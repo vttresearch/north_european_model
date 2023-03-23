@@ -1,0 +1,9 @@
+name: hopetimeseries
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas
+  - matplotlib
+  - openpyxl
+

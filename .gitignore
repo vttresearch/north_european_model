@@ -1,0 +1,20 @@
+#entso-e original capacity input files 
+input/TYNDP-2020-Scenario-Datafile.xlsx
+
+#entso-e VRE files which are used as input
+input/**/PECD*
+
+#output files
+#output/
+
+# kde directory files
+.directory
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+#temporary files
+*~lock*
+
+# configuration files
+starthere_my.jl
