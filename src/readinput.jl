@@ -104,8 +104,8 @@ function readalllines(linesourcefiles, scenario, year)
         if isnothing(lines)
             lines = temp
         else
-            # remove those unit types in previous data which have been redefined in new input
-            lines = antijoin(lines, temp, on = [:Startnode, :Endnode])
+            # remove those line data in previous data which have been redefined in new input
+            lines = antijoin(lines, temp, on = [:Startnode, :Endnode, :Parameter])
             # add newly read capacities
             lines = vcat(lines, temp, cols = :union)
         end

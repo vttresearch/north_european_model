@@ -594,34 +594,53 @@ Make the table for the pgnn parameter in backbone input
 ...
 """
 function make_pgnn(entsoelines, options)
-    #export capacity
+
+    #export capacity forms a set of lines in the input file
     e1 = subset(entsoelines, 
                 :Parameter => ByRow(==("Export Capacity")), 
                 )
 
+    #check whether ramp limits have been defined for this set of capacities
+    rl = subset(entsoelines, 
+            :Parameter => ByRow(==("Ramp Limit")), 
+            )
+    select!(rl, :Startnode, :Endnode, :Value => :rampLimit1)
+
+    # join ramp limits with export capacity data to match rows
+    e1 = leftjoin(e1, rl, on = [:Startnode, :Endnode])
+    e1.rampLimit1 = coalesce.(e1.rampLimit1, 0)
+
+    # part of final table related to export capacity
     pgnn_1 = DataFrame(grid = "all", 
                         from_node = e1.Startnode .* "_elec",
                         to_node = e1.Endnode .* "_elec",
                         dummy = "",
-                        transferCap = e1.Value
+                        transferCap = e1.Value,
+                        rampLimit = e1.rampLimit1
                     )
 
-    #import capacity
+
+    #import capacity forms another set of lines in the input file
     e2 = subset(entsoelines, 
                     :Parameter => ByRow(==("Import Capacity")), 
                     )
     
+    # join ramp limits with import capacity data to match rows
+    e2 = leftjoin(e2, rl, on = [:Startnode, :Endnode])
+    e2.rampLimit1 = coalesce.(e2.rampLimit1, 0)
+
     pgnn_2 = DataFrame(grid = "all", 
                             from_node = e2.Endnode .* "_elec",
                             to_node = e2.Startnode .* "_elec",
                             dummy = "",
-                            transferCap = -1 * e2.Value
+                            transferCap = -1 * e2.Value,
+                            rampLimit = e2.rampLimit1
                         )
     
     pgnn = vcat(pgnn_1, pgnn_2)
 
     insertcols!(pgnn, :transferCapBidirectional => 0)
-    insertcols!(pgnn, :transferLoss => 0.01)
+    insertcols!(pgnn, :transferLoss => 0.02)
     insertcols!(pgnn, :diffCoeff => 0)
     insertcols!(pgnn, :boundStateOffset => 0)
     insertcols!(pgnn, :boundStateMaxDiff => 0)
@@ -639,7 +658,7 @@ function make_pgnn(entsoelines, options)
         insertcols!(pgnn, :ICrampDown => 0)
         insertcols!(pgnn, :annuity => 0)
     else
-        insertcols!(pgnn, :rampLimit => 0)
+        #insertcols!(pgnn, :rampLimit => 0)
         insertcols!(pgnn, :annuityFactor => 0)
     end
 
