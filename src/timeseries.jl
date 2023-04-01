@@ -2,7 +2,7 @@ using Dates
 using DataFrames, CSV
 using Interpolations
 using Missings
-
+using Printf
 
 function correct_leapyear(x)
 
@@ -144,26 +144,22 @@ Make the table for the ts_influx_other parameter concerning some heat or other l
 """
 function make_dummy_ts_influx_heat(filenames, scenario, year, timeorigin)
 
-    # determine the time span for the demand time series
+    # determine the time span for the demand time series, begins from timeorigin of course
     endtime = DateTime(2020,12,31)
     time = collect(timeorigin:Hour(1):endtime)
     bbtime = formattime.(time, timeorigin)
 
-    # prepare sinewave representing approximate heat demand 
-    min_dem = 0.2
-    t1 = convert.(Dates.Hour, time - timeorigin) ./ Hour(1)
-    sinewave = (1 .+ cos.(t1/8760 .* 2 .* π)) ./ 2 .* (1 - min_dem) .+ min_dem
-
     # read constant demands for certain nodes
     dem = readdemands(filenames["demandfile"], scenario, year)
 
-    # create the demand timeseries table
+    # create the demand timeseries table and fill with some initial data
     # FI00industry: industry process heat
-
     demand = DataFrame(grid = "all", f = "f00", t = bbtime, 
-                    FI00industry = -2800
+                    FI00industry = -2600,
+                    SE03_industry = -900
                     )
  
+    # insert all specified constant demands to the demand timeseries table
     for row in eachrow(dem)
         insertcols!(demand, row["inputnode"] => -row["Value"])
     end
