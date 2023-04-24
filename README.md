@@ -9,7 +9,6 @@ Make sure you have [Backbone](https://gitlab.vtt.fi/backbone/backbone)  installe
 
 The usual preparations for the Backbone installation include:
 
-* copy modelsInit_temp.gms from the Backbone root folder to Backbone/input and rename it to modelsInit.gms.
 * copy Backbone/1_options_temp.gms to Backbone/input and rename it 1_options.gms
 
 
@@ -35,7 +34,9 @@ The conversion does not work in isolation, thus you first need the proper input 
 * PECD-MAF2019-wide-WindOffshore.csv
 * PECD-MAF2019-wide-WindOnshore.csv
 
-Load data must be downloaded from the ENTSO-E transparency platform. User-specific API token is needed for automatically accessing the more recent data in ENTSO-E Transparency platform. The token should be added to API_token.txt-file.
+Note that these are older results with very low capacity factors. There is an option to use newer results but the processing of the input files is not included in this repository.
+
+Electrical load data is usually downloaded from the ENTSO-E transparency platform. User-specific API token is needed for automatically accessing the more recent data in ENTSO-E Transparency platform. The token should be added to API_token.txt-file. Alternatively, if you can obtain the files from another source, you can skip downloads by setting the relevant option in **start_inputdata.py**.
 
 
 ## Usage
@@ -52,7 +53,7 @@ Time series are built in two steps: for VRE and others (electricity, hydro, and 
 For VRE, the series are converted into Backbone format by running the function **convert_vre**, the call is found in the file **starthere.jl**. Note: PyCall might use different python version, that does not find all packages. Current workround is to run using PyCall; pyimport_conda("pandas", "pandas")
 
 
-For electricity, hydro, and district heating, Python language is needed.  Python requires installing of several packages to work correctly. Recommend approach is to set up an environment in Anaconda (https://www.anaconda.com/products/distribution). You can set up the environment in timeseries/ folder by running the following command line commands
+For electricity, hydro, and district heating, Python language is needed.  Python requires installing of several packages to work correctly. Recommend approach is to set up an environment in Anaconda (https://www.anaconda.com/products/distribution). You can set up the environment in **timeseries/** folder by running the following command line commands
 
     conda env create -f environment.yml
     conda activate hopetimeseries
@@ -81,22 +82,24 @@ While we are working on the input data to be comprehensive, there are still thin
 ### Setting up run files before running Backbone
 
 Working model requires certain run specificaion files for GAMS
-* Copy **changes.inc** and **timeandsamples.inc** from GAMS_files folder to Backbone input folder. Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\38\csv2gdx ...`
-* Copy **cplex.opt** from GAMS_files folder to backbone root folder. 
-* Use a suitable modelsInit.gms and scheduleinit.gms file, for example copy **modelsInit_example.gms** and **scheduleInit_example.gms** from GAMS_files to Backbone input folder and rename them to modelsInit.gms and scheduleInit.gms. 
-* additional input data can be given by creating **input/bb_input_addData1.xlsx** file. A mandatory structure is that the file has all tables of a full input file except ts_cf, ts_inlux, and ts_node. This option enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file.
 
-### Running the Backbone
+* Copy **changes.inc** and **timeandsamples.inc** from GAMS_files folder to Backbone input folder. Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\38\csv2gdx ...`
+* Use a suitable modelsInit.gms and scheduleinit.gms file, for example copy **modelsInit_example.gms** and **scheduleInit_example.gms** from GAMS_files to Backbone input folder and rename them to modelsInit.gms and scheduleInit.gms. 
+* Optional: copy **cplex.opt** from GAMS_files folder to backbone root folder. 
+* Additional input data can be given by creating **input/bb_input_addData1.xlsx** file. A mandatory structure is that the file has all tables of a full input file except ts_cf, ts_inlux, and ts_node. This option enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file.
+
+### Running the Backbone model
 
 Run the model by running Backbone.gms in GAMS. The model requires following command line options (use two hyphens in the beginning of each)
-* **--input_file_excel** is a mandatory parameter defining the used input excel file name
+
+* **--input_file_excel** is a mandatory parameter defining the used input excel file name (e.g. bb_input1-3x.xlsx)
 * **--modelledDays** is a mandatory parameter defining how many days the model runs. Currently capped between [1-365] if used in combination with tsYear. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * **--tsYear** is a mandatory parameter with allowed values of 0 or [xxxx - 2019]. Selecting a specific year greatly reduce the model size, but the model will use time series only from the selected year and loop those time series. The Model does always model e.g. year 2025, but time series year changes time series profiles and annual demands and water inflows.  
 
 Working command line options for backbone.gms would, for an example, be
 
-	--input_file_excel=bb_input1.xlsx
-	--input_file_excel=bb_input1.xlsx --modelYear=2030 --tsYear=2011 --forecasts=2
+	--input_file_excel=bb_input1-3x.xlsx --tsYear=0
+	--input_file_excel=bb_input1-3x.xlsx --modelYear=2030 --tsYear=2011 --forecasts=2
 	--input_file_excel=bb_input1-3x.xlsx --modelledDays=30 --tsYear=2015 --priceMultiplier=0.8 
 
 J
