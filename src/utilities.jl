@@ -28,6 +28,17 @@ function writetable_and_clear(sheet, df, _anchor_cell)
         
 end
 
+"""
+    create_empty_columns(n = 500, m = 100)
+
+
+Creates data for clearing an area in excel sheet
+...
+# Arguments
+- `n::Int`: number of rows
+- `m::Int`: number of columns
+
+"""
 function create_empty_columns(n = 500, m = 100)
 
     columns = Vector()
