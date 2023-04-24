@@ -28,6 +28,16 @@ from Elec_demand.src.AverageLoads import AverageLoads
 import os
 import glob
 
+#------------------------------------
+# Options
+
+# option to redownload ENTSO-E Transparency platform datafiles
+options =  {"download": True}
+
+
+
+#------------------------------------
+
 ADD="DH/"
 # process timeseries data into separate area-specific files
 DH = GenerateDH(ADD)
@@ -109,9 +119,11 @@ files = glob.glob(ADD+'output/*')
 for f in files:
     os.remove(f)
 
-# process timeseries data into separate area-specific files (ENTSO-E Transparency platform) 
+# Download electrical load timeseries data into separate area-specific files (ENTSO-E Transparency platform) 
+# 
 entsoeloads = EntsoeQueryLoad(ADD)
-entsoeloads.process_areas()
+if options["download"] == True:
+    entsoeloads.process_areas()
 
 # summarise areas from ENTSO-E Transparency platform
 entsoemerged = EntsoeMergeAreaLoads(ADD)

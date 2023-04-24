@@ -22,7 +22,7 @@ scenario = "National Trends"
 year = 2025
 
 #option to redownload ENTSO-E Transparency platform datafiles
-options =  {"redownload": False}
+options =  {"download": False}
 
 # Clean output folder
 files = glob.glob('output/*')
@@ -30,10 +30,10 @@ for f in files:
     os.remove(f)
 
 # 1 Download electrical load timeseries data into separate area-specific files (ENTSO-E Transparency platform) 
-# options["redownload"] governs if downloads are done or if old results are used
+# options["download"] governs if downloads are done or if old results are used
 # Note: create the file input/API_token.txt and add your own entsoe platform API-key to input/API_token.txt
 entsoeloads = EntsoeQueryLoad()
-if options["redownload"] == True:
+if options["download"] == True:
     entsoeloads.process_areas()
 
 # 2 summarise areas from ENTSO-E Transparency platform
