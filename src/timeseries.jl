@@ -93,7 +93,7 @@ end
 
 
 function formattime(x, timeorigin)
-    bb_t = convert(Dates.Hour, x - timeorigin)  / Hour(1)
+    bb_t = convert(Dates.Hour, x - timeorigin)  / Hour(1) + 1
     bb_t = "t" * @sprintf("%06d",bb_t)
 end
 
@@ -111,7 +111,7 @@ Make the table for the ts_cf_io parameter in backbone input
 function make_tscfio(cf, timeorigin, includenodes)
 
     #select those time stamps which are after time origin
-    cf = subset(cf, :time => ByRow(>(timeorigin)) )
+    cf = subset(cf, :time => ByRow(>=(timeorigin)) )
     
     #convert time into backbone time index
     cf = transform(cf, :time
