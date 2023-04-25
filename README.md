@@ -121,6 +121,7 @@ Contact the authors.
 Jussi Ikäheimo - model development, time series, testing
 Anu Purhonen - time series
 Tomi J. Lindroos - time series, testing
+Miika Rämä - district heating data
 
 ## License
 To be specified.
