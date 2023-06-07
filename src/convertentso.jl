@@ -95,6 +95,7 @@ function convert_entsoe(includenodes,
     XLSX.openxlsx(filenames["bbinputfile"], mode="rw") do xf
         
         writetable_and_clear(xf["p_gnu_io"], pgnuio, "B5")
+        writetable_and_clear(xf["flow"], unique(select(flowunit, :flow)), "B5")
         writetable_and_clear(xf["flowUnit"], flowunit, "B4")
           
         writetable_and_clear(xf["p_gn"], pgn, "B5")

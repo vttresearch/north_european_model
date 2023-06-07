@@ -33,6 +33,7 @@ function make_punit(ct, options)
                         minShutDownHours = ct.minShutDownHours)
     else
         punit = DataFrame(unit = ct.unit,
+                        useTimeseriesAvailability = coalesce.(ct.useTimeseriesAvailability,0),
                         useTimeseries = 0,
                         outputCapacityTotal = 0,
                         availability = 1,
