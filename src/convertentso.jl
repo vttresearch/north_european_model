@@ -23,7 +23,7 @@ function convert_entsoe(includenodes,
     entsoecapa = subset(entsoecapa, :Node => ByRow(in(includenodes) ) )
 
     # read capacity filters which remove some units and remove the units
-    capafilters = readcapafilters(filenames["plantsourcefiles"])
+    capafilters = readcapafilters(filenames["plantsourcefiles"], scenario, year)
     entsoecapa = antijoin(entsoecapa, capafilters, on = [:Node, :Generator_ID])
 
     # reading fuel prices

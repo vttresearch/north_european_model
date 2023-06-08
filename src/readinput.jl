@@ -54,10 +54,11 @@ Reads the unit types which should be removed from the input data.
 ...
 # Arguments
 - `plantsourcefiles::Array{String,1}`: list of file names of capacity files
-
+- `scenario::String`: scenario name
+- `year::Int`: year
 ...
 """
-function readcapafilters(plantsourcefiles)
+function readcapafilters(plantsourcefiles, scenario, year)
    
     filters = nothing
 
@@ -77,6 +78,11 @@ function readcapafilters(plantsourcefiles)
             filters = vcat(filters, temp, cols = :union)
         end
     end
+
+    #filter the filters
+    filters  = subset(filters , 
+    :Scenario => ByRow(==(scenario)),
+    :Year => ByRow(==(year))  )
 
     return filters
 end
