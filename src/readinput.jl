@@ -22,8 +22,8 @@ function readcapa(plantsourcefiles, scenario, year)
     
     #reading all the given files and combining
     for f in plantsourcefiles
-        columns, labels = XLSX.readtable(f, "Capacity")
-        newinput = DataFrame(columns, labels)
+        #columns, labels = XLSX.readtable(f, "Capacity")
+        newinput = DataFrame(XLSX.readtable(f, "Capacity") )
 
         #filter the capacities
         newinput  = subset(newinput , 
@@ -65,8 +65,8 @@ function readcapafilters(plantsourcefiles, scenario, year)
     for f in plantsourcefiles
         temp = DataFrame(Node = [], Generator_ID = [])
         try
-            columns, labels = XLSX.readtable(f, "Remove_units_by_node")
-            temp = DataFrame(columns, labels)
+            #columns, labels = XLSX.readtable(f, "Remove_units_by_node")
+            temp = DataFrame(XLSX.readtable(f, "Remove_units_by_node") )
         catch
             nothing
         end
@@ -80,23 +80,27 @@ function readcapafilters(plantsourcefiles, scenario, year)
     end
 
     #filter the filters
-    filters  = subset(filters , 
-    :Scenario => ByRow(==(scenario)),
-    :Year => ByRow(==(year))  )
+    if isempty(filters)
+        filters  = DataFrame(Node = [], Generator_ID = [], Scenario = [], Year = [])
+    else
+        filters  = subset(filters , 
+                    :Scenario => ByRow(==(scenario)),
+                    :Year => ByRow(==(year))  )
+    end
 
     return filters
 end
 
 function readtechdata(techdatafile)
     #reading the whole sheet
-    columns, labels = XLSX.readtable(techdatafile, "techdata")
-    techdata = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(techdatafile, "techdata")
+    techdata = DataFrame(XLSX.readtable(techdatafile, "techdata") )
 end
 
 function readagggens(techdatafile)
     #reading the whole sheet
-    columns, labels = XLSX.readtable(techdatafile, "aggregates")
-    agg_gens = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(techdatafile, "aggregates")
+    agg_gens = DataFrame(XLSX.readtable(techdatafile, "aggregates") )
 end
 
 
@@ -123,8 +127,8 @@ end
 
 function readentsoelines(linesourcefile, scenario, year)
     #reading the whole sheet of entsoe lines
-    columns, labels = XLSX.readtable(linesourcefile, "Line")
-    entsoelines = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(linesourcefile, "Line")
+    entsoelines = DataFrame(XLSX.readtable(linesourcefile, "Line") )
 
     #rename some cols
     rename!(entsoelines, Symbol("Node/Line") => :Line)
@@ -143,8 +147,8 @@ end
 
 function readunitstubflow(unitdictfile)
     #reading the whole sheet s
-    columns, labels = XLSX.readtable(unitdictfile, "unitflow")
-    unitstubflow = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(unitdictfile, "unitflow")
+    unitstubflow = DataFrame(XLSX.readtable(unitdictfile, "unitflow") )
 end
 
 function readVRE(inputdir, options)
@@ -194,8 +198,8 @@ end
 function readfuelprices(filename, scenario, year)
 
     #reading the whole sheet 
-    columns, labels = XLSX.readtable(filename, "fuelprices")
-    fp = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(filename, "fuelprices")
+    fp = DataFrame(XLSX.readtable(filename, "fuelprices") )
 
     #filter the capacities
     fp = subset(fp, 
@@ -207,10 +211,10 @@ end
 function reademissionprices(filename, scenario, year)
 
     #reading the whole sheet 
-    columns, labels = XLSX.readtable(filename, "emissionprices")
-    fp = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(filename, "emissionprices")
+    fp = DataFrame(XLSX.readtable(filename, "emissionprices") )
  
-    #filter the capacities
+    #filter the capacities        
     fp = subset(fp, 
                 :Scenario => ByRow(==(scenario)),
                 :Year => ByRow(==(year))  )
@@ -219,8 +223,8 @@ end
 
 function readdemands(demandfile, scenario, year)
     #reading the whole sheet of entsoe lines
-    columns, labels = XLSX.readtable(demandfile, "demand")
-    dem = DataFrame(columns, labels)
+    #columns, labels = XLSX.readtable(demandfile, "demand")
+    dem = DataFrame(XLSX.readtable(demandfile, "demand") )
 
     #filter the demands
     dem = subset(dem, 

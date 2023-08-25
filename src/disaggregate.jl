@@ -68,9 +68,8 @@ Create unit modelnames to be used in Backbone model
 function add_modelname(capa, unitdictfile)
 
      #load stub model unit names and connect
-     #columns, labels = XLSX.readtable("input/unitdict.xlsx", "unitdict")
-     columns, labels = XLSX.readtable(unitdictfile, "unitdict")
-     unitdict = DataFrame(columns, labels)
+     #columns, labels = XLSX.readtable(unitdictfile, "unitdict")
+     unitdict = DataFrame(XLSX.readtable(unitdictfile, "unitdict") )
      unitdict.unitstub = replace(unitdict.unitstub, "NA" => missing)
      unitdict = dropmissing(unitdict)
      

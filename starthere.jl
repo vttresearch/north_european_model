@@ -13,7 +13,7 @@ options = Dict()
 # input files for unit capacities
 # uncomment the ones needed
 filenames["plantsourcefiles"] = ["input/capacity/TYNDP-2020-capacities.xlsx", 
-                                "input/capacity/additional-units-chp.xlsx", #CHP
+                                #"input/capacity/additional-units-chp.xlsx", #CHP
                                 #"input/capacity/additional-units-vre.xlsx", #updates to VRE capacity
                                 #"input/capacity/additional-units-conventional.xlsx" #updates to some conventional units
                                 ]
@@ -51,7 +51,7 @@ filenames["timeseriesfolder"] = "input/vre/"
 options["bb_version"] = "3.x"
 
 # set true if you wish to use PECD 2021 data for selected VRE series 
-options["use_updated_VRE_series"] == false
+options["use_updated_VRE_series"] = false
 
 # set true if parameters for special plant start types are included
 options["use_constrained_starttypes"] = false
@@ -82,7 +82,7 @@ includenodes = ["FI00",
 convert_entsoe(includenodes, filenames, options, scenario, year)
 
 # convert VRE time series into CSV "ts_cf_io"
-convert_vre(includenodes, filenames, options)
+#convert_vre(includenodes, filenames, options)
 
 # produce a dummy heat demand for FI00_others_dheat region and industrial process heat
 # also produce hydrogen demand for certain nodes
