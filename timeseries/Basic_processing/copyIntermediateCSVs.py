@@ -38,7 +38,7 @@ dstList = [
 
 
 
-for i in range(0,7):
+for i in range(0,len(srcList)):
 	
 	src = os.path.normpath(srcList[i])
 	dst = os.path.normpath(dstList[i])
