@@ -1,5 +1,3 @@
-#entso-e original capacity input files 
-input/TYNDP-2020-Scenario-Datafile.xlsx
 
 #entso-e VRE files which are used as input
 input/**/PECD*

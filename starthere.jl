@@ -13,7 +13,7 @@ options = Dict()
 # input files for unit capacities
 # uncomment the ones needed
 filenames["plantsourcefiles"] = ["input/capacity/TYNDP-2020-capacities.xlsx", 
-                                #"input/capacity/additional-units-chp.xlsx", #CHP
+                                "input/capacity/additional-units-chp.xlsx", #CHP
                                 #"input/capacity/additional-units-vre.xlsx", #updates to VRE capacity
                                 #"input/capacity/additional-units-conventional.xlsx" #updates to some conventional units
                                 ]
