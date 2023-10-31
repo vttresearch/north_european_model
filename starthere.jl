@@ -79,12 +79,12 @@ includenodes = ["FI00",
                 "NL00"]
 
 # convert entso-e unit and line data into Backbone excel
-convert_entsoe(includenodes, filenames, options, scenario, year)
+#convert_entsoe(includenodes, filenames, options, scenario, year)
 
 # convert VRE time series into CSV "ts_cf_io"
-#convert_vre(includenodes, filenames, options)
+convert_vre(includenodes, filenames, options)
 
 # produce a dummy heat demand for FI00_others_dheat region and industrial process heat
 # also produce hydrogen demand for certain nodes
-make_other_demands(filenames, scenario, year)
+#make_other_demands(filenames, scenario, year)
 
