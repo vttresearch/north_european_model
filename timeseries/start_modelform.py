@@ -25,6 +25,7 @@ selected_regions = ['FI00',
                     "LV00",
                     "NL00",
                     "BE00"]
+#                    "ES00"]
 
 
 # call the conversion functions for different data 
