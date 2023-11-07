@@ -8,6 +8,8 @@ from src.DHToModelForm import conv_dhdemand_tomodelform
 # Convert intermediate timeseries files, created using the scripts in Basic_processing
 # to the correct model format. 
 # Output is printed to "timeseries/output"
+# !! The software does not currently process EV time series from basic_processing/EV
+# folder. Please copy them manually to Backbone input folder.
 
 # select the regions for which you want timeseries values (others except DH)
 
