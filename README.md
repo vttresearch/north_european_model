@@ -118,10 +118,11 @@ The model supports few user given additional options. All these are optional. Be
 Contact the authors.
 
 ## Authors and acknowledgment
-Jussi Ikäheimo - model development, time series, testing
-Anu Purhonen - time series
-Tomi J. Lindroos - time series, testing
-Miika Rämä - district heating data
+* Jussi Ikäheimo - model development, time series, testing
+* Anu Purhonen - time series
+* Tomi J. Lindroos - time series, testing
+* Miika Rämä - district heating data
+* Eric Harrison - testing
 
 ## License
 To be specified.

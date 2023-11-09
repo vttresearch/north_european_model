@@ -59,6 +59,10 @@ class CombineSummaries:
         self.start='2011-01-01 00:00:00'
         self.end='2019-12-31 23:00:00'              #temperatures are available until this date
         self.middle = '2015-01-01 00:00:00'
+        #self.countrycodefile = os.path.normpath(self.ADD+'input/countrycodes.csv')
+
+        #region codes
+        #country_codes1 = pd.read_csv(self.countrycodefile)
 
         #files to be combined
         self.csvInput = os.path.normpath(self.ADD+'output/summary_2011-2014-1h.csv')
