@@ -14,8 +14,8 @@ options = Dict()
 # uncomment the ones needed
 filenames["plantsourcefiles"] = ["input/capacity/TYNDP-2020-capacities.xlsx", 
                                 "input/capacity/additional-units-chp.xlsx", #CHP
-                                #"input/capacity/additional-units-vre.xlsx", #updates to VRE capacity
-                                #"input/capacity/additional-units-conventional.xlsx" #updates to some conventional units
+                                "input/capacity/additional-units-vre.xlsx", #updates to VRE capacity
+                                "input/capacity/additional-units-conventional.xlsx" #updates to some conventional units
                                 ]
 
 
@@ -76,15 +76,17 @@ includenodes = ["FI00",
                 "UK00",
                 "LV00",
                 "LT00",
-                "NL00"]
+                "NL00",
+                "BE00",
+                "ES00"]
 
 # convert entso-e unit and line data into Backbone excel
-#convert_entsoe(includenodes, filenames, options, scenario, year)
+convert_entsoe(includenodes, filenames, options, scenario, year)
 
 # convert VRE time series into CSV "ts_cf_io"
 convert_vre(includenodes, filenames, options)
 
-# produce a dummy heat demand for FI00_others_dheat region and industrial process heat
+# produce certain commondity demands for specified areas
 # also produce hydrogen demand for certain nodes
-#make_other_demands(filenames, scenario, year)
+make_other_demands(filenames, scenario, year)
 
