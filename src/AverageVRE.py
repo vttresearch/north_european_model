@@ -127,6 +127,10 @@ def conv_AverageVRE(timeorigin, selected_regions):
                 result.insert(2,"t",result['a'].apply(lambda x: f"t{int(x):06d}"))
                 del result['a']
                 #print(result.info())
+
+                # Add rounding step for the entire dataframe
+                result = result.round(decimals=4) 
+
                 filename = output_prefix+'_'+rate+'p.csv'
                 result.to_csv(filename,index=False)
 

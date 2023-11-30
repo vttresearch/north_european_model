@@ -1,4 +1,4 @@
-name: hopetimeseries
+name: northEuropeModel
 channels:
   - defaults
 dependencies:
@@ -6,4 +6,4 @@ dependencies:
   - pandas
   - matplotlib
   - openpyxl
-
+  - itertools

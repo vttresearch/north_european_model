@@ -1,94 +1,155 @@
-# Europe Input
+# North European energy system model
 
-Input data conversions for the North European energy system model for the Backbone model.
+This repository contains North European energy system model. The model is built for the Backbone modelling framework. 
 
-
-## Preparation
-
-Make sure you have [Backbone](https://gitlab.vtt.fi/backbone/backbone)  installed. For the moment we recommend using the master branch.
-
-The usual preparations for the Backbone installation include:
-
-* copy Backbone/1_options_temp.gms to Backbone/input and rename it 1_options.gms
+This readme has following main sections
+- Installing Backbone and the North European Model
+- Installing Julia, Conda, and setting up the environments
+- Downloading required time series files
+- Building input files for backbone
+- Running Backbone
 
 
-## Installation
 
-Clone the repository on your machine. Make sure you have [Julia](https://julialang.org/)  version >= 1.5 installed. Install the dependencies by starting Julia interactive session (e.g. typing Julia in command prompt) in "europe-input" folder and running following commands:
+## Installing Backbone and the North European Model
+
+Make sure you have installed. For the moment we recommend using the release-3.x branch. If not, use git to clone the Backbone from [release-3.x](https://gitlab.vtt.fi/backbone/backbone/-/tree/release-3.x) use git to [switch to a correct brach](https://gitlab.vtt.fi/backbone/backbone/-/wikis/Versions).
+
+Use git to clone the repository of North European model. The easiest approach is if the model folder is under backbone, e.g. c:\backbone\north_european_model.
+
+
+## Installing Julia, Conda, and setting up the environments
+
+Make sure you have [Julia](https://julialang.org/)  version >= 1.5 installed. Install the Julia dependencies by starting Julia interactive session (e.g. typing 'Julia' in command prompt) in **north_european_model/** folder and running following commands:
 
 	using Pkg
 	Pkg.activate(".") 
     Pkg.instantiate()
 
-
 Note: Building PyCall might be slow, but do not interrupt it. 
 
-The timeseries/ folder contains Python scripts for which you need a Python installation. More instructions to be added.
+Recommend approach to install Python dependencies is to set up a new environment in [Anaconda](https://www.anaconda.com/products/distribution). New users might want to use [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html) instead of more complicated Anaconda. 
+
+Open the installed conda, go to folder **timeseries/**, and set up the environment by running the following commands
+
+    conda env create -f environment.yml
+    conda activate northEuropeModel
+
+Installed environment does not contain [entsoe-py](https://github.com/EnergieID/entsoe-py) as conda does not automatically find it. After creating and activating the northEuropeModel environment, install entsoe-py by following command:
+
+    python -m pip install entsoe-py
+   
+ENTSO-E user-specific API token is needed for automated data queries from the ENTSO-E Transparency platform. To set up your API key
+* go to ENTSO-E transparency platform, https://transparency.entsoe.eu/dashboard/show
+* create a user account by clicking login at the top right of the page
+* request API by sending and email to transparency@entsoe.eu with “Restful API access” in the subject line
+* create file timeseries\Basic_processing\Elec_demand\input\API_token.txt and add the received token there. 
+
+After these steps, you should have required softwares and environments ready. 
+
+Python scripts are tested with python 3.10.
 
 
-## Getting the input data
+## Downloading required time series files
 
-The conversion does not work in isolation, thus you first need the proper input data. The Following VRE time series ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)) should be added in the input/vre/ folder manually as files are really large: 
+The North Europe model has extensive time series that are too large to be shared in this repository. Time series data are collected in two steps: for VRE (wind, solar) and others (electricity, hydro, and district heat). 
 
+**VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Following files are large and should be added in the **input/vre/** folder manually: 
 * PECD-MAF2019-wide-PV.csv
 * PECD-MAF2019-wide-WindOffshore.csv
 * PECD-MAF2019-wide-WindOnshore.csv
 
-Note that these are older results with very low capacity factors. There is an option to use newer results but the processing of the input files is not included in this repository.
+Note: that these are older results with very low capacity factors. There is an option to use newer results but the processing of the input files is not yet included in this repository.
 
-Electrical load data is usually downloaded from the ENTSO-E transparency platform. User-specific API token is needed for automatically accessing the more recent data in ENTSO-E Transparency platform. The token should be added to API_token.txt-file. Alternatively, if you can obtain the files from another source, you can skip downloads by setting the relevant option in **start_inputdata.py**.
+**Other time series data** are shared in this repository or queried from the ENTSO-E transparency platform. 
 
+* Open Conda and activate the northEuropeModel environment
+* go to folder **timeseries\Basic_processing**
+* run start_inputdata.py (type 'python start_inputdata.py') to create the uniform timeseries-files from the original input data. The run time is from 20 to 40 min and requires internet connection.
+* run copyIntermediateCSVs.py to copy created intermediate files to **timeseries/input** folder. These are not model input, but intermediate storages for downloaded data.
 
-## Usage
+If needed, each subfolder in timeseries\basic_processing\ contains a separate readme file explaining the data processing and requirements in greater detail.
 
-The package contains functions for building both the main excel input file for Backbone containing the energy system description, functions for building the necessary time series, and example GAMS run files.
+Note: If you receive errors from missing packages, API key, or other, see previous section "Installing Julia, Conda, and setting up the environments".
 
-### Building the main input file
-For building the Excel input file for Backbone, run the script **starthere.jl**. starthere.jl contains a detailed explanation of the function argument along with examples. By default the output file will be **bb_input1-3x.xlsx**.
-
-### Building the time series files
-
-Time series are built in two steps: for VRE and others (electricity, hydro, and district heat). 
-
-For VRE, the series are converted into Backbone format by running the function **convert_vre**, the call is found in the file **starthere.jl**. Note: PyCall might use different python version, that does not find all packages. Current workround is to run using PyCall; pyimport_conda("pandas", "pandas")
+Note: Basic processing has EV folder, but that is still work in progress and cannot be run with the currently shared files.
 
 
-For electricity, hydro, and district heating, Python language is needed.  Python requires installing of several packages to work correctly. Recommend approach is to set up an environment in Anaconda (https://www.anaconda.com/products/distribution). You can set up the environment in **timeseries/** folder by running the following command line commands
+## Building and copying input files for backbone
 
-    conda env create -f environment.yml
-    conda activate hopetimeseries
-    
-    
-Then:
+The package contains functions for building 
+* the main excel input file for Backbone containing the energy system description (Julia), 
+* VRE time series csv files (Julia),
+* other time series csv files (Python)
 
-1. run **start_inputdata.py** (folder timeseries/basic_processing/) to create the uniform timeseries-files from the original input data. In order to be able to do this, you should acquire your personal API-key to entsoe platform. API-key should be put into file "timeseries/basic_processing/elec_demand/input/API_token.txt". 
-2. run **copyIntermediateCSVs.py** to copy created intermediate files to "timeseries/input" folder
-3. run **start_modelform.py** (folder timeseries) to convert intermediate timeseries files to the correct model format. Output is printed to "timeseries/output" folder
+Time series are built in two steps: for VRE (wind, solar) and others (electricity, hydro, and district heat). 
 
-Each subfolder in *basic_processing*  contains a separate readme file explaining the data processing and requirements in greater detail. Tested with python 3.10.4.
+### Running julia for bb-input and VRE timeseries
 
-### Giving the inputs to Backbone
+The file 'starthere.jl' in the north_european_model root folder contains three main functions 'convert_entsoe', 'convert_vre', and 'make_other_demands'. Check that all of these are active (not commented out).
 
-Move the main Excel input file (e.g. bb_input1-3x.xlsx) to Backbone input folder. Also move all .csv files from  **output/** and **timeseries/output** folders to Backbone input folder.
+run the script **starthere.jl**, e.g. typing 'Julia' in command prompt in "europe-input" folder and running following commands:
+
+	using Pkg
+	Pkg.activate(".") 
+    Pkg.instantiate()
+    include("starthere.jl")
+
+In certain cases, Julia's PyCall might use different python version, that does not find all packages. If julia crashes complaining, e.g. that pandas is not found, run 
+
+	using PyCall
+	pyimport_conda("pandas", "pandas")
+
+And the then rerun starthere.jl.
+
+By default, the output files will be 
+* ./output/bb_input1-3x.xlsx
+* ./output/bb_ts_cf_io.csv
+* ./output/bb_ts_cf_io_10p.csv
+* ./output/bb_ts_cf_io_50p.csv
+* ./output/bb_ts_cf_io_90p.csv
+
+Copy these files to **backbone/input** folder
+
+
+### Running python for other timeseries
+
+Open Conda and activate the northEuropeModel environment. Then
+
+* go to folder **./timeseries**
+* run start_modelform.py to convert intermediate timeseries files to the correct model format. 
+* Output csv files are printed to **./timeseries/output** folder. Copy these files to **backbone/input**
+
+At the time of writing, the total size of files from Julia and Python are slightly below 2 Gb. 
+
 
 ### Manual additions
 
-While we are working on the input data to be comprehensive, there are still things you need to do manually. It is suggested that you copy the rows from file **manual_additions/additional_backbone_input** to the respective tables in the backbone input file bb_input1.xlsx. Specific suggested manual additions also include
+While we are working on the input data to be comprehensive, there are still some data that you need to do add manually to the input excel. 
+* open **additional backbone input.xlsx** in .\north_european_model\manual_additions\
+* copy the data to the created **bb_input1-3x.xlsx** in backbone/input folder
 
-* Set fixed start levels to water reservoirs, which are listed in **manual_additions/additional_backbone_input** (sheet Boundary properties for states). You would do this by putting "1" in the boundStart column and rows pertaining to the water reservoirs of p_gn sheet in the backbone input file bb_input1.xlsx.
+Current manual additions set fixed start levels to water reservoirs, set higher balance penalty, and allow spillages. Manual changes require putting "1" in the boundStart column for correct rows in p_gn sheet, and copying the data to p_gnBoundaryPropertiesForStates sheet.
 
-* Set the operation mode for conversion units are modified in changes.inc. In the current input data, all units are set as **directoff**, but changes.inc converts certain units to LP or MIP.
 
-### Setting up run files before running Backbone
+### Run specification files
+
 
 Working model requires certain run specificaion files for GAMS
 
-* Copy **changes.inc** and **timeandsamples.inc** from GAMS_files folder to Backbone input folder. Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\38\csv2gdx ...`
-* Use a suitable modelsInit.gms and scheduleinit.gms file, for example copy **modelsInit_example.gms** and **scheduleInit_example.gms** from GAMS_files to Backbone input folder and rename them to modelsInit.gms and scheduleInit.gms. 
-* Optional: copy **cplex.opt** from GAMS_files folder to backbone root folder. 
-* Additional input data can be given by creating **input/bb_input_addData1.xlsx** file. A mandatory structure is that the file has all tables of a full input file except ts_cf, ts_inlux, and ts_node. This option enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file.
+* copy **cplex.opt** from GAMS_files folder to backbone root folder. 
+* Use a suitable **modelsInit.gms** and **scheduleInit.gms** file, for example copy **modelsInit_example.gms** and **scheduleInit_example.gms** from GAMS_files to backbone\input folder and rename them to modelsInit.gms and scheduleInit.gms. 
+* Copy **1_options.gms**, **changes.inc** and **timeandsamples.inc** from GAMS_files folder to Backbone input folder. 
 
-### Running the Backbone model
+Note: included scheduleInit file has a specific structure that it works with *tsYear* and *modelledDays* parameters. If using your own file, adapt a similar structure to the file.
+
+Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\45\csv2gdx ...`
+
+
+Additional input data can be given by creating **input/bb_input_addData1.xlsx** file. A mandatory structure is that the file has all tables of a full input file except ts_cf, ts_inlux, and ts_node. This option enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file.
+
+
+## Running Backbone
 
 Run the model by running Backbone.gms in GAMS. The model requires following command line options (use two hyphens in the beginning of each)
 
@@ -101,8 +162,6 @@ Working command line options for backbone.gms would, for an example, be
 	--input_file_excel=bb_input1-3x.xlsx --tsYear=0
 	--input_file_excel=bb_input1-3x.xlsx --modelYear=2030 --tsYear=2011 --forecasts=2
 	--input_file_excel=bb_input1-3x.xlsx --modelledDays=30 --tsYear=2015 --priceMultiplier=0.8 
-
-J
 
 The model supports few user given additional options. All these are optional. Behaviour and default values are listed below.
 * --modelYear [2025, 2030]. Default 2025. Allows a quick selection of the the modelled year. Currently two options and impacts only district heating demand. 

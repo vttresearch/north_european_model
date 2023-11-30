@@ -49,6 +49,8 @@ if (mType('schedule'),
 * --- Model Time Structure ----------------------------------------------------
 * =============================================================================
 
+t_invest(t) = no;
+
 * --- Define Samples ----------------------------------------------------------
 
     // Number of samples used by the model
@@ -60,7 +62,7 @@ if (mType('schedule'),
 
     // Define time span of samples
     msStart('schedule', 's000') = mSettings('schedule', 't_start');
-    msEnd('schedule', 's000') = mSettings('schedule', 't_end') + mSettings('schedule', 't_horizon');
+    msEnd('schedule', 's000') = mSettings('schedule', 't_start') + mSettings('schedule', 't_end') + mSettings('schedule', 't_horizon');
 
     // Define the probability (weight) of samples
     p_msAnnuityWeight('schedule', 's000') = 1;
@@ -106,6 +108,8 @@ if (mType('schedule'),
 * --- Model Forecast Structure ------------------------------------------------
 * =============================================================================
 
+    Option clear = gn_forecasts;  // By default includes everything, so clear first
+
 if(%forecastNumber%=1, 
     // Define the number of forecasts used by the model
     mSettings('schedule', 'forecasts') = 0;
@@ -117,27 +121,47 @@ if(%forecastNumber%=1,
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;
     p_mfProbability(mf_realization('schedule', f)) = 1;
-);
-if(%forecastNumber%=2, 
-    // Define the number of forecasts used by the model
-    mSettings('schedule', 'forecasts') = 2;
+
+else
+
+    // Define which nodes and timeseries use forecasts
+
+    // loops flowNodes that have ts_cf data
+    option flowNode_tmp < ts_cf;
+    loop(flowNode_tmp,
+        // if ts_cf has values in f01, use forecasts. Works because changes.inc makes sure that f02 and f03 also exist
+        if(sum(t, ts_cf(flowNode_tmp, 'f01', t))>0,
+            gn_forecasts(flowNode_tmp, 'ts_cf') = yes;            
+        );
+    );
+
+    // loops gridNodes that have ts_influx data
+    option gn_tmp < ts_influx;
+    loop(gn_tmp,
+        // if ts_cf has values in f01, use forecasts. Works because changes.inc makes sure that f02 and f03 also exist
+        if(sum(t, ts_influx(gn_tmp, 'f01', t)<>0),
+            gn_forecasts(gn_tmp, 'ts_influx') = yes;            
+        );
+    );
 
     // Define forecast properties and features
     mSettings('schedule', 't_forecastStart') = 1;                  // At which time step the first forecast is available ( 1 = t000001 )
-    mSettings('schedule', 't_forecastLengthUnchanging') = 36;      // Length of forecasts in time steps - this does not decrease when the solve moves forward (requires forecast data that is longer than the horizon at first)
-    mSettings('schedule', 't_forecastLengthDecreasesFrom') = 168;  // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read (then extends back to full length)
+    mSettings('schedule', 't_forecastLengthUnchanging') = 0;       // Length of forecasts in time steps - this does not decrease when the solve moves forward (requires forecast data that is longer than the horizon at first)
+    mSettings('schedule', 't_forecastLengthDecreasesFrom') = 8760; // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read (then extends back to full length)
     mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
     mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
-    mSettings('schedule', 't_improveForecast') = 0;                // Number of time steps ahead of time that the forecast is improved on each solve.
-
-    // Define how forecast data is read
-    mSettings(mSolve, 'onlyExistingForecasts') = yes; // yes = Read only existing data; zeroes need to be EPS to be recognized as data.
 
     // Define Realized and Central forecasts
     mf_realization('schedule', f) = no;
     mf_realization('schedule', 'f00') = yes;
     mf_central('schedule', f) = no;
     mf_central('schedule', 'f01') = yes;
+
+);
+
+if(%forecastNumber%=2, 
+    // Define the number of forecasts used by the model
+    mSettings('schedule', 'forecasts') = 2;
 
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;
@@ -148,23 +172,6 @@ if(%forecastNumber%=2,
 if(%forecastNumber%=4,
     // Define the number of forecasts used by the model
     mSettings('schedule', 'forecasts') = 4;
-
-    // Define forecast properties and features
-    mSettings('schedule', 't_forecastStart') = 1;                  // At which time step the first forecast is available ( 1 = t000001 )
-    mSettings('schedule', 't_forecastLengthUnchanging') = 36;      // Length of forecasts in time steps - this does not decrease when the solve moves forward (requires forecast data that is longer than the horizon at first)
-    mSettings('schedule', 't_forecastLengthDecreasesFrom') = 168;  // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read (then extends back to full length)
-    mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
-    mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
-    mSettings('schedule', 't_improveForecast') = 0;                // Number of time steps ahead of time that the forecast is improved on each solve.
-
-    // Define how forecast data is read
-    mSettings(mSolve, 'onlyExistingForecasts') = yes; // yes = Read only existing data; zeroes need to be EPS to be recognized as data.
-
-    // Define Realized and Central forecasts
-    mf_realization('schedule', f) = no;
-    mf_realization('schedule', 'f00') = yes;
-    mf_central('schedule', f) = no;
-    mf_central('schedule', 'f01') = yes;
 
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;
@@ -193,8 +200,11 @@ if(%forecastNumber%=4,
 
     // Define the last time step for each unit aggregation and efficiency level (3a_periodicInit.gms ensures that there is a effLevel until t_horizon)
     mSettingsEff('schedule', 'level1') = 24;
-    mSettingsEff('schedule', 'level2') = Inf;
-*    mSettingsEff('schedule', 'level3') = Inf;
+    mSettingsEff('schedule', 'level2') = 336;
+    mSettingsEff('schedule', 'level3') = Inf;
+
+    option unit_tmp < effLevelGroupUnit;
+    effLevelGroupUnit('level3', 'directOff', unit_tmp) = yes;
 
 * --- Control the solver ------------------------------------------------------
 
