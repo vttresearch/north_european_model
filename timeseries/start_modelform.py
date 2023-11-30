@@ -12,8 +12,6 @@ from src.DHToModelForm import conv_dhdemand_tomodelform
 # folder. Please copy them manually to Backbone input folder.
 
 # select the regions for which you want timeseries values (others except DH)
-
-
 selected_regions = ['FI00', 
                     'SE01', 'SE02', 'SE03', 'SE04', 
                     'NOS0', 'NOM1', 'NON1', 

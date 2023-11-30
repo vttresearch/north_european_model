@@ -6,7 +6,7 @@ copies intermediate csv files from basic processing output folders to timeseries
 import shutil
 import os
 
-
+# define the files to be copied
 srcList = [	
 			"./DH/output/DH_2025_timeseries_summary.csv",
 			"./DH/output/DH_2030_timeseries_summary.csv",
@@ -21,6 +21,7 @@ srcList = [
 			"./Hydro/Reservoir_minmax_generation/output/summary_hydro_reservoir_minmax_generation_1982_2020_1h_MWh.csv",
     	  ]
 
+# define where each file is copied
 dstList = [	
 			"../input/DH_2025_timeseries_summary.csv",
 			"../input/DH_2030_timeseries_summary.csv",
@@ -37,7 +38,7 @@ dstList = [
 
 
 
-
+# do the copying
 for i in range(0,len(srcList)):
 	
 	src = os.path.normpath(srcList[i])

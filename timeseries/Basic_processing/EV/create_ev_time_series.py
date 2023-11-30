@@ -15,7 +15,7 @@ import itertools
 
 # scenario and year of EV capacity, e.g. "Distributed Energy", 2030
 scenario = "Distributed Energy"
-year = 2040
+year = 2030
 
 # years between 1982-2020 (inclusive): 39
 years_qty = 39
