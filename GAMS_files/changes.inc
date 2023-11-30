@@ -111,6 +111,18 @@ $if set forecasts $setglobal forecastNumber %forecasts%
 $if not set priceMultiplier $setglobal priceMultiplier 1
 
 
+
+* ------------------------
+* creating few helper sets
+* ------------------------
+
+* projecting a temporary (grid, node) set for looping only required pairs
+Set gn_tmp(grid, node);
+
+* projecting a temporary (flow, node) set for looping only required pairs
+Set flowNode_tmp(flow, node);
+
+
 * ------------------------
 * making few manual changes to input data
 * ------------------------
@@ -139,12 +151,15 @@ loop(unit,
     );
 );
 
+$ontext
+// deactivated by default 
+
 * converting Finnish and Swedish nuclear to MIP
 effLevelGroupUnit('level1', 'directOnLP', 'U_FI00_nuclear') = no;
 effLevelGroupUnit('level1', 'directOnMIP', 'U_FI00_nuclear') = yes;
 effLevelGroupUnit('level1', 'directOnLP', 'U_SE03_nuclear') = no;
 effLevelGroupUnit('level1', 'directOnMIP', 'U_SE03_nuclear') = yes;
-
+$offtext
 
 
 
@@ -212,6 +227,25 @@ $ifthen set forecasts
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_50p failed! Check that your input file is valid and that your file path and file name are correct.
 
+$ifthen %forecastNumber% == 4
+    // convert csv to gdx with correct id
+    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_10p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_10p.gdx" checkDate=TRUE'
+    // Load ts_influx_io
+    $$gdxin  '%input_dir%/bb_ts_cf_io_10p.gdx'
+    $$loaddcm ts_cf_io
+    $$gdxin
+$endif
+$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_10p failed! Check that your input file is valid and that your file path and file name are correct.
+
+$ifthen %forecastNumber% == 4
+    // convert csv to gdx with correct id
+    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_90p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_90p.gdx" checkDate=TRUE'
+    // Load ts_influx_io
+    $$gdxin  '%input_dir%/bb_ts_cf_io_90p.gdx'
+    $$loaddcm ts_cf_io
+    $$gdxin
+$endif
+$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_90p failed! Check that your input file is valid and that your file path and file name are correct.
 
 
 * ------------------------
@@ -228,9 +262,12 @@ display  hour, minute, second;
 
 if(%tsYear%>1980,
     tmp = tmp-1 ;  // -1 as t000000 is the first one, but we want to map to t000001
+    // pick only selected values if modelling a specific times series year
     ts_cf(flow, node, f, t - tmp) = ts_cf_io(flow, f, t, node)$t_selectedYear(t) ;
+    // clear the large ts table if modelling only a specific time series year
     option clear = ts_cf_io;
 else
+    // otherwise rename the large table to the model input table
     ts_cf(flow, node, f, t) = ts_cf_io(flow, f, t, node);
 );
 
@@ -424,10 +461,13 @@ $endif
 
 $ifthen set convert_ts_influx
     if(%tsYear%>1980,
+        // pick only selected values if modelling a specific times series year
         ts_influx(grid, node, f, t - tmp) = ts_influx_io(grid, f, t, node)$t_selectedYear(t); // tmp from ts_cf
+        // clear the large ts table if modelling only a specific time series year
         option clear = ts_influx_io;
     else
-         ts_influx(grid, node, f, t) = ts_influx_io(grid, f, t, node);
+        // otherwise rename the large table to the model input table
+        ts_influx(grid, node, f, t) = ts_influx_io(grid, f, t, node);
     );
 $endif
 
@@ -451,7 +491,7 @@ $ifthen exist '%input_dir%/bb_ts_node.gdx'
 $endif
 
 * --- forecasts ----------
-
+* no forecasts for ts_node
 
 
 * ------------------------
@@ -470,46 +510,63 @@ $ifthen exist '%input_dir%/bb_ts_historical_levels.gdx'
 $endif
 
 * --- forecast ---------
+* no forecasts for ts_node
+
 
 * ------------------------
 * ts_node (tsYear conversion if defined)
 * ------------------------
 
 if(%tsYear%>1980,
+    // pick only selected values if modelling a specific times series year
     // tmp from ts_cf
     ts_node(grid, node, param_gnBoundaryTypes, f, t-tmp) = ts_node_io(grid, param_gnBoundaryTypes, f, t, node)$t_selectedYear(t);
 else
+    // otherwise rename the large table to the model input table
     ts_node(grid, node, param_gnBoundaryTypes, f, t) = ts_node_io(grid, param_gnBoundaryTypes, f, t, node);
 );
 
+option gn_tmp < ts_node;
 
 $ifthen exist '%input_dir%/bb_ts_historical_levels.gdx'
     if(%tsYear%>1980,
-        loop(node,
-            if(sum(grid, sum(f, ts_node(grid, node, 'reference', f, 't000001'))) > 0,
-                p_gn('all', node, 'boundStart') = 1;
-                p_gnBoundaryPropertiesForStates('all', node, 'reference', 'useConstant') = 1;
-                p_gnBoundaryPropertiesForStates('all', node, 'reference', 'constant') = max(0.7* sum(grid, sum(f, ts_node(grid, node, 'upwardLimit', f, 't000001'))),
-                                                                                            sum(grid, sum(f, ts_node(grid, node, 'reference', f, 't000001')))
-                                                                                            );
+        loop(gn_tmp,
+            if(ts_node(gn_tmp, 'reference', 'f00', 't000001') > 0 or p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant') > 0,
+                p_gn(gn_tmp, 'boundStart') = 1;
+                p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'useConstant') = 1;
+                p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant') 
+                    = max(p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant'),
+                          ts_node(gn_tmp, 'downwardLimit', 'f00', 't000001') + (ts_node(gn_tmp, 'upwardLimit', 'f00', 't000001')-ts_node(gn_tmp, 'downwardLimit', 'f00', 't000001'))/2,
+                          ts_node(gn_tmp, 'reference', 'f00', 't000001')
+                        );
             );
         );
-
+$ontext
+// this section seems quite dangerous and is commented out by default        
     else
         loop(node,
-            if(sum(grid, sum(f, sum(t, ts_node(grid, node, 'reference', f, t)))) > 0,
+            if(sum(grid, sum(t, ts_node(grid, node, 'reference', 'f00', t))) > 0,
                 p_gn('all', node, 'boundStart') = 1;
                 p_gnBoundaryPropertiesForStates('all', node, 'reference', 'useTimeseries') = 1;
             );
         );
+$offtext      
     );
 $endif
 
+// remove data from ts_node(*, *, 'reference', f, t)
+option gn_tmp < ts_node;
+ts_node(gn_tmp(grid, node), 'reference', f, t) = 0;
+
+
+// clear the large ts table if modelling only a specific time series year
 if(%tsYear%>1980,
     option clear = ts_node_io;
 );
 
 * --- forecasts ----------
+* no forecasts for ts_node
+
 
 
 
@@ -517,27 +574,19 @@ if(%tsYear%>1980,
 * ts_influx (adding missing forecasts)
 * ------------------------
 
-* projecting a temporary (grid, node) set for looping only required pairs
-Set gn_tmp(grid, node);
-option gn_tmp < ts_influx;
+// if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
-if(%forecastNumber% >= 2,
-    // copying f00 values to f01 if values are not given in earlier steps
-    loop(gn_tmp(grid, node),
-        if(sum(t, ts_influx(grid, node, 'f01', t))=0,
-            ts_influx(grid, node, 'f01', t) = ts_influx(grid, node, 'f00', t);
-        );
-    );
-);
-
+// if 4 forecasts, make sure that f02 and f03 data exists when there is f01 data
 if(%forecastNumber% >= 4,
-    // copying f00 values to f02 and f03 if values are not given in earlier steps
+    option gn_tmp < ts_influx;
+
+    // copying f01 values to f02 and f03 if f01 has values, but f02 or f03 does not
     loop(gn_tmp(grid, node),
-        if(sum(t, ts_influx(grid, node, 'f02', t))=0,
-            ts_influx(grid, node, 'f02', t) = ts_influx(grid, node, 'f00', t);
+        if(sum(t, ts_influx(grid, node, 'f02', t))=0 and sum(t, ts_influx(grid, node, 'f01', t))>0,
+            ts_influx(grid, node, 'f02', t) = ts_influx(grid, node, 'f01', t);
         );
-        if(sum(t, ts_influx(grid, node, 'f03', t))=0,
-            ts_influx(grid, node, 'f03', t) = ts_influx(grid, node, 'f00', t);
+        if(sum(t, ts_influx(grid, node, 'f03', t))=0 and sum(t, ts_influx(grid, node, 'f01', t))>0,
+            ts_influx(grid, node, 'f03', t) = ts_influx(grid, node, 'f01', t);
         );
     );
 );
@@ -548,27 +597,19 @@ if(%forecastNumber% >= 4,
 * ts_cf (adding missing forecasts)
 * ------------------------
 
-* projecting a temporary (flow, node) set for looping only required pairs
-Set flowNode_tmp(flow, node);
-option flowNode_tmp < ts_cf;
+// if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
-if(%forecastNumber% >= 2,
-    // copying f00 values to f01 if values are not given in earlier steps
-    loop(flowNode_tmp(flow, node),
-        if(sum(t, ts_cf(flow, node, 'f01', t))=0,
-            ts_cf(flow, node, 'f01', t) = ts_cf(flow, node, 'f00', t);
-        );
-    );
-);
-
+// if 4 forecasts, make sure that f02 and f03 data exists when there is f01 data
 if(%forecastNumber% >= 4,
+    option flowNode_tmp < ts_cf;
+
     // copying f00 values to f02 and f03 if values are not given in earlier steps
     loop(flowNode_tmp(flow, node),
-        if(sum(t, ts_cf(flow, node, 'f02', t))=0,
-            ts_cf(flow, node, 'f02', t) = ts_cf(flow, node, 'f00', t);
+        if(sum(t, ts_cf(flow, node, 'f02', t))=0 and sum(t, ts_cf(flow, node, 'f01', t))>0,
+            ts_cf(flow, node, 'f02', t) = ts_cf(flow, node, 'f01', t);
         );
-        if(sum(t, ts_cf(flow, node, 'f03', t))=0,
-            ts_cf(flow, node, 'f03', t) = ts_cf(flow, node, 'f00', t);
+        if(sum(t, ts_cf(flow, node, 'f03', t))=0 and sum(t, ts_cf(flow, node, 'f01', t))>0,
+            ts_cf(flow, node, 'f03', t) = ts_cf(flow, node, 'f01', t);
         );
     );
 );
@@ -577,32 +618,4 @@ if(%forecastNumber% >= 4,
 * ------------------------
 * ts_node (adding missing forecasts)
 * ------------------------
-
-* projecting a temporary (grid, node, param_gnBoundaryTypes) set for looping only required combinations
-Set gnBoundaryTypes_tmp(grid, node, param_gnBoundaryTypes);
-option gnBoundaryTypes_tmp < ts_node;
-
-if(%forecastNumber% >= 2,
-    // copying f00 values to f01 if values are not given in earlier steps
-    loop(gnBoundaryTypes_tmp(grid, node, param_gnBoundaryTypes),
-        if(sum(t, ts_node(grid, node, param_gnBoundaryTypes, 'f00', t))>0,
-            if(sum(t, ts_node(grid, node, param_gnBoundaryTypes, 'f01', t))=0,
-                ts_node(grid, node, param_gnBoundaryTypes, 'f01', t) = ts_node(grid, node, param_gnBoundaryTypes, 'f00', t);
-            );
-        );
-    );
-);
-
-if(%forecastNumber% >= 4,
-    // copying f00 values to f02 and f03 if values are not given in earlier steps
-    loop(gnBoundaryTypes_tmp(grid, node, param_gnBoundaryTypes),
-        if(sum(t, ts_node(grid, node, param_gnBoundaryTypes, 'f00', t))>0,
-            if(sum(t, ts_node(grid, node, param_gnBoundaryTypes, 'f02', t))=0,
-                ts_node(grid, node, param_gnBoundaryTypes, 'f02', t) = ts_node(grid, node, param_gnBoundaryTypes, 'f00', t);
-            );
-            if(sum(t, ts_node(grid, node, param_gnBoundaryTypes, 'f03', t))=0,
-                ts_node(grid, node, param_gnBoundaryTypes, 'f03', t) = ts_node(grid, node, param_gnBoundaryTypes, 'f00', t);
-            );
-        );
-    );
-);
+* no forecasts for ts_node

@@ -80,6 +80,9 @@ function process_maf(filename, selected_areas, outfile = nothing)
 
     #correct leap years
     maf = correct_leapyear(maf)
+
+    # Round the values in the DataFrame
+    maf[:, Not(:time)] .= round.(maf[:, Not(:time)], digits=4)
     
     if isnothing(outfile)
         outfile = filename * "_byarea.csv"
