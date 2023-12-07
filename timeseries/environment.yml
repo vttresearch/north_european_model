@@ -1,4 +1,4 @@
-name: northEuropeModel
+name: northEuropeanModel
 channels:
   - defaults
 dependencies:
