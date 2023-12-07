@@ -14,7 +14,6 @@ Contents
     - populating gn_hydroStorage manually
 - Reading additional input data
     - bb_input_addData1.xlsx
-    - additional input files
 - ts_cf
     - reading onshore, offshore, and PV data
     - creating ts_cf
@@ -230,10 +229,6 @@ $ife %system.errorlevel%>0 $abort gdxxrw failed!
     $$loaddcm uss_bound
     $$gdxin
 $endif
-
-
-* --- additional input files -------------------------------
-
 
 
 
@@ -746,3 +741,7 @@ if(%tsYear%=2013,
     ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f02', t) = ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f00', t) * 1.1;
     ts_influx('all', 'SE04_reservoir', 'f02', t) = ts_influx('all', 'SE04_reservoir', 'f02', t) * 0.9;
 );
+
+
+
+* --- project specific modifications ----------
