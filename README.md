@@ -127,9 +127,10 @@ At the time of writing, the total size of files from Julia and Python are slight
 
 While we are working on the input data to be comprehensive, there are still some data that you need to do add manually to the input excel. 
 * open **additional backbone input.xlsx** in .\north_european_model\manual_additions\
-* copy the data to the created **bb_input1-3x.xlsx** in backbone/input folder
+* copy the data to the **bb_input1-3x.xlsx** in backbone/input folder
 
-Current manual additions set fixed start levels to water reservoirs, set higher balance penalty, and allow spillages. Manual changes require putting "1" in the boundStart column for correct rows in p_gn sheet, and copying the data to p_gnBoundaryPropertiesForStates sheet.
+Current manual additions increase FR demand response capacity, set upwardLimits for ROR storages and converts them to constant upwardLimit, changes allow spillages in hydro nodes, and set certain reference values and balance penalties. Each change is accompanied with additional info 'replace' or 'add' indicating whether user should edit an existing value or add a new row to data tables.
+
 
 
 ### Run specification files
