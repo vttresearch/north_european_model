@@ -129,7 +129,7 @@ else
     // loops flowNodes that have ts_cf data
     option flowNode_tmp < ts_cf;
     loop(flowNode_tmp,
-        // if ts_cf has values in f01, use forecasts. Works because changes.inc makes sure that f02 and f03 also exist
+        // if ts_cf has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist.
         if(sum(t, ts_cf(flowNode_tmp, 'f01', t))>0,
             gn_forecasts(flowNode_tmp, 'ts_cf') = yes;            
         );
@@ -138,11 +138,24 @@ else
     // loops gridNodes that have ts_influx data
     option gn_tmp < ts_influx;
     loop(gn_tmp,
-        // if ts_cf has values in f01, use forecasts. Works because changes.inc makes sure that f02 and f03 also exist
+        // if ts_cf has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist
         if(sum(t, ts_influx(gn_tmp, 'f01', t)<>0),
             gn_forecasts(gn_tmp, 'ts_influx') = yes;            
         );
     );
+
+    // loops gridNodes that have ts_node data
+    option gn_tmp < ts_node;
+    loop(gn_tmp,
+        // if ts_cf has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist
+        if(sum(t, ts_node(gn_tmp, 'upwardLimit', 'f01', t)<>0),
+            gn_forecasts(gn_tmp, 'ts_node') = yes;            
+        );
+        if(sum(t, ts_node(gn_tmp, 'downwardLimit', 'f01', t)<>0),
+            gn_forecasts(gn_tmp, 'ts_node') = yes;            
+        );        
+    );
+
 
     // Define forecast properties and features
     mSettings('schedule', 't_forecastStart') = 1;                  // At which time step the first forecast is available ( 1 = t000001 )
@@ -150,6 +163,19 @@ else
     mSettings('schedule', 't_forecastLengthDecreasesFrom') = 8760; // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read (then extends back to full length)
     mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
     mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
+    mSettings('schedule', 't_improveForecastNew') = 168;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
+
+
+    // Defining longer forecast improvement horizons for hydro nodes
+    p_gn_improveForecastNew(gn_hydroStorage, 'ts_influx_')$gn_forecasts(gn_hydroStorage, 'ts_influx') = 168*2;
+
+    // Even longer improvement for FR00 and SE04 that are prone to have dummies
+    p_gn_improveForecastNew('all', 'FR00_reservoir', 'ts_influx_') = 168*3;
+    p_gn_improveForecastNew('all', 'SE04_reservoir', 'ts_influx_') = 168*3;
+
+
+    // Define the number of forecasts used by the model
+    mSettings('schedule', 'forecasts') = 2;
 
     // Define Realized and Central forecasts
     mf_realization('schedule', f) = no;
@@ -157,15 +183,9 @@ else
     mf_central('schedule', f) = no;
     mf_central('schedule', 'f01') = yes;
 
-);
-
-if(%forecastNumber%=2, 
-    // Define the number of forecasts used by the model
-    mSettings('schedule', 'forecasts') = 2;
-
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;
-    p_mfProbability(mf_realization('schedule', f)) = 1;
+    p_mfProbability('schedule', 'f00') = 1;
     p_mfProbability('schedule', 'f01') = 1;
 );
 
@@ -175,7 +195,7 @@ if(%forecastNumber%=4,
 
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;
-    p_mfProbability(mf_realization('schedule', f)) = 1;
+    p_mfProbability('schedule', 'f00') = 1;
     p_mfProbability('schedule', 'f01') = 0.6;
     p_mfProbability('schedule', 'f02') = 0.2;
     p_mfProbability('schedule', 'f03') = 0.2;
@@ -189,11 +209,11 @@ if(%forecastNumber%=4,
 * --- Define Reserve Properties -----------------------------------------------
 
     // Define whether reserves are used in the model
-    mSettingsReservesInUse('schedule', 'primary', 'up') = yes;
+    mSettingsReservesInUse('schedule', 'primary', 'up') = no;
     mSettingsReservesInUse('schedule', 'primary', 'down') = no;
     mSettingsReservesInUse('schedule', 'secondary', 'up') = no;
     mSettingsReservesInUse('schedule', 'secondary', 'down') = no;
-    mSettingsReservesInUse('schedule', 'tertiary', 'up') = yes;
+    mSettingsReservesInUse('schedule', 'tertiary', 'up') = no;
     mSettingsReservesInUse('schedule', 'tertiary', 'down') = no;
 
 * --- Define Unit Approximations ----------------------------------------------
@@ -211,5 +231,15 @@ if(%forecastNumber%=4,
     // Control the use of advanced basis
     mSettings('schedule', 'loadPoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
     mSettings('schedule', 'savePoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
+
+
+* --- roundings ------------------------------------------------------
+
+    p_roundingParam('p_vomCost') = 2;
+    p_roundingParam('p_startupCost') = 0;
+
+    p_roundingTs('ts_influx_') = 0;
+    p_roundingTs('ts_cf_') = 4;
+
 
 ); // END if(mType)

@@ -127,9 +127,10 @@ At the time of writing, the total size of files from Julia and Python are slight
 
 While we are working on the input data to be comprehensive, there are still some data that you need to do add manually to the input excel. 
 * open **additional backbone input.xlsx** in .\north_european_model\manual_additions\
-* copy the data to the created **bb_input1-3x.xlsx** in backbone/input folder
+* copy the data to the **bb_input1-3x.xlsx** in backbone/input folder
 
-Current manual additions set fixed start levels to water reservoirs, set higher balance penalty, and allow spillages. Manual changes require putting "1" in the boundStart column for correct rows in p_gn sheet, and copying the data to p_gnBoundaryPropertiesForStates sheet.
+Current manual additions increase FR demand response capacity, set upwardLimits for ROR storages and converts them to constant upwardLimit, changes allow spillages in hydro nodes, and set certain reference values and balance penalties. Each change is accompanied with additional info 'replace' or 'add' indicating whether user should edit an existing value or add a new row to data tables.
+
 
 
 ### Run specification files
@@ -142,6 +143,8 @@ Working model requires certain run specificaion files for GAMS
 * Copy **1_options.gms**, **changes.inc** and **timeandsamples.inc** from GAMS_files folder to Backbone input folder. 
 
 Note: included scheduleInit file has a specific structure that it works with *tsYear* and *modelledDays* parameters. If using your own file, adapt a similar structure to the file.
+
+Note: changes.inc does quite many different tasks to read and process input data, see the content and introduction at the beginning of the file. The file has a separate section where user can do additional changes.
 
 Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\45\csv2gdx ...`
 
@@ -165,10 +168,10 @@ Working command line options for backbone.gms would, for an example, be
 
 The model supports few user given additional options. All these are optional. Behaviour and default values are listed below.
 * --modelYear [2025, 2030]. Default 2025. Allows a quick selection of the the modelled year. Currently two options and impacts only district heating demand. 
-* --tsYear  allows a quick selection of which time series year the model uses. Giving this parameter greatly reduces the solve time as the model drops ts data from other years. Default value = none, which means that the model will use full time series and user is responsible for giving the correct starting time step.
-* --forecasts [none, 2, 4]. Default value: none. **Recommended value: 2**. Enables reading forecast timeseries and activating relevant sections in the model. Currently Accepted values are none (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). In difficult, we use low hydro inflow, high demand inflows, and average VRE. 
-* --modelledDays [1-365] defines the amount of days the model runs. If not given, the default value is 365. If used with tsYear, the maximum value is 365. 
-* --priceMultiplier [positive float] allows a quick command line adjustmenet of fuel and emission prices. The multiplier is applied fully to fuel prices and half to emission prices. E.g priceMultiplier = 0.7 means that fuel price are -30% and emission price -15%.
+* --tsYear [0, 2011-2016]. Default 2015. allows a quick selection of which time series year the model uses. Giving this parameter greatly reduces the solve time as the model drops ts data from other years. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
+* --modelledDays [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. 
+* --forecasts [1, 2, 4]. Default value: 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently Accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling. 
+* --priceMultiplier [positive float]. Default 1. allows a quick command line adjustmenet of fuel and emission prices. The multiplier is applied fully to fuel prices and half to emission prices. E.g priceMultiplier = 0.7 means that fuel price are -30% and emission price -15%.
 
 
 
@@ -178,8 +181,8 @@ Contact the authors.
 
 ## Authors and acknowledgment
 * Jussi Ikäheimo - model development, time series, testing
-* Anu Purhonen - time series
 * Tomi J. Lindroos - time series, testing
+* Anu Purhonen - time series
 * Miika Rämä - district heating data
 * Eric Harrison - testing
 

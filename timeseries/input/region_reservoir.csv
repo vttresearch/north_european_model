@@ -3,6 +3,7 @@ AT00,AT00_reservoir
 AT00,AT00_psOpen
 AT00,AT00_ror
 BE00,BE00_ror
+BE00,BE00_psClosed
 CH00,CH00_reservoir
 CH00,CH00_ror
 DE00,DE00_reservoir
@@ -11,6 +12,7 @@ DE00,DE00_psClosed
 DE00,DE00_ror
 ES00,ES00_reservoir
 ES00,ES00_psOpen
+ES00,ES00_psClosed
 ES00,ES00_ror
 FI00,FI00_reservoir
 FR00,FR00_reservoir
@@ -20,6 +22,7 @@ FR00,FR00_psOpen
 UK00,UK00_ror
 UK00,UK00_psClosed
 LT00,LT00_ror
+LT00,LT00_psClosed
 LV00,LV00_ror
 NL00,NL00_ror
 NOS0,NOS0_psOpen
@@ -27,6 +30,7 @@ NOM1,NOM1_psOpen
 NON1,NON1_psOpen
 PL00,PL00_reservoir
 PL00,PL00_psOpen
+PL00,PL00_psClosed
 PL00,PL00_ror
 SE01,SE01_reservoir
 SE02,SE02_reservoir
