@@ -1,13 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# Calculation of node, unit and influx time series for electric vehicles.
-#
-# References:
-# https://scholar.google.fi/citations?view_op=view_citation&hl=en&user=DWr7TDoAAAAJ&cstart=100&pagesize=100&sortby=pubdate&citation_for_view=DWr7TDoAAAAJ:WF5omc3nYNoC
-
-# this script requires PI_calculations.xlsx and region_coefficients.xlsx in the same folder
-# it also requires pandas and itertools that can be installed with pip
 
 import pandas as pd
 import itertools
