@@ -13,9 +13,11 @@ This readme has following main sections
 
 ## Installing Backbone and the North European Model
 
-Make sure you have installed. For the moment we recommend using the release-3.x branch. If not, use git to clone the Backbone from [release-3.x](https://gitlab.vtt.fi/backbone/backbone/-/tree/release-3.x) use git to [switch to a correct brach](https://gitlab.vtt.fi/backbone/backbone/-/wikis/Versions).
+Make sure you have Backbone installed. For the moment, the North European Model works only in the Backbone master branch. 
 
-Use git to clone the repository of North European model. The easiest approach is if the model folder is under backbone, e.g. c:\backbone\north_european_model.
+If you do not have Backbone, use git to clone the Backbone from [release-3.x](https://gitlab.vtt.fi/backbone/backbone/). Master is the default branch, but you can use git to [switch between braches](https://gitlab.vtt.fi/backbone/backbone/-/wikis/Versions).
+
+Use git to clone the repository of North European model. The easiest approach to install North European model under Backbone, e.g. c:\backbone\north_european_model.
 
 
 ## Installing Julia, Conda, and setting up the environments
@@ -28,14 +30,14 @@ Make sure you have [Julia](https://julialang.org/)  version >= 1.5 installed. In
 
 Note: Building PyCall might be slow, but do not interrupt it. 
 
-Recommend approach to install Python dependencies is to set up a new environment in [Anaconda](https://www.anaconda.com/products/distribution). New users might want to use [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html) instead of more complicated Anaconda. 
+The recommend approach to install Python dependencies is to set up a new environment in [Anaconda](https://www.anaconda.com/products/distribution). New users might want to use [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html) instead of more complicated Anaconda. 
 
 Open the installed conda, go to folder **timeseries/**, and set up the environment by running the following commands
 
     conda env create -f environment.yml
-    conda activate northEuropeModel
+    conda activate northEuropeanModel
 
-Installed environment does not contain [entsoe-py](https://github.com/EnergieID/entsoe-py) as conda does not automatically find it. After creating and activating the northEuropeModel environment, install entsoe-py by following command:
+Installed environment does not contain [entsoe-py](https://github.com/EnergieID/entsoe-py) as conda does not automatically find it. After creating and activating the northEuropeanModel environment, install entsoe-py by following command:
 
     python -m pip install entsoe-py
    

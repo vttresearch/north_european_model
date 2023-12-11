@@ -138,7 +138,7 @@ else
     // loops gridNodes that have ts_influx data
     option gn_tmp < ts_influx;
     loop(gn_tmp,
-        // if ts_cf has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist
+        // if ts_influx has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist
         if(sum(t, ts_influx(gn_tmp, 'f01', t)<>0),
             gn_forecasts(gn_tmp, 'ts_influx') = yes;            
         );
@@ -147,7 +147,7 @@ else
     // loops gridNodes that have ts_node data
     option gn_tmp < ts_node;
     loop(gn_tmp,
-        // if ts_cf has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist
+        // if ts_node has values in f01, use forecasts. It is ok to check only f01 because changes.inc makes sure that f02 and f03 also exist
         if(sum(t, ts_node(gn_tmp, 'upwardLimit', 'f01', t)<>0),
             gn_forecasts(gn_tmp, 'ts_node') = yes;            
         );
