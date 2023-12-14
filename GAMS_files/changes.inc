@@ -706,6 +706,10 @@ effLevelGroupUnit('level1', 'directOnLP', 'U_SE03_nuclear') = no;
 effLevelGroupUnit('level1', 'directOnMIP', 'U_SE03_nuclear') = yes;
 $offtext
 
+// adding all directOff level3 for all units
+option unit_tmp < effLevelGroupUnit;
+effLevelGroupUnit('level3', 'directOff', unit_tmp) = yes;
+
 
 * --- clearing reduntant values from p_gnu_io, p_unit and rounding remaining values -------
 
