@@ -1,11 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
-# this script requires PI_calculations.xlsm and region_coefficients.csv in the same folder
-# it also requires pandas and itertools that can be installed with pip
 
 import pandas as pd
 import itertools
