@@ -49,7 +49,7 @@ ENTSO-E user-specific API token is needed for automated data queries from the EN
 
 After these steps, you should have required softwares and environments ready. 
 
-Python scripts are tested with python 3.10.
+Python scripts are tested with python 3.10. Python environment is tested with miniconda.
 
 
 ## Downloading required time series files

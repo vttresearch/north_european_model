@@ -223,15 +223,11 @@ if(%forecastNumber%=4,
     mSettingsEff('schedule', 'level2') = 336;
     mSettingsEff('schedule', 'level3') = Inf;
 
-    option unit_tmp < effLevelGroupUnit;
-    effLevelGroupUnit('level3', 'directOff', unit_tmp) = yes;
-
 * --- Control the solver ------------------------------------------------------
 
     // Control the use of advanced basis
     mSettings('schedule', 'loadPoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
     mSettings('schedule', 'savePoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
-
 
 * --- roundings ------------------------------------------------------
 
