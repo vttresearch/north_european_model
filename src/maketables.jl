@@ -299,7 +299,7 @@ function make_pgnuio_input(ct, options)
     capa_hydroinput = transform(capa_hydroinput, 
                     AsTable([:Node, :inputnodestub]) => ByRow(x -> x[1] * "_" * x[2]) => :inputnode)
                     
-    #input rows to units of storage units
+    #input rows to units of storage units of the bidding zone level
     capa_stoinput = subset(ct, :inputtype => ByRow(==("storage")))
     #format the input node name for storage units, adding the regional node in the beginning
     capa_stoinput = transform(capa_stoinput, 
