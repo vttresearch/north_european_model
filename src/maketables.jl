@@ -292,6 +292,10 @@ function make_pgnuio_input(ct, options)
     capa_elecinput = subset(ct, :inputtype => ByRow(==("elec")))
     capa_elecinput = transform(capa_elecinput, :Node => ByRow(x -> x * elec_suffix) => :inputnode)
 
+    #input rows of heat-using units
+    capa_heatinput = subset(ct, :inputtype => ByRow(==("heat")))
+    capa_heatinput = transform(capa_heatinput, :Heatnode => ByRow(identity) => :inputnode)
+
     #input rows to units of hydro units
     capa_hydroinput = subset(ct, :inputtype => ByRow(==("hydro")))
 
@@ -300,13 +304,26 @@ function make_pgnuio_input(ct, options)
                     AsTable([:Node, :inputnodestub]) => ByRow(x -> x[1] * "_" * x[2]) => :inputnode)
                     
     #input rows to units of storage units of the bidding zone level
-    capa_stoinput = subset(ct, :inputtype => ByRow(==("storage")))
+    capa_stoinput = subset(ct, :inputtype => ByRow(==("storage")),
+                                :level => ByRow(==("node"))
+                            )
+
     #format the input node name for storage units, adding the regional node in the beginning
     capa_stoinput = transform(capa_stoinput, 
                     AsTable([:Node, :inputnodestub]) => ByRow(x -> x[1] * "_" * x[2]) => :inputnode)
 
+    #input rows to units of storage units of the local level
+    capa_stoinput2 = subset(ct, :inputtype => ByRow(==("storage")),
+                                :level => ByRow(==("local"))
+                            )
+    #format the input node name for storage units, adding the local node in the beginning
+    capa_stoinput2 = transform(capa_stoinput2, 
+                    AsTable([:Heatnode, :inputnodestub]) => ByRow(x -> x[1] * "_" * x[2]) => :inputnode)
+
+    capa_stoinput = vcat(capa_stoinput, capa_stoinput2)
+
     #combine units with different input types 
-    capa_1 = vcat(capa_conv, capa_elecinput, capa_hydroinput, capa_stoinput, cols = :union)
+    capa_1 = vcat(capa_conv, capa_elecinput, capa_heatinput, capa_hydroinput, capa_stoinput, cols = :union)
 
     # deduce backbone nodetypes
     nodetypes = DataFrame(node = capa_1.inputnode, type = capa_1.inputtype)  
@@ -346,7 +363,9 @@ function make_pgnuio_output(ct, options)
     # units with custom output node which is not fuel
     # currently the node type is not set for these nodes
     capa_customoutput = subset(ct, :Other_capa => ByRow(!ismissing),
-                                    :outputtype => ByRow(ismissing) )
+                                    :outputtype => ByRow(ismissing),
+                                    :level =>  ByRow(isequal("node"))) )
+                                    
     capa_customoutput = transform(capa_customoutput, AsTable([:Node, :outputnodestub]) 
                             => ByRow(x -> x[1] * "_" * x[2])  
                             => :outputnode)
@@ -356,7 +375,18 @@ function make_pgnuio_output(ct, options)
                                 :outputtype => ByRow(isequal("fuel") ) )
     
     insertcols!(capa_customoutput2, :outputnode => capa_customoutput2.outputnodestub)
-    capa_customoutput = vcat(capa_customoutput, capa_customoutput2)                                           
+
+    # units with custom output node which is not fuel and is on the local level
+    capa_customoutput3 = subset(ct, :Other_capa => ByRow(!ismissing),
+                                    :outputtype => ByRow(ismissing),
+                                    :level =>  ByRow(isequal("local")))
+
+    capa_customoutput3 = transform(capa_customoutput3, AsTable([:Heatnode, :outputnodestub]) 
+                            => ByRow(x -> x[1] * "_" * x[2])  
+                            => :outputnode)
+
+    #combine the custom output units 
+    capa_customoutput = vcat(capa_customoutput, capa_customoutput2, capa_customoutput3)                                           
 
     pgnu_output_3 = formatpgnuio(capa_customoutput, :outputnode, :Other_capa, options)
     nodetypes_output = vcat(nodetypes_output, DataFrame(node = capa_customoutput2.outputnode, type = "fuel") )
