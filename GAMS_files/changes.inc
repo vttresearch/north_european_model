@@ -23,6 +23,7 @@ Contents
     - reading hydro data
     - reading heat data
     - reading generation limit data
+    - reading other demand data
     - creating ts_influx
     - adding missing forecasts when necessary
 - ts_node
@@ -79,9 +80,10 @@ scalar now       Gregorian current date + time
 $if not set modelYear $setglobal modelYear 2025
 $if not set tsYear $setglobal tsYear 2015
 $if not set modelledDays $setglobal modelledDays 365
-$if not set forecasts $setglobal forecastNumber 4
-$if set forecasts $setglobal forecastNumber %forecasts%
+$if not set forecasts $evalglobal forecastNumber 4
+$if set forecasts $evalglobal forecastNumber %forecasts%
 $if not set priceMultiplier $setglobal priceMultiplier 1
+
 
 
 * --- populating gn_hydroStorage manually -------------
@@ -252,30 +254,30 @@ $endif
 
 * --- forecasts, ts_cf_io ------------------------------------
 
-$ifthen set forecasts
+$ifThenE %forecastNumber%>1
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_cf_io_50p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_50p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
+    // Load ts_cf_io
     $$gdxin  '%input_dir%/bb_ts_cf_io_50p.gdx'
     $$loaddcm ts_cf_io
     $$gdxin
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_50p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_cf_io_10p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_10p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
+    // Load ts_cf_io
     $$gdxin  '%input_dir%/bb_ts_cf_io_10p.gdx'
     $$loaddcm ts_cf_io
     $$gdxin
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_10p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_cf_io_90p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_90p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
+    // Load ts_cf_io
     $$gdxin  '%input_dir%/bb_ts_cf_io_90p.gdx'
     $$loaddcm ts_cf_io
     $$gdxin
@@ -283,7 +285,7 @@ $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_90p failed! Check that your input file is valid and that your file path and file name are correct.
 
 
-* --- creating ts_cf -------------------------------------
+* --- creating ts_cf ----------------------------------
 
 * display time
 now    = jnow;
@@ -305,7 +307,7 @@ else
 );
 
 
-* --- adding missing forecasts if necessary ---------
+* --- adding missing forecasts when necessary ---------
 
 // if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
@@ -345,7 +347,7 @@ $endif
 
 * --- forecasts, elec, ts_influx_io ----------
 
-$ifthen set forecasts
+$ifThenE %forecastNumber%>1
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_elec_50p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec_50p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -356,7 +358,7 @@ $ifthen set forecasts
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_influx_elec_50p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_elec_10p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec_10p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -367,7 +369,7 @@ $ifthen %forecastNumber% == 4
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_influx_elec_10p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_elec_90p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec_90p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -395,7 +397,7 @@ $endif
 
 * --- forecasts, hydro, ts_influx_io ----------
 
-$ifthen set forecasts
+$ifThenE %forecastNumber%>1
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_hydro_50p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro_50p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -406,7 +408,7 @@ $ifthen set forecasts
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_influx_hydro_50p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_hydro_10p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro_10p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -417,7 +419,7 @@ $ifthen %forecastNumber% == 4
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_influx_hydro_10p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_hydro_90p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro_90p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -445,7 +447,7 @@ $endif
 
 * --- forecasts, heat, ts_influx_io ----------
 
-$ifthen set forecasts
+$ifThenE %forecastNumber%>1
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%_50p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%_50p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -456,7 +458,7 @@ $ifthen set forecasts
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_influx_heat_%modelYear%_50p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%_10p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%_10p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -467,7 +469,7 @@ $ifthen %forecastNumber% == 4
 $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_influx_heat_%modelYear%_10p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifthen %forecastNumber% == 4
+$ifThenE %forecastNumber%>3
     // convert csv to gdx with correct id
     $$call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%_90p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%_90p.gdx" checkDate=TRUE'
     // Load ts_influx_io
@@ -499,7 +501,26 @@ $endif
 
 
 
-* --- creating ts_influx -------------------------------------
+** --- realization, other demands, ts_influx_io ---------
+*
+*$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_other.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y utput="%input_dir%/bb_ts_influx_other.gdx" *checkDate=TRUE'
+*$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (other) failed! Check that your input Excel is valid and that your file path and file name are correct.
+*
+** Load ts_influx_io
+*$ifthen exist '%input_dir%/bb_ts_influx_other.gdx'
+*    $$gdxin  '%input_dir%/bb_ts_influx_other.gdx'
+*    $$loaddcm ts_influx_io
+*    $$gdxin
+*    $$set convert_ts_influx
+*$endif
+*
+** --- forecasts, other demands, ts_influx_io ----------
+*
+** no forecasts 
+
+
+
+* --- creating ts_influx -----------------------------
 
 * display time
 now    = jnow;
@@ -522,7 +543,7 @@ $ifthen set convert_ts_influx
 $endif
 
 
-* --- adding missing forecasts if necessary ---------
+* --- adding missing forecasts when necessary -------
 
 // if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
@@ -540,6 +561,8 @@ if(%forecastNumber% >= 4,
         );
     );
 );
+
+
 
 
 * --------------------------------------------------------------------------------
@@ -646,7 +669,7 @@ ts_node(gn_tmp(grid, node), 'reference', f, t) = 0;
 
 
 
-* --- adding missing forecasts if necessary ---------
+* --- adding missing forecasts when necessary ---------
 
 // no forecast data for hydro storage limits, but creating higher downwardLimit 
 // and lower upwardlimit to forecasts, helps the model to avoid over using hydro storages.  
