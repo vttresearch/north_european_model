@@ -86,10 +86,9 @@ t_invest(t) = no;
 
     mInterval('schedule', 'stepsPerInterval', 'c003') = 24;
     mInterval('schedule', 'lastStepInIntervalBlock', 'c003') = 336;
-    mInterval('schedule', 'stepsPerInterval', 'c004') = 324;
+    mInterval('schedule', 'stepsPerInterval', 'c004') = 162;
     mInterval('schedule', 'lastStepInIntervalBlock', 'c004') = 8760;
-*    mInterval('schedule', 'stepsPerInterval', 'c005') = 8760/12;
-*    mInterval('schedule', 'lastStepInIntervalBlock', 'c005') = mSettings('schedule', 't_horizon');
+
 
 * --- z-structure for superpositioned nodes ----------------------------------
 
@@ -164,14 +163,16 @@ else
     mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
     mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
     mSettings('schedule', 't_improveForecastNew') = 168;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
+    mSettings('schedule', 'boundForecastEnds') = 0;                // 0/1 parameter if last v_state and v_online in f02,f03,... are bound to f01
 
 
     // Defining longer forecast improvement horizons for hydro nodes
     p_gn_improveForecastNew(gn_hydroStorage, 'ts_influx_')$gn_forecasts(gn_hydroStorage, 'ts_influx') = 168*2;
 
-    // Even longer improvement for FR00 and SE04 that are prone to have dummies
-    p_gn_improveForecastNew('all', 'FR00_reservoir', 'ts_influx_') = 168*3;
-    p_gn_improveForecastNew('all', 'SE04_reservoir', 'ts_influx_') = 168*3;
+
+    // shorter improvement for upward and downward limits to reduce dummies in reservoirs
+    option gn_tmp < ts_node;
+    p_gn_improveForecastNew(gn_tmp, 'ts_node_') = 48;
 
 
     // Define the number of forecasts used by the model
@@ -232,10 +233,10 @@ if(%forecastNumber%=4,
 * --- roundings ------------------------------------------------------
 
     p_roundingParam('p_vomCost') = 2;
-    p_roundingParam('p_startupCost') = 0;
+    p_roundingParam('p_startupCost') = 1;
 
-    p_roundingTs('ts_influx_') = 0;
+    p_roundingTs('ts_influx_') = 1; // does not accept 0 and Eps causes a lot of problems
     p_roundingTs('ts_cf_') = 4;
-
+    p_roundingTs('ts_node_') = 1;
 
 ); // END if(mType)
