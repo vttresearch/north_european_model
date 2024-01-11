@@ -364,7 +364,7 @@ function make_pgnuio_output(ct, options)
     # currently the node type is not set for these nodes
     capa_customoutput = subset(ct, :Other_capa => ByRow(!ismissing),
                                     :outputtype => ByRow(ismissing),
-                                    :level =>  ByRow(isequal("node"))) )
+                                    :level =>  ByRow(isequal("node"))) 
                                     
     capa_customoutput = transform(capa_customoutput, AsTable([:Node, :outputnodestub]) 
                             => ByRow(x -> x[1] * "_" * x[2])  
