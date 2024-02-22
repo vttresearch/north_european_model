@@ -108,6 +108,7 @@ t_invest(t) = no;
 * =============================================================================
 
     Option clear = gn_forecasts;  // By default includes everything, so clear first
+    Option clear = unit_forecasts;  // By default includes everything, so clear first
 
 if(%forecastNumber%=1, 
     // Define the number of forecasts used by the model
@@ -210,12 +211,8 @@ if(%forecastNumber%=4,
 * --- Define Reserve Properties -----------------------------------------------
 
     // Define whether reserves are used in the model
-    mSettingsReservesInUse('schedule', 'primary', 'up') = no;
-    mSettingsReservesInUse('schedule', 'primary', 'down') = no;
-    mSettingsReservesInUse('schedule', 'secondary', 'up') = no;
-    mSettingsReservesInUse('schedule', 'secondary', 'down') = no;
-    mSettingsReservesInUse('schedule', 'tertiary', 'up') = no;
-    mSettingsReservesInUse('schedule', 'tertiary', 'down') = no;
+    mSettingsReservesInUse('schedule', restype, up_down) = no;
+
 
 * --- Define Unit Approximations ----------------------------------------------
 
@@ -224,11 +221,13 @@ if(%forecastNumber%=4,
     mSettingsEff('schedule', 'level2') = 336;
     mSettingsEff('schedule', 'level3') = Inf;
 
+
 * --- Control the solver ------------------------------------------------------
 
     // Control the use of advanced basis
     mSettings('schedule', 'loadPoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
     mSettings('schedule', 'savePoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
+
 
 * --- roundings ------------------------------------------------------
 
@@ -238,5 +237,6 @@ if(%forecastNumber%=4,
     p_roundingTs('ts_influx_') = 1; // does not accept 0 and Eps causes a lot of problems
     p_roundingTs('ts_cf_') = 4;
     p_roundingTs('ts_node_') = 1;
+
 
 ); // END if(mType)
