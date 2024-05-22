@@ -49,7 +49,11 @@ class QueryMinMaxLimits:
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04'
+                'SE04',
+                'ITN1',
+                'ITCN',
+                'ITCS',
+                'PT00'
                 ]
 
 
@@ -100,8 +104,15 @@ class QueryMinMaxLimits:
                         dfb = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         print(c)
                         df = indf.copy()
+
+                        # check if limits data has any NaN values
+                        serieshasnans = df[df["zone"] == c].iloc[:,3].to_numpy().any()
+                        if serieshasnans:
+                            print(c + " has Nan values!" )
+
+                        skipdetailedlevels = df[df["zone"] == c].empty or serieshasnans
                         
-                        if not df[df["zone"] == c].empty:
+                        if not skipdetailedlevels:
                                 df = df[df["zone"] == c]
                                 df.sort_values(by=['year','week'], inplace=True)
                                 df.reset_index(inplace=True)

@@ -55,7 +55,11 @@ class QueryMinMaxGeneration:
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04'
+                'SE04',
+                'ITN1',
+                'ITCN',
+                'ITCS',
+                'PT00'
                 ]
 
 
