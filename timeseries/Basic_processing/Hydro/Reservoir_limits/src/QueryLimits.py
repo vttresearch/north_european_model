@@ -106,7 +106,7 @@ class QueryMinMaxLimits:
                         df = indf.copy()
 
                         # check if limits data has any NaN values
-                        serieshasnans = df[df["zone"] == c].iloc[:,3].to_numpy().any()
+                        serieshasnans = df[df["zone"] == c].iloc[:,3].isna().to_numpy().any()
                         if serieshasnans:
                             print(c + " has Nan values!" )
 
@@ -134,7 +134,7 @@ class QueryMinMaxLimits:
                                 dfa.interpolate(inplace=True, limit = 84, limit_direction='both')
                                 dfb.interpolate(inplace=True, limit = 84, limit_direction='both')
                         else:
-                                print("no levels")
+                                print(c + " has no levels")
                                 dfa[c+self.add] = 0
                                 dfb[c+self.add] = 1000*capc.at[(c,'Reservoir','Reservoir capacity (GWh)'),'value'] #change GWhs to MWhs
 
