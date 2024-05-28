@@ -159,21 +159,19 @@ Additional input data can be given by creating **input/bb_input_addData1.xlsx** 
 Run the model by running Backbone.gms in GAMS. The model requires following command line options (use two hyphens in the beginning of each)
 
 * **--input_file_excel** is a mandatory parameter defining the used input excel file name (e.g. bb_input1-3x.xlsx)
-* **--modelledDays** is a mandatory parameter defining how many days the model runs. Currently capped between [1-365] if used in combination with tsYear. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * **--tsYear** is a mandatory parameter with allowed values of 0 or [xxxx - 2019]. Selecting a specific year greatly reduce the model size, but the model will use time series only from the selected year and loop those time series. The Model does always model e.g. year 2025, but time series year changes time series profiles and annual demands and water inflows.  
+* **--modelledDays** is a mandatory parameter defining how many days the model runs. Currently capped between [1-365] if used in combination with tsYear. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 
 Working command line options for backbone.gms would, for an example, be
 
-	--input_file_excel=bb_input1-3x.xlsx --tsYear=0
-	--input_file_excel=bb_input1-3x.xlsx --modelYear=2030 --tsYear=2011 --forecasts=2
-	--input_file_excel=bb_input1-3x.xlsx --modelledDays=30 --tsYear=2015 --priceMultiplier=0.8 
+	--input_file_excel=bb_input1-3x.xlsx --tsYear=2016 --modelledDays=7
+
 
 The model supports few user given additional options. All these are optional. Behaviour and default values are listed below.
-* --modelYear [2025, 2030]. Default 2025. Allows a quick selection of the the modelled year. Currently two options and impacts only district heating demand. 
+* --modelYear [2025, 2030]. Default 2025. This parameter currently two options and impacts only district heating demand. Generation and transfer capacities for different model years are changed in the starthere.jl
 * --tsYear [0, 2011-2016]. Default 2015. allows a quick selection of which time series year the model uses. Giving this parameter greatly reduces the solve time as the model drops ts data from other years. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * --modelledDays [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. 
 * --forecasts [1, 2, 4]. Default value: 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently Accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling. 
-* --priceMultiplier [positive float]. Default 1. allows a quick command line adjustmenet of fuel and emission prices. The multiplier is applied fully to fuel prices and half to emission prices. E.g priceMultiplier = 0.7 means that fuel price are -30% and emission price -15%.
 
 
 

@@ -35,7 +35,7 @@ if (mType('schedule'),
     mSettings('schedule', 't_end') =  mSettings('schedule', 't_start') + 24*%modelledDays% - 1; // Last time step to be included in the solve (may solve and output more time steps in case t_jump does not match)
 
     // Define simulation horizon and moving horizon optimization "speed"
-    mSettings('schedule', 't_horizon') = 8760;    // How many active time steps the solve contains (aggregation of time steps does not impact this, unless the aggregation does not match)
+    mSettings('schedule', 't_horizon') = 24*7*65;    // How many active time steps the solve contains (aggregation of time steps does not impact this, unless the aggregation does not match)
     mSettings('schedule', 't_jump') = 24;          // How many time steps the model rolls forward between each solve
 
     // Define length of data for proper circulation
@@ -44,6 +44,7 @@ if (mType('schedule'),
     else 
         mSettings('schedule', 'dataLength') =  min(mSettings('schedule', 't_start')-1 + 8760, 306815);
     );
+
 
 * =============================================================================
 * --- Model Time Structure ----------------------------------------------------
@@ -85,9 +86,9 @@ t_invest(t) = no;
     mInterval('schedule', 'lastStepInIntervalBlock', 'c002') = 24*7;
 
     mInterval('schedule', 'stepsPerInterval', 'c003') = 24;
-    mInterval('schedule', 'lastStepInIntervalBlock', 'c003') = 336;
-    mInterval('schedule', 'stepsPerInterval', 'c004') = 162;
-    mInterval('schedule', 'lastStepInIntervalBlock', 'c004') = 8760;
+    mInterval('schedule', 'lastStepInIntervalBlock', 'c003') = 24*14;
+    mInterval('schedule', 'stepsPerInterval', 'c004') = 168;
+    mInterval('schedule', 'lastStepInIntervalBlock', 'c004') = 24*7*65;
 
 
 * --- z-structure for superpositioned nodes ----------------------------------
@@ -159,8 +160,8 @@ else
 
     // Define forecast properties and features
     mSettings('schedule', 't_forecastStart') = 1;                  // At which time step the first forecast is available ( 1 = t000001 )
-    mSettings('schedule', 't_forecastLengthUnchanging') = 0;       // Length of forecasts in time steps - this does not decrease when the solve moves forward (requires forecast data that is longer than the horizon at first)
-    mSettings('schedule', 't_forecastLengthDecreasesFrom') = 8760; // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read (then extends back to full length)
+    mSettings('schedule', 't_forecastLengthUnchanging') = 3576;       // Length of forecasts in time steps - this does not decrease when the solve moves forward 
+    mSettings('schedule', 't_forecastLengthDecreasesFrom') = 0; // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read
     mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
     mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
     mSettings('schedule', 't_improveForecastNew') = 168;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
@@ -229,12 +230,36 @@ if(%forecastNumber%=4,
     mSettings('schedule', 'savePoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
 
 
-* --- roundings ------------------------------------------------------
+* --- additional data circulation rules ---------------------------------------
 
-    p_roundingParam('p_vomCost') = 2;
-    p_roundingParam('p_startupCost') = 1;
+    option clear = ff;
+    option ff < p_mfProbability;
 
-    p_roundingTs('ts_influx_') = 1; // does not accept 0 and Eps causes a lot of problems
+    option flowNode_tmp < ts_cf;
+    gn_tsCirculation('ts_cf', flowNode_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
+    gn_tsCirculation('ts_cf', flowNode_tmp, ff, 'interpolateStepChange', 'length') = 12;
+
+    // not needed for PV as year changes overnight
+    gn_tsCirculation('ts_cf', flowNode_tmp('PV', node), ff, 'interpolateStepChange', 'isActive') = 0;
+    gn_tsCirculation('ts_cf', flowNode_tmp('PV', node), ff, 'interpolateStepChange', 'length') = 0;
+
+    option gn_tmp < ts_influx;
+    gn_tsCirculation('ts_influx', gn_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
+    gn_tsCirculation('ts_influx', gn_tmp, ff, 'interpolateStepChange', 'length') = 24;
+
+    option gn_tmp < ts_node;
+    gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
+    gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'length') = 48;
+
+
+
+* --- Solver speed improvements -------------------------------
+
+    mSettings('schedule', 'reducedDummies') = 1000;
+    mSettings('schedule', 'scalingMethod') = 2;
+    mSettings('schedule', 'automaticRoundings') = 1;
+
+    p_roundingTs('ts_influx_') = 1;
     p_roundingTs('ts_cf_') = 4;
     p_roundingTs('ts_node_') = 1;
 

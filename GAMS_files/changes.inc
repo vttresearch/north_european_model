@@ -82,7 +82,6 @@ $if not set tsYear $setglobal tsYear 2015
 $if not set modelledDays $setglobal modelledDays 365
 $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%
-$if not set priceMultiplier $setglobal priceMultiplier 1
 
 
 
@@ -123,7 +122,7 @@ gn_hydroStorage('all', 'DE00_psClosed') = yes;  // 8.4 GW, 0 TWh
 gn_hydroStorage('all', 'ES00_psClosed') = yes;  // 4.2 GW, 0 TWh
 gn_hydroStorage('all', 'FR00_psClosed') = yes;  // 1.8 GW, 0 TWh
 gn_hydroStorage('all', 'LT00_psClosed') = yes;  // 0.9 GW, 0 TWh
-gn_hydroStorage('all', 'PL00_psClosed') = yes;  // 1.3 GW, 0 TWh !!
+gn_hydroStorage('all', 'PL00_psClosed') = yes;  // 1.3 GW, 0 TWh
 gn_hydroStorage('all', 'UK00_psClosed') = yes;  // 3.0 GW, 0 TWh
 
 
@@ -285,7 +284,7 @@ $endif
 $ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_90p failed! Check that your input file is valid and that your file path and file name are correct.
 
 
-* --- creating ts_cf ----------------------------------
+* --- creating ts_cf -------------------------------------
 
 * display time
 now    = jnow;
@@ -307,7 +306,7 @@ else
 );
 
 
-* --- adding missing forecasts when necessary ---------
+* --- adding missing forecasts if necessary ---------
 
 // if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
@@ -520,7 +519,7 @@ $endif
 
 
 
-* --- creating ts_influx -----------------------------
+* --- converting ts_influx_io to ts_influx ---------------------
 
 * display time
 now    = jnow;
@@ -543,7 +542,7 @@ $ifthen set convert_ts_influx
 $endif
 
 
-* --- adding missing forecasts when necessary -------
+* --- adding missing forecasts if necessary ----------
 
 // if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
@@ -669,7 +668,7 @@ ts_node(gn_tmp(grid, node), 'reference', f, t) = 0;
 
 
 
-* --- adding missing forecasts when necessary ---------
+* --- adding missing forecasts if necessary ------------
 
 // no forecast data for hydro storage limits, but creating higher downwardLimit 
 // and lower upwardlimit to forecasts, helps the model to avoid over using hydro storages.  
@@ -702,12 +701,6 @@ if(%forecastNumber% >= 4,
 * --------------------------------------------------------------------------------
 * Additional manual changes to input data
 * --------------------------------------------------------------------------------
-
-* --- applying price multipliers ----------------------------------
-
-ts_priceChange(node, t) = ts_priceChange(node, t) * %priceMultiplier%;
-ts_emissionPriceChange(emission, group, t) = ts_emissionPriceChange(emission, group, t) * (1-(1-%priceMultiplier%)/2);
-
 
 * --- converting selected units to onlineLP and onlineMIP --------------
 
