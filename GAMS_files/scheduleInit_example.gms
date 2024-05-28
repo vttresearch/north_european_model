@@ -255,7 +255,7 @@ if(%forecastNumber%=4,
 
 * --- Solver speed improvements -------------------------------
 
-    mSettings('schedule', 'reducedDummies') = 1000;
+    mSettings('schedule', 'reducedDummies') = 0;
     mSettings('schedule', 'scalingMethod') = 2;
     mSettings('schedule', 'automaticRoundings') = 1;
 
