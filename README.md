@@ -6,7 +6,7 @@ This readme has the following main sections
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
 - [Installing Julia, Conda, and setting up the environments](#installing-julia-conda-and-setting-up-the-environments)
 - [Downloading required time series files](#downloading-required-time-series-files)
-- [Building and copying input files for backbone](#building-and_copying-input-files-for-backbone)
+- [Building and copying input files for Backbone](#building-and-copying-input-files-for-backbone)
 - [Running Backbone](#running-backbone)
 
 ## Installing Backbone and the North European Model
