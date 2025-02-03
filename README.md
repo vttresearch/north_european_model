@@ -132,19 +132,15 @@ At the time of writing, the total size of files from Julia and Python are slight
 
 ### Manual additions
 
-While we are working on the input data to be comprehensive, there are still some data that you need to do add manually to the input Excel file. 
+While we are working on the input data to be comprehensive, there are still some data that you need to add manually. It can be done in one of the two following ways.
 
-* Open **additional backbone input.xlsx** in backbone\north_european_model\manual_additions\
-* Copy the data to the **bb_input1-3x.xlsx** in backbone\input folder
+Option 1. Copy bb_input_addData1.xlsx file from .\north_european_model\manual_additions\ to backbone\input folder.
 
-You should locate and edit worksheets in **bb_input1-3x.xlsx** with names corresponding to **additional backbone input.xlsx** worksheet names. Each change in **additional backbone input.xlsx** is accompanied with additional info 'replace' or 'add' indicating whether user should edit an existing value or add a new row to data tables. Note that p_gnn worksheet values should be added as new rows.
+Option 2. Copy data present in .\north_european_model\manual_additions\additional backbone input.xlsx to corresponding sheets of backbone\bb_input1-3x.xlsx file. Each data row of additional backbone input.xlsx includes 'replace' or 'add' indicating whether user should edit an existing value or add a new row to data tables.
 
-Current manual additions 
-* increase FR demand response capacity
-* set upwardLimits for ROR storages and converts them to constant upwardLimit
-* allow spillages in hydro nodes
-* set certain reference values and balance penalties
-* add transfer links between certain district heating nodes
+Note that neither bb_input_addData1.xlsx nor additional backbone input.xlsx specifies scenario, which has to be determined by the data present. Currently bb_input_addData1.xlsx has data needed for "H2 heavy" scenario and \additional backbone input.xlsx for other scenarios.
+
+Option 1 enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file. bb_input_addData1.xlsx has a mandatory file structure containing all tables of a full input file (i.e., bb_input_addData1.xlsx) except for ts_cf, ts_inlux, and ts_node.
 
 
 ### Copying run specification files
@@ -161,9 +157,6 @@ Note: Included scheduleInit.gms file has a specific structure so that it works w
 Note: changes.inc does quite many different tasks to read and process input data, see the content and introduction at the beginning of the file. The file has a separate section where user can do additional changes.
 
 Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\45\csv2gdx ...`
-
-
-Additional input data can be given by creating **backbone\input\bb_input_addData1.xlsx** file. A mandatory structure is that the file has all tables of a full input file except ts_cf, ts_inlux, and ts_node. This option enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file.
 
 
 ## Running Backbone
