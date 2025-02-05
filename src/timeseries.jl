@@ -159,7 +159,7 @@ function make_dummy_ts_influx_heat(filenames, scenario, year, timeorigin)
     # FI00industry: industry process heat
     demand = DataFrame(grid = "all", f = "f00", t = bbtime, 
                     #FI00industry = -2600,
-                    SE03_industry = -900
+                    #SE03_industry = -900
                     )
  
     # insert all specified constant demands to the demand timeseries table
