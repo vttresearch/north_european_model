@@ -36,7 +36,6 @@ Contents
 - additional manual changes 
     - applying price multipliers
     - converting selected units to onlineLP, onlineMIP
-    - clearing redundant values from p_gnu_io, p_unit and rounding remaining values
     - project specific modifications
 
 
@@ -726,19 +725,6 @@ $offtext
 option unit_tmp < effLevelGroupUnit;
 effLevelGroupUnit('level3', 'directOff', unit_tmp) = yes;
 
-
-* --- clearing reduntant values from p_gnu_io, p_unit and rounding remaining values -------
-
-// clearing reduntant values from p_gnu_io and rounding the remaining values to 4 digits
-p_gnu_io(grid, node, unit, input_output, 'maxRampUp')$((p_gnu_io(grid, node, unit, input_output, 'maxRampUp')=1)$p_gnu_io(grid, node, unit, input_output, 'maxRampUp')) = 0;
-p_gnu_io(grid, node, unit, input_output, 'maxRampDown')${(p_gnu_io(grid, node, unit, input_output, 'maxRampDown')=1)$p_gnu_io(grid, node, unit, input_output, 'maxRampDown') } = 0;
-p_gnu_io(grid, node, unit, input_output, param_gnu) = round(p_gnu_io(grid, node, unit, input_output, param_gnu), 4);
-
-
-// clearing reduntant values from p_unit and rounding the remaining values to 4 digits
-p_unit(unit, 'minOperationHours')${(p_unit(unit, 'minOperationHours')=1)$p_unit(unit, 'minOperationHours')} = 0;
-p_unit(unit, 'minShutdownHours')${(p_unit(unit, 'minShutdownHours')=1)$p_unit(unit, 'minShutdownHours')} = 0;
-p_unit(unit, param_unit) = round(p_unit(unit, param_unit), 4);
 
 
 * --- reservoir downwardLimit adjustments -------
