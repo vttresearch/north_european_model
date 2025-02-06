@@ -14,13 +14,18 @@ options = Dict()
 # uncomment the ones needed
 filenames["plantsourcefiles"] = ["input/capacity/TYNDP-2020-capacities.xlsx", 
                                 "input/capacity/additional-units-chp.xlsx", #CHP
+                                #"input/capacity/TYNDP-2024-capacities.xlsx", #if using H2 heavy
                                 "input/capacity/additional-units-vre.xlsx", #updates to VRE capacity
                                 "input/capacity/additional-units-conventional.xlsx" #updates to some conventional units
                                 ]
 
 
-# input file for transmission line capacities
+# input file for transmission line capacities, 2025 national trends
 filenames["linesourcefiles"] = ["input/TYNDP-2020-Scenario-Datafile.xlsx", "input/additional-lines1.xlsx"]
+## input file for transmission line capacities, 2035 H2 heavy
+#filenames["linesourcefiles"] = ["input/TYNDP-2020-Scenario-Datafile.xlsx"]
+
+
 # input file for unit technical data
 filenames["techdatafile"] = "input/maf2020techdata.xlsx"
 # input file of unit types and their model names
@@ -59,6 +64,8 @@ options["use_constrained_starttypes"] = false
 # define simulation scenario and year
 scenario = "National Trends" 
 year = 2025
+#scenario = "H2 heavy" 
+#year = 2035
 
 
 # Define nodes for which 

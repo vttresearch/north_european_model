@@ -54,6 +54,8 @@ Python scripts are tested with python 3.10. Python environment is tested with mi
 
 ## Downloading required time series files
 
+[Back to top](#North-European-energy-system-model)
+
 The North Europe model has extensive time series that are too large to be shared in this repository. Time series data are collected in two steps: for VRE (wind, solar) and others (electricity, hydro, and district heat). 
 
 **VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Following files are large and should be added in the **backbone/north_european_model/input/vre/** folder manually: 
@@ -78,6 +80,8 @@ Note: Basic processing has EV folder, but that is still work in progress and can
 
 
 ## Building and copying input files for Backbone
+
+[Back to top](#North-European-energy-system-model)
 
 The package contains functions for building 
 * the main excel input file for Backbone containing the energy system description (Julia), 
@@ -130,17 +134,14 @@ Open Anaconda Prompt and activate the northEuropeModel environment (`conda activ
 At the time of writing, the total size of files from Julia and Python are slightly below 2 Gb. 
 
 
-### Manual additions
+### Additional data outside julia generated main input file
 
-While we are working on the input data to be comprehensive, there are still some data that you need to add manually. It can be done in one of the two following ways.
+While we are working on the input data to be comprehensive and automated, there are still some data that you need to add manually.
 
-Option 1. Copy bb_input_addData1.xlsx file from .\north_european_model\manual_additions\ to backbone\input folder.
+* Copy bb_input_addData1.xlsx file from .\north_european_model\manual_additions\ to backbone\input folder
+* If using "H2 heavy" scenario, copy bb_input_addData2-h2HeavyOnly.xlsx from .\north_european_model\manual_additions\ to backbone \input folder and rename it to bb_input_addData2.xlsx
 
-Option 2. Copy data present in .\north_european_model\manual_additions\additional backbone input.xlsx to corresponding sheets of backbone\bb_input1-3x.xlsx file. Each data row of additional backbone input.xlsx includes 'replace' or 'add' indicating whether user should edit an existing value or add a new row to data tables.
-
-Note that neither bb_input_addData1.xlsx nor additional backbone input.xlsx specifies scenario, which has to be determined by the data present. Currently bb_input_addData1.xlsx has data needed for "H2 heavy" scenario and \additional backbone input.xlsx for other scenarios.
-
-Option 1 enables adding scenarios, modifying input data without the need to alter the automatically generated file, and saving your own modifications while generating a new base input data file. bb_input_addData1.xlsx has a mandatory file structure containing all tables of a full input file (i.e., bb_input_addData1.xlsx) except for ts_cf, ts_inlux, and ts_node.
+The updated changes.inc reads these additional data files and integrates them to the main input data. *bb_input_addData1.xlsx* is intended for all scenarios and *bb_input_addData2-h2HeavyOnly.xlsx* for H2 heavy only, and requires renaming.
 
 
 ### Copying run specification files
@@ -161,6 +162,8 @@ Note: changes.inc calls csv2gdx and some older versions of csv2gdx do not suppor
 
 ## Running Backbone
 
+[Back to top](#North-European-energy-system-model)
+
 Run the model by running Backbone.gms in GAMS. The model requires the following command line option (use two hyphens in the beginning)
 
 * **--input_file_excel** is a mandatory parameter defining the used input excel file name (e.g. bb_input1-3x.xlsx)
@@ -178,6 +181,8 @@ Working command line options for backbone.gms would be, for example:
 
 
 ## Support
+
+[Back to top](#North-European-energy-system-model)
 
 Contact the authors.
 

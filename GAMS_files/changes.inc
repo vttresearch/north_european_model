@@ -13,7 +13,8 @@ Contents
     - default values for command line parameters if not given
     - populating gn_hydroStorage manually
 - Reading additional input data
-    - bb_input_addData1.xlsx
+    - optional bb_input_addData1.xlsx
+    - optional bb_input_addData2.xlsx
 - ts_cf
     - reading onshore, offshore, and PV data
     - creating ts_cf
@@ -163,7 +164,7 @@ if(%tsYear%>1980,
 * Reading additional input data
 * --------------------------------------------------------------------------------
 
-* --- bb_input_addData1.xlsx ----------------------------
+* --- optional bb_input_addData1.xlsx ----------------------------
 
 // proceeding only if additional input data excel exists
 $ifthen exist '%input_dir%/bb_input_addData1.xlsx'
@@ -174,6 +175,74 @@ $ife %system.errorlevel%>0 $abort gdxxrw failed!
 
     // load input data
     $$gdxin  '%input_dir%/bb_input_addData1.gdx'
+    $$loaddcm grid
+    $$loaddcm node
+    $$loaddcm flow
+    $$loaddcm unittype
+    $$loaddcm unit
+    $$loaddcm unitUnittype
+    $$loaddcm unit_fail
+    $$loaddcm unitUnitEffLevel
+    $$loaddcm effLevelGroupUnit
+    $$loaddcm group
+    $$loaddcm p_gn
+    $$loaddcm p_gnn
+    $$loaddcm p_gnu_io
+    $$loaddcm p_gnuBoundaryProperties
+    $$loaddcm p_unit
+    $$loaddcm ts_unit
+    $$loaddcm p_unitConstraint
+    $$loaddcm p_unitConstraintNode
+    $$loaddcm restype
+    $$loaddcm restypeDirection
+    $$loaddcm restypeReleasedForRealization
+    $$loaddcm restype_inertia
+    $$loaddcm p_groupReserves
+    $$loaddcm p_groupReserves3D
+    $$loaddcm p_groupReserves4D
+    $$loaddcm p_gnuReserves
+    $$loaddcm p_gnnReserves
+    $$loaddcm p_gnuRes2Res
+    $$loaddcm ts_reserveDemand
+    $$loaddcm p_gnBoundaryPropertiesForStates
+    $$loaddcm p_uStartupfuel
+    $$loaddcm flowUnit
+    $$loaddcm emission
+    $$loaddcm p_nEmission
+*    $$loaddcm ts_cf      // ts_cf, ts_influx, and ts_node constructed below. Cannot add content there like this.
+    $$loaddcm ts_priceChange
+*    $$loaddcm ts_influx
+*    $$loaddcm ts_node
+    $$loaddcm p_s_discountFactor
+    $$loaddcm t_invest
+    $$loaddcm utAvailabilityLimits
+    $$loaddcm p_storageValue
+    $$loaddcm ts_storageValue
+    $$loaddcm uGroup
+    $$loaddcm gnuGroup
+    $$loaddcm gn2nGroup
+    $$loaddcm gnGroup
+    $$loaddcm sGroup
+    $$loaddcm p_groupPolicy
+    $$loaddcm p_groupPolicyEmission
+    $$loaddcm p_groupPolicyUnit
+    $$loaddcm gnss_bound
+    $$loaddcm uss_bound
+    $$gdxin
+$endif
+
+
+* --- optional bb_input_addData2.xlsx ----------------------------
+
+// proceeding only if additional input data excel exists
+$ifthen exist '%input_dir%/bb_input_addData2.xlsx'
+
+// Convert additional excel input
+$call 'gdxxrw Input="%input_dir%/bb_input_addData2.xlsx" Output="%input_dir%/bb_input_addData2.gdx" index=index!A1'
+$ife %system.errorlevel%>0 $abort gdxxrw failed!
+
+    // load input data
+    $$gdxin  '%input_dir%/bb_input_addData2.gdx'
     $$loaddcm grid
     $$loaddcm node
     $$loaddcm flow
@@ -500,21 +569,21 @@ $endif
 
 
 ** --- realization, other demands, ts_influx_io ---------
-*
-*$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_other.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y utput="%input_dir%/bb_ts_influx_other.gdx" *checkDate=TRUE'
-*$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (other) failed! Check that your input Excel is valid and that your file path and file name are correct.
-*
-** Load ts_influx_io
-*$ifthen exist '%input_dir%/bb_ts_influx_other.gdx'
-*    $$gdxin  '%input_dir%/bb_ts_influx_other.gdx'
-*    $$loaddcm ts_influx_io
-*    $$gdxin
-*    $$set convert_ts_influx
-*$endif
-*
+
+$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_other.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_other.gdx" checkDate=TRUE'
+$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (other) failed! Check that your input Excel is valid and that your file path and file name are correct.
+
+* Load ts_influx_io
+$ifthen exist '%input_dir%/bb_ts_influx_other.gdx'
+    $$gdxin  '%input_dir%/bb_ts_influx_other.gdx'
+    $$loaddcm ts_influx_io
+    $$gdxin
+    $$set convert_ts_influx
+$endif
+
 ** --- forecasts, other demands, ts_influx_io ----------
-*
-** no forecasts 
+
+* no forecasts 
 
 
 
@@ -747,6 +816,12 @@ if(%tsYear%=2013,
     ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f02', t) = ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f00', t) * 1.1;
     ts_influx('all', 'SE04_reservoir', 'f02', t) = ts_influx('all', 'SE04_reservoir', 'f02', t) * 0.9;
 );
+
+
+* --- adding unitType if missing -------
+
+unitUnittype(unit,'all')${not unitUnittype(unit,'all')} = yes;
+
 
 
 
