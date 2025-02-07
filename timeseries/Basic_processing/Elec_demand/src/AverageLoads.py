@@ -100,7 +100,7 @@ class AverageLoads:
                 diff = end - newend
                 mylist = mylist[0:(modyear-diff)]
                 indf.loc[start:newend,'group'] = mylist
-        print(indf.info())
+        #print(indf.info())
         del indf['Date']
         dfinflow1h = pd.DataFrame()
 
@@ -124,7 +124,7 @@ class AverageLoads:
         #rounding values to int
         result = dfinflow1h.round(0)
         result = result.convert_dtypes()
-        print(result.info())
+        #print(result.info())
 
         
         csvOutput1h = os.path.normpath(self.ADD+'output/average_load_2011-2020-1h.csv')

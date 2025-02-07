@@ -99,9 +99,9 @@ def conv_levels_tomodelform(selected_regions):
 
     result.reset_index(inplace=True, drop=True)
 
-    print('\n')
-    print(result.info())
-    print(result.head(10))
+    #print('\n')
+    #print(result.info())
+    #print(result.head(10))
         
     result.to_csv('output/bb_ts_historical_levels.csv',index=False)
 

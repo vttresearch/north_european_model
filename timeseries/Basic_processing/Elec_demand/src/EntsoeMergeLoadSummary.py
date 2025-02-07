@@ -190,7 +190,7 @@ class EntsoeMergeAreaLoads:
                         tsStep = np.timedelta64(df.index.values[-1] - df.index.values[-2], "m")
                         tsStep = str(tsStep)[:2]
                         tsStep = int(tsStep)
-                        df = df.resample(str(tsStep)+'T').asfreq()
+                        df = df.resample(str(tsStep)+'min').asfreq()
 
 
                         ###
@@ -245,11 +245,11 @@ class EntsoeMergeAreaLoads:
                         # preserve original frequency and resample to 1h when needed.
                         if tsStep == 15:
                                 dfMerge15min = pd.merge(dfMerge15min, df, how='left', left_index=True, right_index=True, validate='one_to_one')
-                                df1h = df.resample('60T').mean()
+                                df1h = df.resample('60min').mean()
                                 dfMerge1h = pd.merge(dfMerge1h, df1h, how='left', left_index=True, right_index=True, validate='one_to_one')
                         elif tsStep == 30:
                                 dfMerge30min = pd.merge(dfMerge30min, df, how='left', left_index=True, right_index=True, validate='one_to_one')
-                                df1h = df.resample('60T').mean()
+                                df1h = df.resample('60min').mean()
                                 dfMerge1h = pd.merge(dfMerge1h, df1h, how='left', left_index=True, right_index=True, validate='one_to_one')
                         else:
                                 dfMerge1h = pd.merge(dfMerge1h, df, how='left', left_index=True, right_index=True, validate='one_to_one')

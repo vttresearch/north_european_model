@@ -16,10 +16,19 @@ import os
 import glob
 
 #choose scenario and year
-scenario = "Distributed Energy"
-year = 2040
-#scenario = "National Trends"
-#year = 2025
+#scenario = "Distributed Energy"
+#year = 2040
+scenario = "National Trends"
+year = 2025
+#scenario = "H2 heavy" 
+#year = 2035
+
+
+print("\n")
+print("scenario: ", scenario)
+print("year: ", year)
+print("\n")
+
 
 #option to redownload ENTSO-E Transparency platform datafiles
 options =  {"download": False}

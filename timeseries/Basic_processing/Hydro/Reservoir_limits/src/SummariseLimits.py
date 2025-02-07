@@ -48,11 +48,11 @@ class LimitsSummary:
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04',
-                'ITN1',
-                'ITCN',
-                'ITCS',
-                'PT00'
+                'SE04'
+                #'ITN1',
+                #'ITCN',
+                #'ITCS',
+                #'PT00'
                 ]
 
 
@@ -80,7 +80,7 @@ class LimitsSummary:
 
 
                 for c in self.country_codes:
-                        print(c)
+                        #print(c)
                         csvName = os.path.normpath(self.ADD+'output/'+ c +'.csv')
                         try:
                                 indf = pd.read_csv(csvName)
@@ -99,7 +99,7 @@ class LimitsSummary:
                         #print(df1h.info())
 
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
 
                 #rounding values to int
                 df1h = df1h.round(0)

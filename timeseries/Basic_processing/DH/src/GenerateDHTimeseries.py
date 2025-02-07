@@ -72,7 +72,7 @@ class GenerateDH:
                 production_df.columns = production_df.columns.astype(str)
 
                 for c in self.country_codes:
-                        print(c)
+                        #print(c)
                         csvName = os.path.normpath(self.ADD+'output/'+ c +'.csv')
                         #Select production values to be processed
                         pdf = production_df.loc[production_df['Area'] == c].copy()
@@ -112,7 +112,7 @@ class GenerateDH:
                         #pyplot.show()
 
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
 
 """
     Used in testing

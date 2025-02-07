@@ -95,7 +95,7 @@ class DHSummary:
                         df_30 = pd.merge(df_30, temp_30, how='left', left_index=True, right_index=True, validate='one_to_one')
                         
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
                         
                 # add FI00_others_dheat to dataframe
                 df_25["FI00_others_dheat"] = df_25["FI00_dheat"]

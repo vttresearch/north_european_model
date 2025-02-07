@@ -34,9 +34,9 @@ class MinMaxSummary:
                 'BE00',	
                 'CH00',
                 'DE00',
-                'DKW1',
-                'DKE1',
-                'EE00',
+                #'DKW1',
+                #'DKE1',
+                #'EE00',
                 'ES00',
                 'FI00',
                 'FR00',
@@ -51,11 +51,11 @@ class MinMaxSummary:
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04',
-                'ITN1',
-                'ITCN',
-                'ITCS',
-                'PT00'
+                'SE04'
+                #'ITN1',
+                #'ITCN',
+                #'ITCS',
+                #'PT00'
                 ]
 
 
@@ -83,12 +83,12 @@ class MinMaxSummary:
 
 
                 for c in self.country_codes:
-                        print(c)
+                        #print(c)
                         csvName = os.path.normpath(self.ADD+'output/'+ c +'.csv')
                         try:
                                 indf = pd.read_csv(csvName)
                         except:
-                                print("File did not exist")
+                                print("min max data for", c, "did not exist")
                         else:
                                 indf['Unnamed: 0'] = pd.to_datetime(indf['Unnamed: 0'])
                                 indf.set_index(['Unnamed: 0','boundarytype'], inplace=True)
@@ -99,10 +99,14 @@ class MinMaxSummary:
                                 #print(indf.head())
 
                                 df1h = pd.merge(df1h, indf, how='left', left_index=True, right_index=True, validate='one_to_one')
+
+                                print(c, " ", round(time.time() - startTime,2), "s  -- done")
+                                #print('\n')
+                        
                         #print(df1h.info())
 
-                        print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        
+                        
 
                 #rounding values to int
                 df1h = df1h.round(0)

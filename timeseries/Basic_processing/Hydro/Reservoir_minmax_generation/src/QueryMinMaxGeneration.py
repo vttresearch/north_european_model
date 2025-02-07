@@ -38,9 +38,9 @@ class QueryMinMaxGeneration:
                 'BE00',	
                 'CH00',
                 'DE00',
-                'DKW1',
-                'DKE1',
-                'EE00',
+                #'DKW1',
+                #'DKE1',
+                #'EE00',
                 'ES00',
                 'FI00',
                 'FR00',
@@ -48,18 +48,18 @@ class QueryMinMaxGeneration:
                 'LT00',
                 'LV00',
                 'NL00',
-                'NOS0',
-                'NOM1',
-                'NON1',
+                #'NOS0', #Norway processed with separate python-file
+                #'NOM1',
+                #'NON1',
                 'PL00',
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04',
-                'ITN1',
-                'ITCN',
-                'ITCS',
-                'PT00'
+                'SE04'
+                #'ITN1',
+                #'ITCN',
+                #'ITCS',
+                #'PT00'
                 ]
 
 
@@ -95,7 +95,7 @@ class QueryMinMaxGeneration:
                         df1h = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         dfa = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         dfb = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
-                        print(c)
+                        #print(c)
                         #df.plot()
                         #pyplot.show()
 
@@ -135,13 +135,15 @@ class QueryMinMaxGeneration:
                                 #print(df1h.info())
                                 df1h.to_csv(csvName)
 
+                                print(c, " ", round(time.time() - startTime,2), "s  -- done")
+                                #print('\n')
+
                                 
                         else:
-                                print("no values")
+                                print("no min max generation values for", c)
                         
 
-                        print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        
 
 """
     Used in testing

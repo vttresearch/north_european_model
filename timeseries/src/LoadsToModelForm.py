@@ -78,9 +78,9 @@ def conv_loads_tomodelform(selected_regions):
 
     result.reset_index(inplace=True, drop=True)
 
-    print('\n')
+    #print('\n')
     #print(result.info())
-    print(result.head(10))
+    #print(result.head(10))
         
     result.to_csv('output/bb_ts_influx_elec.csv',index=False)
     #result.to_excel('summary_load_2011_2020_model_form_MWh.xlsx', index=False)
@@ -163,8 +163,8 @@ def conv_loads_tomodelform(selected_regions):
         i+=1
         dfModel.insert(2,"t",dfModel['a'].apply(lambda x: f"t{int(x):06d}"))
         del dfModel['a']
-        print(dfModel.head())
-        print(dfModel.info())
+        #print(dfModel.head())
+        #print(dfModel.info())
 
         filename = output_prefix+'_'+rate+'p.csv'
         dfModel.to_csv(filename,index=False)

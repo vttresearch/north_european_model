@@ -150,10 +150,10 @@ def conv_generation_tomodelform(selected_regions):
 
     result.reset_index(inplace=True, drop=True)
 
-    print('\n')
-    print(result.info())
-    print(result.head(10))
-    print(result.tail(10))
+    #print('\n')
+    #print(result.info())
+    #print(result.head(10))
+    #print(result.tail(10))
         
     result.to_csv(outputfilename, index=False)
     #result.to_excel('summary_reservoir_minmax_generation_model_form_MWh.xlsx', index=False)

@@ -65,7 +65,7 @@ class DHAverage:
                 """
                 startTime = time.time()
                 print('\n')
-                print('averaging DH production')
+                print('Creating average DH year from historical data')
 
                 ####
                 25
@@ -131,7 +131,7 @@ class DHAverage:
                 #rounding values to int
                 result = dfinflow1h.round(0)
                 result = result.convert_dtypes()
-                print(result.info())
+                #print(result.info())
         
                 result.to_csv(self.outName_25)
 
@@ -198,7 +198,7 @@ class DHAverage:
                 #rounding values to int
                 result = dfinflow1h.round(0)
                 result = result.convert_dtypes()
-                print(result.info())
+                #print(result.info())
         
                 result.to_csv(self.outName_30)
 

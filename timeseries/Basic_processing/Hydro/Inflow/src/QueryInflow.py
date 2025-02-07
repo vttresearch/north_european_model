@@ -51,11 +51,12 @@ class QueryInflow:
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04',
-                'ITN1',
-                'ITCN',
-                'ITCS',
-                'PT00']
+                'SE04'
+                #'ITN1',
+                #'ITCN',
+                #'ITCS',
+                #'PT00'
+                ]
 
 
                 self.inflow1 = 'Cumulated inflow into reservoirs per week in GWh'
@@ -96,7 +97,7 @@ class QueryInflow:
 
                         csvName = os.path.normpath(self.ADD+'output/'+ c +'.csv')
                         dfinflow1h = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
-                        print(c)
+                        #print(c)
                         df = indf.copy()
 
                         #first handle the inflow file
@@ -121,11 +122,10 @@ class QueryInflow:
                                                                 dfinflow1h.at[t,c+self.add2]= 1000*yeardf.at[51,self.inflow2]/168 #change GWhs to MWhs, from weekly to average hourly value
 
                                 #print(dfinflow1h.info())
-                                dfinflow1h[c+self.add1].interpolate(inplace=True, limit = 84, limit_direction='both')
-                                dfinflow1h[c+self.add2].interpolate(inplace=True, limit = 84,  limit_direction='both')
-                                
+                                dfinflow1h[c+self.add1] = dfinflow1h[c+self.add1].interpolate(limit = 84, limit_direction='both')
+                                dfinflow1h[c+self.add2] = dfinflow1h[c+self.add2].interpolate(limit = 84,  limit_direction='both')
                         else:
-                                print("inflow null")
+                                print("inflow to reservoir + psOpen null in", c)
                                 dfinflow1h.loc[:,c+self.add1] =  np.nan #add null
                                 dfinflow1h.loc[:,c+self.add2] =  np.nan #add null
                                 
@@ -150,9 +150,9 @@ class QueryInflow:
                                                         leapt = date(year,12,31) + pd.DateOffset(hours=12)
                                                         dfinflow1h.at[leapt,c+self.add3]= 1000*yeardf.at[364,self.ror]/24 #one additional day for leap years, not in source file
                                 #print(dfinflow1h.info())
-                                dfinflow1h[c+self.add3].interpolate(inplace=True, limit = 12, limit_direction='both') 
+                                dfinflow1h[c+self.add3] = dfinflow1h[c+self.add3].interpolate(limit = 12, limit_direction='both') 
                         else:
-                                print("ror null")
+                                print("Ror inflow null in", c)
                                 dfinflow1h.loc[:,c+self.add3] = np.nan #add null
                                 
                         #print(dfinflow1h.info())
@@ -161,7 +161,7 @@ class QueryInflow:
                         dfinflow1h.to_csv(csvName)
 
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
 
 """
     Used in testing

@@ -57,7 +57,7 @@ class AreaRates:
         print('creates rates for areas')
         
         df = pd.read_csv(self.csvInput)
-        df['Unnamed: 0'] = pd.to_datetime(df['Unnamed: 0'], infer_datetime_format=True)
+        df['Unnamed: 0'] = pd.to_datetime(df['Unnamed: 0'])
         df.set_index('Unnamed: 0', inplace=True)
         #print(df.head(5))
         rates = pd.DataFrame()
@@ -91,7 +91,7 @@ class AreaRates:
         print('creates leap year rates for areas')
 
         df = pd.read_csv(self.csvInput)
-        df['Unnamed: 0'] = pd.to_datetime(df['Unnamed: 0'], infer_datetime_format=True)
+        df['Unnamed: 0'] = pd.to_datetime(df['Unnamed: 0'])
         df.set_index('Unnamed: 0', inplace=True)
         #print(df.head(5))
         rates = pd.DataFrame()

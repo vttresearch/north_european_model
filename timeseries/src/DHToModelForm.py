@@ -90,9 +90,9 @@ def conv_dhdemand_tomodelform(selected_regions):
         df.insert(1, "f", move )
 
         df.reset_index(inplace=True, drop=True)
-        print('\n')
-        print(df.info())
-        print(df.head(10))
+        #print('\n')
+        #print(df.info())
+        #print(df.head(10))
             
         df.to_csv(outputfile, index=False)
 
@@ -104,7 +104,7 @@ def conv_dhdemand_tomodelform(selected_regions):
 
         startTime = time.time()
         print('\n')
-        print('transforming average DH data')
+        print('transforming average DH data to forecasts')
 
         dfyear = pd.read_csv(inputaverage)
         del dfyear['Unnamed: 0']
@@ -157,8 +157,8 @@ def conv_dhdemand_tomodelform(selected_regions):
             i+=1
             dfModel.insert(2,"t",dfModel['a'].apply(lambda x: f"t{int(x):06d}"))
             del dfModel['a']
-            print(dfModel.head())
-            print(dfModel.info())
+            #print(dfModel.head())
+            #print(dfModel.info())
 
             filename = output_prefix+'_'+yt+'_'+rate+'p.csv'
             dfModel.to_csv(filename,index=False)

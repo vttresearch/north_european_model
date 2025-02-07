@@ -67,7 +67,7 @@ class QueryMinMaxGenerationNorway:
                         df1h = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         dfa = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         dfb = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
-                        print(c)
+                        #print(c)
 
                         filename = os.path.normpath(self.ADD+'input/'+self.file_first+c+self.file_last)
                         indf = read_excel(filename,sheet_name='Pump storage - Open Loop',
@@ -106,7 +106,7 @@ class QueryMinMaxGenerationNorway:
                         df1h.to_csv(csvName)
 
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
 
 """
     Used in testing

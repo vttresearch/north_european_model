@@ -68,12 +68,12 @@ class LevelsSummary:
                 df1h = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
 
                 for c in self.country_codes:
-                        print(c)
+                        #print(c)
                         csvName = os.path.normpath(self.ADD+'output/'+ c +'.csv')
                         try:
                                 indf = pd.read_csv(csvName)
                         except:
-                                print("File did not exist")
+                                print("Data for", c, "did not exist")
                         else:
                                 indf['Unnamed: 0'] = pd.to_datetime(indf['Unnamed: 0'])
                                 indf.set_index('Unnamed: 0', inplace=True)
@@ -86,7 +86,7 @@ class LevelsSummary:
                         #print(df1h.info())
 
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
 
                 #rounding values to int
                 df1h = df1h.round(0)

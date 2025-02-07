@@ -116,10 +116,10 @@ class QueryLevels:
                         try:
                                 temp = indf[c].copy()                                
                         except:
-                                print(c)
-                                print("Area not found")
-                                print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                                print('\n')
+                                #print(c)
+                                print("Data for reservoir levels in ", c, "not found")
+                                #print(c, " ", round(time.time() - startTime,2), "s  -- done")
+                                #print('\n')
                         else:                                
                                 # getting a "typical year" for extrapolation
                                 # first transform into df where each input year is one column
@@ -152,7 +152,7 @@ class QueryLevels:
 
                 for c in areas:
                         df1h = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
-                        print(c)
+                        #print(c)
                         # change codes, Norway is exception
                         if c[:2] == 'NO':
                                 nor = pd.DataFrame()
@@ -179,7 +179,7 @@ class QueryLevels:
                         if not temp.empty:        
                                 for i in range(len(temp)):
                                         t = startfourthday + i*pd.DateOffset(days=7) 
-                                        df1h.at[t,title] = temp[i]
+                                        df1h.at[t,title] = temp.iloc[i]
 
                                 # interpolate between weekly values to great hourly timeseries
                                 df1h.interpolate(inplace=True, limit = 84, limit_direction='both')
@@ -195,7 +195,7 @@ class QueryLevels:
 
 
                                 print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                                print('\n')
+                                #print('\n')
 
 """
     Used in testing

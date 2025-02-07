@@ -63,7 +63,7 @@ class QueryLoad:
                 """
                 startTime = time.time()
                 print('\n')
-                print('querying data -- open power system data -- query_load')
+                print('querying and curing data -- open power system data')
 
 
                 for c in self.country_codes:
@@ -84,8 +84,8 @@ class QueryLoad:
                         #df.plot()
                         #pyplot.show()
 
-                        print('\n')
-                        print('curing load data')
+                        #print('\n')
+                        #print('curing load data')
 
 
                         # processing yearly data if available

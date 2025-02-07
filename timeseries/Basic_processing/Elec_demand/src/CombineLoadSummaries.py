@@ -77,7 +77,7 @@ class CombineSummaries:
         indf = indf[indf["Time"] >= pd.to_datetime(self.start)]
         indf.set_index('Time', inplace=True)
         self.temps = indf.copy()
-        print(indf.info())
+        #print(indf.info())
         
         #Importing constants file for temperature-specific adjustments
         #from excel file if scenario is defined

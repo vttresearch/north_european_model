@@ -49,11 +49,11 @@ class QueryMinMaxLimits:
                 'SE01',
                 'SE02',
                 'SE03',
-                'SE04',
-                'ITN1',
-                'ITCN',
-                'ITCS',
-                'PT00'
+                'SE04'
+                #'ITN1',
+                #'ITCN',
+                #'ITCS',
+                #'PT00'
                 ]
 
 
@@ -102,7 +102,7 @@ class QueryMinMaxLimits:
                         df1h = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         dfa = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
                         dfb = pd.DataFrame(index = pd.date_range(self.start, self.end, freq='60 min'))
-                        print(c)
+                        #print(c)
                         df = indf.copy()
 
                         # check if limits data has any NaN values
@@ -157,7 +157,7 @@ class QueryMinMaxLimits:
                                
 
                         print(c, " ", round(time.time() - startTime,2), "s  -- done")
-                        print('\n')
+                        #print('\n')
 
 """
     Used in testing
