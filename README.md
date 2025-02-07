@@ -133,6 +133,10 @@ Open Anaconda Prompt and activate the northEuropeModel environment (`conda activ
 
 At the time of writing, the total size of files from Julia and Python are slightly below 2 Gb. 
 
+Note: electricity time series for each scenario currently needs a manual adjustment 
+* open north_european_model\timeseries\Basic_processing\Elec_demand\Elec_demand_timeseries.py
+* edit 'scenario' and 'year'
+
 
 ### Additional data outside julia generated main input file
 
@@ -142,6 +146,7 @@ While we are working on the input data to be comprehensive and automated, there 
 * If using "H2 heavy" scenario, copy bb_input_addData2-h2HeavyOnly.xlsx from .\north_european_model\manual_additions\ to backbone \input folder and rename it to bb_input_addData2.xlsx
 
 The updated changes.inc reads these additional data files and integrates them to the main input data. *bb_input_addData1.xlsx* is intended for all scenarios and *bb_input_addData2-h2HeavyOnly.xlsx* for H2 heavy only, and requires renaming.
+
 
 
 ### Copying run specification files
