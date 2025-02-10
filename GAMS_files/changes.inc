@@ -11,33 +11,20 @@ Contents
 - Set and parameter definitions
     - New sets, parameters, and scalars
     - default values for command line parameters if not given
-    - populating gn_hydroStorage manually
+    - listing hydro storages
 - Reading additional input data
     - optional bb_input_addData1.xlsx
     - optional bb_input_addData2.xlsx
-- ts_cf
-    - reading onshore, offshore, and PV data
-    - creating ts_cf
-    - adding missing forecasts when necessary
-- ts_influx
-    - reading elec data
-    - reading hydro data
-    - reading heat data
-    - reading generation limit data
-    - reading other demand data
-    - creating ts_influx
-    - adding missing forecasts when necessary
-- ts_node
-    - reading upwardLimit and downwardLimit data
-    - creating upwardLimits and downwardLimits forecasts
-    - reading historical values -> reference ts
-    - creating ts_node
+- reading preprocessed input timeseries
+    - ts_cf
+    - ts_inclux
+    - ts_node
     - creating hydro storage start levels, clearing reference ts
-    - adding missing forecasts when necessary
 - additional manual changes 
-    - applying price multipliers
     - converting selected units to onlineLP, onlineMIP
-    - project specific modifications
+    - adding certain unit parameters
+    - converting constant ts_influx to p_gn('influx')
+- project specific modifications
 
 
 NOTE: additional project specific modifications are safest to add to the very end.
@@ -53,26 +40,8 @@ $offtext
 * --- New sets, parameters, and scalars --------------
 
 Sets
-t_selectedYear(t) "Time steps selected by user in --tsYear and --modelledDays command line parameters"
-year "available model time series years" / y0001 * y2022 /
-gn_tmp(grid, node) "temporary (grid, node) set used in the input data manipulation"
-flowNode_tmp(flow, node) "temporary (flow, node) set used in the input data manipulation"
 gn_hydroStorage(grid, node) "helper set listing hydro nodes with storage"
 ;
-
-Parameters
-ts_influx_io(grid, f, t, node) "External power inflow/outflow during a time step (MWh/h) (reordered)"
-ts_cf_io(flow, f, t, node) "Available capacity factor time series (p.u. reordered)"
-ts_node_io(grid, param_gnBoundaryTypes, f, t, node) "Set node limits according to time-series form exogenous input (reordered)"
-p_yearStarts(year) "First time steps of available years"
-;
-
-*define parameters for time checking
-scalar now       Gregorian current date + time
-       hour      hour,
-       minute    minute,
-       second    second;
-
 
 * --- default values for command line parameters if not given ------
 
@@ -84,10 +53,11 @@ $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%
 
 
+* --- listing hydro storages -------------
 
-* --- populating gn_hydroStorage manually -------------
-
+// a helper set used when generating start levels from hydro storages
 // gn_hydroStorage(grid, node) = yes; // capacity, normal year inflow, calculated FLH
+// Note: required also in scheduleInit.gms
 
 gn_hydroStorage('all', 'BE00_ror') = yes;  // 0.13 GW, 0.35 TWh, 2655 FLH
 gn_hydroStorage('all', 'DE00_ror') = yes;  // 4.0 GW, 15.1 TWh, 3780 FLH
@@ -125,38 +95,6 @@ gn_hydroStorage('all', 'LT00_psClosed') = yes;  // 0.9 GW, 0 TWh
 gn_hydroStorage('all', 'PL00_psClosed') = yes;  // 1.3 GW, 0 TWh
 gn_hydroStorage('all', 'UK00_psClosed') = yes;  // 3.0 GW, 0 TWh
 
-
-* --- Listing first time steps of each year and populating selectedYear --------------
-
-// list the first time steps of the modelled years
-p_yearStarts('y2004') = 192841;
-p_yearStarts('y2005') = 201625;
-p_yearStarts('y2006') = 210385;
-p_yearStarts('y2007') = 219145;
-p_yearStarts('y2008') = 227905;
-p_yearStarts('y2009') = 236689;
-p_yearStarts('y2010') = 245449;
-p_yearStarts('y2011') = 254209;
-p_yearStarts('y2012') = 262993;
-p_yearStarts('y2013') = 271753;
-p_yearStarts('y2014') = 280513;
-p_yearStarts('y2015') = 289273;
-p_yearStarts('y2016') = 298057;
-p_yearStarts('y2017') = 306817;
-p_yearStarts('y2018') = 315577;
-p_yearStarts('y2019') = 324337;
-
-// if user has given tsYear, compile t_selectedYear
-if(%tsYear%>1980,
-    // picking the first time step of the selected year to tmp variable
-    tmp = sum(year $ (ord(year) = %tsYear%), p_yearStarts(year));
-
-    // Determine time steps in the selected year to construct a year starting at t000001
-    t_selectedYear(t)${ ord(t) >= (tmp + 1)
-                        and ord(t) <= (tmp + 8760)
-                      }
-        = yes;
-);
 
 
 
@@ -232,6 +170,7 @@ $ife %system.errorlevel%>0 $abort gdxxrw failed!
 $endif
 
 
+
 * --- optional bb_input_addData2.xlsx ----------------------------
 
 // proceeding only if additional input data excel exists
@@ -301,405 +240,55 @@ $endif
 
 
 
-* --------------------------------------------------------------------------------
-* ts_cf
-* --------------------------------------------------------------------------------
-
-* onshore, offshore, and PV are all in the same files
-
-* --- realization, ts_cf_io ----------------------------------
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_cf_io.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort  csv2gdx failed.
-
-* Load ts_cf_io
-$ifthen exist '%input_dir%/bb_ts_cf_io.gdx'
-    $$gdxin  '%input_dir%/bb_ts_cf_io.gdx'
-    $$loaddc ts_cf_io
-    $$gdxin
-$endif
-
-* --- forecasts, ts_cf_io ------------------------------------
-
-$ifThenE %forecastNumber%>1
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_50p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_50p.gdx" checkDate=TRUE'
-    // Load ts_cf_io
-    $$gdxin  '%input_dir%/bb_ts_cf_io_50p.gdx'
-    $$loaddcm ts_cf_io
-    $$gdxin
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_50p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_10p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_10p.gdx" checkDate=TRUE'
-    // Load ts_cf_io
-    $$gdxin  '%input_dir%/bb_ts_cf_io_10p.gdx'
-    $$loaddcm ts_cf_io
-    $$gdxin
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_10p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_90p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_cf_io_90p.gdx" checkDate=TRUE'
-    // Load ts_cf_io
-    $$gdxin  '%input_dir%/bb_ts_cf_io_90p.gdx'
-    $$loaddcm ts_cf_io
-    $$gdxin
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_90p failed! Check that your input file is valid and that your file path and file name are correct.
-
-
-* --- creating ts_cf -------------------------------------
-
-* display time
-now    = jnow;
-hour   = ghour(now);
-minute = gminute(now);
-second = gsecond(now);
-display  hour, minute, second;
-
-* convert ts_cf_io to ts_cf
-if(%tsYear%>1980,
-    tmp = tmp-1 ;  // -1 as t000000 is the first one, but we want to map to t000001
-    // pick only selected values if modelling a specific times series year
-    ts_cf(flow, node, f, t - tmp) = ts_cf_io(flow, f, t, node)$t_selectedYear(t) ;
-    // clear the large ts table if modelling only a specific time series year
-    option clear = ts_cf_io;
-else
-    // otherwise rename the large table to the model input table
-    ts_cf(flow, node, f, t) = ts_cf_io(flow, f, t, node);
-);
-
-
-* --- adding missing forecasts if necessary ---------
-
-// if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
-
-// if 4 forecasts, make sure that f02 and f03 data exists when there is f01 data
-if(%forecastNumber% >= 4,
-    option flowNode_tmp < ts_cf;
-
-    // copying f00 values to f02 and f03 if values are not given in earlier steps
-    loop(flowNode_tmp(flow, node),
-        if(sum(t, ts_cf(flow, node, 'f02', t))=0 and sum(t, ts_cf(flow, node, 'f01', t))>0,
-            ts_cf(flow, node, 'f02', t) = ts_cf(flow, node, 'f01', t);
-        );
-        if(sum(t, ts_cf(flow, node, 'f03', t))=0 and sum(t, ts_cf(flow, node, 'f01', t))>0,
-            ts_cf(flow, node, 'f03', t) = ts_cf(flow, node, 'f01', t);
-        );
-    );
-);
-
-
 
 * --------------------------------------------------------------------------------
-* ts_influx
+* reading preprocessed timeseries
 * --------------------------------------------------------------------------------
 
-* --- realization, elec, ts_influx_io ---------
 
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_elec.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort gdxxrw addition input failed! Check that your input Excel is valid and that your file path and file name are correct.
+* --- ts_cf ----------------------------------
 
-* Load ts_influx_io
-$ifthen exist '%input_dir%/bb_ts_influx_elec.gdx'
-    $$gdxin  '%input_dir%/bb_ts_influx_elec.gdx'
-    $$loaddc ts_influx_io
+// reading only selected few tables required for time series preprocessing
+$ifthen exist '%input_dir%/ts_cf.gdx'  
+    // load input data
+    $$gdxin  '%input_dir%/ts_cf.gdx'
+    $$loaddcm ts_cf
     $$gdxin
-    $$set convert_ts_influx
+$else
+    $$abort 'Run timeseries preprocessing to create %input_dir%/ts_cf.gdx!'     
 $endif
 
-* --- forecasts, elec, ts_influx_io ----------
 
-$ifThenE %forecastNumber%>1
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_elec_50p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec_50p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_elec_50p.gdx'
-    $$loaddcm ts_influx_io
+* --- ts_influx ----------------------------------
+
+// reading only selected few tables required for time series preprocessing
+$ifthen exist '%input_dir%/ts_influx.gdx'  
+    // load input data
+    $$gdxin  '%input_dir%/ts_influx.gdx'
+    $$loaddcm ts_influx
     $$gdxin
-    $$set convert_ts_influx
+$else
+    $$abort 'Run timeseries preprocessing to create %input_dir%/ts_influx.gdx!'     
 $endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_elec_50p failed! Check that your input file is valid and that your file path and file name are correct.
 
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_elec_10p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec_10p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_elec_10p.gdx'
-    $$loaddcm ts_influx_io
+
+* --- ts_node ----------------------------------
+
+// reading only selected few tables required for time series preprocessing
+$ifthen exist '%input_dir%/ts_node.gdx'  
+    // load input data
+    $$gdxin  '%input_dir%/ts_node.gdx'
+    $$loaddcm ts_node
     $$gdxin
-    $$set convert_ts_influx
+$else
+    $$abort 'Run timeseries preprocessing to create %input_dir%/ts_node.gdx!'     
 $endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_elec_10p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_elec_90p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_elec_90p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_elec_90p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_elec_90p failed! Check that your input file is valid and that your file path and file name are correct.
-
-
-
-* --- realization, hydro, ts_influx_io ---------
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_hydro.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (hydro) failed! Check that your input Excel is valid and that your file path and file name are correct.
-
-* Load ts_influx_io
-$ifthen exist '%input_dir%/bb_ts_influx_hydro.gdx'
-    $$gdxin  '%input_dir%/bb_ts_influx_hydro.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-
-* --- forecasts, hydro, ts_influx_io ----------
-
-$ifThenE %forecastNumber%>1
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_hydro_50p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro_50p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_hydro_50p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_hydro_50p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_hydro_10p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro_10p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_hydro_10p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_hydro_10p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_hydro_90p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol)  useHeader=y output="%input_dir%/bb_ts_influx_hydro_90p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_hydro_90p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_hydro_90p failed! Check that your input file is valid and that your file path and file name are correct.
-
-
-
-* --- realization, heat, ts_influx_io ---------
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (heat) failed! Check that your input Excel is valid and that your file path and file name are correct.
-
-* Load ts_influx_io
-$ifthen exist '%input_dir%/bb_ts_influx_heat_%modelYear%.gdx'
-    $$gdxin  '%input_dir%/bb_ts_influx_heat_%modelYear%.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-
-* --- forecasts, heat, ts_influx_io ----------
-
-$ifThenE %forecastNumber%>1
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%_50p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%_50p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_heat_%modelYear%_50p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_heat_%modelYear%_50p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%_10p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%_10p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_heat_%modelYear%_10p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_heat_%modelYear%_10p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_influx_heat_%modelYear%_90p.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_heat_%modelYear%_90p.gdx" checkDate=TRUE'
-    // Load ts_influx_io
-    $$gdxin  '%input_dir%/bb_ts_influx_heat_%modelYear%_90p.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_influx_heat_%modelYear%_90p failed! Check that your input file is valid and that your file path and file name are correct.
-
-
-
-* --- realization, generation limit nodes, ts_influx_io ---------
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_genlim.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_genlim.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (heat) failed! Check that your input Excel is valid and that your file path and file name are correct.
-
-* Load ts_influx_io
-$ifthen exist '%input_dir%/bb_ts_influx_genlim.gdx'
-    $$gdxin  '%input_dir%/bb_ts_influx_genlim.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-
-* --- forecasts, generation limit nodes, ts_influx_io ----------
-
-* no forecasts 
-
-
-
-** --- realization, other demands, ts_influx_io ---------
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_influx_other.csv id=ts_influx_io index=1,2,3 values=(4..LastCol) useHeader=y valueDim=y output="%input_dir%/bb_ts_influx_other.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort gdxxrw ts_influx_io (other) failed! Check that your input Excel is valid and that your file path and file name are correct.
-
-* Load ts_influx_io
-$ifthen exist '%input_dir%/bb_ts_influx_other.gdx'
-    $$gdxin  '%input_dir%/bb_ts_influx_other.gdx'
-    $$loaddcm ts_influx_io
-    $$gdxin
-    $$set convert_ts_influx
-$endif
-
-** --- forecasts, other demands, ts_influx_io ----------
-
-* no forecasts 
-
-
-
-* --- converting ts_influx_io to ts_influx ---------------------
-
-* display time
-now    = jnow;
-hour   = ghour(now);
-minute = gminute(now);
-second = gsecond(now);
-display  hour, minute, second;
-
-* convert ts_influx_io to ts_influx
-$ifthen set convert_ts_influx
-    if(%tsYear%>1980,
-        // pick only selected values if modelling a specific times series year
-        ts_influx(grid, node, f, t - tmp) = ts_influx_io(grid, f, t, node)$t_selectedYear(t); // tmp from ts_cf
-        // clear the large ts table if modelling only a specific time series year
-        option clear = ts_influx_io;
-    else
-        // otherwise rename the large table to the model input table
-        ts_influx(grid, node, f, t) = ts_influx_io(grid, f, t, node);
-    );
-$endif
-
-
-* --- adding missing forecasts if necessary ----------
-
-// if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
-
-// if 4 forecasts, make sure that f02 and f03 data exists when there is f01 data
-if(%forecastNumber% >= 4,
-    option gn_tmp < ts_influx;
-
-    // copying f01 values to f02 and f03 if f01 has values, but f02 or f03 does not
-    loop(gn_tmp(grid, node),
-        if(sum(t, ts_influx(grid, node, 'f02', t))=0 and sum(t, ts_influx(grid, node, 'f01', t))>0,
-            ts_influx(grid, node, 'f02', t) = ts_influx(grid, node, 'f01', t);
-        );
-        if(sum(t, ts_influx(grid, node, 'f03', t))=0 and sum(t, ts_influx(grid, node, 'f01', t))>0,
-            ts_influx(grid, node, 'f03', t) = ts_influx(grid, node, 'f01', t);
-        );
-    );
-);
-
-
-
-
-* --------------------------------------------------------------------------------
-* ts_node
-* --------------------------------------------------------------------------------
-
-* --- realization, upwardLimits and downwardLimits, ts_node_io ---------
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_node.csv id=ts_node_io index=1,2,3,4 values=(5..LastCol)  useHeader=y output="%input_dir%/bb_ts_node.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort csv2gdx ts_node_io (hydro downward and upward limits) failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifthen exist '%input_dir%/bb_ts_node.gdx'
-    $$gdxin  '%input_dir%/bb_ts_node.gdx'
-    $$loaddc ts_node_io
-    $$gdxin
-$endif
-
-* --- forecasts, upwardLimits and downwardLimits, ts_node_io  ----------
-
-* no forecasts
-
-
-
-* --- realization, reference, ts_node_io -----------------
-
-// reading historical levels data reference. 
-// Used only to generate hydro storage starting levels then cleared. 
-
-$if set input_file_excel $call 'csv2gdx %input_dir%/bb_ts_historical_levels.csv id=ts_node_io index=1,2,3,4 values=(5..LastCol)  useHeader=y output="%input_dir%/bb_ts_historical_levels.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort csv2gdx ts_historical_levels (hydro) failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifthen exist '%input_dir%/bb_ts_historical_levels.gdx'
-    $$gdxin  '%input_dir%/bb_ts_historical_levels.gdx'
-    $$loaddcm ts_node_io
-    $$gdxin
-$endif
-
-* --- forecast, reference, ts_node_io ------------------
-
-* no forecasts
-
-
-
-* --- creating ts_node ----------------------------------
-
-* display time
-now    = jnow;
-hour   = ghour(now);
-minute = gminute(now);
-second = gsecond(now);
-display  hour, minute, second;
-
-* convert ts_node_io to ts_node
-if(%tsYear%>1980,
-    // pick only selected values if modelling a specific times series year
-    // tmp from ts_cf
-    ts_node(grid, node, param_gnBoundaryTypes, f, t-tmp) = ts_node_io(grid, param_gnBoundaryTypes, f, t, node)$t_selectedYear(t);
-    // clear the large ts table if modelling only a specific time series year
-    option clear = ts_node_io;
-else
-    // otherwise rename the large table to the model input table
-    ts_node(grid, node, param_gnBoundaryTypes, f, t) = ts_node_io(grid, param_gnBoundaryTypes, f, t, node);
-);
-
 
 
 * --- setting boundStart and clearing values from 'reference' timeseries -----
 
 // if user has given tsYear
-//  * loop gn_hydroStorages
+//  * loop gn_hydroStorage
 //  * set boundStart = 1, useConstant =1
 //  * calculate constant value as max(historical ts value, between downward and upward, user given value in the input data)
 // else
@@ -709,60 +298,20 @@ else
 
 option gn_tmp < ts_node;
 
-if(%tsYear%>1980,
-    loop(gn_hydroStorage(grid, node),
-        p_gn(grid, node, 'boundStart') = 1;
-        p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'useConstant') = 1;
+loop(gn_hydroStorage(grid, node),
+    p_gn(grid, node, 'boundStart') = 1;
+    p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'useConstant') = 1;
 
-        p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant') 
-            = max{ p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant'),
-                   [ts_node(grid, node, 'downwardLimit', 'f00', 't000001') + (ts_node(grid, node, 'upwardLimit', 'f00', 't000001')-ts_node(grid, node, 'downwardLimit', 'f00', 't000001'))/2]${gn_tmp(grid, node)},
-                   ts_node(grid, node, 'reference', 'f00', 't000001')
-                   };            
+    p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant') 
+        = max{ p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant'),
+               [ts_node(grid, node, 'downwardLimit', 'f00', 't000001') + (ts_node(grid, node, 'upwardLimit', 'f00', 't000001')-ts_node(grid, node, 'downwardLimit', 'f00', 't000001'))/2]${gn_tmp(grid, node)},
+               ts_node(grid, node, 'reference', 'f00', 't000001')
+               };            
     );
-else
-    loop(node,
-        if(sum(grid, sum(t, ts_node(grid, node, 'reference', 'f00', t))) > 0,
-            p_gn('all', node, 'boundStart') = 1;
-            p_gnBoundaryPropertiesForStates('all', node, 'reference', 'useTimeseries') = 1;
-        );
-    );
-);
+
 
 // remove data from ts_node(*, *, 'reference', f, t)
-option gn_tmp < ts_node;
 ts_node(gn_tmp(grid, node), 'reference', f, t) = 0;
-
-
-
-
-* --- adding missing forecasts if necessary ------------
-
-// no forecast data for hydro storage limits, but creating higher downwardLimit 
-// and lower upwardlimit to forecasts, helps the model to avoid over using hydro storages.  
-
-// Creating f01 (central) from realization by upwardlimit*0.98 and downwardLimit*1.02
-// Creating f02 (low) from realization by upwardlimit*0.96 and downwardLimit*1.04
-// Creating f03 (high) from realization by upwardlimit*1 and downwardLimit*1
-
-if(%forecastNumber% >= 2,
-    ts_node(grid, node, 'upwardLimit', 'f01', t)$ts_node(grid, node, 'upwardLimit', 'f00', t) 
-        = ts_node(grid, node, 'upwardLimit', 'f00', t) * 0.98;
-    ts_node(grid, node, 'downwardLimit', 'f01', t)$ts_node(grid, node, 'downwardLimit', 'f00', t) 
-        = ts_node(grid, node, 'downwardLimit', 'f00', t) * 1.02;
-);
-
-if(%forecastNumber% >= 4,
-    ts_node(grid, node, 'upwardLimit', 'f02', t)$ts_node(grid, node, 'upwardLimit', 'f00', t) 
-        = ts_node(grid, node, 'upwardLimit', 'f00', t) * 0.96;
-    ts_node(grid, node, 'downwardLimit', 'f02', t)$ts_node(grid, node, 'downwardLimit', 'f00', t) 
-        = ts_node(grid, node, 'downwardLimit', 'f00', t) * 1.04;
-
-    ts_node(grid, node, 'upwardLimit', 'f03', t)$ts_node(grid, node, 'upwardLimit', 'f00', t) 
-        = ts_node(grid, node, 'upwardLimit', 'f00', t) * 1;
-    ts_node(grid, node, 'downwardLimit', 'f03', t)$ts_node(grid, node, 'downwardLimit', 'f00', t) 
-        = ts_node(grid, node, 'downwardLimit', 'f00', t) * 1;
-);
 
 
 
@@ -790,39 +339,59 @@ effLevelGroupUnit('level1', 'directOnLP', 'U_SE03_nuclear') = no;
 effLevelGroupUnit('level1', 'directOnMIP', 'U_SE03_nuclear') = yes;
 $offtext
 
-// adding all directOff level3 for all units
+
+
+
+* --- adding certain unit parameters ----------
+
+// making sure all units have unitType
+unitUnittype(unit,'all')${not unitUnittype(unit,'all')} = yes;
+
+// adding directOff level3 for all units
 option unit_tmp < effLevelGroupUnit;
 effLevelGroupUnit('level3', 'directOff', unit_tmp) = yes;
 
 
 
-* --- reservoir downwardLimit adjustments -------
+* --- converting constant ts_influx to p_gn('influx') ---------
 
-// FR00 and SE04 reservoir nodes are particularly difficult to get dummy free with the current capacities and timeseries.
-// As a patch, f02 influx is adjusted lower and f02 downwardLimit higher and than in other reservoirs.
+// timeseries with constant values are much slower to process than single constant parameter
 
-ts_node('all', 'FR00_reservoir', 'downwardLimit', 'f02', t) = ts_node('all', 'FR00_reservoir', 'downwardLimit', 'f00', t) * 1.06;
-ts_influx('all', 'FR00_reservoir', 'f02', t) = ts_influx('all', 'FR00_reservoir', 'f02', t) * 0.95;
+// gn in ts_influx
+option gn_tmp < ts_influx;
+// f in ts_influx
+option ff < ts_influx;
+// t in ts_influx
+option tt < ts_influx;
 
-if(%tsYear%=2011,
-    ts_node('all', 'FR00_reservoir', 'downwardLimit', 'f02', t) = ts_node('all', 'FR00_reservoir', 'downwardLimit', 'f00', t) * 1.1;
-    ts_influx('all', 'FR00_reservoir', 'f02', t) = ts_influx('all', 'FR00_reservoir', 'f02', t) * 0.9;
-);
+// gn that have constant ts_influx 
+option clear = gn_tmp_;
+loop(gn_tmp(grid, node),
+    // if data only in 'f00'
+    if(sum(tt, ts_influx(grid, node, 'f01', tt)) = 0,
+        gn_tmp_(grid, node)
+            ${ [smax(tt, ts_influx(grid, node, 'f00', tt)) = smin(tt, ts_influx(grid, node, 'f00', tt)) ]
+              } = yes;
+    // if data only also in other forecasts than 'f00'
+    else
+        gn_tmp_(grid, node)
+            ${ [smax((ff, tt), ts_influx(grid, node, ff, tt)) = smin((ff, tt), ts_influx(grid, node, ff, tt)) ]
+              } = yes;
+    ); // END if(more than one f in ts_influx)
 
-ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f02', t) = ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f00', t) * 1.06;
-ts_influx('all', 'SE04_reservoir', 'f02', t) = ts_influx('all', 'SE04_reservoir', 'f02', t) * 0.95;
+); // END loop(gn_tmp)
 
-if(%tsYear%=2013,
-    ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f02', t) = ts_node('all', 'SE04_reservoir', 'downwardLimit', 'f00', t) * 1.1;
-    ts_influx('all', 'SE04_reservoir', 'f02', t) = ts_influx('all', 'SE04_reservoir', 'f02', t) * 0.9;
-);
+// picking value to p_gn('influx') for filtered gn from ts_influx
+p_gn(gn_tmp_(grid, node), 'influx') = ts_influx(grid, node, 'f00', 't000001');
 
-
-* --- adding unitType if missing -------
-
-unitUnittype(unit,'all')${not unitUnittype(unit,'all')} = yes;
+// clearing ts_influx of filtered gn 
+ts_influx(gn_tmp_, ff, tt) = 0;
 
 
 
 
-* --- project specific modifications ----------
+* --------------------------------------------------------------------------------
+* project specific modifications
+* --------------------------------------------------------------------------------
+
+

@@ -26,11 +26,7 @@ if (mType('schedule'),
 * --- Define Key Execution Parameters in Time Indeces -------------------------
 
     // Define simulation start and end time indeces
-    if(%tsYear%>1980,
-        mSettings('schedule', 't_start') = 1;  // First time step to be solved, 1 corresponds to t000001 (t000000 will then be used for initial status of dynamic variables)
-    else
-        mSettings('schedule', 't_start') = 245449;  // First time step to be solved, 1 corresponds to t000001 (t000000 will then be used for initial status of dynamic variables)
-    );
+    mSettings('schedule', 't_start') = 1;  // First time step to be solved, 1 corresponds to t000001 (t000000 will then be used for initial status of dynamic variables)
 
     mSettings('schedule', 't_end') =  mSettings('schedule', 't_start') + 24*%modelledDays% - 1; // Last time step to be included in the solve (may solve and output more time steps in case t_jump does not match)
 
@@ -39,18 +35,12 @@ if (mType('schedule'),
     mSettings('schedule', 't_jump') = 24;          // How many time steps the model rolls forward between each solve
 
     // Define length of data for proper circulation
-    if(%tsYear%>1980,
-        mSettings('schedule', 'dataLength') =  8760;
-    else 
-        mSettings('schedule', 'dataLength') =  min(mSettings('schedule', 't_start')-1 + 8760, 306815);
-    );
+    mSettings('schedule', 'dataLength') =  8760;
 
 
 * =============================================================================
 * --- Model Time Structure ----------------------------------------------------
 * =============================================================================
-
-t_invest(t) = no;
 
 * --- Define Samples ----------------------------------------------------------
 
@@ -254,14 +244,24 @@ if(%forecastNumber%=4,
 
 
 * --- Solver speed improvements -------------------------------
+    //available from v3.9 onwards
 
-    mSettings('schedule', 'reducedDummies') = 0;
-    mSettings('schedule', 'scalingMethod') = 2;
-    mSettings('schedule', 'automaticRoundings') = 1;
+    // Option to reduce the amount of dummy variables. 0 = off = default. 1 = automatic for unrequired dummies. 
+    // Values 2... remove also possibly needed dummies from N first hours (time steps) of the solve.
+    // Using value that ar larger than t_horizon drops all dummy variables from the solve. 
+    // Impacts vq_gen, vq_reserveDemand, vq_resMissing, vq_unitConstraint, and vq_userconstraint
+    // NOTE: Should be used only with well behaving models
+    // NOTE: this changes the shape of the problem and there are typically differences in the decimals of the solutions
+    // NOTE: It is the best to keep 0 here when editing and updating the model and drop the dummies only when running a stable model.      
+    mSettings('schedule', 'reducedDummies') = 1;  
+                       
+    // Scaling the model with a factor of 10^N. 0 = off = default. Accepted values 1-6.                                         
+    // This option might improve the model behaviour in case the model has "infeasibilities after unscaling" issue.
+    // It also might improve the solve time of well behaving model, but this is model specific and the option might also slow the model.
+    mSettings('schedule', 'scalingMethod') = 0; 
 
-    p_roundingTs('ts_influx_') = 1;
-    p_roundingTs('ts_cf_') = 4;
-    p_roundingTs('ts_node_') = 1;
+    // Automatic rounding of cost parameters, ts_influx, ts_node, ts_cf, ts_gnn, and ts_reserveDemand. 0 = off = default. 1 = on. 
+    mSettings('schedule', 'automaticRoundings') = 0; 
 
 
 ); // END if(mType)
