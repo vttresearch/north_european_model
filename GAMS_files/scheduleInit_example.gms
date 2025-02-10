@@ -242,6 +242,18 @@ if(%forecastNumber%=4,
     gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'length') = 48;
 
 
+* --- z-structure for superpositioned nodes ----------------------------------
+
+    // add the candidate periods to model
+    // no need to touch this part
+    // The set is mainly used in the 'invest' model
+    mz('schedule', z) = no;
+
+    // Mapping between typical periods (=samples) and the candidate periods (z).
+    // Assumption is that candidate periods start from z000 and form a continuous
+    // sequence.
+    // The set is mainly used in the 'invest' model
+    zs(z,s) = no;
 
 * --- Solver speed improvements -------------------------------
     //available from v3.9 onwards
