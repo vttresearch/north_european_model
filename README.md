@@ -173,42 +173,42 @@ Note: changes.inc does additional processing of input data, see the content and 
 [Back to top](#North-European-energy-system-model)
 
 The Model is run in two steps: 
-* preprocessTimeseries.gms handles certain heavier timeseries calculations by selecting the wanted year, amount of forecasts, etc. The file is located at backbone\north_european_model/ and installed as a part of the north European model
-* backbone.gms runs the actual optimization. the file is located at backbone\ and installed as a part of the Backbone
+* preprocessTimeseries.gms handles certain heavier timeseries calculations by selecting the wanted year, amount of forecasts, etc. The file is located at backbone\north_european_model and installed as a part of the North European model
+* backbone.gms runs the actual optimization. The file is located at the backbone root folder and installed as a part of Backbone.
 
 
 ### Timeseries preprocessing
 
-Run timeseries preprocessing from GAMS with following options
+Copy preprocessTimeseries.gms from backbone\north_european_model to backbone. Run preprocessTimeseries.gms from GAMS with the following options
 * **--input_file_excel** is a mandatory parameter for both defining the used input excel file name (e.g. bb_input1-3x.xlsx)
 * --modelYear [2025, 2030]. Default 2025. This parameter currently two options and impacts only district heating demand. Generation and transfer capacities for different model years are changed in the starthere.jl
 * --tsYear [0, 2011-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling. 
-* --input_dir=<directory>. Default input. Allows custom locations of input directory.
+* --input_dir=&ltdirectory>. Default input. Allows custom locations of input directory.
 
 
 Working command line options for preprocessTimeseries.gms would be, for example:
 
---input_file_excel=bb_input1-3x.xlsx --tsYear=2015 
---input_file_excel=bb_input1-3x.xlsx --tsYear=2015 --modelYear=2030
+	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 
+	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 --modelYear=2030
 
-Time series preprocessing writes ts_cf.gdx, ts_influx.gdx, and ts_node.gdx to input directory (c:\backbone\input\ in these instructions)
+The preprocessTimeseries.gms program writes ts_cf.gdx, ts_influx.gdx, and ts_node.gdx to input directory (c:\backbone\input\ in these instructions).
 
-The github repository contains timeseries-for-2015.cmd that can be placed to c:\backbone\north_european_model and run from file explorer
+The backbone\north_european_model folder contains timeseries-for-2015.cmd that can be run from file explorer. You can also copy it to the same folder and rename it, e.g. to timeseries-for-2015-myversion.cmd. Then you can edit it and run it without modifying a file that is tracked by git. Note that timeseries-for-2015.cmd assumes that north_european_model is located in the backbone root folder.
 
-*Note:* Timeseries preprocessing needs to be rerun only when changing timeseries year
+*Note:* preprocessTimeseries.gms needs to be rerun only when changing timeseries year.
 
-*Note:* preprocessTimeseries.gms calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent gams and manually add a hard coded file path to changes inc, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\47\csv2gdx ...`
+*Note:* preprocessTimeseries.gms calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent GAMS and manually add a hard coded file path to preprocessTimeseries.gms, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\47\csv2gdx ...`
 
 
 ### Running the optimization
 
-Run the model by running Backbone.gms in GAMS. The model supports the following command line option (use two hyphens in the beginning)
+Run the model by running Backbone.gms in GAMS. The model supports the following command line options (use two hyphens in the beginning)
 
 * **--input_file_excel** is a mandatory parameter for both defining the used input excel file name (e.g. bb_input1-3x.xlsx)
 * --modelledDays [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
-* --input_dir=<directory>. Default input. Allows custom locations of input directory.
+* --input_dir=&ltdirectory>. Default input. Allows custom locations of input directory.
 
 
 Working command line options for backbone.gms would be, for example:
