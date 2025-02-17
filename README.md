@@ -94,6 +94,10 @@ Time series are built in two steps: for VRE (wind, solar) and others (electricit
 
 The Julia script 'starthere.jl' in backbone\north_european_model folder runs three main functions 'convert_entsoe', 'convert_vre', and 'make_other_demands'. Check that all of these are active at the end of the file (not commented out).
 
+Note: each scenario currently needs a manual adjustment 
+* open backbone\north_european_model\starthere.jl
+* edit 'filenames["plantsourcefiles"]', 'filenames["linesourcefiles"]', 'scenario' and 'year'
+
 Run the script **starthere.jl**, e.g. by typing `julia` in command prompt in **backbone\north_european_model** folder and running the following commands:
 
 	using Pkg
