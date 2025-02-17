@@ -184,7 +184,7 @@ Copy preprocessTimeseries.gms from backbone\north_european_model to backbone. Ru
 * --modelYear [2025, 2030]. Default 2025. This parameter currently two options and impacts only district heating demand. Generation and transfer capacities for different model years are changed in the starthere.jl
 * --tsYear [0, 2011-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling. 
-* --input_dir=&ltdirectory>. Default input. Allows custom locations of input directory.
+* --input_dir=< directory >. Default input. Allows custom locations of input directory.
 
 
 Working command line options for preprocessTimeseries.gms would be, for example:
@@ -208,7 +208,7 @@ Run the model by running Backbone.gms in GAMS. The model supports the following 
 * **--input_file_excel** is a mandatory parameter for both defining the used input excel file name (e.g. bb_input1-3x.xlsx)
 * --modelledDays [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
-* --input_dir=&ltdirectory>. Default input. Allows custom locations of input directory.
+* --input_dir=< directory >. Default input. Allows custom locations of input directory.
 
 
 Working command line options for backbone.gms would be, for example:
