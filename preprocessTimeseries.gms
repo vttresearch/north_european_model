@@ -1,13 +1,13 @@
 $ontext
 * --------------------------------------------------------------------------------
-* Changes.inc for the Northern European model
+* PreprocessTimeseries.gms for the Northern European model
 * --------------------------------------------------------------------------------
 
 This file is created for Northern European Model (https://github.com/vttresearch/north_european_model)
-and should be placed in the Backbone input folder, see instructions from 'Run specification files' section
+and should be placed in the Backbone input folder, see instructions from 'Running Backbone' section
 of the Northern European Model readme.
 
-Contents 
+Contents
 - General settings
 - Set and parameter definitions for timeseries preprocessing
     - Sets, parameters, and scalars
@@ -59,10 +59,10 @@ $eolcom //
 Sets
     grid(*) "Forms of energy endogenously presented in the model"
     node(*) "Nodes maintain the energy balance or track exogenous commodities"
-    unit(*) "Set of generators, storages and loads"   
+    unit(*) "Set of generators, storages and loads"
     gn_tmp(grid, node) "temporary (grid, node) set used in the input data manipulation"
 
-    flow(*) "Flow based energy resources (time series)"    
+    flow(*) "Flow based energy resources (time series)"
     flowNode_tmp(flow, node) "temporary (flow, node) set used in the input data manipulation"
 
     s "samples" / s000 /
@@ -83,7 +83,7 @@ Parameters
     ts_influx_io(grid, f, t, node) "External power inflow/outflow during a time step (MWh/h) (reordered)"
     ts_cf_io(flow, f, t, node) "Available capacity factor time series (p.u. reordered)"
     ts_node_io(grid, param_gnBoundaryTypes, f, t, node) "Set node limits according to time-series form exogenous input (reordered)"
-    
+
     p_yearStarts(year) "First time steps of available years"
 
     ts_influx(grid, node, f, t)
@@ -104,10 +104,10 @@ $if not set tsYear $setglobal tsYear 2015
 $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%
 
-$if not set inputDir $setglobal inputDir input
-$if not set input_file_gdx $setglobal input_file_gdx 'inputData.gdx'  
-$if not set input_excel_index $setglobal input_excel_index 'INDEX' 
-$if not set input_excel_checkdate $setglobal input_excel_checkdate ''  
+$if not set input_dir $setglobal input_dir input
+$if not set input_file_gdx $setglobal input_file_gdx 'inputData.gdx'
+$if not set input_excel_index $setglobal input_excel_index 'INDEX'
+$if not set input_excel_checkdate $setglobal input_excel_checkdate ''
 
 
 
@@ -154,13 +154,44 @@ if(%tsYear%>1980,
 $ifthen exist '%input_dir%/%input_file_excel%'
     $$call 'gdxxrw Input="%input_dir%/%input_file_excel%" Output="%input_dir%/%input_file_gdx%" Index=%input_excel_index%! %input_excel_checkdate%'
 $elseif set input_file_excel
-    $$abort 'Did not find input data excel from the given location, check path and spelling!'    
+
+    $$abort 'Did not find input data excel from the given location, check path and spelling!'
+$else
+    $$abort 'Timeseries preprocessing needs --input_file_excel=<filename> to work!'
+$endif
+
+$ifthen exist '%input_dir%/bb_input_addData1.xlsx'
+    $$call 'gdxxrw Input="%input_dir%/bb_input_addData1.xlsx" Output="%input_dir%/bb_input_addData1.gdx" Index=%input_excel_index%! %input_excel_checkdate%'
+$endif
+
+$ifthen exist '%input_dir%/bb_input_addData2.xlsx'
+    $$call 'gdxxrw Input="%input_dir%/bb_input_addData2.xlsx" Output="%input_dir%/bb_input_addData2.gdx" Index=%input_excel_index%! %input_excel_checkdate%'
 $endif
 
 // reading only selected few tables required for time series preprocessing
-$ifthen exist '%input_dir%/%input_file_gdx%'  
+$ifthen exist '%input_dir%/%input_file_gdx%'
     // load input data
     $$gdxin  '%input_dir%/%input_file_gdx%'
+    $$loaddcm grid
+    $$loaddcm node
+    $$loaddcm flow
+    $$loaddcm unit
+    $$gdxin
+$endif
+
+$ifthen exist '%input_dir%/bb_input_addData1.gdx'
+    // load input data
+    $$gdxin  '%input_dir%/bb_input_addData1.gdx'
+    $$loaddcm grid
+    $$loaddcm node
+    $$loaddcm flow
+    $$loaddcm unit
+    $$gdxin
+$endif
+
+$ifthen exist '%input_dir%/bb_input_addData2.gdx'
+    // load input data
+    $$gdxin  '%input_dir%/bb_input_addData2.gdx'
     $$loaddcm grid
     $$loaddcm node
     $$loaddcm flow
@@ -231,7 +262,7 @@ $ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_90p failed! Check that your i
 // convert ts_cf_io to ts_cf
 
 // -1 as t000000 is the first one, but we want to map to t000001
-firstT = firstT-1 ;  
+firstT = firstT-1 ;
 
 // pick only selected values if modelling a specific times series year
 ts_cf(flow, node, f, t - firstT) = ts_cf_io(flow, f, t, node)$t_selectedYear(t) ;
@@ -432,7 +463,7 @@ $endif
 
 * --- forecasts, generation limit nodes, ts_influx_io ----------
 
-* no forecasts 
+* no forecasts
 
 
 
@@ -451,7 +482,7 @@ $endif
 
 * --- forecasts, other demands, ts_influx_io ----------
 
-* no forecasts 
+* no forecasts
 
 
 
@@ -517,8 +548,8 @@ $endif
 
 * --- realization, reference, ts_node_io -----------------
 
-// reading historical levels data reference. 
-// Used only to generate hydro storage starting levels then cleared. 
+// reading historical levels data reference.
+// Used only to generate hydro storage starting levels then cleared.
 
 $call 'csv2gdx %input_dir%/bb_ts_historical_levels.csv id=ts_node_io index=1,2,3,4 values=(5..LastCol) useHeader=y output="%input_dir%/bb_ts_historical_levels.gdx" checkDate=TRUE'
 $ife %system.errorlevel%>0 $abort csv2gdx ts_historical_levels (hydro) failed! Check that your input file is valid and that your file path and file name are correct.
@@ -549,29 +580,29 @@ option clear = ts_node_io;
 
 * --- adding missing forecasts if necessary ---------
 
-// no forecast data for hydro storage limits, but creating higher downwardLimit 
-// and lower upwardlimit to forecasts, helps the model to avoid over using hydro storages.  
+// no forecast data for hydro storage limits, but creating higher downwardLimit
+// and lower upwardlimit to forecasts, helps the model to avoid over using hydro storages.
 
 // Creating f01 (central) from realization by upwardlimit*0.98 and downwardLimit*1.02
 // Creating f02 (low) from realization by upwardlimit*0.96 and downwardLimit*1.04
 // Creating f03 (high) from realization by upwardlimit*1 and downwardLimit*1
 
 if(%forecastNumber% >= 2,
-    ts_node(grid, node, 'upwardLimit', 'f01', t)$ts_node(grid, node, 'upwardLimit', 'f00', t) 
+    ts_node(grid, node, 'upwardLimit', 'f01', t)$ts_node(grid, node, 'upwardLimit', 'f00', t)
         = ts_node(grid, node, 'upwardLimit', 'f00', t) * 0.98;
-    ts_node(grid, node, 'downwardLimit', 'f01', t)$ts_node(grid, node, 'downwardLimit', 'f00', t) 
+    ts_node(grid, node, 'downwardLimit', 'f01', t)$ts_node(grid, node, 'downwardLimit', 'f00', t)
         = ts_node(grid, node, 'downwardLimit', 'f00', t) * 1.02;
 );
 
 if(%forecastNumber% >= 4,
-    ts_node(grid, node, 'upwardLimit', 'f02', t)$ts_node(grid, node, 'upwardLimit', 'f00', t) 
+    ts_node(grid, node, 'upwardLimit', 'f02', t)$ts_node(grid, node, 'upwardLimit', 'f00', t)
         = ts_node(grid, node, 'upwardLimit', 'f00', t) * 0.96;
-    ts_node(grid, node, 'downwardLimit', 'f02', t)$ts_node(grid, node, 'downwardLimit', 'f00', t) 
+    ts_node(grid, node, 'downwardLimit', 'f02', t)$ts_node(grid, node, 'downwardLimit', 'f00', t)
         = ts_node(grid, node, 'downwardLimit', 'f00', t) * 1.04;
 
-    ts_node(grid, node, 'upwardLimit', 'f03', t)$ts_node(grid, node, 'upwardLimit', 'f00', t) 
+    ts_node(grid, node, 'upwardLimit', 'f03', t)$ts_node(grid, node, 'upwardLimit', 'f00', t)
         = ts_node(grid, node, 'upwardLimit', 'f00', t) * 1;
-    ts_node(grid, node, 'downwardLimit', 'f03', t)$ts_node(grid, node, 'downwardLimit', 'f00', t) 
+    ts_node(grid, node, 'downwardLimit', 'f03', t)$ts_node(grid, node, 'downwardLimit', 'f00', t)
         = ts_node(grid, node, 'downwardLimit', 'f00', t) * 1;
 );
 

@@ -110,6 +110,12 @@ The package contains functions for building
 
 Run the script **starthere.jl** in backbone\north_european_model folder, e.g. by typing `julia` in command prompt in **backbone\north_european_model** folder and running the following commands:
 
+Note: each scenario currently needs a manual adjustment 
+* open backbone\north_european_model\starthere.jl
+* edit 'filenames["plantsourcefiles"]', 'filenames["linesourcefiles"]', 'scenario' and 'year'
+
+Run the script **starthere.jl**, e.g. by typing `julia` in command prompt in **backbone\north_european_model** folder and running the following commands:
+
 	using Pkg
 	Pkg.activate(".") 
     Pkg.instantiate()
@@ -194,6 +200,9 @@ Run preprocessTimeseries.gms from GAMS with the following options
 
 Working command line options for preprocessTimeseries.gms would be, for example: `--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 `
 
+
+	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 
+	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 --modelYear=2030
 
 The preprocessTimeseries.gms program writes ts_cf.gdx, ts_influx.gdx, and ts_node.gdx to input directory (c:\backbone\input\ in these instructions).
 
