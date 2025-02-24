@@ -1,3 +1,32 @@
+# All folders except
+/*/
+!/GAMS_files/
+!/input/
+!/inputFiles/
+!/manual_additions/
+!/output/
+!/src/
+
+# python specific subfolders
+/*/__pycache__
+
+# GAMS specific
+*.gdx
+*.gpr
+*.gsp
+*.lst
+*.lxi
+*.~*
+*.tmp
+*.put
+*.log*
+*.gchf
+*.lic
+
+# GAMS specific in subfolders
+/*/*.~*
+/*/*.tmp
+/*/*.lic
 
 # kde directory files
 .directory
