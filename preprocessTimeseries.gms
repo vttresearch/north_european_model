@@ -154,9 +154,7 @@ if(%tsYear%>1980,
 $ifthen exist '%input_dir%/%input_file_excel%'
     $$call 'gdxxrw Input="%input_dir%/%input_file_excel%" Output="%input_dir%/%input_file_gdx%" Index=%input_excel_index%! %input_excel_checkdate%'
 $elseif set input_file_excel
-    $$abort 'Did not find input data excel from the given location, check path and spelling!'
-$else
-    $$abort 'Timeseries preprocessing needs --input_file_excel=<filename> to work!'     
+    $$abort 'Did not find input data excel from the given location, check path and spelling!'    
 $endif
 
 // reading only selected few tables required for time series preprocessing

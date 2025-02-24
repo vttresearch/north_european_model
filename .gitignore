@@ -1,18 +1,14 @@
 
-#entso-e VRE files which are used as input
-input/**/PECD*
-
-#output files
-#output/
-
 # kde directory files
 .directory
-
-# Byte-compiled / optimized / DLL files
-__pycache__/
+.vscode
 
 #temporary files
 *~lock*
 
-# configuration files
-starthere_my.jl
+# certain large input files instructed for separate download
+inputfiles/timeseries/elec_2030_National_Trends.xlsx
+inputfiles/timeseries/elec_2040_National_Trends.xlsx
+inputfiles/timeseries/PECD-MAF2019-wide-PV.csv
+inputfiles/timeseries/PECD-MAF2019-wide-WindOffshore.csv
+inputfiles/timeseries/PECD-MAF2019-wide-WindOnshore.csv
