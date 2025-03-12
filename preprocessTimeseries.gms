@@ -65,11 +65,13 @@ Sets
     flow(*) "Flow based energy resources (time series)"
     flowNode_tmp(flow, node) "temporary (flow, node) set used in the input data manipulation"
 
-    s "samples" / s000 /
+    //s "samples" / s000 /
     f "forecasts" / f00 * f03 /
     t "timesteps" / t000000 * t400000 /
-    t_selectedYear(t) "Time steps selected by user in --tsYear and --modelledDays command line parameters"
-    year "available model time series years" / y0001 * y2022 /
+    t_selected(t) "Time steps selected by user in --tsYear and --modelledDays command line parameters"
+    year "available model time series years" / y0001 * y2050 /
+
+    year_starts(year, t) "The first t of each year in timeseries data"
 
     param_gnBoundaryTypes "Types of boundaries that can be set for a node with balance" /
         upwardLimit      "Absolute maximum state of the node (MWh, unless modified by energyStoredPerUnitOfState parameter)"
@@ -80,15 +82,17 @@ Sets
 ;
 
 Parameters
-    ts_influx_io(grid, f, t, node) "External power inflow/outflow during a time step (MWh/h) (reordered)"
-    ts_cf_io(flow, f, t, node) "Available capacity factor time series (p.u. reordered)"
-    ts_node_io(grid, param_gnBoundaryTypes, f, t, node) "Set node limits according to time-series form exogenous input (reordered)"
-
-    p_yearStarts(year) "First time steps of available years"
-
-    ts_influx(grid, node, f, t)
     ts_cf(flow, node, f, t)
+    ts_influx(grid, node, f, t)
     ts_node(grid, node, param_gnBoundaryTypes, f, t)
+
+    ts_cf_singleYear(flow, node, f, t)
+    ts_influx_singleYear(grid, node, f, t)
+    ts_node_singleYear(grid, node, param_gnBoundaryTypes, f, t)
+
+    ts_cf_tmp(flow, node, f, t)
+    ts_influx_tmp(grid, node, f, t)
+    ts_node_tmp(grid, node, param_gnBoundaryTypes, f, t)
 ;
 
 Scalars
@@ -99,7 +103,6 @@ Scalars
 * --- Default values for command line parameters if not given ------
 
 // set values global to be available also when reading other files
-$if not set modelYear $setglobal modelYear 2025
 $if not set tsYear $setglobal tsYear 2015
 $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%
@@ -113,35 +116,25 @@ $if not set input_excel_checkdate $setglobal input_excel_checkdate ''
 
 * --- Listing first time steps of each year and populating selectedYear --------------
 
-// list the first time steps of the modelled years
-p_yearStarts('y2004') = 192841;
-p_yearStarts('y2005') = 201625;
-p_yearStarts('y2006') = 210385;
-p_yearStarts('y2007') = 219145;
-p_yearStarts('y2008') = 227905;
-p_yearStarts('y2009') = 236689;
-p_yearStarts('y2010') = 245449;
-p_yearStarts('y2011') = 254209;
-p_yearStarts('y2012') = 262993;
-p_yearStarts('y2013') = 271753;
-p_yearStarts('y2014') = 280513;
-p_yearStarts('y2015') = 289273;
-p_yearStarts('y2016') = 298057;
-p_yearStarts('y2017') = 306817;
-p_yearStarts('y2018') = 315577;
-p_yearStarts('y2019') = 324337;
+// read year_starts.gdx from input folder
+$ifthen exist '%input_dir%/year_starts.gdx'
+    // load input data
+    $$gdxin  '%input_dir%/year_starts.gdx'
+    $$loaddcm year_starts
+    $$gdxin
+$else
+    $$abort "Could not find year_starts.gdx from the input directory!!!"
+$endif
 
-// if user has given tsYear, compile t_selectedYear
-if(%tsYear%>1980,
-    // picking the first time step of the selected year to firstT variable
-    firstT = sum(year $ (ord(year) = %tsYear%), p_yearStarts(year));
+// compile t_selected
+// picking the first time step of the selected year to firstT variable
+firstT = sum(year_starts('y%tsYear%', t), ord(t));
 
-    // Determine time steps in the selected year to construct a year starting at t000001
-    t_selectedYear(t)${ ord(t) >= (firstT + 1)
-                        and ord(t) <= (firstT + 8760)
-                      }
-        = yes;
-);
+// Determine time steps in the selected year to reconstruct a year starting at t000001
+t_selected(t)${ ord(t) >= (firstT)
+                    and ord(t) <= (firstT + 8759)
+                  }
+    = yes;
 
 
 * --------------------------------------------------------------------------------
@@ -154,7 +147,6 @@ if(%tsYear%>1980,
 $ifthen exist '%input_dir%/%input_file_excel%'
     $$call 'gdxxrw Input="%input_dir%/%input_file_excel%" Output="%input_dir%/%input_file_gdx%" Index=%input_excel_index%! %input_excel_checkdate%'
 $elseif set input_file_excel
-
     $$abort 'Did not find input data excel from the given location, check path and spelling!'
 $else
     $$abort 'Timeseries preprocessing needs --input_file_excel=<filename> to work!'
@@ -202,78 +194,50 @@ $endif
 
 
 
-
-
-
 * --------------------------------------------------------------------------------
 * ts_cf
 * --------------------------------------------------------------------------------
 
-* onshore, offshore, and PV are all in the same files
+* onshore, offshore, and PV
 
-* --- realization, ts_cf_io ----------------------------------
+* --- realization ----------------------------------
 
-$call 'csv2gdx %input_dir%/bb_ts_cf_io.csv id=ts_cf_io index=1,2,3 values=(4..LastCol) useHeader=y output="%input_dir%/bb_ts_cf_io.gdx" checkDate=TRUE'
-$ife %system.errorlevel%>0 $abort  csv2gdx failed.
+$ifthen exist '%input_dir%/ts_cf_PV.gdx'
+    $$gdxin  '%input_dir%/ts_cf_PV.gdx'
+    $$loaddc ts_cf
+    $$gdxin
+$endif
 
-* Load ts_cf_io
-$ifthen exist '%input_dir%/bb_ts_cf_io.gdx'
-    $$gdxin  '%input_dir%/bb_ts_cf_io.gdx'
-    $$loaddc ts_cf_io
+$ifthen exist '%input_dir%/ts_cf_wind_onshore.gdx'
+    $$gdxin  '%input_dir%/ts_cf_wind_onshore.gdx'
+    $$loaddc ts_cf
+    $$gdxin
+$endif
+
+$ifthen exist '%input_dir%/ts_cf_wind_offshore.gdx'
+    $$gdxin  '%input_dir%/ts_cf_wind_offshore.gdx'
+    $$loaddc ts_cf
     $$gdxin
 $endif
 
 
-* --- forecasts, ts_cf_io ------------------------------------
-
-$ifThenE %forecastNumber%>1
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx.exe %input_dir%/bb_ts_cf_io_50p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol) useHeader=y output="%input_dir%/bb_ts_cf_io_50p.gdx" checkDate=TRUE'
-    // Load ts_cf_io
-    $$gdxin  '%input_dir%/bb_ts_cf_io_50p.gdx'
-    $$loaddcm ts_cf_io
-    $$gdxin
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_50p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_10p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol) useHeader=y output="%input_dir%/bb_ts_cf_io_10p.gdx" checkDate=TRUE'
-    // Load ts_cf_io
-    $$gdxin  '%input_dir%/bb_ts_cf_io_10p.gdx'
-    $$loaddcm ts_cf_io
-    $$gdxin
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_10p failed! Check that your input file is valid and that your file path and file name are correct.
-
-$ifThenE %forecastNumber%>3
-    // convert csv to gdx with correct id
-    $$call 'csv2gdx %input_dir%/bb_ts_cf_io_90p.csv id=ts_cf_io index=1,2,3 values=(4..LastCol) useHeader=y output="%input_dir%/bb_ts_cf_io_90p.gdx" checkDate=TRUE'
-    // Load ts_cf_io
-    $$gdxin  '%input_dir%/bb_ts_cf_io_90p.gdx'
-    $$loaddcm ts_cf_io
-    $$gdxin
-$endif
-$ife %system.errorlevel%>0 $abort csv2gdx ts_cf_io_90p failed! Check that your input file is valid and that your file path and file name are correct.
-
-
-* --- creating ts_cf -------------------------------------
-
-// convert ts_cf_io to ts_cf
-
-// -1 as t000000 is the first one, but we want to map to t000001
-firstT = firstT-1 ;
+* --- reducing ts_cf to a single year -------------------------------------
 
 // pick only selected values if modelling a specific times series year
-ts_cf(flow, node, f, t - firstT) = ts_cf_io(flow, f, t, node)$t_selectedYear(t) ;
+// +1 as t000000 is the first one, but we want to map to t000001
+ts_cf_tmp(flow, node, f, t - firstT+1) = ts_cf(flow, node, f, t)$t_selected(t) ;
 
 // clear the large ts table
-option clear = ts_cf_io;
+option clear = ts_cf;
+
+ts_cf(flow, node, f, t)$ts_cf_tmp(flow, node, f, t) = ts_cf_tmp(flow, node, f, t)
 
 
 * --- adding missing forecasts if necessary ---------
 
-// if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
+// read forecast data
+
+
 
 // if 4 forecasts, make sure that f02 and f03 data exists when there is f01 data
 if(%forecastNumber% >= 4,
@@ -290,6 +254,7 @@ if(%forecastNumber% >= 4,
     );
 );
 
+// if 2 forecasts, scheduleInit activates forecasts only when there is data in f01
 
 
 
@@ -492,7 +457,7 @@ $endif
 $ifthen set convert_ts_influx
     if(%tsYear%>1980,
         // pick only selected values if modelling a specific times series year
-        ts_influx(grid, node, f, t - firstT) = ts_influx_io(grid, f, t, node)$t_selectedYear(t);
+        ts_influx(grid, node, f, t - firstT) = ts_influx_io(grid, f, t, node)$t_selected(t);
         // clear the large ts table if modelling only a specific time series year
         option clear = ts_influx_io;
     else
@@ -571,7 +536,7 @@ $endif
 // convert ts_node_io to ts_node
 
 // pick only selected values if modelling a specific times series year
-ts_node(grid, node, param_gnBoundaryTypes, f, t-firstT) = ts_node_io(grid, param_gnBoundaryTypes, f, t, node)$t_selectedYear(t);
+ts_node(grid, node, param_gnBoundaryTypes, f, t-firstT) = ts_node_io(grid, param_gnBoundaryTypes, f, t, node)$t_selected(t);
 
 // clear the large ts table
 option clear = ts_node_io;

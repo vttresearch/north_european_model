@@ -6,6 +6,7 @@
 !/manual_additions/
 !/output/
 !/src/
+!/src_files/
 
 # python specific subfolders
 /*/__pycache__
@@ -41,3 +42,8 @@ inputfiles/timeseries/elec_2040_National_Trends.xlsx
 inputfiles/timeseries/PECD-MAF2019-wide-PV.csv
 inputfiles/timeseries/PECD-MAF2019-wide-WindOffshore.csv
 inputfiles/timeseries/PECD-MAF2019-wide-WindOnshore.csv
+src_files/timeseries/elec_2030_National_Trends.xlsx
+src_files/timeseries/elec_2040_National_Trends.xlsx
+src_files/timeseries/PECD-MAF2019-wide-PV.csv
+src_files/timeseries/PECD-MAF2019-wide-WindOffshore.csv
+src_files/timeseries/PECD-MAF2019-wide-WindOnshore.csv

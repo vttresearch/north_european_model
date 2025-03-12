@@ -14,23 +14,23 @@ class elec_demand_TYNDP2024:
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
         scenario (str): Scenario to filter the demand file.
-        s_year (int): Target year for scaling the profiles.
+        scenario_year (int): Target year for scaling the profiles.
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date, df_annual_demands, s_year):
+    def __init__(self, input_folder, country_codes, start_date, end_date, df_annual_demands, scenario_year):
         self.input_folder = input_folder
         self.country_codes = country_codes
         self.start_date = start_date
         self.end_date = end_date
         self.df_annual_demands = df_annual_demands
-        self.s_year = s_year
+        self.scenario_year = scenario_year
 
         # Extract start and end years from the provided dates.
         self.startyear = pd.to_datetime(start_date).year
         self.endyear = pd.to_datetime(end_date).year
 
-        # Choose the appropriate electricity profile file based on s_year.
-        if self.s_year <= 2035:
+        # Choose the appropriate electricity profile file based on scenario_year.
+        if self.scenario_year <= 2035:
             self.input_file = os.path.join(self.input_folder, 'elec_2030_National_Trends.xlsx')
         else:
             self.input_file = os.path.join(self.input_folder, 'elec_2040_National_Trends.xlsx')
@@ -42,11 +42,11 @@ class elec_demand_TYNDP2024:
     def get_values_from_excel(self):
         """
         Reads the Excel file for each country, melts the data, and pivots the DataFrame so that each row 
-        is identified by a unique combination of Year, Month, Day, and Hour, with each country's values 
+        is identified by a unique combination of year, month, day, and hour, with each country's values 
         in its own column.
 
         Returns:
-            pivot_df (pd.DataFrame): DataFrame with columns ['Year', 'Month', 'Day', 'Hour', ...country columns...]
+            pivot_df (pd.DataFrame): DataFrame with columns ['year', 'month', 'day', 'hour', ...country columns...]
         """
         import pandas as pd
 
@@ -70,20 +70,20 @@ class elec_demand_TYNDP2024:
             df = df.drop(labels='Date', axis=1)
 
             # Rename the first three columns to: Month, Day, Hour.
-            df.rename(columns={df.columns[0]: 'Month', 
-                               df.columns[1]: 'Day', 
-                               df.columns[2]: 'Hour'}, inplace=True)
+            df.rename(columns={df.columns[0]: 'month', 
+                               df.columns[1]: 'day', 
+                               df.columns[2]: 'hour'}, inplace=True)
             # The remaining columns are the values for different years.
             year_cols = df.columns[3:]
             # Melt the DataFrame so that each row corresponds to a specific year and time.
-            df_melted = df.melt(id_vars=['Month', 'Day', 'Hour'], 
+            df_melted = df.melt(id_vars=['month', 'day', 'hour'], 
                                 value_vars=year_cols,
-                                var_name='Year', 
-                                value_name='Value')
-            # Convert the "Year" column to integer.
-            df_melted['Year'] = df_melted['Year'].astype(int)
+                                var_name='year', 
+                                value_name='value')
+            # Convert the "year" column to integer.
+            df_melted['year'] = df_melted['year'].astype(int)
             # Add a column to denote which country this row is from.
-            df_melted['Country'] = country
+            df_melted['country'] = country
 
             melted_list.append(df_melted)
 
@@ -92,9 +92,9 @@ class elec_demand_TYNDP2024:
 
         # Combine the melted DataFrames and pivot.
         combined_df = pd.concat(melted_list, ignore_index=True)
-        pivot_df = combined_df.pivot_table(index=['Year', 'Month', 'Day', 'Hour'], 
-                                             columns='Country', 
-                                             values='Value',
+        pivot_df = combined_df.pivot_table(index=['year', 'month', 'day', 'hour'], 
+                                             columns='country', 
+                                             values='value',
                                              aggfunc='first').reset_index()
         return pivot_df
 
@@ -108,7 +108,7 @@ class elec_demand_TYNDP2024:
           - Reindexing to a full hourly datetime index defined by self.start_date and self.end_date.
 
         Args:
-            pivot_df (pd.DataFrame): DataFrame with columns ['Year', 'Month', 'Day', 'Hour', ...country columns...]
+            pivot_df (pd.DataFrame): DataFrame with columns ['year', 'month', 'day', 'hour', ...country columns...]
 
         Returns:
             result_df (pd.DataFrame): Final DataFrame indexed by a full hourly datetime index.
@@ -116,10 +116,10 @@ class elec_demand_TYNDP2024:
         
         def adjust_date(row):
             # Adjust month (Excel months are zero-indexed).
-            y = int(row['Year'])
-            m = int(row['Month']) + 1
-            d = int(row['Day'])
-            h = int(row['Hour'])
+            y = int(row['year'])
+            m = int(row['month']) + 1
+            d = int(row['day'])
+            h = int(row['hour'])
             # For leap years, if month is after February, shift the day by -1.
             if calendar.isleap(y) and m > 2:
                 d = d - 1
@@ -129,19 +129,19 @@ class elec_demand_TYNDP2024:
             ts = pd.Timestamp(year=y, month=m, day=d, hour=h)
 
             # If the row represents December 31 in a leap year, duplicate the timestamp.
-            if calendar.isleap(y) and int(row['Month']) == 11 and int(row['Day']) == calendar.monthrange(y, m)[1]:
+            if calendar.isleap(y) and int(row['month']) == 11 and int(row['day']) == calendar.monthrange(y, m)[1]:
                 extra_ts = ts + pd.Timedelta(days=1)
                 return [ts, extra_ts]
 
             return [ts]
 
         # Apply the date adjustment once per row.
-        input_df['Datetime'] = input_df.apply(adjust_date, axis=1)
+        input_df['datetime'] = input_df.apply(adjust_date, axis=1)
         # Explode rows with multiple timestamps.
-        input_df = input_df.explode('Datetime')
-        input_df = input_df.dropna(subset=['Datetime'])
+        input_df = input_df.explode('datetime')
+        input_df = input_df.dropna(subset=['datetime'])
         # Set the datetime as the index and sort.
-        input_df = input_df.set_index('Datetime').sort_index()
+        input_df = input_df.set_index('datetime').sort_index()
 
         # Create a full hourly index for the defined date range.
         full_index = pd.date_range(self.start_date, self.end_date, freq='60min')
@@ -185,8 +185,6 @@ class elec_demand_TYNDP2024:
     
 
     def build_demands(self, df_profiles_norm, df_annual_demands):
-        # Convert all column names to lowercase.
-        df_annual_demands.columns = df_annual_demands.columns.str.lower()
 
         # Create a new DataFrame to store the computed profiles.
         df_profiles_result = pd.DataFrame(index=df_profiles_norm.index)
@@ -233,7 +231,7 @@ class elec_demand_TYNDP2024:
                 A = annual_demand * (1 - constant_share)
                 B = annual_demand * constant_share / 8760
 
-                #print(f"      {col_name}.. {round(annual_demand/10**6, 1)} TWh/year")
+                #print(f"      {col_name}.. {round(annual_demand/10**6, 1)} twh/year")
                 
                 # Compute the new profile using the base profile from df_profiles_norm.
                 df_profiles_result[col_name] = A * df_profiles_norm[country] + B
@@ -274,24 +272,24 @@ if __name__ == '__main__':
     ]
     start_date = '1982-01-01 00:00:00'
     end_date = '2021-01-01 00:00:00'
-    # Example scenario and s_year
+    # Example scenario and scenario_year
     scenario = 'National Trends'
-    s_year = 2025 
+    scenario_year = 2025 
 
     # Constructed demand data for testing
     annual_demands = {
-        'Country': ['FI00', 'FR00'],
-        'Grid': ['elec', 'Elec'],
-        'Scenario': ['National Trends', 'National Trends'],
-        'Year': [2025, 2025],
-        'MWh/year': [10**8, 10**9],
-        'Constant_share': [0.9, 0]
+        'country': ['FI00', 'FR00'],
+        'grid': ['elec', 'Elec'],
+        'scenario': ['National Trends', 'National Trends'],
+        'tear': [2025, 2025],
+        'twh/year': [10**5, 10**6],
+        'constant_share': [0.9, 0]
         }
 
     df_annual_demands = pd.DataFrame(annual_demands)
 
     # Create an instance of elec_demand_ts and run the processing.
-    processor = elec_demand_TYNDP2024(input_folder, country_codes, start_date, end_date, df_annual_demands, s_year)
+    processor = elec_demand_TYNDP2024(input_folder, country_codes, start_date, end_date, df_annual_demands, scenario_year)
     summary_df = processor.run()
 
     # Ensure the output directory exists.

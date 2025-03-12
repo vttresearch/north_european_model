@@ -151,9 +151,9 @@ Open Miniconda Prompt and activate the northEuropeModel environment (`conda acti
 
 * Go to folder **backbone\north_european_model** (for example, `cd c:\backbone\north_european_model`)
 * Run **build_input_date.py** by typing (`python build_input_data.py inputFiles config_NT2025.ini`) 
-* Output gdx files are written to **'backbone\north_european_model\inputData_National Trends_2025'** folder. Copy these files to **backbone\input**
+* Output gdx files are written to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
 
-At the time of writing, the total size of timeseries files is about Mb and the time of generating timeseries is around 3 minutes. 
+At the time of writing, the total size of created timeseries files is about 400 Mb and the time of generating timeseries is around 3 minutes. 
 
 Python functions to build input data is called as _python build_input_data.py <input_dir> <config.ini>_
 	* The input directory in repository is **inputFiles**
@@ -161,6 +161,7 @@ Python functions to build input data is called as _python build_input_data.py <i
 * users can create their own conversions with the examples in config_NT2025.ini
 * processed files are written to c:\Backbone\north_european_model\<output_folder>, where
 	* output folder is a combination of <output_folder_prefix>_<scenario>_<year> defined in the called config file
+
 
 
 ### Copying run specification files
@@ -198,11 +199,11 @@ Run preprocessTimeseries.gms from GAMS with the following options
 * --input_dir=directory. Default 'input'. Allows custom locations of input directory.
 
 
-Working command line options for preprocessTimeseries.gms would be, for example: `--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 `
-
+Working command line options for preprocessTimeseries.gms would be, for example: 
 
 	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 
-	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 --modelYear=2030
+	--input_dir="inputData_National Trends_2025" --input_file_excel=bb_input1-3x.xlsx --tsYear=2015 
+
 
 The preprocessTimeseries.gms program writes ts_cf.gdx, ts_influx.gdx, and ts_node.gdx to input directory (c:\backbone\input\ in these instructions).
 
