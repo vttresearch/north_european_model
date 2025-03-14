@@ -9,23 +9,25 @@ import calendar
 
 
 class create_timeseries:
-    def __init__(self, timeseries_specs, run_start, input_folder, output_folder, start_date, end_date,
-                 country_codes, df_annual_demands, scenario, scenario_year, write_csv_files=False):
+    def __init__(self, timeseries_specs, input_folder, output_folder, 
+                 start_date, end_date, country_codes, scenario, scenario_year, 
+                 df_annual_demands, log_start, write_csv_files=False
+                 ):
+        self.timeseries_specs = timeseries_specs
         self.input_folder = os.path.join(input_folder, "timeseries")
         self.output_folder = output_folder
         self.start_date = pd.to_datetime(start_date)
         self.end_date = pd.to_datetime(end_date)
         self.country_codes = country_codes
-        self.df_annual_demands = df_annual_demands
         self.scenario = scenario
         self.scenario_year = scenario_year
-        self.run_start = run_start
+        self.df_annual_demands = df_annual_demands
+        self.log_start = log_start
         self.write_csv_files = write_csv_files
-        self.timeseries_specs = timeseries_specs
 
 
     def log_time(self, message):
-        elapsed = time.perf_counter() - self.run_start
+        elapsed = time.perf_counter() - self.log_start
         print(f"[{elapsed:0.2f} s] {message}")
 
     def trim_summary(self, summary_df, round_precision=0):
@@ -307,7 +309,7 @@ class create_timeseries:
             country = row["country"]
             grid = row["grid"]
             node_suffix = row.get("node_suffix", "")
-            # Build node value only if node_suffix is provided
+            # Build node name <country>_<grid> or <country>_<grid>_<node_suffix>
             if pd.notna(node_suffix) and str(node_suffix).strip() != "":
                 node = f"{country}_{grid}_{node_suffix}"
             else:

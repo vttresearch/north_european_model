@@ -17,17 +17,21 @@
 *.gsp
 *.lst
 *.lxi
-*.~*
 *.tmp
 *.put
 *.log*
 *.gchf
 *.lic
-
-# GAMS specific in subfolders
-/*/*.~*
-/*/*.tmp
 /*/*.lic
+
+# Temporary files 
+*.~*
+*~$*
+*.tmp*
+/*/*.~*
+/*/*~$*
+/*/*.tmp
+
 
 # kde directory files
 .directory
