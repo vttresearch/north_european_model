@@ -31,7 +31,33 @@ from src.create_timeseries import create_timeseries
 # ------------------------------------------------------
 # Functions to merge input excels, carry a quality check, and simplify the code by calling these both via an aggregate fucntion
 # ------------------------------------------------------
-def merge_excel_files(excel_files, sheet_name_prefix):
+
+def process_dataset(files, prefix, isMandatory=True):
+    """
+    Merge excel files and perform a quality check for a given dataset.
+    
+    Parameters:
+        files (list): List of file paths.
+        prefix (str): A string prefix to be used for the dataset.
+    
+    Returns:
+        DataFrame: The processed DataFrame after merging and quality check.
+    """
+    try:
+        df = merge_excel_files(files, prefix, isMandatory)
+    except (FileNotFoundError, ValueError) as e:
+        print(e)
+        sys.exit(1)
+    
+    try:
+        df = quality_check(df, prefix)
+    except (TypeError, ValueError) as e:
+        print(e)
+        sys.exit(1)
+    
+    return df
+
+def merge_excel_files(excel_files, sheet_name_prefix, isMandatory=True):
     """
     Merges multiple Excel files by:
       1. Reading sheets starting with sheet_name_prefix from each file.
@@ -61,7 +87,7 @@ def merge_excel_files(excel_files, sheet_name_prefix):
         sheet_names = [sheet for sheet in excel_file.sheet_names if sheet.lower().startswith(sheet_name_prefix.lower())]
 
         # Raise ValueError if no matching sheet is found
-        if not sheet_names:
+        if isMandatory and not sheet_names:
             raise ValueError(f"Excel file '{file_name}' does not contain any sheet starting with '{sheet_name_prefix}'.")
         
         # Process each matching sheet individually
@@ -113,33 +139,6 @@ def quality_check(df_input, df_identifier):
     return df_input
 
 
-def process_dataset(files, prefix):
-    """
-    Merge excel files and perform a quality check for a given dataset.
-    
-    Parameters:
-        files (list): List of file paths.
-        prefix (str): A string prefix to be used for the dataset.
-    
-    Returns:
-        DataFrame: The processed DataFrame after merging and quality check.
-    """
-    try:
-        df = merge_excel_files(files, prefix)
-    except (FileNotFoundError, ValueError) as e:
-        print(e)
-        sys.exit(1)
-    
-    try:
-        df = quality_check(df, prefix)
-    except (TypeError, ValueError) as e:
-        print(e)
-        sys.exit(1)
-    
-    return df
-
-
-
 # ------------------------------------------------------
 # Smaller utility functions
 # ------------------------------------------------------
@@ -148,7 +147,6 @@ def log_time(message, log_start):
     # small helper function used to track the progress
     elapsed = time.perf_counter() - log_start
     print(f"[{elapsed:0.2f} s] {message}")
-
 
 def keep_last_occurance(df_input, key_columns=None):
     # If key_columns is not provided, default to all columns except 'value'
@@ -175,6 +173,7 @@ def filter_df_whitelist(df_input, df_name, filters):
         filters (dict): Dictionary where keys are column names and values are the desired filter values.
                         For example: {'scenario': 'National Trends', 'year': 2025}. 
                         For example: {'scenario': ['National Trends', 'Global Ambition'], 'year': [2025, 2030]}.
+                        Exception: Always accept scenario all and year 1
         df_name (str): Name of the DataFrame (used in exception messages).
     """
     # Check that all filter columns exist in the DataFrame
@@ -185,21 +184,23 @@ def filter_df_whitelist(df_input, df_name, filters):
     # Apply the filters iteratively
     df_filtered = df_input.copy()
     for col, val in filters.items():
-        if isinstance(val, list):
-            if pd.api.types.is_string_dtype(df_filtered[col]):
-                # Convert both the column and the list values to lower case for a case-insensitive comparison
-                lowered_vals = [v.lower() for v in val if isinstance(v, str)]
-                df_filtered = df_filtered[df_filtered[col].str.lower().isin(lowered_vals)]
-            else:
-                df_filtered = df_filtered[df_filtered[col].isin(val)]
-        else:
-            # If the column contains strings and the filter value is a string, do a case-insensitive comparison
-            if pd.api.types.is_string_dtype(df_filtered[col]) and isinstance(val, str):
-                df_filtered = df_filtered[df_filtered[col].str.lower() == val.lower()]
-            else:
-                df_filtered = df_filtered[df_filtered[col] == val]
-    return df_filtered
+        # Convert a single value to a list of one item
+        if not isinstance(val, list):
+            val = [val]
 
+        # Exception: Always accept scenario all and year 1
+        if col == 'scenario': val.append('all')
+        if col == 'year': val.append(1)
+
+        # If the column is of string type, do a case-insensitive comparison
+        if pd.api.types.is_string_dtype(df_filtered[col]):
+            # Lower-case both the column values and filter values
+            lowered_vals = [v.lower() if isinstance(v, str) else v for v in val]
+            df_filtered = df_filtered[df_filtered[col].str.lower().isin(lowered_vals)]
+        else:
+            df_filtered = df_filtered[df_filtered[col].isin(val)]
+            
+    return df_filtered
 
 def filter_df_blacklist(df_input, df_name, filters):
     """
@@ -218,20 +219,25 @@ def filter_df_blacklist(df_input, df_name, filters):
     # Apply the filters iteratively to remove blacklisted rows
     df_filtered = df_input.copy()
     for col, val in filters.items():
-        if isinstance(val, list):
-            if pd.api.types.is_string_dtype(df_filtered[col]):
-                # Convert both the column and the list values to lower case for a case-insensitive comparison
-                lowered_vals = [v.lower() for v in val if isinstance(v, str)]
-                df_filtered = df_filtered[~df_filtered[col].str.lower().isin(lowered_vals)]
-            else:
-                df_filtered = df_filtered[~df_filtered[col].isin(val)]
+        # Convert a single value to a list of one item
+        if not isinstance(val, list):
+            val = [val]
+
+        # If the column is of string type, do a case-insensitive comparison
+        if pd.api.types.is_string_dtype(df_filtered[col]):
+            lowered_vals = [v.lower() if isinstance(v, str) else v for v in val]
+            df_filtered = df_filtered[~df_filtered[col].str.lower().isin(lowered_vals)]
         else:
-            # If the column contains strings and the filter value is a string, do a case-insensitive comparison
-            if pd.api.types.is_string_dtype(df_filtered[col]) and isinstance(val, str):
-                df_filtered = df_filtered[df_filtered[col].str.lower() != val.lower()]
-            else:
-                df_filtered = df_filtered[df_filtered[col] != val]
+            df_filtered = df_filtered[~df_filtered[col].isin(val)]
     return df_filtered
+
+def parse_args(argv):
+    args = {}
+    for arg in argv[1:]:
+        if '=' in arg:
+            key, value = arg.split('=', 1)
+            args[key] = value
+    return args
 
 
 # ------------------------------------------------------
@@ -260,12 +266,14 @@ def run(input_folder, config_file):
     # Convert string representations of lists into actual Python lists.
     scenarios = ast.literal_eval(config.get('InputData', 'scenarios'))
     scenario_years = ast.literal_eval(config.get('InputData', 'scenario_years'))
+    scenario_alternatives = ast.literal_eval(config.get('InputData', 'scenario_alternatives'))
     country_codes = ast.literal_eval(config.get('InputData', 'country_codes'))
     exclude_grids = ast.literal_eval(config.get('InputData', 'exclude_grids'))
     demand_files = ast.literal_eval(config.get('InputData', 'demand_files'))
     transfer_files = ast.literal_eval(config.get('InputData', 'transfer_files'))
     techdata_files = ast.literal_eval(config.get('InputData', 'techdata_files'))
-    unitcapacities_files = ast.literal_eval(config.get('InputData', 'unitcapacities_files'))
+    unitdata_files = ast.literal_eval(config.get('InputData', 'unitdata_files'))
+    storagedata_files = ast.literal_eval(config.get('InputData', 'storagedata_files'))
     fueldata_files = ast.literal_eval(config.get('InputData', 'fueldata_files'))
     emissiondata_files = ast.literal_eval(config.get('InputData', 'emissiondata_files'))
     # timeseries processing specs dictionary
@@ -275,69 +283,81 @@ def run(input_folder, config_file):
     df_demands   = process_dataset(demand_files, 'demands')
     df_transfers = process_dataset(transfer_files, 'transfers')
     df_techs  = process_dataset(techdata_files, 'techdata') 
-    df_unitcapacities  = process_dataset(unitcapacities_files, 'unitcapacities') 
-    df_fuels  = process_dataset(fueldata_files, 'fueldata') 
+    df_unitdata  = process_dataset(unitdata_files, 'unitdata') 
+    df_remove_units  = process_dataset(unitdata_files, 'remove', isMandatory=False) 
+    df_storagedata  = process_dataset(storagedata_files, 'storagedata') 
+    df_fueldata  = process_dataset(fueldata_files, 'fueldata') 
     df_emissions  = process_dataset(emissiondata_files, 'emissiondata') 
 
     # exclude grids
-    df_demands = filter_df_blacklist(df_demands, 'transfer_files', {'grid': exclude_grids})
+    df_demands = filter_df_blacklist(df_demands, 'demand_files', {'grid': exclude_grids})
     df_transfers = filter_df_blacklist(df_transfers, 'transfer_files', {'grid': exclude_grids})
 
-    # remove duplicates
-    df_demands = keep_last_occurance(df_demands, ['country', 'grid', 'node_suffix', 'scenario', 'year'])
-    df_transfers = keep_last_occurance(df_transfers, ['from-to', 'grid', 'scenario', 'year'])
-    df_techs = keep_last_occurance(df_techs, ['scenario', 'year', 'generator_id'])
-    df_unitcapacities = keep_last_occurance(df_unitcapacities, ['country', 'generator_id', 'unit_name_prefix', 'scenario', 'year'])
-    df_fuels = keep_last_occurance(df_fuels, ['scenario', 'year', 'fuel'])
-    df_emissions = keep_last_occurance(df_emissions, ['scenario', 'year', 'emission'])
-
-
-
     # Loop over every combination of scenario and scenario year.
-    for scenario, scenario_year in itertools.product(scenarios, scenario_years):
+    for scenario, scenario_year, scenario_alternative in itertools.product(scenarios, scenario_years, scenario_alternatives or [None]):
         print(f"\n--------------------------------------------------------------------------- ")
-        log_time(f"---- processing {scenario}, {scenario_year} ---------------- ", log_start)
+        if scenario_alternative:
+            log_time(f"---- processing scenario:'{scenario}', scenario_year:{scenario_year}, and scenario alternative: '{scenario_alternative}'  ---------------- ", log_start)
+        else:
+            log_time(f"---- processing scenario:'{scenario}' and scenario_year:{scenario_year} ---------------- ", log_start) 
+
+        # Combine scenario with a possible alternative
+        scen_and_alt = [scenario]
+        if scenario_alternative:  # Only extend if not empty
+            scen_and_alt.extend(scenario_alternatives)
 
         # Process global input files to get the data for the current scenario and year.
-        df_f_techs = filter_df_whitelist(df_techs, 'techdata_files', {'scenario':scenario, 'year':scenario_year})     
-        df_f_fuels = filter_df_whitelist(df_fuels, 'fueldata_files', {'scenario':scenario, 'year':scenario_year})
-        df_f_emissions = filter_df_whitelist(df_emissions, 'emissiondata_files' , {'scenario':scenario, 'year':scenario_year})
-        df_f_transfers = filter_df_whitelist(df_transfers, 'transfer_files', {'scenario':scenario, 'year':scenario_year})
+        df_f_techs = filter_df_whitelist(df_techs, 'techdata_files', {'scenario':scen_and_alt, 'year':scenario_year})     
+        df_f_fueldata = filter_df_whitelist(df_fueldata, 'fueldata_files', {'scenario':scen_and_alt, 'year':scenario_year})
+        df_f_emissions = filter_df_whitelist(df_emissions, 'emissiondata_files' , {'scenario':scen_and_alt, 'year':scenario_year})
+        df_f_transfers = filter_df_whitelist(df_transfers, 'transfer_files', {'scenario':scen_and_alt, 'year':scenario_year})
 
         # Process country specific input files to get the data for the current scenario, year, and country.
-        df_f_demands = filter_df_whitelist(df_demands, 'demand_files', {'scenario':scenario, 'year':scenario_year, 'country': country_codes})
-        df_f_unitcapacities = filter_df_whitelist(df_unitcapacities, 'unitcapacity_files', {'scenario':scenario, 'year':scenario_year, 'country': country_codes})
-        
+        df_f_demands = filter_df_whitelist(df_demands, 'demand_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
+        df_f_unitdata = filter_df_whitelist(df_unitdata, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})        
+        df_f_remove_units = filter_df_whitelist(df_remove_units, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
+        df_f_storagedata = filter_df_whitelist(df_storagedata, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})  
+
+        # remove duplicates. Keep the last value. 
+        df_f_techs = keep_last_occurance(df_f_techs, ['generator_id'])
+        df_f_fueldata = keep_last_occurance(df_f_fueldata, ['fuel'])
+        df_f_emissions = keep_last_occurance(df_f_emissions, ['emission'])
+        df_f_transfers = keep_last_occurance(df_f_transfers, ['from-to', 'grid'])
+        df_f_demands = keep_last_occurance(df_f_demands, ['country', 'grid', 'node_suffix'])
+        df_f_unitdata = keep_last_occurance(df_f_unitdata, ['country', 'generator_id', 'unit_name_prefix'])
+        df_f_storagedata = keep_last_occurance(df_f_storagedata, ['country', 'generator_id', 'node_suffix'])
+
         # Create an output folder specific to the current scenario and year
-        output_folder = os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}")
+        if scenario_alternative:
+            output_folder = os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}_{scenario_alternative}")
+        else:
+            output_folder = os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}")
         if not os.path.exists(output_folder): 
             os.makedirs(output_folder)
         print(f"Writing output files to '.\\{output_folder}'")
 
+        # Create the timeseries using the create_timeseries class.
+        # Returns mingen_nodes
+        secondary_results = create_timeseries(timeseries_specs, input_folder, output_folder, 
+                                start_date, end_date, country_codes, scenario_year, 
+                                df_f_demands, log_start, write_csv_files
+                                ).run()
+
         # Build input excel using the build_input_excel class.    
-        build_input_excel(input_folder, output_folder, 
-                          scenario, scenario_year, country_codes, exclude_grids,
-                          df_f_transfers, df_f_techs, df_f_unitcapacities, df_f_fuels, df_f_emissions 
+        build_input_excel(input_folder, output_folder, country_codes, exclude_grids,
+                          df_f_transfers, df_f_techs, df_f_unitdata, df_f_remove_units, df_f_storagedata,
+                          df_f_fueldata, df_f_emissions, df_f_demands,
+                          secondary_results
                           ).run()
 
-        # Create the timeseries using the create_timeseries class.
-        create_timeseries(timeseries_specs, input_folder, output_folder, 
-                          start_date, end_date, country_codes, scenario, scenario_year, 
-                          df_f_demands, log_start, write_csv_files
-                          ).run()
+
         
     print("\n-----------------------------------")   
-    log_time(f"All (scenario, year) pairs processed.", log_start)
+    if scenario_alternatives:
+        log_time(f"All (scenario, alternative, year) tuples processed.", log_start)
+    else:
+        log_time(f"All (scenario, year) pairs processed.", log_start)
 
-
-
-def parse_args(argv):
-    args = {}
-    for arg in argv[1:]:
-        if '=' in arg:
-            key, value = arg.split('=', 1)
-            args[key] = value
-    return args
 
 # ------------------------------------------------------
 # Main entry point for the script

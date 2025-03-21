@@ -13,8 +13,6 @@ class DH_demand_fromTemperature:
         country_codes (list): List of country codes.
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
-        scenario (str): Scenario to filter the demand file.
-        scenario_year (int): Target year for scaling the profiles.
     """
 
     def __init__(self, input_folder, country_codes, start_date, end_date, df_annual_demands, scenario_year):
@@ -197,16 +195,17 @@ class DH_demand_fromTemperature:
         print("   Building demand time series..")
         summary_df = self.build_demands(summary_df, self.df_annual_demands)
         
-        # Renaming column titles from country to country_heat or country_heat_suffix if suffix exists,
-        # e.g. DE00 -> DE00_heat and FI00_HKI -> FI00_heat_HKI
+        # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
+        # e.g. DE00 -> DE00_dheat and FI00_HKI -> FI00_HKI_dheat
+        grid = self.df_annual_demands['grid'].iloc[0]
         new_columns = {}
         for col in summary_df.columns:
             for country in self.country_codes:
                 if col.startswith(country):
                     # Capture any suffix after the country code.
                     suffix = col[len(country):]  # e.g., '' or '_HKI'
-                    # Build the new column name by inserting '_heat'
-                    new_columns[col] = f"{country}_heat" + suffix
+                    # Build the new column name
+                    new_columns[col] = f"{country}_{grid}" + suffix
                     break  # Found matching country code, move to next column.
         summary_df = summary_df.rename(columns=new_columns)
 
@@ -224,16 +223,13 @@ if __name__ == '__main__':
     ]
     start_date = '1982-01-01 00:00:00'
     end_date = '2021-01-01 00:00:00'
-    # Example scenario and scenario_year
-    scenario = 'National Trends'
     scenario_year = 2025 
 
     # Constructed demand data for testing
     annual_demands = {
         'country': ['FI00', 'FR00'],
-        'grid': ['heat', 'heat'],
+        'grid': ['dheat', 'dheat'],
         'node_suffix': ['_HKI', ''],
-        'scenario': ['National Trends', 'National Trends'],
         'year': [2025, 2025],
         'twh/year': [1000, 100],
         'constant_share': [0.3, 0.4]

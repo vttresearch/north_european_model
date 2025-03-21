@@ -81,17 +81,17 @@ class hydro_storage_limits_MAF2019:
     def merge_bounds(self, lowerBound, upperBound, minvariable, maxvariable):
         """
         After filling the lower and upper bound DataFrames, set the
-        'boundarytype' column, concatenate them, and tidy up the index.
+        'param_gnBoundaryTypes' column, concatenate them, and tidy up the index.
         """
-        lowerBound['boundarytype'] = minvariable
-        upperBound['boundarytype'] = maxvariable
+        lowerBound['param_gnBoundaryTypes'] = minvariable
+        upperBound['param_gnBoundaryTypes'] = maxvariable
 
         result_df = pd.concat([lowerBound, upperBound])
         result_df = result_df.reset_index()
-        result_df = result_df.sort_values(['index', 'boundarytype'])
-        result_df = result_df.set_index(['index', 'boundarytype'])
-        result_df = result_df.rename_axis(["", "boundarytype"], axis="rows")
-        result_df.index = result_df.index.set_names(['time', 'boundarytype'])
+        result_df = result_df.sort_values(['index', 'param_gnBoundaryTypes'])
+        result_df = result_df.set_index(['index', 'param_gnBoundaryTypes'])
+        result_df = result_df.rename_axis(["", "param_gnBoundaryTypes"], axis="rows")
+        result_df.index = result_df.index.set_names(['time', 'param_gnBoundaryTypes'])
         return result_df
 
     def process_country(self, country, df_country, df_capacities, start_date, end_date, 
@@ -212,11 +212,11 @@ class hydro_storage_limits_MAF2019:
             return
         df_capacities = df_capacities.set_index(["zone", "type", "variable"])
 
-        # Create a summary DataFrame with a MultiIndex (time, boundarytype).
+        # Create a summary DataFrame with a MultiIndex (time, param_gnBoundaryTypes).
         idx = pd.MultiIndex.from_product(
             [pd.date_range(self.start_date, self.end_date, freq='60 min'),
              [self.minvariable, self.maxvariable]],
-            names=['time', 'boundarytype']
+            names=['time', 'param_gnBoundaryTypes']
         )
         summary_df = pd.DataFrame(index=idx)
 
@@ -242,7 +242,7 @@ class hydro_storage_limits_MAF2019:
                                                  self.suffix_reservoir, self.suffix_open, self.suffix_closed)
 
             if result_df is not None:
-                result_df.index = result_df.index.set_names(['time', 'boundarytype'])
+                result_df.index = result_df.index.set_names(['time', 'param_gnBoundaryTypes'])
                 summary_df = summary_df.join(result_df, how='left')
 
         return summary_df

@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import date
 
-class hydro_generation_limits_MAF2019:
+class hydro_mingen_limits_MAF2019:
     """
     This class processes min/max generation data in several steps:
 
@@ -22,22 +22,51 @@ class hydro_generation_limits_MAF2019:
         process_maxGen (bool): If True, process and print maximum generation limits as well. Default is False.
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date, process_maxGen=False):
+    def __init__(self, input_folder, country_codes, start_date, end_date):
         self.input_folder = input_folder
         self.country_codes = country_codes
         self.start_date = start_date
         self.end_date = end_date
-        self.process_maxGen = process_maxGen
 
         # Global input file (for non-Norway countries)
         self.input_csv = "PECD-hydro-weekly-reservoir-min-max-generation.csv"
 
         # Parameters for processing the generation limits.
         self.minvariable_header = "Minimum Generation in MW"
-        self.maxvariable_header = "Maximum Generation in MW"
-        self.minvariable = "minGen"
-        self.maxvariable = "maxGen"
-        self.suffix_reservoir = "_reservoir"
+        self.suffix_reservoir = {'AL00': '',
+                                'AT00': '',
+                                'BA00': '',
+                                'BG00': '',
+                                'CZ00': '',
+                                'DE00': '',
+                                'ES00': '',
+                                'FI00': '_reservoir',
+                                'GR00': '',
+                                'HR00': '',
+                                'ITCN': '',
+                                'ITCS': '',
+                                'ITN1': '',
+                                'ITS1': '',
+                                'ITSA': '',
+                                'LT00': '',
+                                'LV00': '',
+                                'MK00': '',
+                                'RO00': '',
+                                'RS00': '',
+                                'SE01': '_reservoir',
+                                'SE02': '_reservoir',
+                                'SE03': '_reservoir',
+                                'SE04': '_reservoir',
+                                'SK00': '',
+                                'TR00': '',
+                                'FR00': '_reservoir',
+                                'ME00': '',
+                                'PL00': '',
+                                'PT00': '',
+                                'NON1': '_psOpen',
+                                'NOM1': '_psOpen',
+                                'NOS0': '_psOpen',
+                                }
 
         # Norway-specific file parameters.
         self.norway_file_first = "PEMMDB_"
@@ -50,20 +79,17 @@ class hydro_generation_limits_MAF2019:
 
     def process_global_country(self, country, country_df):
         """
-        Processes global min/max generation data for one country from the CSV input.
+        Processes global minimum generation data for one country from the CSV input.
+        Parameters:  country     -- The country code (e.g., 'AT00')
+                     country_df  -- The country-level CSV DataFrame (already filtered by year)
 
-        Parameters:
-          country     -- The country code (e.g., 'AT00')
-          country_df  -- The country-level CSV DataFrame (already filtered by year)
-
-        Returns:
-          A DataFrame with a time index and a "genLimit" level containing the processed data.
-          If process_maxGen is False, only the min generation data is returned.
+        Returns: A DataFrame with a time index, 
+                                    column 'group' = 'UC_'<country>_<suffix_reservoir>, 
+                                    column 'param_policy' = 'userconstraintRHS'
         """
         date_index = pd.date_range(self.start_date, self.end_date, freq='60 min')
-        df_lowerBound = pd.DataFrame(index=date_index)
-        if self.process_maxGen:
-            df_upperBound = pd.DataFrame(index=date_index)
+        df_result = pd.DataFrame(index=date_index)
+        country_suffix = self.suffix_reservoir[country]
 
         for year in range(self.start_year, self.end_year + 1):
             df_year = country_df[country_df["year"] == year].copy().reset_index(drop=True)
@@ -76,35 +102,22 @@ class hydro_generation_limits_MAF2019:
                 t = fourthday + i * pd.DateOffset(days=7)
                 # For weeks 0 to 51 (if within end_date)
                 if (t <= pd.to_datetime(self.end_date)) and (i < 52):
-                    df_lowerBound.at[t, country + self.suffix_reservoir] = df_year.at[i, self.minvariable_header]
-                    if self.process_maxGen:
-                        df_upperBound.at[t, country + self.suffix_reservoir] = df_year.at[i, self.maxvariable_header]
+                    df_result.at[t, country + country_suffix] = df_year.at[i, self.minvariable_header]
                 else:
                     if i == 52:
                         # For the final week of the year, use the value at index 51.
                         t = pd.Timestamp(year, 12, 28) + pd.DateOffset(hours=12)
-                        df_lowerBound.at[t, country + self.suffix_reservoir] = df_year.at[51, self.minvariable_header]
-                        if self.process_maxGen:
-                            df_upperBound.at[t, country + self.suffix_reservoir] = df_year.at[51, self.maxvariable_header]
+                        df_result.at[t, country + country_suffix] = df_year.at[51, self.minvariable_header]
 
         # Interpolate missing values for min generation.
-        df_lowerBound.interpolate(inplace=True, limit=84, limit_direction='both')
-        df_lowerBound['genLimit'] = self.minvariable
+        df_result.interpolate(inplace=True, limit=84, limit_direction='both')
 
-        if self.process_maxGen:
-            # Interpolate missing values for max generation.
-            df_upperBound.interpolate(inplace=True, limit=84, limit_direction='both')
-            df_upperBound['genLimit'] = self.maxvariable
+        # fill group param_policy
+        df_result['param_policy'] = 'userconstraintRHS'
 
-            # Concatenate the min and max DataFrames.
-            df_result = pd.concat([df_lowerBound, df_upperBound])
-        else:
-            df_result = df_lowerBound.copy()
-
-        df_result = df_result.reset_index()
-        df_result = df_result.sort_values(by=['index', 'genLimit'])
-        df_result = df_result.set_index(['index', 'genLimit'])
-        df_result = df_result.rename_axis(["", "genLimit"], axis="rows")
+        # create multi-index and return
+        df_result = df_result.reset_index(names='time')
+        df_result = df_result.set_index(['time', 'param_policy'])
         return df_result
 
     def process_norway_country(self, country, filename):
@@ -120,7 +133,8 @@ class hydro_generation_limits_MAF2019:
           If process_maxGen is False, only the min generation data is returned.
         """
         date_index = pd.date_range(self.start_date, self.end_date, freq='60 min')
-        df_lowerBound = pd.DataFrame(index=date_index)
+        df_result = pd.DataFrame(index=date_index)
+        country_suffix = self.suffix_reservoir[country]
 
         try:
             df_input = pd.read_excel(
@@ -146,30 +160,23 @@ class hydro_generation_limits_MAF2019:
             for i in df_year.index:
                 t = fourthday + i * pd.DateOffset(days=7)
                 if t <= pd.to_datetime(self.end_date) and i < 52:
-                    df_lowerBound.at[t, country + self.suffix_reservoir] = df_year[i]
+                    df_result.at[t, country + country_suffix] = df_year[i]
                 else:
                     if i == 52:
                         t = pd.Timestamp(year, 12, 28) + pd.DateOffset(hours=12)
-                        df_lowerBound.at[t, country + self.suffix_reservoir] = df_year[51]
+                        df_result.at[t, country + country_suffix] = df_year[51]
 
-        df_lowerBound.interpolate(inplace=True, limit=84, limit_direction='both')
-        df_lowerBound['genLimit'] = self.minvariable
+        # Interpolate missing values for min generation.
+        df_result.interpolate(inplace=True, limit=84, limit_direction='both')
 
-        if self.process_maxGen:
-            # There are no max values in the Norway Excel files; create a matching empty column.
-            df_upperBound = pd.DataFrame(index=date_index)
-            df_upperBound[country + self.suffix_reservoir] = np.nan
-            df_upperBound['genLimit'] = self.maxvariable
+        # fill param_policy
+        df_result['param_policy'] = 'userconstraintRHS'
 
-            df_result = pd.concat([df_lowerBound, df_upperBound])
-        else:
-            df_result = df_lowerBound.copy()
-
-        df_result = df_result.reset_index()
-        df_result = df_result.sort_values(by=['index', 'genLimit'])
-        df_result = df_result.set_index(['index', 'genLimit'])
-        df_result = df_result.rename_axis(["", "genLimit"], axis="rows")
+        # create multi-index and return
+        df_result = df_result.reset_index(names='time')
+        df_result = df_result.set_index(['time', 'param_policy'])
         return df_result
+
 
     def run(self):
         """
@@ -191,43 +198,41 @@ class hydro_generation_limits_MAF2019:
         global_df["year"] = pd.to_numeric(global_df["year"])
         global_df["week"] = pd.to_numeric(global_df["week"])
 
-        # Prepare the summary DataFrame with a MultiIndex.
-        if self.process_maxGen:
-            idx = pd.MultiIndex.from_product(
-                [pd.date_range(self.start_date, self.end_date, freq="60 min"), [self.minvariable, self.maxvariable]],
-                names=['time', 'genLimit']
-            )
-        else:
-            idx = pd.MultiIndex.from_product(
-                [pd.date_range(self.start_date, self.end_date, freq="60 min"), [self.minvariable]],
-                names=['time', 'genLimit']
-            )
-        summary_df = pd.DataFrame(index=idx)
-        summary_df = summary_df.rename_axis(["time", "genLimit"], axis="rows")
+        # Prepare the summary DataFrame 
+        summary_df = pd.DataFrame()
 
         # Process each country.
         for country in self.country_codes:
+            # choose correct processing function
             if country in self.norway_countries:
                 filename = os.path.join(self.input_folder, f"{self.norway_file_first}{country}{self.norway_file_last}")
                 result_df = self.process_norway_country(country, filename)
             else:
                 country_df = global_df[global_df["zone"] == country].copy()
                 if country_df.empty:
-                    print(f"   No hydro minGen or maxGen data for {country}")
+                    print(f"   No hydro minGen data for {country}")
                     continue
                 result_df = self.process_global_country(country, country_df)
 
+            # join results
             if result_df is not None:
-                # Ensure the index is named correctly.
-                result_df.index = result_df.index.set_names(['time', 'genLimit'])
-                summary_df = summary_df.join(result_df, how='left')
+                # For the first DataFrame, assign it directly to summary_df
+                if summary_df.empty:
+                    summary_df = result_df.copy()
+                else:
+                    summary_df = summary_df.join(result_df, how='left')
 
-        return summary_df
+        hydro_mingen_nodes = summary_df.columns.tolist()
+
+        if hydro_mingen_nodes is not None:
+            return (summary_df, hydro_mingen_nodes)
+        else:
+            return summary_df
 
 
-# Example usage:
+# __main__ for testing this function directly
 if __name__ == "__main__":
-    input_folder = os.path.join("..\\inputFiles\\timeseries")
+    input_folder = os.path.join("..\\src_files\\timeseries")
     output_folder = os.path.join("..\\inputData-test")
     output_file = os.path.join(output_folder, f'test_hydro_generation_limits.csv')
     country_codes = [
@@ -239,13 +244,21 @@ if __name__ == "__main__":
 
     # Set process_maxGen to True to process maximum generation limits,
     # or leave it as False (default) to process only minimum generation limits.
-    processor = hydro_generation_limits_MAF2019(input_folder, country_codes, start_date, end_date, process_maxGen=False)
-    summary_df = processor.run()
+    processor = hydro_mingen_limits_MAF2019(input_folder, country_codes, start_date, end_date)
+    result = processor.run()
 
     # Ensure the output directory exists.
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     
+    # Handle the case of an optional second DataFrame.
+    if isinstance(result, tuple) and len(result) == 2:
+        summary_df, df_optional = result
+        #secondary_results[secondary_output_name] = df_optional
+    else:
+        summary_df = result   
+
     # Write to a csv.
-    print(f"writing {output_file}")
-    summary_df.to_csv(output_file)
+    if summary_df is not None:
+        print(f"writing {output_file}")
+        summary_df.to_csv(output_file)

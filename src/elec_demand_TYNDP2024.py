@@ -13,7 +13,6 @@ class elec_demand_TYNDP2024:
         country_codes (list): List of country codes.
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
-        scenario (str): Scenario to filter the demand file.
         scenario_year (int): Target year for scaling the profiles.
     """
 
@@ -252,12 +251,22 @@ class elec_demand_TYNDP2024:
 
         print("   Building demand time series..")
         summary_df = self.build_demands(summary_df, self.df_annual_demands)
+        
+        # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
+        # e.g. DE00 -> DE00_elec and FI00_HKI -> FI00_HKI_elec
+        grid = self.df_annual_demands['grid'].iloc[0]
+        new_columns = {}
+        for col in summary_df.columns:
+            for country in self.country_codes:
+                if col.startswith(country):
+                    # Capture any suffix after the country code.
+                    suffix = col[len(country):]  # e.g., '' or '_HKI'
+                    # Build the new column name
+                    new_columns[col] = f"{country}_{grid}" + suffix
+                    break  # Found matching country code, move to next column.
+        summary_df = summary_df.rename(columns=new_columns)
 
-        # Renaming column titles from country to country_elec, e.g. FI00 -> FI00_elec
-        for country in self.country_codes:
-            if country in summary_df.columns:
-                summary_df = summary_df.rename({country: f"{country}_elec"}, axis=1)
-            
+
         return summary_df
 
 
@@ -272,16 +281,13 @@ if __name__ == '__main__':
     ]
     start_date = '1982-01-01 00:00:00'
     end_date = '2021-01-01 00:00:00'
-    # Example scenario and scenario_year
-    scenario = 'National Trends'
     scenario_year = 2025 
 
     # Constructed demand data for testing
     annual_demands = {
         'country': ['FI00', 'FR00'],
         'grid': ['elec', 'Elec'],
-        'scenario': ['National Trends', 'National Trends'],
-        'tear': [2025, 2025],
+        'year': [2025, 2025],
         'twh/year': [10**5, 10**6],
         'constant_share': [0.9, 0]
         }
