@@ -258,35 +258,35 @@ def run(input_folder, config_file):
     config = configparser.ConfigParser()
     config.read(config_file_path)
 
-    # Extract parameters from the config file under the 'InputData' section.
-    output_folder_prefix = config.get('InputData', 'output_folder_prefix')
-    write_csv_files = config.getboolean('InputData', 'write_csv_files')
-    start_date = config.get('InputData', 'start_date')
-    end_date = config.get('InputData', 'end_date')
+    # Extract parameters from the config file under the 'inputdata' section.
+    output_folder_prefix = config.get('inputdata', 'output_folder_prefix')
+    write_csv_files = config.getboolean('inputdata', 'write_csv_files')
+    start_date = config.get('inputdata', 'start_date')
+    end_date = config.get('inputdata', 'end_date')
     # Convert string representations of lists into actual Python lists.
-    scenarios = ast.literal_eval(config.get('InputData', 'scenarios'))
-    scenario_years = ast.literal_eval(config.get('InputData', 'scenario_years'))
-    scenario_alternatives = ast.literal_eval(config.get('InputData', 'scenario_alternatives'))
-    country_codes = ast.literal_eval(config.get('InputData', 'country_codes'))
-    exclude_grids = ast.literal_eval(config.get('InputData', 'exclude_grids'))
-    demand_files = ast.literal_eval(config.get('InputData', 'demand_files'))
-    transfer_files = ast.literal_eval(config.get('InputData', 'transfer_files'))
-    techdata_files = ast.literal_eval(config.get('InputData', 'techdata_files'))
-    unitdata_files = ast.literal_eval(config.get('InputData', 'unitdata_files'))
-    storagedata_files = ast.literal_eval(config.get('InputData', 'storagedata_files'))
-    fueldata_files = ast.literal_eval(config.get('InputData', 'fueldata_files'))
-    emissiondata_files = ast.literal_eval(config.get('InputData', 'emissiondata_files'))
+    scenarios = ast.literal_eval(config.get('inputdata', 'scenarios'))
+    scenario_years = ast.literal_eval(config.get('inputdata', 'scenario_years'))
+    scenario_alternatives = ast.literal_eval(config.get('inputdata', 'scenario_alternatives'))
+    country_codes = ast.literal_eval(config.get('inputdata', 'country_codes'))
+    exclude_grids = ast.literal_eval(config.get('inputdata', 'exclude_grids'))
+    demanddata_files = ast.literal_eval(config.get('inputdata', 'demanddata_files'))
+    transferdata_files = ast.literal_eval(config.get('inputdata', 'transferdata_files'))
+    unittypedata_files = ast.literal_eval(config.get('inputdata', 'unittypedata_files'))
+    unitdata_files = ast.literal_eval(config.get('inputdata', 'unitdata_files'))
+    storagedata_files = ast.literal_eval(config.get('inputdata', 'storagedata_files'))
+    fueldata_files = ast.literal_eval(config.get('inputdata', 'fueldata_files'))
+    emissiondata_files = ast.literal_eval(config.get('inputdata', 'emissiondata_files'))
     # timeseries processing specs dictionary
-    timeseries_specs = ast.literal_eval(config.get('InputData', 'timeseries_specs'))
+    timeseries_specs = ast.literal_eval(config.get('inputdata', 'timeseries_specs'))
 
     # Read and process input excels
-    df_demands   = process_dataset(demand_files, 'demands')
-    df_transfers = process_dataset(transfer_files, 'transfers')
-    df_techs  = process_dataset(techdata_files, 'techdata') 
-    df_unitdata  = process_dataset(unitdata_files, 'unitdata') 
+    df_demands   = process_dataset(demanddata_files, 'demanddata')
+    df_transfers = process_dataset(transferdata_files, 'transferdata')
+    df_unittypes  = process_dataset(unittypedata_files, 'unittypedata') 
+    df_units  = process_dataset(unitdata_files, 'unitdata') 
     df_remove_units  = process_dataset(unitdata_files, 'remove', isMandatory=False) 
-    df_storagedata  = process_dataset(storagedata_files, 'storagedata') 
-    df_fueldata  = process_dataset(fueldata_files, 'fueldata') 
+    df_storages  = process_dataset(storagedata_files, 'storagedata') 
+    df_fuels  = process_dataset(fueldata_files, 'fueldata') 
     df_emissions  = process_dataset(emissiondata_files, 'emissiondata') 
 
     # exclude grids
@@ -307,25 +307,25 @@ def run(input_folder, config_file):
             scen_and_alt.extend(scenario_alternatives)
 
         # Process global input files to get the data for the current scenario and year.
-        df_f_techs = filter_df_whitelist(df_techs, 'techdata_files', {'scenario':scen_and_alt, 'year':scenario_year})     
-        df_f_fueldata = filter_df_whitelist(df_fueldata, 'fueldata_files', {'scenario':scen_and_alt, 'year':scenario_year})
+        df_f_unittypes = filter_df_whitelist(df_unittypes, 'techdata_files', {'scenario':scen_and_alt, 'year':scenario_year})     
+        df_f_fuels = filter_df_whitelist(df_fuels, 'fueldata_files', {'scenario':scen_and_alt, 'year':scenario_year})
         df_f_emissions = filter_df_whitelist(df_emissions, 'emissiondata_files' , {'scenario':scen_and_alt, 'year':scenario_year})
         df_f_transfers = filter_df_whitelist(df_transfers, 'transfer_files', {'scenario':scen_and_alt, 'year':scenario_year})
 
         # Process country specific input files to get the data for the current scenario, year, and country.
         df_f_demands = filter_df_whitelist(df_demands, 'demand_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
-        df_f_unitdata = filter_df_whitelist(df_unitdata, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})        
+        df_f_units = filter_df_whitelist(df_units, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})        
         df_f_remove_units = filter_df_whitelist(df_remove_units, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
-        df_f_storagedata = filter_df_whitelist(df_storagedata, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})  
+        df_f_storages = filter_df_whitelist(df_storages, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})  
 
         # remove duplicates. Keep the last value. 
-        df_f_techs = keep_last_occurance(df_f_techs, ['generator_id'])
-        df_f_fueldata = keep_last_occurance(df_f_fueldata, ['fuel'])
+        df_f_unittypes = keep_last_occurance(df_f_unittypes, ['generator_id'])
+        df_f_fuels = keep_last_occurance(df_f_fuels, ['fuel'])
         df_f_emissions = keep_last_occurance(df_f_emissions, ['emission'])
         df_f_transfers = keep_last_occurance(df_f_transfers, ['from-to', 'grid'])
         df_f_demands = keep_last_occurance(df_f_demands, ['country', 'grid', 'node_suffix'])
-        df_f_unitdata = keep_last_occurance(df_f_unitdata, ['country', 'generator_id', 'unit_name_prefix'])
-        df_f_storagedata = keep_last_occurance(df_f_storagedata, ['country', 'generator_id', 'node_suffix'])
+        df_f_units = keep_last_occurance(df_f_units, ['country', 'generator_id', 'unit_name_prefix'])
+        df_f_storages = keep_last_occurance(df_f_storages, ['country', 'generator_id', 'node_suffix'])
 
         # Create an output folder specific to the current scenario and year
         if scenario_alternative:
@@ -336,17 +336,20 @@ def run(input_folder, config_file):
             os.makedirs(output_folder)
         print(f"Writing output files to '.\\{output_folder}'")
 
+        # compile scen_tags
+        scen_tags = {'scenario': scenario, 'year': scenario_year, 'alternative': scenario_alternative} 
+
         # Create the timeseries using the create_timeseries class.
         # Returns mingen_nodes
         secondary_results = create_timeseries(timeseries_specs, input_folder, output_folder, 
-                                start_date, end_date, country_codes, scenario_year, 
+                                start_date, end_date, country_codes, scen_tags, 
                                 df_f_demands, log_start, write_csv_files
                                 ).run()
 
         # Build input excel using the build_input_excel class.    
-        build_input_excel(input_folder, output_folder, country_codes, exclude_grids,
-                          df_f_transfers, df_f_techs, df_f_unitdata, df_f_remove_units, df_f_storagedata,
-                          df_f_fueldata, df_f_emissions, df_f_demands,
+        build_input_excel(input_folder, output_folder, country_codes, exclude_grids, scen_tags,
+                          df_f_transfers, df_f_unittypes, df_f_units, df_f_remove_units, df_f_storages,
+                          df_f_fuels, df_f_emissions, df_f_demands,
                           secondary_results
                           ).run()
 

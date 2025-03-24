@@ -6,26 +6,29 @@ import numpy as np
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl import load_workbook
 
 
 
 class build_input_excel:
-    def __init__(self, input_folder, output_folder, country_codes, exclude_grids,
-                 df_transfers, df_techs, df_unitdata, df_remove_units, df_storagedata,
-                 df_fueldata, df_emissions, df_demands,
+    def __init__(self, input_folder, output_folder, country_codes, exclude_grids, scen_tags,
+                 df_transfers, df_techs, df_units, df_remove_units, df_storages,
+                 df_fuels, df_emissions, df_demands,
                  secondary_results=None
                  ):
-        self.input_folder = os.path.join(input_folder, "timeseries")
+        self.input_folder = input_folder
         self.output_folder = output_folder
         self.country_codes = country_codes
         self.exclude_grids = exclude_grids
 
+        self.scen_tags = scen_tags
+
         self.df_transfers = df_transfers
         self.df_techs = df_techs
-        self.df_unitdata = df_unitdata
+        self.df_units = df_units
         self.df_remove_units = df_remove_units
-        self.df_storagedata = df_storagedata
-        self.df_fueldata = df_fueldata
+        self.df_storages = df_storages
+        self.df_fuels = df_fuels
         self.df_emissions = df_emissions
         self.df_demands = df_demands
 
@@ -36,16 +39,20 @@ class build_input_excel:
 # Functions creating the main Backbone input parameters: p_gnn and p_gnu
 # ------------------------------------------------------
 
-    def create_p_gnu(self, df_techs, df_unitdata, exclude_grids, df_remove_units):
+# !!!!!!!!!!!!!
+# ADD: mirrorer_capacities to p_Gnu
+# !!!!!!!!!!!!!
+
+    def create_p_gnu(self, df_techs, df_units, exclude_grids, df_remove_units):
         """
         Creates a new DataFrame p_gnu with 
         dimension columns: [grid, node, unit, input_output]
         value columns: [capacity, conversionCoeff, vomCosts]
 
-        For each row in df_unitdata:
+        For each row in df_units:
         - Lookup the corresponding generator_id row in df_techs.
         - skip processing if (country, unit_name_prefix, generator_id) exists in df_remove_units
-        - Build unit name: <country>_<'unit_name_prefix' if defined>_<unit_short_name>
+        - Build unit name: <country>_<'unit_name_prefix' if defined>_<unittype>
         - for puts=['input', 'output1', 'output2', 'output3']
             * fetch matching grid <grid>_<{put}> from df_techs
             * if grid is defined
@@ -60,7 +67,7 @@ class build_input_excel:
         rows = []
 
         # Process each row in the capacities DataFrame.
-        for _, cap_row in df_unitdata.iterrows():
+        for _, cap_row in df_units.iterrows():
 
             # Fetch values for country, unit_name_prefix, and generator_id
             country = cap_row['country']
@@ -87,9 +94,9 @@ class build_input_excel:
 
             # Build unit name.
             if pd.notna(unit_name_prefix) and unit_name_prefix not in ['', '-']:
-                unit_name = f"{country}_{unit_name_prefix}_{tech_row['unit_short_name']}"
+                unit_name = f"{country}_{unit_name_prefix}_{tech_row['unittype']}"
             else:
-                unit_name = f"{country}_{tech_row['unit_short_name']}"
+                unit_name = f"{country}_{tech_row['unittype']}"
 
             # Filter only available puts based on whether 'grid_{put}' exists.
             available_puts = [put for put in ['input1', 'input2', 'input3', 'output1', 'output2', 'output3'] 
@@ -232,8 +239,8 @@ class build_input_excel:
     def create_flowUnit(self, df_techs, unitUnittype):
         # Filter rows in df_techs that have a non-null 'flow' value
         flowtechs = df_techs[df_techs['flow'].notnull()].copy()
-        # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unit_short_name'
-        merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unit_short_name', how='inner')
+        # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unittype'
+        merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unittype', how='inner')
         # Create the final DataFrame with only 'flow' and 'unit' columns
         flowUnit = merged[['flow', 'unit']]
         return flowUnit
@@ -243,7 +250,7 @@ class build_input_excel:
         # Iterate over each row in unitUnittype
         for _, u_row in unitUnittype.iterrows():
             # Retrieve the matching row from df_techs
-            tech_row = df_techs[df_techs['unit_short_name'] == u_row['unittype']].iloc[0]
+            tech_row = df_techs[df_techs['unittype'] == u_row['unittype']].iloc[0]
 
             # Build the param_unit dictionary using values from the matching row
             row_data = {
@@ -281,8 +288,8 @@ class build_input_excel:
             unit = u_row['unit']
             unittype = u_row['unittype']
 
-            # Retrieve the matching row from df_techs where 'unit_short_name' equals the unittype value
-            tech_matches = df_techs[df_techs['unit_short_name'] == unittype]
+            # Retrieve the matching row from df_techs where 'unittype' equals the unittype value
+            tech_matches = df_techs[df_techs['unittype'] == unittype]
             tech_row = tech_matches.iloc[0]
 
             # LP/MIP value
@@ -313,21 +320,21 @@ class build_input_excel:
 # p_gn, p_gnBoundaryPropertiesForStates, ts_priceChange, 
 # ------------------------------------------------------
 
-    def create_p_gn(self, p_gnn, p_gnu, df_fueldata, df_demands, df_storagedata):
-        # Build node name to df_storagedata: <country>_<grid>_<node_suffix>
-        df_storagedata['node'] = df_storagedata.apply(
+    def create_p_gn(self, p_gnn, p_gnu, df_fuels, df_demands, df_storages):
+        # Build node name to df_storages: <country>_<grid>_<node_suffix>
+        df_storages['node'] = df_storages.apply(
             lambda row: f"{row['country']}_{row['grid']}" + 
                         (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
             axis=1
         )
 
-        # Extract gn pairs from df_storagedata, p_gnn, and p_gnu
-        pairs_df_storagedata = df_storagedata[['grid', 'node']]
+        # Extract gn pairs from df_storages, p_gnn, and p_gnu
+        pairs_df_storages = df_storages[['grid', 'node']]
         pairs_from = p_gnn[['grid', 'from_node']].rename(columns={'from_node': 'node'})
         pairs_to = p_gnn[['grid', 'to_node']].rename(columns={'to_node': 'node'})
         pairs_gnu = p_gnu[['grid', 'node']]
         # Concatenate and drop duplicates
-        unique_gn_pairs = pd.concat([pairs_df_storagedata, pairs_from, pairs_to, pairs_gnu]).drop_duplicates()
+        unique_gn_pairs = pd.concat([pairs_df_storages, pairs_from, pairs_to, pairs_gnu]).drop_duplicates()
 
         # Grids in df_demands for quick membership test
         demand_grids = df_demands['grid'].unique()
@@ -339,7 +346,7 @@ class build_input_excel:
             node = row['node']
 
             # Determine usePrice: if any fuel record for this grid has price > 0.
-            fuels_for_grid = df_fueldata[df_fueldata['grid'] == grid]
+            fuels_for_grid = df_fuels[df_fuels['grid'] == grid]
             if not fuels_for_grid.empty and (fuels_for_grid['price'] > 0).any():
                 usePrice = True
             else:
@@ -348,9 +355,9 @@ class build_input_excel:
             useBalance = not usePrice
 
             # check if node is a storage node based on multiple criteria:
-            # 1. if in df_storagedata
-            is_storage = ((pairs_df_storagedata['grid'] == grid) & 
-                          (pairs_df_storagedata['node'] == node)).any()
+            # 1. if in df_storages
+            is_storage = ((pairs_df_storages['grid'] == grid) & 
+                          (pairs_df_storages['node'] == node)).any()
 
             # 2. if 'upperLimitCapacityRatio' is defined to any (grid, node)
             subset_p_gnu = p_gnu[(p_gnu['grid'] == grid) & (p_gnu['node'] == node)]
@@ -384,11 +391,11 @@ class build_input_excel:
         p_gn = p_gn.fillna(value=0)
         return p_gn
 
-    def create_p_gnBoundaryPropertiesForStates(self, p_gn, df_storagedata):
+    def create_p_gnBoundaryPropertiesForStates(self, p_gn, df_storages):
         import pandas as pd  # Ensure pandas is imported if not already
 
-        # Build the 'node' column in df_storagedata: <country>_<grid>_<node_suffix>
-        df_storagedata['node'] = df_storagedata.apply(
+        # Build the 'node' column in df_storages: <country>_<grid>_<node_suffix>
+        df_storages['node'] = df_storages.apply(
             lambda row: f"{row['country']}_{row['grid']}" + 
                         (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
             axis=1
@@ -401,20 +408,20 @@ class build_input_excel:
                 grid = gn_row['grid']
                 node = gn_row['node']
 
-                # Find the corresponding row in df_storagedata where both grid and node match
-                mask = (df_storagedata['grid'] == grid) & (df_storagedata['node'] == node)
+                # Find the corresponding row in df_storages where both grid and node match
+                mask = (df_storages['grid'] == grid) & (df_storages['node'] == node)
                 if mask.any():
-                    storage_row = df_storagedata[mask].iloc[0]
+                    storage_row = df_storages[mask].iloc[0]
                 else:
                     continue
 
                 # Build the dictionary for the new row
                 row_dict = {'grid': grid, 'node': node}
 
-                # List of optional keys to include if they exist in df_storagedata
+                # List of optional keys to include if they exist in df_storages
                 optional_keys = ['upwardLimit', 'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill']
                 for key in optional_keys:
-                    if key.lower() in df_storagedata.columns:
+                    if key.lower() in df_storages.columns:
                         # If a matching storage_row was found, retrieve the value; otherwise, set to None
                         row_dict[key] = storage_row[key.lower()] if storage_row is not None and key.lower() in storage_row else None
 
@@ -425,11 +432,11 @@ class build_input_excel:
         p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.fillna(value=0)
         return p_gnBoundaryPropertiesForStates
         
-    def create_ts_priceChange(self, p_gn, df_fueldata):
-        # Identify the price column in df_fueldata (case-insensitive)
-        price_col = next((col for col in df_fueldata.columns if col.lower() == 'price'), None)
+    def create_ts_priceChange(self, p_gn, df_fuels):
+        # Identify the price column in df_fuels (case-insensitive)
+        price_col = next((col for col in df_fuels.columns if col.lower() == 'price'), None)
         if price_col is None:
-            raise ValueError("No 'price' column found in df_fueldata (case-insensitive)")
+            raise ValueError("No 'price' column found in df_fuels (case-insensitive)")
 
         rows = []
         # Loop through each row in p_gn using the columns: grid, node, and usePrice
@@ -437,8 +444,8 @@ class build_input_excel:
             grid_value = row['grid']
             node_value = row['node']
 
-            # Retrieve the node_price from df_fueldata where the grid value matches.
-            matching_rows = df_fueldata[df_fueldata['grid'] == grid_value]
+            # Retrieve the node_price from df_fuels where the grid value matches.
+            matching_rows = df_fuels[df_fuels['grid'] == grid_value]
             if not matching_rows.empty:
                 node_price = matching_rows.iloc[0][price_col]
 
@@ -453,6 +460,11 @@ class build_input_excel:
         # Create the ts_priceChange DataFrame from the list of row dictionaries
         ts_priceChange = pd.DataFrame(rows)
         return ts_priceChange
+
+
+# !!!!!!!!!!!!!
+# convert p_userconstraint to ts_gnu(mingen)
+# !!!!!!!!!!!!!
 
     def create_p_userConstraint(self, p_gnu, **kwargs):
     
@@ -501,14 +513,28 @@ class build_input_excel:
 
 
 # ------------------------------------------------------
-# Functions to create various features: 
-# minimum generation limits
+# Function to create compile domains 
 # ------------------------------------------------------
 
-# ------------------------------------------------------
-# Functions to create domains: 
-# grid, node, flow, unittype, unit, group
-# ------------------------------------------------------
+    def compile_domain(self, dfs, domain):
+        # Initialize an empty list to collect domain values
+        all_domains = []
+
+        # Iterate over each DataFrame in the list
+        for df in dfs:
+            if domain not in df.columns:
+                print(f"Warning: '{domain}' is not in DataFrame columns.")
+            else:
+                # Extend the list with values from the specified domain column
+                all_domains.extend(df[domain].dropna().tolist())
+
+        # Get unique domain values
+        unique_domains = pd.unique(pd.Series(all_domains))
+
+        # Create a new DataFrame where each unique domain has a corresponding 'yes'
+        compiled_df = pd.DataFrame({domain: unique_domains})
+        return compiled_df
+
 
 
 # ------------------------------------------------------
@@ -563,6 +589,38 @@ class build_input_excel:
 
         wb.save(output_file)
 
+    def add_index_sheet(self, input_folder, output_file):
+        # Construct full path to the index sheet file
+        index_path = os.path.join(input_folder, 'indexSheet.xlsx')
+
+        # Read the index sheet file (assuming the first row contains headers)
+        df_index = pd.read_excel(index_path, header=0)
+
+        # Load the output Excel workbook which already has multiple sheets
+        wb = load_workbook(output_file)
+        existing_sheet_names = wb.sheetnames
+
+        # Filter rows: keep only rows where the 'Symbol' exists among the workbook's sheet names
+        df_filtered = df_index[df_index['Symbol'].isin(existing_sheet_names)]
+
+        # Create a new sheet named 'index'
+        new_sheet = wb.create_sheet(title='index')
+
+        # Write header row (row 1)
+        for col_num, header in enumerate(df_index.columns, start=1):
+            new_sheet.cell(row=1, column=col_num, value=header)
+
+        # Write the filtered data starting from row 2
+        for row_num, row in enumerate(df_filtered.itertuples(index=False, name=None), start=2):
+            for col_num, value in enumerate(row, start=1):
+                new_sheet.cell(row=row_num, column=col_num, value=value)
+
+        # Move the 'index' sheet to the first position in the workbook
+        wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(new_sheet)))
+
+        # Save the updated workbook back to the output file
+        wb.save(output_file)
+
 
 # ------------------------------------------------------
 # Functions for quality and consistency checks
@@ -605,11 +663,9 @@ class build_input_excel:
 
     def run(self):
 
-        # quality checks
-        self.check_if_values_defined(self.df_techs, 'techdata_files', self.df_unitdata, 'unitdata_files', 'generator_id')
-
         # main input tables
-        p_gnu = self.create_p_gnu(self.df_techs, self.df_unitdata, self.exclude_grids, self.df_remove_units)
+        self.check_if_values_defined(self.df_techs, 'techdata_files', self.df_units, 'unitdata_files', 'generator_id')
+        p_gnu = self.create_p_gnu(self.df_techs, self.df_units, self.exclude_grids, self.df_remove_units)
         self.check_if_values_defined(p_gnu, 'techdata_files', self.df_transfers, 'transferdata', 'grid')
         p_gnn = self.create_p_gnn(self.df_transfers, p_gnu, self.exclude_grids)
 
@@ -620,15 +676,25 @@ class build_input_excel:
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_techs, unitUnittype)
 
         # node based input tables
-        self.check_if_values_defined(p_gnu, 'techdata_files', self.df_storagedata, 'storagedata', 'grid')
-        p_gn = self.create_p_gn(p_gnn, p_gnu, self.df_fueldata, self.df_demands, self.df_storagedata)
-        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn, self.df_storagedata)
-        ts_priceChange = self.create_ts_priceChange(p_gn, self.df_fueldata)
+        self.check_if_values_defined(p_gnu, 'techdata_files', self.df_storages, 'storagedata', 'grid')
+        p_gn = self.create_p_gn(p_gnn, p_gnu, self.df_fuels, self.df_demands, self.df_storages)
+        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn, self.df_storages)
+        ts_priceChange = self.create_ts_priceChange(p_gn, self.df_fuels)
         p_userconstraint = self.create_p_userConstraint(p_gnu, **self.secondary_results)
-        #print(p_userconstraint)
 
-         # emission based input tables
+        # emission based input tables
 
+
+        # Compile domains
+        grid = self.compile_domain([p_gnu, p_gnn, p_gn], 'grid')
+        node = self.compile_domain([p_gnu, p_gn], 'node') #cannot use p_gnn as it has domains from_node, to_node
+        unit = self.compile_domain([unitUnittype], 'unit')
+        unittype = self.compile_domain([unitUnittype], 'unittype')
+
+
+
+        # scenario tags to an excel sheet
+        scen_tags_df = pd.DataFrame([self.scen_tags])
 
         # Define the merged output file
         merged_output_file = os.path.join(self.output_folder, 'inputData.xlsx')
@@ -656,10 +722,17 @@ class build_input_excel:
             ts_priceChange.to_excel(writer, sheet_name='ts_priceChange', index=False)   
             p_userconstraint.to_excel(writer, sheet_name='p_userconstraint', index=False)     
 
-            # !!!!!!!!!!!!!!!
-            # write scen_year_alt sheet        
-            # !!!!!!!!!!!!!!!
+            # domains
+            grid.to_excel(writer, sheet_name='grid', index=False)       
+            node.to_excel(writer, sheet_name='node', index=False)   
+            unit.to_excel(writer, sheet_name='unit', index=False)   
+            unittype.to_excel(writer, sheet_name='unittype', index=False)                                               
+
+            # scenario tags
+            scen_tags_df.to_excel(writer, sheet_name='add_scen_tags', index=False)  
 
 
-        # Apply the adjustment method on the Excel file
+        # Apply the adjustments on the Excel file
+        self.add_index_sheet(self.input_folder, merged_output_file)
         self.adjust_excel(merged_output_file)
+

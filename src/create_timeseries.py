@@ -10,7 +10,7 @@ import calendar
 
 class create_timeseries:
     def __init__(self, timeseries_specs, input_folder, output_folder, 
-                 start_date, end_date, country_codes, scenario_year, 
+                 start_date, end_date, country_codes, scen_tags, 
                  df_annual_demands, log_start, write_csv_files=False
                  ):
         self.timeseries_specs = timeseries_specs
@@ -19,7 +19,7 @@ class create_timeseries:
         self.start_date = pd.to_datetime(start_date)
         self.end_date = pd.to_datetime(end_date)
         self.country_codes = country_codes
-        self.scenario_year = scenario_year
+        self.scenario_year = scen_tags['year']
         self.df_annual_demands = df_annual_demands
         self.log_start = log_start
         self.write_csv_files = write_csv_files
@@ -54,8 +54,8 @@ class create_timeseries:
         Calculates 'hour_of_year' as hours elapsed since Jan 1, starting at 1.
         Checks dim_cols as columns in bb_parameter_dimensions except 'f' and 't'
         for each unique dim_col:
-            * Calculates quantiles (0.1, 0.5, 0.9) for each hour_of_year of processed years
-            * maps {0.1: 'f02', 0.5: 'f01', 0.9: 'f03'}
+            * Calculates quantiles for each hour_of_year of processed years using the quantile mapping.
+            * Maps quantiles to 'f' based on quantile_map provided via kwargs
 
         Raises following errors
             * ValueError if input_df does not have 'time' columns
@@ -63,9 +63,11 @@ class create_timeseries:
             * ValueError if input_df columns do not have all bb_parameter_dimensions
             * ValueError if bb_parameter_dimensions cover only 'f' and 't'
         """
+        # ---- Parameters and checks ----
         # Retrieve mandatory kwargs
         processor_name = kwargs.get('processor_name') # for error messages
         bb_parameter_dimensions = kwargs.get('bb_parameter_dimensions')
+        quantile_map = kwargs.get('quantile_map')
 
         # Check for 'time' column.
         if 'time' not in input_df.columns:
@@ -84,6 +86,7 @@ class create_timeseries:
         if not ('t' in bb_parameter_dimensions and 'f' in bb_parameter_dimensions):
             raise ValueError(f"processor '{processor_name}' dimensions '{bb_parameter_dimensions}' do not include 'f' and 't'. Cannot calculate average year. Use 'calculate_average_year': False in config file?")
 
+        # ---- Create helper columns ----
         # Create 'hour_of_year' column (hours elapsed since Jan 1, starting at 1).
         input_df['hour_of_year'] = (
             (input_df['time'] - pd.to_datetime(input_df['time'].dt.year.astype(str) + '-01-01')) /
@@ -99,26 +102,22 @@ class create_timeseries:
         if not dim_cols:
             raise ValueError(f"processor '{processor_name}' dimensions '{bb_parameter_dimensions}' do not include anything but 'f' and 't'.")
 
-        # Mapping for quantile values to the 'f' column.
-        quantile_to_f = {0.1: 'f02', 0.5: 'f01', 0.9: 'f03'}
-
-        # -------------------------------
+        # ---- Quantile computation ----
         # Vectorized quantile computation:
         # Group by the additional dimensions and 'hour_of_year' then compute the three quantiles.
         df_quant = (
             input_df.groupby(dim_cols + ['hour_of_year'])['value']
-            .quantile([0.1, 0.5, 0.9])
+            .quantile(list(quantile_map.keys()))
             .reset_index(name='value')
         )
         # Rename the quantile column (it comes from the groupby quantile call)
         df_quant = df_quant.rename(columns={'level_{}'.format(len(dim_cols) + 1): 'quantile'})
 
-        # -------------------------------
         # Create a complete Cartesian product for each group, each quantile, and every hour from 1 to 8760.
         # First, get unique group combinations.
         unique_dims = input_df[dim_cols].drop_duplicates()
         # DataFrame for quantile values.
-        quantiles_df = pd.DataFrame({'quantile': list(quantile_to_f.keys())})
+        quantiles_df = pd.DataFrame({'quantile': list(quantile_map.keys())})
         # DataFrame for hours.
         hours_df = pd.DataFrame({'hour_of_year': np.arange(1, 8761)})
 
@@ -132,10 +131,10 @@ class create_timeseries:
         # Merge the computed quantile results with the complete grid.
         df_full = full_grid.merge(df_quant, on=dim_cols + ['hour_of_year', 'quantile'], how='left')
 
-        # -------------------------------
+        # ---- Prepare df_final ----
         # Add the 't' and 'f' columns vectorized.
         df_full['t'] = df_full['hour_of_year'].apply(lambda x: 't' + str(x).zfill(6))
-        df_full['f'] = df_full['quantile'].map(quantile_to_f)
+        df_full['f'] = df_full['quantile'].map(quantile_map)
 
         # Fill missing quantile values with 0.
         df_full['value'] = df_full['value'].fillna(0)
@@ -436,6 +435,7 @@ class create_timeseries:
             calculate_average_year = ts_params.get('calculate_average_year', False)
             process_only_single_year = ts_params.get('process_only_single_year', False)
             secondary_output_name = ts_params.get('secondary_output_name', None)
+            quantile_map = ts_params.get('quantile_map', {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'})
 
             print(f"\n------ {processor_name} --------------------------------------------------------------- ")
             self.log_time("Processing input data")
@@ -493,10 +493,11 @@ class create_timeseries:
                 print(f"   Summary csv written to {output_file_csv}")
 
             # Prepare arguments.
-            kwargs = {'bb_parameter': bb_parameter, 
+            kwargs = {'processor_name': processor_name,
+                      'bb_parameter': bb_parameter, 
                       'bb_parameter_dimensions': bb_parameter_dimensions, 
                       'custom_column_value': custom_column_value,
-                      'processor_name': processor_name
+                      'quantile_map': quantile_map
                       }
             if demand_grid is not None: 
                 kwargs['is_demand'] = True
