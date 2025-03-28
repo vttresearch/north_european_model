@@ -4,8 +4,7 @@ import importlib
 from gdxpds import to_gdx
 import pandas as pd
 import numpy as np
-from dateutil.relativedelta import relativedelta
-import calendar
+import glob
 
 
 class create_timeseries:
@@ -271,14 +270,15 @@ class create_timeseries:
         to_gdx(dataframes, path=output_file)
 
 
-    def write_BB_gdx_annual(self, df, output_file, **kwargs):
+    def write_BB_gdx_annual(self, df, **kwargs):
         """
         Splits the processed DataFrame by year, remaps the time labels per year,
         and writes each year's data to a separate GDX file.
 
-        Variables: output_file (DataFrame) with 'value' column. Other columns are treated as dimensions.
+        Variables: df (DataFrame) with 'value' column. Other columns are treated as dimensions.
                    bb_parameter (string) used to create gdx parameter name
                    bb_parameter_dimensions (list of strings) used to filter written columns.  E.g. ['grid', 'node', 'f', 't']
+                   gdx_name_suffix (string) used when generating the output file name
         """
         if df is None:
             print("Abort: No data to write")
@@ -287,13 +287,11 @@ class create_timeseries:
         # Prepare required parameters
         bb_parameter = kwargs.get('bb_parameter')        
         bb_parameter_dimensions = kwargs.get('bb_parameter_dimensions')
+        gdx_name_suffix = kwargs.get('gdx_name_suffix')
 
         # iterated years
         groups = df.groupby('year')
         single_year = groups.ngroups == 1
-
-        # output_file reconstruction
-        base, ext = os.path.splitext(output_file)
 
         # add 'value' to final_cols
         final_cols = bb_parameter_dimensions.copy()
@@ -308,8 +306,13 @@ class create_timeseries:
             group['t'] = group['t'].map(new_time_mapping)
             group_out = group[final_cols]
 
+            # Construct filename
+            if single_year:
+                file_path = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}.gdx') 
+            else: 
+                file_path = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_{yr}.gdx') 
+
             # write gdx
-            file_path = output_file if single_year else f"{base}_{yr}{ext}"
             dataframes = {bb_parameter: group_out}
             to_gdx(dataframes, path=file_path)
 
@@ -401,6 +404,68 @@ class create_timeseries:
             df_result = pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
         return df_result
         
+
+    def update_import_timeseries_inc(self, output_folder, file_suffix=None, **kwargs):
+        # Prepare required parameters
+        bb_parameter = kwargs.get('bb_parameter')
+        gdx_name_suffix = kwargs.get('gdx_name_suffix')
+
+        # If file_suffix flag is True, search for the specific file.
+        if file_suffix is not None:
+            filename = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx')
+            if os.path.exists(filename):
+                matching_files = filename
+            else:
+                raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx not found in {output_folder}.")
+
+        else:
+            # Check for the two patterns in the output_folder
+            # Pattern a: a single file: f'{bb_parameter}_{gdx_name_suffix}.gdx'
+            file_a = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}.gdx')
+            if os.path.exists(file_a):
+                matching_files = file_a
+                file_suffix = None
+            else:
+                # Pattern b: multiple files, e.g., f'{bb_parameter}_{gdx_name_suffix}_{yr}.gdx' where yr is four digit integer, e.g. 2014
+                pattern_b = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}_[0-9][0-9][0-9][0-9].gdx')
+                matching_files = glob.glob(pattern_b)
+                if matching_files:
+                    file_suffix = "%climateYear%"
+
+        if matching_files is None:
+            raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}.gdx or {bb_parameter}_{gdx_name_suffix}_year.gdx not found in {output_folder}.")
+
+        # Creating a text block with a specific structure to read GDX to Backbone
+        if file_suffix is None:
+            text_block = "\n".join([
+                f"// If {bb_parameter}_{gdx_name_suffix} exists",
+                f"$ifthen exist '%input_dir%/{bb_parameter}_{gdx_name_suffix}.gdx'",
+                "    // load input data",
+                f"    $$gdxin '%input_dir%/{bb_parameter}_{gdx_name_suffix}.gdx'",
+                f"    $$loaddcm '{bb_parameter}'",
+                "    $$gdxin",
+                "$endIf",
+                ""
+            ])
+        else:
+            text_block = "\n".join([
+                f"// If {bb_parameter}_{gdx_name_suffix}_{file_suffix} exists",
+                f"$ifthen exist '%input_dir%/{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx'",
+                "    // load input data",
+                f"    $$gdxin '%input_dir%/{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx'",
+                f"    $$loaddcm '{bb_parameter}'",
+                "    $$gdxin",
+                "$endIf",
+                ""
+            ])
+
+        # Define the output file path
+        output_file = os.path.join(output_folder, 'import_timeseries.inc')
+
+        # Create the file if it does not exist and then append the text_block
+        with open(output_file, 'a') as f:
+            f.write(text_block + "\n")
+
 
     def run(self):
         
@@ -497,17 +562,19 @@ class create_timeseries:
                       'bb_parameter': bb_parameter, 
                       'bb_parameter_dimensions': bb_parameter_dimensions, 
                       'custom_column_value': custom_column_value,
-                      'quantile_map': quantile_map
+                      'quantile_map': quantile_map,
+                      'gdx_name_suffix': gdx_name_suffix
                       }
             if demand_grid is not None: 
                 kwargs['is_demand'] = True
               
             # Call BB conversion.
             summary_df = self.prepare_BB_df(summary_df, self.start_date, self.country_codes, **kwargs)
-            # write annual gdx files.
-            output_file_gdx = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}.gdx')        
-            self.write_BB_gdx_annual(summary_df, output_file_gdx, **kwargs)
-            print(f"   Annual GDX files for Backbone written to {output_file_gdx}")
+            # write annual gdx files.      
+            self.write_BB_gdx_annual(summary_df, **kwargs)
+            # add reading instructions to import_timeseries.inc
+            self.update_import_timeseries_inc(self.output_folder, **kwargs)
+            print(f"   Annual GDX files for Backbone written to {self.output_folder}")
 
             # --- Average year calculations -------------------------------
             # If average-year calculations are enabled...
@@ -526,9 +593,10 @@ class create_timeseries:
                     avg_df.to_csv(output_file_avg_csv)
                     print(f"   Average year csv written to {output_file_avg_csv}")
 
-                # writing annual gdx files
+                # writing gdx file for forecasts
                 output_file_gdx = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_forecasts.gdx')
                 self.write_BB_gdx(avg_df, output_file_gdx, **kwargs)
+                self.update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **kwargs)
                 print(f"   GDX for Backbone written to {output_file_gdx}")
 
 

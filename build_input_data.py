@@ -2,12 +2,12 @@ import os
 import sys
 import ast
 import time
-# gdxpds not needed here, but important to import before pandas
+# gdxpds not needed by this file, but it is important to import it before pandas in whole project
 from gdxpds import to_gdx
 import pandas as pd
 import itertools
 import configparser
-import warnings
+import shutil
 
 
 # ------------------------------------------------------
@@ -161,6 +161,63 @@ def keep_last_occurance(df_input, key_columns=None):
         df_input = df_input.drop_duplicates(subset=key_columns, keep='last')
     return df_input
 
+def parse_args(argv):
+    args = {}
+    for arg in argv[1:]:
+        if '=' in arg:
+            key, value = arg.split('=', 1)
+            args[key] = value
+    return args
+
+def copy_GAMS_files(input_folder, output_folder):
+    # Define the folder containing the GAMS files
+    gams_files_folder = os.path.join(input_folder, "GAMS_files")
+    
+    # Define a list of tuples (source file, destination file)
+    files_to_copy = [
+        ("1_options.gms", "1_options.gms"),
+        ("changes.inc", "changes.inc"),
+        ("modelsInit_example.gms", "modelsInit.gms"),
+        ("scheduleInit_example.gms", "scheduleInit.gms"),
+        ("timeAndSamples.inc", "timeAndSamples.inc")
+    ]
+    
+    # Loop through the files and copy them to the output folder with proper naming
+    for src_filename, dst_filename in files_to_copy:
+        src_path = os.path.join(gams_files_folder, src_filename)
+        dst_path = os.path.join(output_folder, dst_filename)
+        
+        # Optionally, you can add error handling in case a file doesn't exist.
+        if not os.path.isfile(src_path):
+            print(f"Warning: {src_path} does not exist.")
+            continue
+        
+        shutil.copy2(src_path, dst_path)
+        print(f"Copied {src_path} to {dst_path}")
+
+def build_node_column(df):
+    """
+    Add 'node' column to df: 
+        * if node_suffix defined: <country>_<grid>_<node_suffix>  
+        * else : <country>_<grid>
+    requires following columns: country, grid, node_suffix
+    """
+    # Define the required columns
+    required_columns = ["country", "grid", "node_suffix"]
+
+    # Identify any missing columns
+    missing_columns = [col for col in required_columns if col not in df.columns]
+
+    if missing_columns:
+        raise ValueError("DataFrame is missing required columns: " + ", ".join(missing_columns))
+
+    # Build 'node' column to df
+    df['node'] = df.apply(
+        lambda row: f"{row['country']}_{row['grid']}" + 
+                    (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
+        axis=1
+    )
+    return df
 
 # ------------------------------------------------------
 # Functions to filter dataframes
@@ -231,14 +288,6 @@ def filter_df_blacklist(df_input, df_name, filters):
             df_filtered = df_filtered[~df_filtered[col].isin(val)]
     return df_filtered
 
-def parse_args(argv):
-    args = {}
-    for arg in argv[1:]:
-        if '=' in arg:
-            key, value = arg.split('=', 1)
-            args[key] = value
-    return args
-
 
 # ------------------------------------------------------
 # Main run function to process input data and create timeseries
@@ -293,6 +342,9 @@ def run(input_folder, config_file):
     df_demands = filter_df_blacklist(df_demands, 'demand_files', {'grid': exclude_grids})
     df_transfers = filter_df_blacklist(df_transfers, 'transfer_files', {'grid': exclude_grids})
 
+    # Build node columns
+    df_storages = build_node_column(df_storages)
+
     # Loop over every combination of scenario and scenario year.
     for scenario, scenario_year, scenario_alternative in itertools.product(scenarios, scenario_years, scenario_alternatives or [None]):
         print(f"\n--------------------------------------------------------------------------- ")
@@ -335,6 +387,10 @@ def run(input_folder, config_file):
         if not os.path.exists(output_folder): 
             os.makedirs(output_folder)
         print(f"Writing output files to '.\\{output_folder}'")
+        # remove import_timeseries.inc if already exists in the output_folder
+        file_path = os.path.join(output_folder, 'import_timeseries.inc')
+        if os.path.exists(file_path): os.remove(file_path)
+
 
         # compile scen_tags
         scen_tags = {'scenario': scenario, 'year': scenario_year, 'alternative': scenario_alternative} 
@@ -353,6 +409,10 @@ def run(input_folder, config_file):
                           secondary_results
                           ).run()
 
+
+        # Copy default GAMS files
+        print(f"\n---- Copying GAMS files to '{output_folder}' ---------------- ")
+        copy_GAMS_files(input_folder, output_folder)
 
         
     print("\n-----------------------------------")   

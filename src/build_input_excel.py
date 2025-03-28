@@ -1,13 +1,13 @@
 import os
 import sys
-from gdxpds import to_gdx
+#from gdxpds import to_gdx
 import pandas as pd
-import numpy as np
-import openpyxl
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.table import Table, TableStyleInfo
+#import numpy as np
 from openpyxl import load_workbook
-
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment
+from openpyxl.worksheet.table import Table, TableStyleInfo
+import re
 
 
 class build_input_excel:
@@ -39,15 +39,9 @@ class build_input_excel:
 # Functions creating the main Backbone input parameters: p_gnn and p_gnu
 # ------------------------------------------------------
 
-# !!!!!!!!!!!!!
-# ADD: mirrorer_capacities to p_Gnu
-# !!!!!!!!!!!!!
-
-    def create_p_gnu(self, df_techs, df_units, exclude_grids, df_remove_units):
+    def create_p_gnu_io(self, df_techs, df_units, exclude_grids, df_remove_units):
         """
-        Creates a new DataFrame p_gnu with 
-        dimension columns: [grid, node, unit, input_output]
-        value columns: [capacity, conversionCoeff, vomCosts]
+        Creates a new DataFrame p_gnu_io with specified dimension and parameter columns
 
         For each row in df_units:
         - Lookup the corresponding generator_id row in df_techs.
@@ -56,14 +50,24 @@ class build_input_excel:
         - for puts=['input', 'output1', 'output2', 'output3']
             * fetch matching grid <grid>_<{put}> from df_techs
             * if grid is defined
-                * Build node name <grid>_<country>_<matching 'node_suffix' if defined> 
+                * Build node name <country>_<grid>_<node_suffix if defined>
                 * Build mandatory base column values            
                 * Build additional parameters 
                     * values can be e.g. vomCosts_input, vomCosts_output2. If no suffix is given, the code assumes output1
+        - Construct 2 levels of column headers: level1 from dimensions and level2 for param_gnu that are present. Using empty name for the counterpart.
         - Build, sort, and return the final dataframe 
 
         Blacklists grids in self.exclude_grids
         """
+        # dimension and parameter columns
+        dimensions = ['grid', 'node', 'unit', 'input_output']
+        param_gnu = [ 'capacity', 'conversionCoeff', 'vomCosts', 'startCostCold', 
+                      'startCostWarm', 'startCostHot', 
+                      'maxRampUp', 'maxRampDown', 'rampCost', 
+                      #'cb', 'cv', 
+                      'upperLimitCapacityRatio'
+                    ]
+        # List to collect the new rows 
         rows = []
 
         # Process each row in the capacities DataFrame.
@@ -108,77 +112,63 @@ class build_input_excel:
 
                 # Only process if put specific grid is defined.
                 if pd.notna(grid) and grid not in ['', '-'] and grid not in exclude_grids:
-                    # Build node name: <country>_<grid>_<node_suffix if has value>
-                    node_name = f"{country}"
+                    # Build node name: <country>_<grid>_<node suffix if defined>
+                    node_name = f"{country}_{grid}"
                     node_suffix = cap_row[f'node_suffix_{put}'] if f'node_suffix_{put}' in cap_row.index else None
                     if pd.notna(node_suffix) and node_suffix not in ['', '-']:
                         node_name = f"{node_name}_{node_suffix}"
-                    node_name = f"{node_name}_{grid}"
                             
                     # Build base row dictionary.
                     base_row = {
-                        'grid': grid,
-                        'node': node_name,
-                        'unit': unit_name,
+                        'grid' : grid,
+                        'node' : node_name,
+                        'unit' : unit_name,
                         'input_output': 'input' if put.startswith('input') else 'output',
-                        'capacity': cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0,
-                        'conversionCoeff': tech_row[f'conversionCoeff_{put}'] if f'conversionCoeff_{put}' in tech_row.index else 1
+                        'capacity' : cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0,
+                        'conversionCoeff' : tech_row[f'conversionCoeff_{put}'] if f'conversionCoeff_{put}' in tech_row.index else 1
                     }
 
                     # Build additional parameters with a dictionary comprehension.
                     additional_params = {
-                        param_gnu: (
-                            (tech_row[f'{param_gnu.lower()}_{put}'] if f'{param_gnu.lower()}_{put}' in tech_row.index else 0) +
-                            (tech_row[param_gnu.lower()] if (param_gnu.lower() in tech_row.index and put == 'output1') else 0)
+                        param : (
+                            (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
+                            (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
                         )
-                        for param_gnu in ['vomCosts', 'startCostCold', 'startCostWarm', 
-                                        'startCostHot', 'startColdAfterXhours', 'startWarmAfterXhours',
-                                        'maxRampUp', 'maxRampDown', 'rampCost',
-                                        'cb', 'cv', 'upperLimitCapacityRatio']
+                        for param in param_gnu
                     }
 
                     # Merge the dictionaries.
                     row = {**base_row, **additional_params}
                     rows.append(row)
 
-        # Define the final columns order.
-        final_columns = [
-            'grid', 'node', 'unit', 'input_output', 'capacity', 'conversionCoeff',
-            'vomCosts', 'startCostCold', 'startCostWarm', 'startCostHot', 
-            'startColdAfterXhours', 'startWarmAfterXhours',
-            'maxRampUp', 'maxRampDown', 'rampCost', 'cb', 'cv', 'upperLimitCapacityRatio'
-        ]
+        # create p_gnu
+        p_gnu_io = self.create_fake_multiIndex(dimensions, param_gnu, rows)
 
-        # Build the final DataFrame with all columns.
-        p_gnu = pd.DataFrame(rows, columns=final_columns)
-        
         # Sort by unit, input_output, node in a case-insensitive manner.
-        p_gnu.sort_values(by=['unit', 'input_output', 'node'], 
+        p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
 
-        # Replace NaN values with 0 and return.
-        p_gnu = p_gnu.fillna(value=0)
-        return p_gnu
+        return p_gnu_io
 
-    def create_p_gnn(self, df_transfers, p_gnu, exclude_grids):
+    def create_p_gnn(self, df_transfers, p_gnu_io_flat, exclude_grids):
         """
-        Creates a new DataFrame p_gnn with 
-          dimension columns: [grid, from_node, to_node]
-          values: [capacity, availability, variableTransCost, transferLoss]
-          additional value for from_node, to_node: [rampLimit]
+        Creates a new DataFrame p_gnn with specified dimension and parameter columns
 
           Blacklists grids in exclude_grids
           Requires that nodes are present in previously created p_gnu
-        """                  
+        """          
+        # dimension and parameter columns
+        dimensions = ['grid', 'from_node', 'to_node']
+        param_gnn = ['transferCap', 'availability', 'variableTransCost', 'transferLoss', 'rampLimit']
+        # List to collect the new rows 
+        rows = []
+
         # Split the 'from-to' column into 'from_node' and 'to_node'
         df_transfers[['from_node', 'to_node']] = df_transfers['from-to'].str.split('-', expand=True)
 
-        # List to collect the new rows for the p_gnn DataFrame
-        rows = []
-
         # Create a set of allowed nodes for faster lookup
-        allowed_nodes = set(p_gnu['node'])
+        allowed_nodes = set(p_gnu_io_flat['node'])
 
         # Iterate over each row in df_transfers
         for _, row in df_transfers.iterrows():
@@ -188,36 +178,37 @@ class build_input_excel:
                 # If export capacity is greater than 0, add row with from_node, to_node, export_capacity
                 if row['export_capacity'] > 0:
                     rows.append({
-                        'grid': row['grid'],
-                        'from_node': row['from_node']+'_'+row['grid'],
-                        'to_node': row['to_node']+'_'+row['grid'],
-                        'capacity': row['export_capacity'], 
-                        'rampLimit': row['ramplimit'] if 'ramplimit' in row.index else 0,                        
-                        'availability': 1,                        
-                        'variableTransCost': row['vomcost'] if 'vomcost' in row.index else 0,
-                        'transferLoss': row['losses'] if 'losses' in row.index else 0
+                        'grid' :                        row['grid'],
+                        'from_node' :                   row['from_node']+'_'+row['grid'],
+                        'to_node' :                     row['to_node']+'_'+row['grid'],
+                        'transferCap' :                 row['export_capacity'],                       
+                        'availability' :                1,                        
+                        'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
+                        'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
+                        'rampLimit' :                   row['ramplimit'] if 'ramplimit' in row.index else 0  
                     })
 
                 # If import capacity is greater than 0, add row with to_node, from_node, import_capacity
                 if row['import_capacity'] > 0:
                     rows.append({
-                        'grid': row['grid'],
-                        'from_node': row['to_node']+'_'+row['grid'],
-                        'to_node': row['from_node']+'_'+row['grid'],
-                        'capacity': row['import_capacity'],  
-                        'rampLimit': 0,    
-                        'availability': 1,                        
-                        'variableTransCost': row['vomcost'] if 'vomcost' in row.index else 0,
-                        'transferLoss': row['losses'] if 'losses' in row.index else 0
+                        'grid' :                        row['grid'],
+                        'from_node' :                   row['to_node']+'_'+row['grid'],
+                        'to_node' :                     row['from_node']+'_'+row['grid'],
+                        'transferCap' :                 row['import_capacity'],  
+                        'availability' :                1,                        
+                        'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
+                        'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
+                        'rampLimit' :                   0    
                     })
 
-        # Create the resulting DataFrame with the specified columns
-        p_gnn = pd.DataFrame(rows, columns=[
-            'grid', 'from_node', 'to_node', 'availability',
-            'capacity', 'variableTransCost', 'transferLoss', 'rampLimit'
-        ])
+        # create p_gnn
+        p_gnn = self.create_fake_multiIndex(dimensions, param_gnn, rows)
+        
+        # Sort by grid, from_node, to_node in a case-insensitive manner.
+        p_gnn.sort_values(by=['grid', 'from_node', 'to_node'], 
+                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+                            inplace=True)
 
-        p_gnn = p_gnn.fillna(value=0)
         return p_gnn  
 
 
@@ -226,9 +217,9 @@ class build_input_excel:
 # unitUnittype, flowUnit, p_unit, effLevelGroupUnit
 # ------------------------------------------------------
 
-    def create_unitUnittype(self, p_gnu):
+    def create_unitUnittype(self, p_gnu_io_flat):
         # Get unique unit names from the 'unit' column of p_gnu
-        unique_units = p_gnu['unit'].unique()
+        unique_units = p_gnu_io_flat['unit'].unique()
         # Create the DataFrame using a list comprehension, taking the last part as the unittype
         unitUnittype = pd.DataFrame(
             [{'unit': unit, 'unittype': unit.split('_')[-1]} for unit in unique_units],
@@ -246,7 +237,18 @@ class build_input_excel:
         return flowUnit
     
     def create_p_unit(self, df_techs, unitUnittype):
+        """
+        Creates a new DataFrame p_unit with specified dimension and parameter columns
+        """      
+        # dimension and parameter columns
+        dimensions = ['unit']
+        param_unit = ['isSource', 'isSink', 'availability', 
+                      'eff00', 'eff01', 'op00', 'op01', 
+                      'startColdAfterXhours', 'startWarmAfterXhours',
+                      'minOperationHours', 'minShutdownHours']
+        # List to collect the new rows 
         rows = []
+
         # Iterate over each row in unitUnittype
         for _, u_row in unitUnittype.iterrows():
             # Retrieve the matching row from df_techs
@@ -254,29 +256,29 @@ class build_input_excel:
 
             # Build the param_unit dictionary using values from the matching row
             row_data = {
-                'unit': u_row['unit'],
-                'isSource': tech_row['isSource']  if 'isSource' in tech_row.index else 0,
-                'isSink': tech_row['isSink']  if 'isSink' in tech_row.index else 0,
-                'availability': 1,
-                'eff00': tech_row['efficiency'],
-                'eff01': tech_row['efficiency'],
-                'op00': tech_row['minstablegen'] if 'minstablegen' in tech_row.index else 0,
-                'op01': 1,
-                'minOperationHours': tech_row['minOperationHours']  if 'minOperationHours' in tech_row.index else 0,
-                'minShutdownHours': tech_row['minShutDownHours']  if 'minShutDownHours' in tech_row.index else 0,
+                'unit'              : u_row['unit'],
+                'isSource'          : tech_row['isSource'] if 'isSource' in tech_row.index else 0,
+                'isSink'            : tech_row['isSink'] if 'isSink' in tech_row.index else 0,
+                'availability'      : 1,
+                'eff00'             : tech_row['efficiency'],
+                'eff01'             : tech_row['efficiency'],
+                'op00'              : tech_row['minstablegen'] if 'minstablegen' in tech_row.index else 0,
+                'op01'              : 1,
+                'minOperationHours' : tech_row['minOperationHours']  if 'minOperationHours' in tech_row.index else 0,
+                'minShutdownHours'  : tech_row['minShutDownHours']  if 'minShutDownHours' in tech_row.index else 0,
             }
 
             # Append the unit and its parameter dictionary to the list
             rows.append(row_data)
 
-        # Create the DataFrame with the desired column order
-        columns = [
-            'unit', 'isSource', 'isSink', 'availability', 
-            'eff00', 'eff01', 'op00', 'op01', 
-            'minOperationHours', 'minShutdownHours'
-        ]
-        p_unit = pd.DataFrame(rows, columns=columns)
-        p_unit = p_unit.fillna(value=0)
+        # create p_unit
+        p_unit = self.create_fake_multiIndex(dimensions, param_unit, rows)
+        
+        # Sort by grid, from_node, to_node in a case-insensitive manner.
+        p_unit.sort_values(by=['unit'], 
+                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+                            inplace=True)
+
         return p_unit
     
     def create_effLevelGroupUnit(self, df_techs, unitUnittype):
@@ -320,19 +322,30 @@ class build_input_excel:
 # p_gn, p_gnBoundaryPropertiesForStates, ts_priceChange, 
 # ------------------------------------------------------
 
-    def create_p_gn(self, p_gnn, p_gnu, df_fuels, df_demands, df_storages):
-        # Build node name to df_storages: <country>_<grid>_<node_suffix>
-        df_storages['node'] = df_storages.apply(
-            lambda row: f"{row['country']}_{row['grid']}" + 
-                        (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
-            axis=1
-        )
+    def create_p_gn(self, p_gnn_flat, p_gnu_io_flat, df_fuels, df_demands, df_storages):
+        """
+        Creates a new DataFrame p_gn with specified dimension and parameter columns
+
+          Collects (grid, node) pairs from df_storages, p_gnn, and p_gnu
+          classifies each gn based on a range of tests
+            - if node has any fuel data in df_fuels -> price node
+            - if node is not price node -> balance node
+            - classifying node as a storage nodes if it passes any of the following three tests
+                1. if gn has upwardLimit, downwardLimit, or reference in df_storages -> storage node
+                2. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
+                3. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demands
+        """      
+        # dimension and parameter columns
+        dimensions = ['grid', 'node']
+        param_gn = ['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState']
+        # List to collect the new rows 
+        rows = []
 
         # Extract gn pairs from df_storages, p_gnn, and p_gnu
         pairs_df_storages = df_storages[['grid', 'node']]
-        pairs_from = p_gnn[['grid', 'from_node']].rename(columns={'from_node': 'node'})
-        pairs_to = p_gnn[['grid', 'to_node']].rename(columns={'to_node': 'node'})
-        pairs_gnu = p_gnu[['grid', 'node']]
+        pairs_from = p_gnn_flat[['grid', 'from_node']].rename(columns={'from_node': 'node'})
+        pairs_to = p_gnn_flat[['grid', 'to_node']].rename(columns={'to_node': 'node'})
+        pairs_gnu = p_gnu_io_flat[['grid', 'node']]
         # Concatenate and drop duplicates
         unique_gn_pairs = pd.concat([pairs_df_storages, pairs_from, pairs_to, pairs_gnu]).drop_duplicates()
 
@@ -340,7 +353,6 @@ class build_input_excel:
         demand_grids = df_demands['grid'].unique()
 
         # Process each (grid, node) pair:
-        rows = []
         for idx, row in unique_gn_pairs.iterrows():
             grid = row['grid']
             node = row['node']
@@ -351,60 +363,85 @@ class build_input_excel:
                 usePrice = True
             else:
                 usePrice = False
-            # useBalance is simply the opposite of usePrice.
-            useBalance = not usePrice
+            # nodeBalance is simply the opposite of usePrice.
+            nodeBalance = not usePrice
 
             # check if node is a storage node based on multiple criteria:
-            # 1. if in df_storages
-            is_storage = ((pairs_df_storages['grid'] == grid) & 
-                          (pairs_df_storages['node'] == node)).any()
+            # 1. if gn has upwardLimit, downwardLimit, or reference in df_storages -> storage node
+            cols_to_check = ['upwardLimit', 'downwardLimit', 'reference']
+            existing_cols = [col for col in cols_to_check if col in df_storages.columns]
+            
+            # Initialize storage flag
+            is_storage_flag = False
+            
+            # Only check further if at least one column exists
+            if existing_cols:
+                node_storage_data = df_storages[(df_storages['grid'] == grid) & (df_storages['node'] == node)]
+                # Check each existing column: if any value is greater than 0, mark as storage
+                for col in existing_cols:
+                    if (node_storage_data[col] > 0).any():
+                        is_storage_flag = True
+                        break
+                    
+            # Set the final flag based on the condition above
+            if is_storage_flag:
+                is_storage = 1
+            else:
+                is_storage = 0
 
-            # 2. if 'upperLimitCapacityRatio' is defined to any (grid, node)
-            subset_p_gnu = p_gnu[(p_gnu['grid'] == grid) & (p_gnu['node'] == node)]
-            if not is_storage and not subset_p_gnu.empty:
-                is_storage = ((subset_p_gnu['upperLimitCapacityRatio'].notnull()) 
-                              & (subset_p_gnu['upperLimitCapacityRatio'] != 0)
+            # 2. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
+            subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & (p_gnu_io_flat['node'] == node)]
+            if not is_storage and not subset_p_gnu_io.empty:
+                is_storage = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) 
+                              & (subset_p_gnu_io['upperLimitCapacityRatio'] != 0)
                               ).any()
-            # 3. if, in p_gnu, for this (grid, node), there are both 'input' and 'output' roles
-            io_roles = set(subset_p_gnu['input_output'])
+
+            # 3. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demands
+            io_roles = set(subset_p_gnu_io['input_output'])
             has_both_io = ('input' in io_roles) and ('output' in io_roles)
-            # Also, the grid should not appear in df_demands.
             grid_not_in_demands = grid not in demand_grids
-            # Determine energyStoredPerUnitOfState:
+
+            # Determine storage nodes based on previous 3 tests:
             if is_storage or (has_both_io and grid_not_in_demands):
                 energyStoredPerUnitOfState = 1
             else:
                 energyStoredPerUnitOfState = 0
 
-            # Build the record dictionary.
-            row = {
-                'grid': grid,
-                'node': node,
-                'usePrice': usePrice,
-                'useBalance': useBalance,
-                'energyStoredPerUnitOfState': energyStoredPerUnitOfState
+            # Build the data row for (grid,node)
+            row_dict = {
+                'grid' :                        grid,
+                'node' :                        node,
+                'usePrice' :                    usePrice,
+                'nodeBalance' :                 nodeBalance,
+                'energyStoredPerUnitOfState' :  energyStoredPerUnitOfState
             }
-            rows.append(row)
+            rows.append(row_dict)
 
-        # Convert list of records to a DataFrame and return.
-        p_gn = pd.DataFrame(rows)
-        p_gn = p_gn.fillna(value=0)
+        # create p_gn
+        p_gn = self.create_fake_multiIndex(dimensions, param_gn, rows)
+        
+        # Sort by grid, from_node, to_node in a case-insensitive manner.
+        p_gn.sort_values(by=['grid', 'node'], 
+                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+                            inplace=True)
         return p_gn
 
-    def create_p_gnBoundaryPropertiesForStates(self, p_gn, df_storages):
-        import pandas as pd  # Ensure pandas is imported if not already
+    def create_p_gnBoundaryPropertiesForStates(self, p_gn_flat, df_storages):
+        """
+        Creates a new DataFrame p_gnBoundaryPropertiesForStates 
 
-        # Build the 'node' column in df_storages: <country>_<grid>_<node_suffix>
-        df_storages['node'] = df_storages.apply(
-            lambda row: f"{row['country']}_{row['grid']}" + 
-                        (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
-            axis=1
-        )
 
-        rows = []
-        # Loop through each row in p_gn that has energyStoredPerUnitOfState equal to 1
-        for _, gn_row in p_gn.iterrows():
-            if gn_row.get('energyStoredPerUnitOfState', 0) == 1:
+        """   
+        dimensions = ['grid', 'node', 'param_gnBoundaryTypes']
+        param_gnBoundaryTypes = ['upwardLimit', 'downwardLimit', 
+                                 'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill']
+        param_gnBoundaryProperties = ['useConstant', 'constant']
+        # List to collect the new rows 
+        rows = []   
+
+        # Loop through each row in p_gn that has useBalance equal to 1
+        for _, gn_row in p_gn_flat.iterrows():
+            if gn_row.get('nodeBalance', 0) == 1:
                 grid = gn_row['grid']
                 node = gn_row['node']
 
@@ -415,24 +452,32 @@ class build_input_excel:
                 else:
                     continue
 
-                # Build the dictionary for the new row
-                row_dict = {'grid': grid, 'node': node}
+                # Loop through each boundary type and add a row if a value exists
+                for p_type in param_gnBoundaryTypes:
+                    # writing a row for p_type if it has data (value different to zero)
+                    value = storage_row.get(p_type.lower(), None)
+                    if value is not None:
+                        if value != 0 and pd.notna(value):
+                            row_dict = {
+                                'grid':                     grid,
+                                'node':                     node,
+                                'param_gnBoundaryTypes':    p_type,
+                                'useConstant':              1,
+                                'constant':                 value
+                            }
+                            rows.append(row_dict)
 
-                # List of optional keys to include if they exist in df_storages
-                optional_keys = ['upwardLimit', 'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill']
-                for key in optional_keys:
-                    if key.lower() in df_storages.columns:
-                        # If a matching storage_row was found, retrieve the value; otherwise, set to None
-                        row_dict[key] = storage_row[key.lower()] if storage_row is not None and key.lower() in storage_row else None
+        # create p_gnBoundaryPropertiesForStates
+        p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(dimensions, param_gnBoundaryProperties, rows)
+        
+        # Sort by grid, from_node, to_node in a case-insensitive manner.
+        p_gnBoundaryPropertiesForStates.sort_values(by=['grid', 'node'], 
+                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+                            inplace=True)
 
-                rows.append(row_dict)
-
-        # Create a DataFrame from the list of row dictionaries
-        p_gnBoundaryPropertiesForStates = pd.DataFrame(rows)
-        p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.fillna(value=0)
         return p_gnBoundaryPropertiesForStates
         
-    def create_ts_priceChange(self, p_gn, df_fuels):
+    def create_ts_priceChange(self, p_gn_flat, df_fuels):
         # Identify the price column in df_fuels (case-insensitive)
         price_col = next((col for col in df_fuels.columns if col.lower() == 'price'), None)
         if price_col is None:
@@ -440,7 +485,7 @@ class build_input_excel:
 
         rows = []
         # Loop through each row in p_gn using the columns: grid, node, and usePrice
-        for _, row in p_gn.iterrows():
+        for _, row in p_gn_flat.iterrows():
             grid_value = row['grid']
             node_value = row['node']
 
@@ -466,7 +511,7 @@ class build_input_excel:
 # convert p_userconstraint to ts_gnu(mingen)
 # !!!!!!!!!!!!!
 
-    def create_p_userConstraint(self, p_gnu, **kwargs):
+    def create_p_userConstraint(self, p_gnu_io_flat, **kwargs):
     
         # Filter kwargs {varname: var} where varname starts with 'mingen'
         mingen_vars = {key: value for key, value in kwargs.items() if key.startswith("mingen")}
@@ -479,7 +524,7 @@ class build_input_excel:
 
         for node in mingen_nodes:
             # Filter rows in p_gnu where 'node' equals current node and 'input_output' is 'input'
-            row_gnu = p_gnu[(p_gnu['node'] == node) & (p_gnu['input_output'] == 'input')]
+            row_gnu = p_gnu_io_flat[(p_gnu_io_flat['node'] == node) & (p_gnu_io_flat['input_output'] == 'input')]
             group_UC = 'UC_' + node
 
             # For each matching row, add a row to p_userConstraint
@@ -503,7 +548,6 @@ class build_input_excel:
             ]
 
         return p_userConstraint
-
 
 
 # ------------------------------------------------------
@@ -536,60 +580,16 @@ class build_input_excel:
         return compiled_df
 
 
-
 # ------------------------------------------------------
 # Function used to fine tune excel file after writing it
 # ------------------------------------------------------
 
-    def adjust_excel(self, output_file):
-        """
-        Adjusts the width of the columns and adds table formatting to all sheets in the specified Excel file.
-        Each sheet gets its columns auto-adjusted based on the maximum length of the cell values,
-        and an Excel table is created using the top row as headers.
-        Sheets with only one row will remain unchanged.
-        """
-        wb = openpyxl.load_workbook(output_file)
-
-        for ws in wb.worksheets:
-
-            # Adjust each column's width in the worksheet
-            for col_cells in ws.columns:
-                max_length = 0
-                col_letter = get_column_letter(col_cells[0].column)
-                for cell in col_cells:
-                    if cell.value is not None:
-                        max_length = max(max_length, len(str(cell.value)))
-                ws.column_dimensions[col_letter].width = max_length + 6  # add extra padding
-
-            # Skip the remaining adjustments if sheet has only one row
-            if ws.max_row == 1:
-                continue
-
-            # Freeze the first row by setting the freeze pane to cell A2
-            ws.freeze_panes = "A2"
-
-            # Determine the table range based on the worksheet's dimensions
-            # Only add a table if there is more than a single cell with data.
-            if ws.dimensions != "A1:A1" or (ws["A1"].value is not None):
-                table_range = ws.dimensions
-                # Generate a unique table name based on the sheet title (spaces replaced with underscores)
-                table_name = f"Table_{ws.title.replace(' ', '_')}"
-                table = Table(displayName=table_name, ref=table_range)
-
-                # Define a table style (you can change the style name as needed)
-                style = TableStyleInfo(name="TableStyleMedium9",
-                                       showFirstColumn=False,
-                                       showLastColumn=False,
-                                       showRowStripes=True,
-                                       showColumnStripes=False)
-                table.tableStyleInfo = style
-
-                # Add the table to the worksheet
-                ws.add_table(table)
-
-        wb.save(output_file)
-
     def add_index_sheet(self, input_folder, output_file):
+        """
+        Adds Index sheet to the excel
+            * loads preconstructed 'indexSheet.xlsx'
+            * picks rows where Symbol is in the sheet names
+        """
         # Construct full path to the index sheet file
         index_path = os.path.join(input_folder, 'indexSheet.xlsx')
 
@@ -621,9 +621,92 @@ class build_input_excel:
         # Save the updated workbook back to the output file
         wb.save(output_file)
 
+    def adjust_excel(self, output_file):
+        """
+        For each sheet in the Excel file
+            * Adjust each column's width.
+            * Skip remaining processing if sheet has only 1 row.
+            * If A2 is empty, iterate non-empty cells in row 2:
+                    - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                    - Centre align columns
+                    - set the column width to 6 
+            * Freeze top row
+            * Create and apply table formatting
+            * Add explanatory texts after (right from) the generated table in case of "fake MultiIndex"
+
+        Note: Empty A2 means the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
+        """
+        wb = load_workbook(output_file)
+
+        for ws in wb.worksheets:
+            # Adjust each column's width
+            for col_cells in ws.columns:
+                max_length = 0
+                col_letter = get_column_letter(col_cells[0].column)
+                for cell in col_cells:
+                    if cell.value is not None:
+                        max_length = max(max_length, len(str(cell.value)))
+                ws.column_dimensions[col_letter].width = max_length + 6  # add extra padding
+
+            # Skip remaining processing if sheet has only 1 row
+            if ws.max_row == 1:
+                continue
+
+            # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
+            if ws["A2"].value is None:
+                # Iterate cells in row 2 if cells are not empty
+                for cell in ws[2]:
+                    if cell.value is not None:
+                        # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                        if len(str(cell.value)) > 5:
+                            ws.cell(row=1, column=cell.col_idx).alignment = Alignment(textRotation=90)
+
+                        # Centre align entire columns that have text in row 2 
+                        col_index = cell.column
+                        # Iterate over all cells in this column
+                        for row_cells in ws.iter_rows(min_col=col_index, max_col=col_index):
+                            for c in row_cells:
+                                # Preserve any existing text rotation
+                                current_rotation = c.alignment.textRotation if c.alignment else 0
+                                c.alignment = Alignment(horizontal='center', textRotation=current_rotation)
+                        col_letter = get_column_letter(cell.column)
+
+                        # set the column width to 6 
+                        ws.column_dimensions[col_letter].width = 6       
+
+            # Freeze the top row
+            ws.freeze_panes = "A2"
+
+            # Derive table name from sheet name: remove any non-word characters and append _table.
+            table_name = re.sub(r'\W+', '_', ws.title) + "_table"
+            # Apply Excel table formatting
+            last_col_letter = get_column_letter(ws.max_column)
+            table_ref = f"A1:{last_col_letter}{ws.max_row}"
+            table = Table(displayName=table_name, ref=table_ref)
+            style = TableStyleInfo(name="TableStyleMedium9",
+                                   showFirstColumn=False,
+                                   showLastColumn=False,
+                                   showRowStripes=True,
+                                   showColumnStripes=False)
+            table.tableStyleInfo = style
+            table.headerRowCount = 1
+            ws.add_table(table)
+
+
+            # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
+            if ws["A2"].value is None:
+                # Add explanatory texts after (right from) the generated table
+                n = ws.max_column + 2
+                ws.cell(row=1, column=n, value='The first row labels are for excel Table headers.')
+                ws.cell(row=2, column=n, value='The Second row labels are for GDXXRW converting excel to GDX.')
+
+
+        # save the adjusted file
+        wb.save(output_file)
+
 
 # ------------------------------------------------------
-# Functions for quality and consistency checks
+# Utility functions
 # ------------------------------------------------------
 
     def check_if_file_open(self, file_path):
@@ -655,6 +738,45 @@ class build_input_excel:
         if missing_ids:
             raise ValueError(f"{name2} have following values in column '{column_name}' that are not defined in {name1}: {missing_ids}")
 
+    def create_fake_multiIndex(self, dim_cols, param_cols, rows):
+        """
+        Creates a fake MultiIndex by 
+            * creating column names from dimension columns and parameter columms
+            * adding the first row where dimension columns have value "" and parameter columns have value as column name
+            * adding row values (the real data) after the first row
+
+        """
+        # Define the final columns titles and orders.
+        final_cols = dim_cols.copy()
+        final_cols.extend(param_cols)
+
+        # Create an empty DataFrame with the desired columns.
+        df_output = pd.DataFrame(columns=final_cols)
+
+        # Create the first row:
+        # For each column in dimensions: use an empty string ""
+        # For each column in param_gnu: use the corresponding param_gnu value.
+        first_row = [""] * len(dim_cols) + list(param_cols)
+        df_output.loc[len(df_output)] = first_row
+
+        # Create a DataFrame for the remaining rows.
+        if rows:  # ensure rows is not empty
+            rows_df = pd.DataFrame(rows, columns=final_cols)
+            # Concatenate the header row with the rest of the rows.
+            df_output = pd.concat([df_output, rows_df], ignore_index=True)
+        
+        # Replace NaN values with 0 and return
+        df_output = df_output.fillna(value=0)
+        return df_output
+
+    def drop_row1(self, df):
+        # Create a copy of the original DataFrame
+        df_flat = df.copy()
+
+        # Drop the second row by using its index position (index 1)
+        df_flat = df_flat.drop(df_flat.index[0]).reset_index(drop=True)
+
+        return df_flat
 
 
 # ------------------------------------------------------
@@ -665,32 +787,38 @@ class build_input_excel:
 
         # main input tables
         self.check_if_values_defined(self.df_techs, 'techdata_files', self.df_units, 'unitdata_files', 'generator_id')
-        p_gnu = self.create_p_gnu(self.df_techs, self.df_units, self.exclude_grids, self.df_remove_units)
-        self.check_if_values_defined(p_gnu, 'techdata_files', self.df_transfers, 'transferdata', 'grid')
-        p_gnn = self.create_p_gnn(self.df_transfers, p_gnu, self.exclude_grids)
+        p_gnu_io = self.create_p_gnu_io(self.df_techs, self.df_units, self.exclude_grids, self.df_remove_units)
+        p_gnu_io_flat = self.drop_row1(p_gnu_io)
+        self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_transfers, 'transferdata', 'grid')
+        p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat, self.exclude_grids)
+        p_gnn_flat = self.drop_row1(p_gnn)
 
         # unittype based input tables
-        unitUnittype = self.create_unitUnittype(p_gnu)
+        unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
         flowUnit = self.create_flowUnit(self.df_techs, unitUnittype)
         p_unit = self.create_p_unit(self.df_techs, unitUnittype)
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_techs, unitUnittype)
 
         # node based input tables
-        self.check_if_values_defined(p_gnu, 'techdata_files', self.df_storages, 'storagedata', 'grid')
-        p_gn = self.create_p_gn(p_gnn, p_gnu, self.df_fuels, self.df_demands, self.df_storages)
-        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn, self.df_storages)
-        ts_priceChange = self.create_ts_priceChange(p_gn, self.df_fuels)
-        p_userconstraint = self.create_p_userConstraint(p_gnu, **self.secondary_results)
+        self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_storages, 'storagedata', 'grid')
+        p_gn = self.create_p_gn(p_gnn_flat, p_gnu_io_flat, self.df_fuels, self.df_demands, self.df_storages)
+        p_gn_flat = self.drop_row1(p_gn)
+        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, self.df_storages)
+        ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fuels)
+        p_userconstraint = self.create_p_userConstraint(p_gnu_io_flat, **self.secondary_results)
 
         # emission based input tables
 
 
         # Compile domains
-        grid = self.compile_domain([p_gnu, p_gnn, p_gn], 'grid')
-        node = self.compile_domain([p_gnu, p_gn], 'node') #cannot use p_gnn as it has domains from_node, to_node
+        grid = self.compile_domain([p_gnu_io_flat, p_gnn_flat, p_gn_flat], 'grid')
+        node = self.compile_domain([p_gnu_io_flat, p_gn_flat], 'node')  # cannot use p_gnn as it has domains from_node, to_node
+        flow = self.compile_domain([flowUnit], 'flow')
         unit = self.compile_domain([unitUnittype], 'unit')
         unittype = self.compile_domain([unitUnittype], 'unittype')
-
+        group = self.compile_domain([p_userconstraint], 'group')
+        restype = pd.DataFrame()
+        emission = pd.DataFrame()
 
 
         # scenario tags to an excel sheet
@@ -708,9 +836,12 @@ class build_input_excel:
 
         # Write DataFrames to different sheets of the merged Excel file
         with pd.ExcelWriter(merged_output_file) as writer:
+            # scenario tags
+            scen_tags_df.to_excel(writer, sheet_name='add_scen_tags', index=False)  
+
             # main input tables
             p_gnn.to_excel(writer, sheet_name='p_gnn', index=False)
-            p_gnu.to_excel(writer, sheet_name='p_gnu', index=False)
+            p_gnu_io.to_excel(writer, sheet_name='p_gnu_io', index=False)
             # unittype based input tables
             unitUnittype.to_excel(writer, sheet_name='unitUnittype', index=False)     
             flowUnit.to_excel(writer, sheet_name='flowUnit', index=False)            
@@ -726,10 +857,11 @@ class build_input_excel:
             grid.to_excel(writer, sheet_name='grid', index=False)       
             node.to_excel(writer, sheet_name='node', index=False)   
             unit.to_excel(writer, sheet_name='unit', index=False)   
-            unittype.to_excel(writer, sheet_name='unittype', index=False)                                               
-
-            # scenario tags
-            scen_tags_df.to_excel(writer, sheet_name='add_scen_tags', index=False)  
+            unittype.to_excel(writer, sheet_name='unittype', index=False)    
+            group.to_excel(writer, sheet_name='group', index=False)              
+            flow.to_excel(writer, sheet_name='flow', index=False)                                   
+            restype.to_excel(writer, sheet_name='restype', index=False)                                   
+            emission.to_excel(writer, sheet_name='emission', index=False)                                   
 
 
         # Apply the adjustments on the Excel file
