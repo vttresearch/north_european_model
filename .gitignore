@@ -1,10 +1,5 @@
 # All folders except
 /*/
-!/GAMS_files/
-!/input/
-!/inputFiles/
-!/manual_additions/
-!/output/
 !/src/
 !/src_files/
 
@@ -36,7 +31,7 @@
 # kde directory files
 .directory
 .vscode
-.code-workspace
+*.code-workspace
 
 #temporary files
 *~lock*
