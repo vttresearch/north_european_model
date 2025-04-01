@@ -36,6 +36,7 @@
 # kde directory files
 .directory
 .vscode
+.code-workspace
 
 #temporary files
 *~lock*

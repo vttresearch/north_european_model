@@ -20,6 +20,12 @@ class hydro_mingen_limits_MAF2019:
         start_date (str): Start date in string format (e.g., "1982-01-01 00:00:00").
         end_date (str): End date in string format (e.g., "2021-01-01 00:00:00").
         process_maxGen (bool): If True, process and print maximum generation limits as well. Default is False.
+
+    Returns:
+        summary_df: DateTime index from start_date to end_date
+                    Processed countries as column names
+                    hydro power minimum generation in MW as column values
+        hydro_mingen_nodes: list of nodes that have minimum generation limits
     """
 
     def __init__(self, input_folder, country_codes, start_date, end_date):

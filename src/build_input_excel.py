@@ -14,7 +14,7 @@ class build_input_excel:
     def __init__(self, input_folder, output_folder, country_codes, exclude_grids, scen_tags,
                  df_transfers, df_techs, df_units, df_remove_units, df_storages,
                  df_fuels, df_emissions, df_demands,
-                 secondary_results=None
+                 secondary_results=None, check_input_values=True
                  ):
         self.input_folder = input_folder
         self.output_folder = output_folder
@@ -32,24 +32,24 @@ class build_input_excel:
         self.df_emissions = df_emissions
         self.df_demands = df_demands
 
-        self.secondary_results = secondary_results        
+        self.secondary_results = secondary_results 
+        self.check_input_values = check_input_values
 
 
 # ------------------------------------------------------
 # Functions creating the main Backbone input parameters: p_gnn and p_gnu
 # ------------------------------------------------------
 
-    def create_p_gnu_io(self, df_techs, df_units, exclude_grids, df_remove_units):
+    def create_p_gnu_io(self, df_unittypes, df_units):
         """
         Creates a new DataFrame p_gnu_io with specified dimension and parameter columns
 
         For each row in df_units:
         - Lookup the corresponding generator_id row in df_techs.
-        - skip processing if (country, unit_name_prefix, generator_id) exists in df_remove_units
         - Build unit name: <country>_<'unit_name_prefix' if defined>_<unittype>
         - for puts=['input', 'output1', 'output2', 'output3']
             * fetch matching grid <grid>_<{put}> from df_techs
-            * if grid is defined
+            * if grid is defined (not NaN, empty, or -)
                 * Build node name <country>_<grid>_<node_suffix if defined>
                 * Build mandatory base column values            
                 * Build additional parameters 
@@ -64,7 +64,7 @@ class build_input_excel:
         param_gnu = [ 'capacity', 'conversionCoeff', 'vomCosts', 'startCostCold', 
                       'startCostWarm', 'startCostHot', 
                       'maxRampUp', 'maxRampDown', 'rampCost', 
-                      #'cb', 'cv', 
+                      'cb', 'cv', 
                       'upperLimitCapacityRatio'
                     ]
         # List to collect the new rows 
@@ -72,29 +72,14 @@ class build_input_excel:
 
         # Process each row in the capacities DataFrame.
         for _, cap_row in df_units.iterrows():
-
+            
             # Fetch values for country, unit_name_prefix, and generator_id
             country = cap_row['country']
             unit_name_prefix = cap_row['unit_name_prefix'] if 'unit_name_prefix' in cap_row.index else None
             generator_id = cap_row['generator_id']
 
             # Get the matching technology row.
-            tech_row = df_techs.loc[df_techs['generator_id'] == generator_id].iloc[0]
-
-            # skip processing if (country, unit_name_prefix, generator_id) exists in df_remove_units
-            # Compare country and generator_id case-insensitively:
-            mask_country = df_remove_units["country"].str.lower() == country.lower()
-            mask_generator_id = df_remove_units["generator_id"].astype(str).str.lower() == str(generator_id).lower()
-            # For unit_name_prefix, use a NaN-aware comparison:
-            mask_unit_prefix = (
-                (df_remove_units["unit_name_prefix"] == unit_name_prefix) |
-                (df_remove_units["unit_name_prefix"].isna() & pd.isna(unit_name_prefix))
-            )
-            # Combine all masks:
-            mask = mask_country & mask_unit_prefix & mask_generator_id
-            # skip if (country, unit_name_prefix, generator_id) is in df_remove_units
-            if mask.any():
-                continue
+            tech_row = df_unittypes.loc[df_unittypes['generator_id'] == generator_id].iloc[0]
 
             # Build unit name.
             if pd.notna(unit_name_prefix) and unit_name_prefix not in ['', '-']:
@@ -111,7 +96,7 @@ class build_input_excel:
                 grid = tech_row[f'grid_{put}'] if f'grid_{put}' in tech_row.index else None
 
                 # Only process if put specific grid is defined.
-                if pd.notna(grid) and grid not in ['', '-'] and grid not in exclude_grids:
+                if pd.notna(grid) and grid not in ['', '-']:
                     # Build node name: <country>_<grid>_<node suffix if defined>
                     node_name = f"{country}_{grid}"
                     node_suffix = cap_row[f'node_suffix_{put}'] if f'node_suffix_{put}' in cap_row.index else None
@@ -125,7 +110,8 @@ class build_input_excel:
                         'unit' : unit_name,
                         'input_output': 'input' if put.startswith('input') else 'output',
                         'capacity' : cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0,
-                        'conversionCoeff' : tech_row[f'conversionCoeff_{put}'] if f'conversionCoeff_{put}' in tech_row.index else 1
+                        # note: lower case conversioncoeff when picking values from tech_row
+                        'conversionCoeff' : tech_row[f'conversioncoeff_{put}'] if f'conversioncoeff_{put}' in tech_row.index else 1
                     }
 
                     # Build additional parameters with a dictionary comprehension.
@@ -134,7 +120,7 @@ class build_input_excel:
                             (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
                             (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
                         )
-                        for param in param_gnu
+                        for param in param_gnu if param not in ['capacity', 'conversionCoeff']
                     }
 
                     # Merge the dictionaries.
@@ -177,28 +163,31 @@ class build_input_excel:
 
                 # If export capacity is greater than 0, add row with from_node, to_node, export_capacity
                 if row['export_capacity'] > 0:
+                    from_to_capacity = row['export_capacity']
+                    rampLimit = row['ramplimit'] if 'ramplimit' in row.index else 0 
                     rows.append({
                         'grid' :                        row['grid'],
                         'from_node' :                   row['from_node']+'_'+row['grid'],
                         'to_node' :                     row['to_node']+'_'+row['grid'],
-                        'transferCap' :                 row['export_capacity'],                       
+                        'transferCap' :                 from_to_capacity,                       
                         'availability' :                1,                        
                         'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
                         'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
-                        'rampLimit' :                   row['ramplimit'] if 'ramplimit' in row.index else 0  
+                        'rampLimit' :                   rampLimit  
                     })
 
                 # If import capacity is greater than 0, add row with to_node, from_node, import_capacity
                 if row['import_capacity'] > 0:
+                    to_from_capacity = row['import_capacity']
                     rows.append({
                         'grid' :                        row['grid'],
                         'from_node' :                   row['to_node']+'_'+row['grid'],
                         'to_node' :                     row['from_node']+'_'+row['grid'],
-                        'transferCap' :                 row['import_capacity'],  
+                        'transferCap' :                 to_from_capacity,  
                         'availability' :                1,                        
                         'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
                         'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
-                        'rampLimit' :                   0    
+                        'rampLimit' :                   rampLimit / from_to_capacity * to_from_capacity if from_to_capacity > 0 else 0
                     })
 
         # create p_gnn
@@ -249,23 +238,36 @@ class build_input_excel:
         # List to collect the new rows 
         rows = []
 
+        def fetch_from_tech_row(tech_row, param, def_value=0):
+            # Reads value from tech_row in case insensitive manner, 
+            # accepts default value and uses 0 if not given
+            # handles errors by using value 0
+            try:
+                value = tech_row[param.lower()]  if param.lower() in tech_row.index else def_value
+            except:
+                value = 0
+            return value
+
         # Iterate over each row in unitUnittype
         for _, u_row in unitUnittype.iterrows():
             # Retrieve the matching row from df_techs
             tech_row = df_techs[df_techs['unittype'] == u_row['unittype']].iloc[0]
 
+            minShutdownHours = fetch_from_tech_row(tech_row, 'minShutdownHours')
             # Build the param_unit dictionary using values from the matching row
             row_data = {
                 'unit'              : u_row['unit'],
-                'isSource'          : tech_row['isSource'] if 'isSource' in tech_row.index else 0,
-                'isSink'            : tech_row['isSink'] if 'isSink' in tech_row.index else 0,
-                'availability'      : 1,
-                'eff00'             : tech_row['efficiency'],
-                'eff01'             : tech_row['efficiency'],
-                'op00'              : tech_row['minstablegen'] if 'minstablegen' in tech_row.index else 0,
-                'op01'              : 1,
-                'minOperationHours' : tech_row['minOperationHours']  if 'minOperationHours' in tech_row.index else 0,
-                'minShutdownHours'  : tech_row['minShutDownHours']  if 'minShutDownHours' in tech_row.index else 0,
+                'isSource'          : fetch_from_tech_row(tech_row, 'isSource'),
+                'isSink'            : fetch_from_tech_row(tech_row, 'isSink'),
+                'availability'      : fetch_from_tech_row(tech_row, 'availability', 1),
+                'eff00'             : fetch_from_tech_row(tech_row, 'eff00', 1),
+                'eff01'             : fetch_from_tech_row(tech_row, 'eff01', 1),
+                'op00'              : fetch_from_tech_row(tech_row, 'op00'),
+                'op01'              : fetch_from_tech_row(tech_row, 'op01', 1),
+                'minOperationHours' : fetch_from_tech_row(tech_row, 'minOperationHours'),
+                'minShutdownHours'  : minShutdownHours,
+                'startColdAfterXhours' : max(minShutdownHours, fetch_from_tech_row(tech_row, 'startColdAfterXhours')),
+                'startWarmAfterXhours' : fetch_from_tech_row(tech_row, 'startWarmAfterXhours')
             }
 
             # Append the unit and its parameter dictionary to the list
@@ -322,7 +324,7 @@ class build_input_excel:
 # p_gn, p_gnBoundaryPropertiesForStates, ts_priceChange, 
 # ------------------------------------------------------
 
-    def create_p_gn(self, p_gnn_flat, p_gnu_io_flat, df_fuels, df_demands, df_storages):
+    def create_p_gn(self, p_gnn_flat, p_gnu_io_flat, df_fuels, df_demands, df_storages, **kwargs):
         """
         Creates a new DataFrame p_gn with specified dimension and parameter columns
 
@@ -332,14 +334,28 @@ class build_input_excel:
             - if node is not price node -> balance node
             - classifying node as a storage nodes if it passes any of the following three tests
                 1. if gn has upwardLimit, downwardLimit, or reference in df_storages -> storage node
-                2. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
-                3. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demands
+                2. if node is in ts_storage_limits
+                3. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
+                4. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demands
         """      
         # dimension and parameter columns
         dimensions = ['grid', 'node']
         param_gn = ['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState']
         # List to collect the new rows 
         rows = []
+
+        # Filter kwargs {varname: var} where varname starts with 'ts_storage_limits'
+        ts_storage_limits = {key: value for key, value in kwargs.items() if key.startswith("ts_storage_limits")}
+          
+        # Initialize an empty set to store unique nodes
+        ts_storage_nodes = set()
+    
+        # Iterate through the filtered DataFrames
+        for key, df in ts_storage_limits.items():
+            # Verify that the DataFrame has the required columns
+            if 'node' in df.columns and 'param_gnBoundaryTypes' in df.columns:
+                # Add all nodes to the set
+                ts_storage_nodes.update(df['node'].unique())
 
         # Extract gn pairs from df_storages, p_gnn, and p_gnu
         pairs_df_storages = df_storages[['grid', 'node']]
@@ -389,23 +405,27 @@ class build_input_excel:
             else:
                 is_storage = 0
 
-            # 2. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
+            # 2. if node is in ts_storage_limits
+            if not is_storage and node in ts_storage_nodes:
+                is_storage = 1
+
+            # 3. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
             subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & (p_gnu_io_flat['node'] == node)]
             if not is_storage and not subset_p_gnu_io.empty:
                 is_storage = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) 
                               & (subset_p_gnu_io['upperLimitCapacityRatio'] != 0)
                               ).any()
 
-            # 3. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demands
+            # 4. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demands
             io_roles = set(subset_p_gnu_io['input_output'])
             has_both_io = ('input' in io_roles) and ('output' in io_roles)
             grid_not_in_demands = grid not in demand_grids
+            if not is_storage and (has_both_io and grid_not_in_demands):
+                is_storage = 1
 
             # Determine storage nodes based on previous 3 tests:
-            if is_storage or (has_both_io and grid_not_in_demands):
-                energyStoredPerUnitOfState = 1
-            else:
-                energyStoredPerUnitOfState = 0
+            if is_storage: energyStoredPerUnitOfState = 1
+            else: energyStoredPerUnitOfState = 0
 
             # Build the data row for (grid,node)
             row_dict = {
@@ -426,7 +446,7 @@ class build_input_excel:
                             inplace=True)
         return p_gn
 
-    def create_p_gnBoundaryPropertiesForStates(self, p_gn_flat, df_storages):
+    def create_p_gnBoundaryPropertiesForStates(self, p_gn_flat, df_storages, **kwargs):
         """
         Creates a new DataFrame p_gnBoundaryPropertiesForStates 
 
@@ -434,10 +454,26 @@ class build_input_excel:
         """   
         dimensions = ['grid', 'node', 'param_gnBoundaryTypes']
         param_gnBoundaryTypes = ['upwardLimit', 'downwardLimit', 
-                                 'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill']
-        param_gnBoundaryProperties = ['useConstant', 'constant']
+                                 'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill',
+                                 'downwardSlack01']
+        param_gnBoundaryProperties = ['useConstant', 'constant', 'useTimeSeries', 'slackCost']
         # List to collect the new rows 
         rows = []   
+
+        # Filter kwargs {varname: var} where varname starts with 'ts_storage_limits'
+        ts_storage_limits = {key: value for key, value in kwargs.items() if key.startswith("ts_storage_limits")}
+
+        # Initialize an empty dictionary for {(node, param_gnBoundaryTypes): average_value}
+        ts_node_boundaryTypes = {}
+
+        # Iterate through the filtered DataFrames
+        for key, df in ts_storage_limits.items():
+            # Verify that the DataFrame has the required columns
+            if all(col in df.columns for col in ['node', 'param_gnBoundaryTypes', 'average_value']):
+                # Extract (node, param_gnBoundaryTypes, average_value) tuples and add to dictionary
+                for _, row in df[['node', 'param_gnBoundaryTypes', 'average_value']].iterrows():
+                    node_boundaryType = (row['node'], row['param_gnBoundaryTypes'])
+                    ts_node_boundaryTypes[node_boundaryType] = row['average_value']
 
         # Loop through each row in p_gn that has useBalance equal to 1
         for _, gn_row in p_gn_flat.iterrows():
@@ -450,13 +486,40 @@ class build_input_excel:
                 if mask.any():
                     storage_row = df_storages[mask].iloc[0]
                 else:
-                    continue
+                    storage_row = None
 
                 # Loop through each boundary type and add a row if a value exists
                 for p_type in param_gnBoundaryTypes:
+
+                    # looking if storage_row has constant value for this p_type
+                    if storage_row is not None:
+                        value = storage_row.get(p_type.lower(), None)
+                    else:
+                        value = None
+
+                    # if (node, p_type) in ts_node_boundaryTypes, flag to use timeseries
+                    if (node, p_type) in ts_node_boundaryTypes:          
+                        row_dict = {
+                            'grid':                     grid,
+                            'node':                     node,
+                            'param_gnBoundaryTypes':    p_type,
+                            'useTimeSeries':            1,
+                        }
+                        rows.append(row_dict)  
+                        # if timeseries format downwardLimit, activate downwardSlack01
+                        if p_type == 'downwardLimit':
+                            row_dict = {
+                                'grid':                     grid,
+                                'node':                     node,
+                                'param_gnBoundaryTypes':    'downwardSlack01',
+                                'useConstant':              1,
+                                'constant':                 round(ts_node_boundaryTypes[(node, p_type)]/1000, 0),
+                                'slackCost':                300
+                            }
+                            rows.append(row_dict)      
+
                     # writing a row for p_type if it has data (value different to zero)
-                    value = storage_row.get(p_type.lower(), None)
-                    if value is not None:
+                    elif value is not None:
                         if value != 0 and pd.notna(value):
                             row_dict = {
                                 'grid':                     grid,
@@ -466,6 +529,25 @@ class build_input_excel:
                                 'constant':                 value
                             }
                             rows.append(row_dict)
+                
+            # Additional check for storage nodes
+            if gn_row.get('energyStoredPerUnitOfState', 0) == 1:
+                grid = gn_row['grid']
+                node = gn_row['node']
+                # Add a row for 'downwardLimit' with constant 'Eps' 
+                # if there is no such row for the current grid and node
+                if not any((r['grid'] == grid and 
+                            r['node'] == node and 
+                            r['param_gnBoundaryTypes'] == 'downwardLimit') for r in rows):
+                    row_dict = {
+                        'grid':                  grid,
+                        'node':                  node,
+                        'param_gnBoundaryTypes': 'downwardLimit',
+                        'useConstant':           1,
+                        'constant':              'Eps'
+                    }
+                    rows.append(row_dict)
+
 
         # create p_gnBoundaryPropertiesForStates
         p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(dimensions, param_gnBoundaryProperties, rows)
@@ -778,6 +860,102 @@ class build_input_excel:
 
         return df_flat
 
+    def remove_rows(self, df, key_col, values_to_exclude):
+        """
+        Remove rows from df where the value in key_col matches any value in df_remove
+
+        Parameters:
+        df (pandas.DataFrame): The DataFrame to remove rows from
+        key_col (str): The column name to use for matching
+        values_to_exclude (pandas.DataFrame or list): DataFrame containing values to match for removal,
+                                             or a list of strings to match directly
+
+        Returns:
+        pandas.DataFrame: DataFrame with matching rows removed
+
+        Raises:
+        ValueError: If key_col is missing in DataFrame or if values_to_exclude is of unsupported type
+        """
+        # Check if key_col exists in main DataFrame
+        if key_col not in df.columns:
+            raise ValueError(f"Column '{key_col}' not found in the main DataFrame")
+
+        # Build list of unique values based on the type of values_to_exclude
+        if isinstance(values_to_exclude, pd.DataFrame):
+            # Handle DataFrame case
+            if key_col not in values_to_exclude.columns:
+                raise ValueError(f"Column '{key_col}' not found in the removal DataFrame")
+            unique_vals = values_to_exclude[key_col].unique()
+        elif isinstance(values_to_exclude, list):
+            # Handle list case
+            unique_vals = values_to_exclude
+        else:
+            raise ValueError("values_to_exclude must be either a pandas DataFrame or a list")
+
+        # Remove rows from df where key_col value is in unique_vals
+        filtered_df = df[~df[key_col].isin(unique_vals)]
+
+        return filtered_df
+
+    def remove_units_by_excluding_grids(self, p_gnu_io, exclude_grids):
+        """
+        Remove units from p_gnu_io DataFrame based on excluded grids.
+
+        Parameters:
+        p_gnu_io (pandas.DataFrame): DataFrame containing grid, node, unit, and input_output columns
+        exclude_grids (list): List of grid names to exclude
+
+        Returns:
+        pandas.DataFrame: Filtered DataFrame with excluded grids and affected units removed
+        """
+        import pandas as pd
+
+        # Get unique units and their input/output counts before filtering
+        units = pd.DataFrame({'unit': p_gnu_io['unit'].unique()})
+
+        # Calculate original input counts for each unit
+        input_counts = p_gnu_io[p_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
+        input_counts.columns = ['unit', 'inputCount_orig']
+        units = units.merge(input_counts, on='unit', how='left')
+        units['inputCount_orig'] = units['inputCount_orig'].fillna(0).astype(int)
+
+        # Calculate original output counts for each unit
+        output_counts = p_gnu_io[p_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
+        output_counts.columns = ['unit', 'outputCount_orig']
+        units = units.merge(output_counts, on='unit', how='left')
+        units['outputCount_orig'] = units['outputCount_orig'].fillna(0).astype(int)
+
+        # Remove rows with excluded grids
+        filtered_gnu_io = self.remove_rows(p_gnu_io, 'grid', exclude_grids)
+
+        # Calculate updated input counts after grid removal
+        input_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
+        input_counts_upd.columns = ['unit', 'inputCount_upd']
+        units = units.merge(input_counts_upd, on='unit', how='left')
+        units['inputCount_upd'] = units['inputCount_upd'].fillna(0).astype(int)
+
+        # Calculate updated output counts after grid removal
+        output_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
+        output_counts_upd.columns = ['unit', 'outputCount_upd']
+        units = units.merge(output_counts_upd, on='unit', how='left')
+        units['outputCount_upd'] = units['outputCount_upd'].fillna(0).astype(int)
+
+        # Identify units to remove - those that lost all inputs or all outputs
+        units_to_remove = []
+
+        for _, row in units.iterrows():
+            # Check if unit had inputs before but lost all of them
+            if row['inputCount_upd'] == 0 and row['inputCount_orig'] >= 1:
+                units_to_remove.append(row['unit'])
+            # Check if unit had outputs before but lost all of them
+            elif row['outputCount_upd'] == 0 and row['outputCount_orig'] >= 1:
+                units_to_remove.append(row['unit'])
+
+        # Remove units that lost all inputs or all outputs
+        result = self.remove_rows(filtered_gnu_io, 'unit', units_to_remove)
+
+        return result
+
 
 # ------------------------------------------------------
 # Main entry point for the script
@@ -785,13 +963,24 @@ class build_input_excel:
 
     def run(self):
 
-        # main input tables
-        self.check_if_values_defined(self.df_techs, 'techdata_files', self.df_units, 'unitdata_files', 'generator_id')
-        p_gnu_io = self.create_p_gnu_io(self.df_techs, self.df_units, self.exclude_grids, self.df_remove_units)
+        # p_gnu_io
+        if self.check_input_values: self.check_if_values_defined(self.df_techs, 'techdata_files', self.df_units, 'unitdata_files', 'generator_id')
+        p_gnu_io = self.create_p_gnu_io(self.df_techs, self.df_units)
+        p_gnu_io = self.remove_rows(p_gnu_io, 'unit', self.df_remove_units)
+        p_gnu_io = self.remove_units_by_excluding_grids(p_gnu_io, self.exclude_grids)
         p_gnu_io_flat = self.drop_row1(p_gnu_io)
-        self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_transfers, 'transferdata', 'grid')
+
+        # p_gnn
+        if self.check_input_values: self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_transfers, 'transferdata', 'grid')
         p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat, self.exclude_grids)
+        p_gnn = self.remove_rows(p_gnn, 'grid', self.exclude_grids)
         p_gnn_flat = self.drop_row1(p_gnn)
+
+        # p_gn
+        if self.check_input_values: self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_storages, 'storagedata', 'grid')
+        p_gn = self.create_p_gn(p_gnn_flat, p_gnu_io_flat, self.df_fuels, self.df_demands, self.df_storages, **self.secondary_results)
+        p_gn = self.remove_rows(p_gn, 'grid', self.exclude_grids)
+        p_gn_flat = self.drop_row1(p_gn)
 
         # unittype based input tables
         unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
@@ -800,10 +989,7 @@ class build_input_excel:
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_techs, unitUnittype)
 
         # node based input tables
-        self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_storages, 'storagedata', 'grid')
-        p_gn = self.create_p_gn(p_gnn_flat, p_gnu_io_flat, self.df_fuels, self.df_demands, self.df_storages)
-        p_gn_flat = self.drop_row1(p_gn)
-        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, self.df_storages)
+        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, self.df_storages, **self.secondary_results)
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fuels)
         p_userconstraint = self.create_p_userConstraint(p_gnu_io_flat, **self.secondary_results)
 

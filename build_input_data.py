@@ -93,15 +93,19 @@ def merge_excel_files(excel_files, sheet_name_prefix, isMandatory=True):
         # Process each matching sheet individually
         for sheet in sheet_names:
             df = pd.read_excel(excel_file, sheet_name=sheet, header=0)
+            
             # Define columns to check for duplicates, excluding any column named 'value' (case-insensitive)
             columns_to_check = [col for col in df.columns if col.lower() != 'value']
-            
             if df.duplicated(subset=columns_to_check).any():
                 duplicates = df[df.duplicated(subset=columns_to_check, keep=False)]
                 raise ValueError(
                     f"Duplicate entries detected in file '{file_name}', sheet '{sheet}' based on columns {columns_to_check}.\n"
                     f"Duplicate rows:\n{duplicates}"
                 )
+            
+            # drop column "Note"
+            df = df.drop(['note', 'Note'], axis=1, errors='ignore')
+
             excel_sheets.append(df)
     
     # Merge all validated sheets into one DataFrame
@@ -195,15 +199,17 @@ def copy_GAMS_files(input_folder, output_folder):
         shutil.copy2(src_path, dst_path)
         print(f"Copied {src_path} to {dst_path}")
 
+
 def build_node_column(df):
     """
     Add 'node' column to df: 
         * if node_suffix defined: <country>_<grid>_<node_suffix>  
         * else : <country>_<grid>
-    requires following columns: country, grid, node_suffix
+    requires following columns: country, grid
+    optional column: node_suffix
     """
     # Define the required columns
-    required_columns = ["country", "grid", "node_suffix"]
+    required_columns = ["country", "grid"]
 
     # Identify any missing columns
     missing_columns = [col for col in required_columns if col not in df.columns]
@@ -211,13 +217,67 @@ def build_node_column(df):
     if missing_columns:
         raise ValueError("DataFrame is missing required columns: " + ", ".join(missing_columns))
 
+    # Check if node_suffix exists in the DataFrame
+    has_node_suffix = "node_suffix" in df.columns
+    
     # Build 'node' column to df
-    df['node'] = df.apply(
-        lambda row: f"{row['country']}_{row['grid']}" + 
-                    (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
-        axis=1
-    )
+    if has_node_suffix:
+        df['node'] = df.apply(
+            lambda row: f"{row['country']}_{row['grid']}" + 
+                        (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
+            axis=1
+        )
+    else:
+        # If node_suffix column doesn't exist, just use country and grid
+        df['node'] = df.apply(
+            lambda row: f"{row['country']}_{row['grid']}",
+            axis=1
+        )
+    
     return df
+
+
+def build_unit_column(df):
+    """
+    Add 'unit' column to df: 
+        * if unit_name_prefix defined: <country>_<unit_name_prefix>_<unittype>
+        * else : <country>_<unittype>
+    unittype is generator_id without spaces
+    requires following columns: country, generator_id
+    optional column: unit_name_prefix
+    """
+    # Define the required columns
+    required_columns = ["country", "generator_id"]
+
+    # Identify any missing columns
+    missing_columns = [col for col in required_columns if col not in df.columns]
+
+    if missing_columns:
+        raise ValueError("DataFrame is missing required columns: " + ", ".join(missing_columns))
+
+    # Generate unittype from generator_id
+    df['unittype'] = df['generator_id'].str.replace(' ', '')
+
+    # Check if node_suffix exists in the DataFrame
+    has_unit_name_prefix = "unit_name_prefix" in df.columns
+    
+    # Build 'node' column to df
+    if has_unit_name_prefix:
+        df['unit'] = df.apply(
+            lambda row: f"{row['country']}" + 
+                        (f"_{row['unit_name_prefix']}" if pd.notnull(row['unit_name_prefix']) and row['unit_name_prefix'] != "" else "")
+                        +f"_{row['unittype']}",
+            axis=1
+        )
+    else:
+        # If node_suffix column doesn't exist, just use country and grid
+        df['unit'] = df.apply(
+            lambda row: f"{row['country']}_{row['unittype']}",
+            axis=1
+        )
+    
+    return df   
+
 
 # ------------------------------------------------------
 # Functions to filter dataframes
@@ -309,9 +369,10 @@ def run(input_folder, config_file):
 
     # Extract parameters from the config file under the 'inputdata' section.
     output_folder_prefix = config.get('inputdata', 'output_folder_prefix')
-    write_csv_files = config.getboolean('inputdata', 'write_csv_files')
     start_date = config.get('inputdata', 'start_date')
     end_date = config.get('inputdata', 'end_date')
+    write_csv_files = config.getboolean('inputdata', 'write_csv_files', fallback=False)
+    check_input_values = config.getboolean('inputdata', 'check_input_values', fallback=True)
     # Convert string representations of lists into actual Python lists.
     scenarios = ast.literal_eval(config.get('inputdata', 'scenarios'))
     scenario_years = ast.literal_eval(config.get('inputdata', 'scenario_years'))
@@ -342,8 +403,9 @@ def run(input_folder, config_file):
     df_demands = filter_df_blacklist(df_demands, 'demand_files', {'grid': exclude_grids})
     df_transfers = filter_df_blacklist(df_transfers, 'transfer_files', {'grid': exclude_grids})
 
-    # Build node columns
+    # Build node and unit columns
     df_storages = build_node_column(df_storages)
+    df_remove_units = build_unit_column(df_remove_units)
 
     # Loop over every combination of scenario and scenario year.
     for scenario, scenario_year, scenario_alternative in itertools.product(scenarios, scenario_years, scenario_alternatives or [None]):
@@ -396,7 +458,6 @@ def run(input_folder, config_file):
         scen_tags = {'scenario': scenario, 'year': scenario_year, 'alternative': scenario_alternative} 
 
         # Create the timeseries using the create_timeseries class.
-        # Returns mingen_nodes
         secondary_results = create_timeseries(timeseries_specs, input_folder, output_folder, 
                                 start_date, end_date, country_codes, scen_tags, 
                                 df_f_demands, log_start, write_csv_files
@@ -406,7 +467,7 @@ def run(input_folder, config_file):
         build_input_excel(input_folder, output_folder, country_codes, exclude_grids, scen_tags,
                           df_f_transfers, df_f_unittypes, df_f_units, df_f_remove_units, df_f_storages,
                           df_f_fuels, df_f_emissions, df_f_demands,
-                          secondary_results
+                          secondary_results, check_input_values
                           ).run()
 
 

@@ -61,6 +61,7 @@ if (mType('schedule'),
     p_msProbability('schedule', 's000') = 1;
     p_msWeight('schedule', s) = 0;
     p_msWeight('schedule', 's000') = 1;
+    p_s_discountFactor('s000') = 1;
 
 * --- Define Time Step Intervals ----------------------------------------------
 
@@ -187,7 +188,7 @@ if(%forecastNumber%=4,
     // Define the last time step for each unit aggregation and efficiency level (3a_periodicInit.gms ensures that there is a effLevel until t_horizon)
     mSettingsEff('schedule', 'level1') = 24;
     mSettingsEff('schedule', 'level2') = 336;
-    mSettingsEff('schedule', 'level3') = Inf;
+    mSettingsEff('schedule', 'level3') = mSettings('schedule', 't_horizon');
 
 
 * --- Control the solver ------------------------------------------------------

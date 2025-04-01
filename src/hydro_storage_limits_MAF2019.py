@@ -12,6 +12,12 @@ class hydro_storage_limits_MAF2019:
         country_codes (list): List of country codes.
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
+
+        Returns:
+            tuple or DataFrame: If valid combinations are found, returns a tuple containing:
+                - summary_df: A MultiIndex DataFrame with time series data for each node
+                - ts_hydro_storage_limits_df: A DataFrame listing valid (node, boundary type, average_value) combinations
+              If no valid combinations are found, returns only the summary_df
     """
 
     def __init__(self, input_folder, country_codes, start_date, end_date):
@@ -190,8 +196,20 @@ class hydro_storage_limits_MAF2019:
 
     def run(self):
         """
-        Executes the processing: reading input files, processing each area,
-        merging results, and return the summary_df
+        Executes the hydro storage data processing pipeline.
+
+        This function performs the following steps:
+        1. Reads and validates reservoir levels data from CSV files
+        2. Reads capacity data for different zones and types
+        3. Creates a time-series framework with minimum and maximum boundary types
+        4. Processes each country's data (with special handling for Norway)
+        5. Creates ts_hydro_storage_limits_df of valid (node, boundary type) combinations
+
+        Returns:
+            tuple or DataFrame: If valid combinations are found, returns a tuple containing:
+                - summary_df: A MultiIndex DataFrame with time series data for each node
+                - ts_hydro_storage_limits_df: A DataFrame listing valid (node, boundary type, average_value) combinations
+              If no valid combinations are found, returns only the summary_df
         """
         # Read the levels CSV file.
         try:
@@ -200,6 +218,7 @@ class hydro_storage_limits_MAF2019:
             print(f"Error reading input CSV file: {e}")
             return
 
+        # Filter data by year range
         df_levels = df_levels[(df_levels["year"] >= self.startyear) & (df_levels["year"] <= self.endyear)]
         df_levels["year"] = pd.to_numeric(df_levels["year"])
         df_levels["week"] = pd.to_numeric(df_levels["week"])
@@ -223,7 +242,7 @@ class hydro_storage_limits_MAF2019:
         # Process each country.
         for country in self.country_codes:
             if country in self.norway_codes:
-                # Build the filename for Norway-specific Excel data.
+                # Special handling for Norway using Excel data
                 filename = os.path.join(self.input_folder, f"{self.file_first}{country}{self.file_last}")
                 result_df = self.process_norway_area(country, filename, df_capacities,
                                                      self.start_date, self.end_date,
@@ -231,6 +250,7 @@ class hydro_storage_limits_MAF2019:
                                                      self.minvariable, self.maxvariable,
                                                      self.suffix_open, self.suffix_closed)
             else:
+                # Standard processing for other countries
                 df_country = df_levels[df_levels["zone"] == country]
                 if df_country.empty:
                     print(f"   No reservoir limit data for {country}")
@@ -241,11 +261,48 @@ class hydro_storage_limits_MAF2019:
                                                  self.minvariable, self.maxvariable,
                                                  self.suffix_reservoir, self.suffix_open, self.suffix_closed)
 
+            # Merge country results into summary dataframe
             if result_df is not None:
                 result_df.index = result_df.index.set_names(['time', 'param_gnBoundaryTypes'])
                 summary_df = summary_df.join(result_df, how='left')
 
-        return summary_df
+        # Remove columns with no data (sum equals zero)
+        summary_df = summary_df.loc[:, summary_df.sum() > 0]
+
+        # Create a mask where values are > 0
+        mask = summary_df > 0
+
+        # Check which (node, boundary type) combinations have data
+        # Group by boundary type and check if sum > 0
+        has_data = mask.groupby(level='param_gnBoundaryTypes').sum() > 0
+
+        # Get all combinations with data and their average values
+        combinations_with_data = []
+        for boundary_type in summary_df.index.get_level_values('param_gnBoundaryTypes').unique():
+            # Filter to get only rows with this boundary type
+            boundary_data = summary_df.xs(boundary_type, level='param_gnBoundaryTypes')
+
+            for node in summary_df.columns:
+                if has_data.loc[boundary_type, node]:
+                    # Calculate average across time for this boundary type and node
+                    # Get only positive values for this node
+                    positive_values = boundary_data[node][boundary_data[node] > 0]
+                    avg_value = positive_values.mean() if len(positive_values) > 0 else 0
+
+                    combinations_with_data.append((node, boundary_type, avg_value))
+
+        # Create a dataframe of all valid combinations with their averages
+        ts_hydro_storage_limits = pd.DataFrame(
+            combinations_with_data, 
+            columns=['node', 'param_gnBoundaryTypes', 'average_value']
+        )
+
+        # Return both dataframes if data was found
+        if ts_hydro_storage_limits is not None:
+            return (summary_df, ts_hydro_storage_limits)
+        else:
+            return summary_df
+
 
 
 # Example usage:
@@ -261,7 +318,7 @@ if __name__ == '__main__':
     start_date = '2015-01-01 00:00:00'
     end_date = '2015-12-31 23:00:00'
 
-    processor = hydro_reservoir_limits_MAF2019(input_folder, country_codes, start_date, end_date)
+    processor = hydro_storage_limits_MAF2019(input_folder, country_codes, start_date, end_date)
     summary_df = processor.run()
 
     # Ensure the output directory exists.
