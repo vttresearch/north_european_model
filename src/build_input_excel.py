@@ -14,7 +14,7 @@ class build_input_excel:
     def __init__(self, input_folder, output_folder, country_codes, exclude_grids, scen_tags,
                  df_transfers, df_techs, df_units, df_remove_units, df_storages,
                  df_fuels, df_emissions, df_demands,
-                 secondary_results=None, check_input_values=True
+                 secondary_results=None
                  ):
         self.input_folder = input_folder
         self.output_folder = output_folder
@@ -33,7 +33,6 @@ class build_input_excel:
         self.df_demands = df_demands
 
         self.secondary_results = secondary_results 
-        self.check_input_values = check_input_values
 
 
 # ------------------------------------------------------
@@ -78,14 +77,20 @@ class build_input_excel:
             unit_name_prefix = cap_row['unit_name_prefix'] if 'unit_name_prefix' in cap_row.index else None
             generator_id = cap_row['generator_id']
 
-            # Get the matching technology row.
-            tech_row = df_unittypes.loc[df_unittypes['generator_id'] == generator_id].iloc[0]
-
             # Build unit name.
             if pd.notna(unit_name_prefix) and unit_name_prefix not in ['', '-']:
                 unit_name = f"{country}_{unit_name_prefix}_{tech_row['unittype']}"
             else:
                 unit_name = f"{country}_{tech_row['unittype']}"
+
+            # Get the matching technology row.
+            try:
+                tech_row = df_unittypes.loc[df_unittypes['generator_id'] == generator_id].iloc[0]
+            # print warning and skip unit if unittype data not available
+            except:
+                print(f"   !!! Unit '{unit_name}' does not have matching generator_id in any of the unittypedata files. Check spelling of generator_id in all files.")
+                continue
+
 
             # Filter only available puts based on whether 'grid_{put}' exists.
             available_puts = [put for put in ['input1', 'input2', 'input3', 'output1', 'output2', 'output3'] 
@@ -187,7 +192,7 @@ class build_input_excel:
                         'availability' :                1,                        
                         'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
                         'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
-                        'rampLimit' :                   rampLimit / from_to_capacity * to_from_capacity if from_to_capacity > 0 else 0
+                        'rampLimit' :                   (rampLimit / to_from_capacity * from_to_capacity ) if to_from_capacity > 0 else 0
                     })
 
         # create p_gnn
@@ -346,10 +351,8 @@ class build_input_excel:
 
         # Filter kwargs {varname: var} where varname starts with 'ts_storage_limits'
         ts_storage_limits = {key: value for key, value in kwargs.items() if key.startswith("ts_storage_limits")}
-          
-        # Initialize an empty set to store unique nodes
-        ts_storage_nodes = set()
-    
+        # Initialize an empty set for storage nodes
+        ts_storage_nodes = set()   
         # Iterate through the filtered DataFrames
         for key, df in ts_storage_limits.items():
             # Verify that the DataFrame has the required columns
@@ -357,13 +360,21 @@ class build_input_excel:
                 # Add all nodes to the set
                 ts_storage_nodes.update(df['node'].unique())
 
+        # Get ts_domains from secondary_results (kwargs), pick grid_node and convert to DataFrame
+        if 'ts_domains' in kwargs:
+            ts_domains = kwargs['ts_domains']
+            if 'grid_node' in ts_domains:
+                ts_grid_node = pd.DataFrame(ts_domains['grid_node'], columns=['grid', 'node'])
+        if ts_grid_node is None:
+            ts_grid_node = pd.DataFrame()
+
         # Extract gn pairs from df_storages, p_gnn, and p_gnu
         pairs_df_storages = df_storages[['grid', 'node']]
         pairs_from = p_gnn_flat[['grid', 'from_node']].rename(columns={'from_node': 'node'})
         pairs_to = p_gnn_flat[['grid', 'to_node']].rename(columns={'to_node': 'node'})
         pairs_gnu = p_gnu_io_flat[['grid', 'node']]
         # Concatenate and drop duplicates
-        unique_gn_pairs = pd.concat([pairs_df_storages, pairs_from, pairs_to, pairs_gnu]).drop_duplicates()
+        unique_gn_pairs = pd.concat([ts_grid_node, pairs_df_storages, pairs_from, pairs_to, pairs_gnu]).drop_duplicates()
 
         # Grids in df_demands for quick membership test
         demand_grids = df_demands['grid'].unique()
@@ -382,28 +393,22 @@ class build_input_excel:
             # nodeBalance is simply the opposite of usePrice.
             nodeBalance = not usePrice
 
+            # Initialize storage status to no storage
+            is_storage = 0
+
             # check if node is a storage node based on multiple criteria:
             # 1. if gn has upwardLimit, downwardLimit, or reference in df_storages -> storage node
             cols_to_check = ['upwardLimit', 'downwardLimit', 'reference']
-            existing_cols = [col for col in cols_to_check if col in df_storages.columns]
-            
-            # Initialize storage flag
-            is_storage_flag = False
-            
+            existing_cols = [col for col in cols_to_check if col.lower() in df_storages.columns]
+          
             # Only check further if at least one column exists
             if existing_cols:
                 node_storage_data = df_storages[(df_storages['grid'] == grid) & (df_storages['node'] == node)]
                 # Check each existing column: if any value is greater than 0, mark as storage
                 for col in existing_cols:
-                    if (node_storage_data[col] > 0).any():
-                        is_storage_flag = True
+                    if (node_storage_data[col.lower()] > 0).any():
+                        is_storage = 1
                         break
-                    
-            # Set the final flag based on the condition above
-            if is_storage_flag:
-                is_storage = 1
-            else:
-                is_storage = 0
 
             # 2. if node is in ts_storage_limits
             if not is_storage and node in ts_storage_nodes:
@@ -423,7 +428,7 @@ class build_input_excel:
             if not is_storage and (has_both_io and grid_not_in_demands):
                 is_storage = 1
 
-            # Determine storage nodes based on previous 3 tests:
+            # Determine storage nodes based on previous tests:
             if is_storage: energyStoredPerUnitOfState = 1
             else: energyStoredPerUnitOfState = 0
 
@@ -642,7 +647,32 @@ class build_input_excel:
 # Function to create compile domains 
 # ------------------------------------------------------
 
-    def compile_domain(self, dfs, domain):
+    def compile_domain(self, dfs, domain, **kwargs):
+        """
+        Compile unique domain values from multiple DataFrames and optional time series domains.
+        
+        This function extracts values from a specified column across multiple DataFrames,
+        and optionally combines them with domain values from time series data.
+        
+        Parameters:
+        -----------
+        dfs : list of pandas.DataFrame
+            List of DataFrames from which to extract domain values.
+        domain : str
+            The column name representing the domain to compile.
+        **kwargs : dict
+            Additional keyword arguments:
+            - secondary_results : dict
+                - potentially including 'ts_domains'. If present, 'ts_domains' should 
+                  be a dictionary mapping domain names to arrays of values.
+        """
+        # Get ts_domains from secondary_results (kwargs)
+        all_ts_domains = []
+        if 'ts_domains' in kwargs:
+            ts_domains = kwargs['ts_domains']
+            if domain in ts_domains:
+                all_ts_domains = ts_domains[domain].tolist()
+
         # Initialize an empty list to collect domain values
         all_domains = []
 
@@ -654,11 +684,16 @@ class build_input_excel:
                 # Extend the list with values from the specified domain column
                 all_domains.extend(df[domain].dropna().tolist())
 
-        # Get unique domain values
-        unique_domains = pd.unique(pd.Series(all_domains))
+        # Get unique domain values from both all_domains and all_ts_domains
+        all_combined_domains = all_domains + all_ts_domains
+        unique_domains = pd.unique(pd.Series(all_combined_domains))
 
         # Create a new DataFrame where each unique domain has a corresponding 'yes'
         compiled_df = pd.DataFrame({domain: unique_domains})
+
+        # Sort the DataFrame alphabetically by the domain column
+        compiled_df = compiled_df.sort_values(by=domain).reset_index(drop=True)
+        
         return compiled_df
 
 
@@ -803,23 +838,6 @@ class build_input_excel:
             except Exception as e:
                 raise Exception(f"The Excel file '{file_path}' is currently open. Please close it before proceeding.")
    
-    def check_if_values_defined(self, df1, name1, df2, name2, column_name):
-
-        # checks that columns exist
-        if column_name not in df1.columns:
-            raise Exception(f"The {column_name} column is missing from {name1}.")
-        if column_name not in df2.columns:
-            raise Exception(f"The {column_name} column is missing from {name2}.")
-        
-        # converts values to lower case
-        col_df1 = set(df1[column_name].astype(str).str.lower())
-        col_df2 = set(df2[column_name].astype(str).str.lower())
-
-        # Checks if all values used in df2['column_name'] are defined in df1['column_name']
-        missing_ids = set(col_df2) - set(col_df1)
-        if missing_ids:
-            raise ValueError(f"{name2} have following values in column '{column_name}' that are not defined in {name1}: {missing_ids}")
-
     def create_fake_multiIndex(self, dim_cols, param_cols, rows):
         """
         Creates a fake MultiIndex by 
@@ -851,11 +869,11 @@ class build_input_excel:
         df_output = df_output.fillna(value=0)
         return df_output
 
-    def drop_row1(self, df):
+    def drop_row0(self, df):
         # Create a copy of the original DataFrame
         df_flat = df.copy()
 
-        # Drop the second row by using its index position (index 1)
+        # Drop the first row by using its index position 0
         df_flat = df_flat.drop(df_flat.index[0]).reset_index(drop=True)
 
         return df_flat
@@ -963,24 +981,23 @@ class build_input_excel:
 
     def run(self):
 
+        print(f"\n------ Building input excel --------------------------------------------------------------- ")
+
         # p_gnu_io
-        if self.check_input_values: self.check_if_values_defined(self.df_techs, 'techdata_files', self.df_units, 'unitdata_files', 'generator_id')
         p_gnu_io = self.create_p_gnu_io(self.df_techs, self.df_units)
         p_gnu_io = self.remove_rows(p_gnu_io, 'unit', self.df_remove_units)
         p_gnu_io = self.remove_units_by_excluding_grids(p_gnu_io, self.exclude_grids)
-        p_gnu_io_flat = self.drop_row1(p_gnu_io)
+        p_gnu_io_flat = self.drop_row0(p_gnu_io)
 
         # p_gnn
-        if self.check_input_values: self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_transfers, 'transferdata', 'grid')
         p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat, self.exclude_grids)
         p_gnn = self.remove_rows(p_gnn, 'grid', self.exclude_grids)
-        p_gnn_flat = self.drop_row1(p_gnn)
+        p_gnn_flat = self.drop_row0(p_gnn)
 
         # p_gn
-        if self.check_input_values: self.check_if_values_defined(p_gnu_io_flat, 'techdata_files', self.df_storages, 'storagedata', 'grid')
         p_gn = self.create_p_gn(p_gnn_flat, p_gnu_io_flat, self.df_fuels, self.df_demands, self.df_storages, **self.secondary_results)
         p_gn = self.remove_rows(p_gn, 'grid', self.exclude_grids)
-        p_gn_flat = self.drop_row1(p_gn)
+        p_gn_flat = self.drop_row0(p_gn)
 
         # unittype based input tables
         unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
@@ -997,15 +1014,14 @@ class build_input_excel:
 
 
         # Compile domains
-        grid = self.compile_domain([p_gnu_io_flat, p_gnn_flat, p_gn_flat], 'grid')
-        node = self.compile_domain([p_gnu_io_flat, p_gn_flat], 'node')  # cannot use p_gnn as it has domains from_node, to_node
-        flow = self.compile_domain([flowUnit], 'flow')
+        grid = self.compile_domain([p_gnu_io_flat, p_gnn_flat, p_gn_flat], 'grid', **self.secondary_results)
+        node = self.compile_domain([p_gnu_io_flat, p_gn_flat], 'node', **self.secondary_results)  # cannot use p_gnn as it has domains from_node, to_node
+        flow = self.compile_domain([flowUnit], 'flow', **self.secondary_results)
         unit = self.compile_domain([unitUnittype], 'unit')
         unittype = self.compile_domain([unitUnittype], 'unittype')
-        group = self.compile_domain([p_userconstraint], 'group')
+        group = self.compile_domain([p_userconstraint], 'group', **self.secondary_results)
         restype = pd.DataFrame()
         emission = pd.DataFrame()
-
 
         # scenario tags to an excel sheet
         scen_tags_df = pd.DataFrame([self.scen_tags])
@@ -1054,3 +1070,4 @@ class build_input_excel:
         self.add_index_sheet(self.input_folder, merged_output_file)
         self.adjust_excel(merged_output_file)
 
+        print(f"Input excel for Backbone written to '{merged_output_file}'")

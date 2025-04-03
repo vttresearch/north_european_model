@@ -28,11 +28,25 @@ class hydro_mingen_limits_MAF2019:
         hydro_mingen_nodes: list of nodes that have minimum generation limits
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date):
-        self.input_folder = input_folder
-        self.country_codes = country_codes
-        self.start_date = start_date
-        self.end_date = end_date
+    def __init__(self, **kwargs_processor):
+        # List of required parameters
+        required_params = [
+            'input_folder', 
+            'country_codes', 
+            'start_date', 
+            'end_date'
+        ]
+
+        # Check if all required parameters are present
+        missing_params = [param for param in required_params if param not in kwargs_processor]
+        if missing_params:
+            raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
+
+        # Unpack parameters
+        self.input_folder = kwargs_processor['input_folder']
+        self.country_codes = kwargs_processor['country_codes']
+        self.start_date = kwargs_processor['start_date']
+        self.end_date = kwargs_processor['end_date']
 
         # Global input file (for non-Norway countries)
         self.input_csv = "PECD-hydro-weekly-reservoir-min-max-generation.csv"
@@ -248,21 +262,28 @@ if __name__ == "__main__":
     start_date = "1982-01-01 00:00:00"
     end_date = "2021-01-01 00:00:00"
 
+    kwargs_processor = {'input_folder': input_folder,
+                        'country_codes': country_codes,
+                        'start_date': start_date,
+                        'end_date': end_date
+    }
+
     # Set process_maxGen to True to process maximum generation limits,
     # or leave it as False (default) to process only minimum generation limits.
-    processor = hydro_mingen_limits_MAF2019(input_folder, country_codes, start_date, end_date)
+    processor = hydro_mingen_limits_MAF2019(**kwargs_processor)
     result = processor.run()
 
     # Ensure the output directory exists.
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     
-    # Handle the case of an optional second DataFrame.
+    # Handle an optional second DataFrame and possible no result
     if isinstance(result, tuple) and len(result) == 2:
         summary_df, df_optional = result
-        #secondary_results[secondary_output_name] = df_optional
+    elif result is None:
+        print(f"processor did not return any DataFrame.")
     else:
-        summary_df = result   
+        summary_df = result  
 
     # Write to a csv.
     if summary_df is not None:

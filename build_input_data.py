@@ -20,7 +20,11 @@ import shutil
 #├── src/
 #    ├── create_timeseries.py  
 #    ├── create_input_excel.py  
-
+#    ├── multiple processor files 
+#├── src_files/
+#    ├── GAMS_files
+#    ├── timeseries
+#    ├── data_files
 
 # Import main processor classes
 from src.build_input_excel import build_input_excel
@@ -32,11 +36,12 @@ from src.create_timeseries import create_timeseries
 # Functions to merge input excels, carry a quality check, and simplify the code by calling these both via an aggregate fucntion
 # ------------------------------------------------------
 
-def process_dataset(files, prefix, isMandatory=True):
+def process_dataset(input_folder, files, prefix, isMandatory=True):
     """
     Merge excel files and perform a quality check for a given dataset.
     
     Parameters:
+        input_folder (str): Location of files
         files (list): List of file paths.
         prefix (str): A string prefix to be used for the dataset.
     
@@ -44,7 +49,7 @@ def process_dataset(files, prefix, isMandatory=True):
         DataFrame: The processed DataFrame after merging and quality check.
     """
     try:
-        df = merge_excel_files(files, prefix, isMandatory)
+        df = merge_excel_files(input_folder, files, prefix, isMandatory)
     except (FileNotFoundError, ValueError) as e:
         print(e)
         sys.exit(1)
@@ -57,7 +62,7 @@ def process_dataset(files, prefix, isMandatory=True):
     
     return df
 
-def merge_excel_files(excel_files, sheet_name_prefix, isMandatory=True):
+def merge_excel_files(input_folder, excel_files, sheet_name_prefix, isMandatory=True):
     """
     Merges multiple Excel files by:
       1. Reading sheets starting with sheet_name_prefix from each file.
@@ -66,6 +71,7 @@ def merge_excel_files(excel_files, sheet_name_prefix, isMandatory=True):
       4. Overwriting duplicate 'value' entries when duplicates occur across sheets.
     
     Parameters:
+      input_folder (str): location of excel files
       excel_files (list of str): List of Excel file names (assumed to be in input_folder).
       sheet_name_prefix (str): Prefix to identify sheets to read.
     
@@ -372,7 +378,7 @@ def run(input_folder, config_file):
     start_date = config.get('inputdata', 'start_date')
     end_date = config.get('inputdata', 'end_date')
     write_csv_files = config.getboolean('inputdata', 'write_csv_files', fallback=False)
-    check_input_values = config.getboolean('inputdata', 'check_input_values', fallback=True)
+
     # Convert string representations of lists into actual Python lists.
     scenarios = ast.literal_eval(config.get('inputdata', 'scenarios'))
     scenario_years = ast.literal_eval(config.get('inputdata', 'scenario_years'))
@@ -390,20 +396,22 @@ def run(input_folder, config_file):
     timeseries_specs = ast.literal_eval(config.get('inputdata', 'timeseries_specs'))
 
     # Read and process input excels
-    df_demands   = process_dataset(demanddata_files, 'demanddata')
-    df_transfers = process_dataset(transferdata_files, 'transferdata')
-    df_unittypes  = process_dataset(unittypedata_files, 'unittypedata') 
-    df_units  = process_dataset(unitdata_files, 'unitdata') 
-    df_remove_units  = process_dataset(unitdata_files, 'remove', isMandatory=False) 
-    df_storages  = process_dataset(storagedata_files, 'storagedata') 
-    df_fuels  = process_dataset(fueldata_files, 'fueldata') 
-    df_emissions  = process_dataset(emissiondata_files, 'emissiondata') 
+    data_folder = os.path.join(input_folder, 'data_files')
+    df_demands   = process_dataset(data_folder, demanddata_files, 'demanddata')
+    df_transfers = process_dataset(data_folder, transferdata_files, 'transferdata')
+    df_unittypes  = process_dataset(data_folder, unittypedata_files, 'unittypedata') 
+    df_units  = process_dataset(data_folder, unitdata_files, 'unitdata') 
+    df_remove_units  = process_dataset(data_folder, unitdata_files, 'remove', isMandatory=False) 
+    df_storages  = process_dataset(data_folder, storagedata_files, 'storagedata') 
+    df_fuels  = process_dataset(data_folder, fueldata_files, 'fueldata') 
+    df_emissions  = process_dataset(data_folder, emissiondata_files, 'emissiondata') 
 
     # exclude grids
     df_demands = filter_df_blacklist(df_demands, 'demand_files', {'grid': exclude_grids})
     df_transfers = filter_df_blacklist(df_transfers, 'transfer_files', {'grid': exclude_grids})
 
     # Build node and unit columns
+    df_demands = build_node_column(df_demands)
     df_storages = build_node_column(df_storages)
     df_remove_units = build_unit_column(df_remove_units)
 
@@ -411,13 +419,13 @@ def run(input_folder, config_file):
     for scenario, scenario_year, scenario_alternative in itertools.product(scenarios, scenario_years, scenario_alternatives or [None]):
         print(f"\n--------------------------------------------------------------------------- ")
         if scenario_alternative:
-            log_time(f"---- processing scenario:'{scenario}', scenario_year:{scenario_year}, and scenario alternative: '{scenario_alternative}'  ---------------- ", log_start)
+            log_time(f"---- processing '{scenario}', year {scenario_year}, and alternative '{scenario_alternative}'  ------------ ", log_start)
         else:
-            log_time(f"---- processing scenario:'{scenario}' and scenario_year:{scenario_year} ---------------- ", log_start) 
+            log_time(f"---- processing '{scenario}' year {scenario_year} ---------------- ", log_start) 
 
         # Combine scenario with a possible alternative
         scen_and_alt = [scenario]
-        if scenario_alternative:  # Only extend if not empty
+        if scenario_alternative:
             scen_and_alt.extend(scenario_alternatives)
 
         # Process global input files to get the data for the current scenario and year.
@@ -432,15 +440,15 @@ def run(input_folder, config_file):
         df_f_remove_units = filter_df_whitelist(df_remove_units, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
         df_f_storages = filter_df_whitelist(df_storages, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})  
 
-        # remove duplicates. Keep the last value. 
+        # remove duplicates. Keep the last value. This implicitly handles overwriting earlier values with the latest.
+        df_f_demands = keep_last_occurance(df_f_demands, ['country', 'grid', 'node'])
+        df_f_transfers = keep_last_occurance(df_f_transfers, ['from-to', 'grid'])
         df_f_unittypes = keep_last_occurance(df_f_unittypes, ['generator_id'])
+        df_f_units = keep_last_occurance(df_f_units, ['country', 'generator_id', 'unit_name_prefix'])
+        df_f_storages = keep_last_occurance(df_f_storages, ['country', 'grid', 'node'])
         df_f_fuels = keep_last_occurance(df_f_fuels, ['fuel'])
         df_f_emissions = keep_last_occurance(df_f_emissions, ['emission'])
-        df_f_transfers = keep_last_occurance(df_f_transfers, ['from-to', 'grid'])
-        df_f_demands = keep_last_occurance(df_f_demands, ['country', 'grid', 'node_suffix'])
-        df_f_units = keep_last_occurance(df_f_units, ['country', 'generator_id', 'unit_name_prefix'])
-        df_f_storages = keep_last_occurance(df_f_storages, ['country', 'generator_id', 'node_suffix'])
-
+        
         # Create an output folder specific to the current scenario and year
         if scenario_alternative:
             output_folder = os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}_{scenario_alternative}")
@@ -449,10 +457,10 @@ def run(input_folder, config_file):
         if not os.path.exists(output_folder): 
             os.makedirs(output_folder)
         print(f"Writing output files to '.\\{output_folder}'")
+
         # remove import_timeseries.inc if already exists in the output_folder
         file_path = os.path.join(output_folder, 'import_timeseries.inc')
         if os.path.exists(file_path): os.remove(file_path)
-
 
         # compile scen_tags
         scen_tags = {'scenario': scenario, 'year': scenario_year, 'alternative': scenario_alternative} 
@@ -467,9 +475,8 @@ def run(input_folder, config_file):
         build_input_excel(input_folder, output_folder, country_codes, exclude_grids, scen_tags,
                           df_f_transfers, df_f_unittypes, df_f_units, df_f_remove_units, df_f_storages,
                           df_f_fuels, df_f_emissions, df_f_demands,
-                          secondary_results, check_input_values
+                          secondary_results
                           ).run()
-
 
         # Copy default GAMS files
         print(f"\n---- Copying GAMS files to '{output_folder}' ---------------- ")

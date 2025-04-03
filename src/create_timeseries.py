@@ -273,12 +273,21 @@ class create_timeseries:
     def write_BB_gdx_annual(self, df, **kwargs):
         """
         Splits the processed DataFrame by year, remaps the time labels per year,
-        and writes each year's data to a separate GDX file.
-
-        Variables: df (DataFrame) with 'value' column. Other columns are treated as dimensions.
-                   bb_parameter (string) used to create gdx parameter name
-                   bb_parameter_dimensions (list of strings) used to filter written columns.  E.g. ['grid', 'node', 'f', 't']
-                   gdx_name_suffix (string) used when generating the output file name
+        and writes each year's data to a separate GDX file. 
+    
+        Variables: 
+            df (DataFrame): DataFrame with 'value' column. Other columns are treated as dimensions.
+            **kwargs: Additional parameters including:
+                bb_parameter (string): Used to create GDX parameter name
+                bb_parameter_dimensions (list of strings): Used to filter written columns. 
+                                                           E.g. ['grid', 'node', 'f', 't']
+                gdx_name_suffix (string): Used when generating the output file name
+    
+        Returns:
+            None: Creates GDX files in the output folder
+    
+        Note: 
+            - Drops hours after t8760 to handle leap years
         """
         if df is None:
             print("Abort: No data to write")
@@ -301,7 +310,18 @@ class create_timeseries:
         for yr, group in groups:
             # format dataframe and drop intermediate columns
             group = group.sort_values(by='t')
+        
+            # Get unique timestamps and create new mapping
             unique_times = pd.unique(group['t'])
+
+            # If this is a leap year and we have more than 8760 hours
+            if len(unique_times) > 8760:
+                # Keep only the first 8760 hours
+                unique_times = unique_times[:8760]
+                # Filter the group to only include rows with times in unique_times
+                group = group[group['t'].isin(unique_times)]
+
+            # Create the time mapping
             new_time_mapping = {time: 't' + str(i + 1).zfill(6) for i, time in enumerate(unique_times)}
             group['t'] = group['t'].map(new_time_mapping)
             group_out = group[final_cols]
@@ -312,38 +332,9 @@ class create_timeseries:
             else: 
                 file_path = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_{yr}.gdx') 
 
-            # write gdx
+            # Compile the parameter dataframe and write gdx
             dataframes = {bb_parameter: group_out}
             to_gdx(dataframes, path=file_path)
-
-
-    def create_year_start_gdx(self, start_date, end_date, output_file):
-            # Create an hourly datetime index
-            dt_index = pd.date_range(start=start_date, end=end_date, freq='h')
-
-            # Create a "t index" where the first hour is t000001, second t000002, etc.
-            t_index = [f't{str(i).zfill(6)}' for i in range(1, len(dt_index)+1)]
-
-            # Combine into a DataFrame
-            df = pd.DataFrame({'datetime': dt_index, 't': t_index})
-
-            # Pick the first hour of each year (January 1 at 00:00)
-            first_hours = df[(df['datetime'].dt.month == 1) &
-                             (df['datetime'].dt.day == 1) &
-                             (df['datetime'].dt.hour == 0)]
-
-            # Create the new DataFrame with columns 'year' and 't'
-            year_starts = pd.DataFrame({
-                'year': first_hours['datetime'].dt.year.apply(lambda x: f'y{x}'),
-                't': first_hours['t']
-            }).reset_index(drop=True)
-
-            # Add the required 'value' column for a set, with True for each element
-            year_starts['value'] = True
-
-            # Package and export the DataFrame to a GDX file.
-            dataframes = {'year_starts': year_starts}
-            to_gdx(dataframes, path=output_file)
 
 
     def import_processor_class(self, processor_name):
@@ -363,49 +354,57 @@ class create_timeseries:
 
     def create_other_demands(self, df_annual_demands, other_demands):
         """
-        For each (country, grid, node_suffix) combination in df_annual_demands
+        For each (grid, node) combination in df_annual_demands
         where the grid (case-insensitive) is in the set 'other_demands',
-        create 8760 rows with columns [grid, node, f, t, value].
-        
-        - 'node' is constructed as <country>_<grid>_<node_suffix> if node_suffix is provided,
-          otherwise just <country>_<grid>.
+        create 8760 rows with columns [grid, node, f, t, value].      
         - 'f' is set to 'f00'.
         - 't' is a sequential time label from t000001 up to t008760.
         - 'value' is calculated as TWh/year * 1e6 / 8760.
         """
         # Filter for rows with unprocessed grid values (using lower-case for comparison)
         df_filtered = df_annual_demands[df_annual_demands["grid"].str.lower().isin(other_demands)]
-        result_frames = []
+        rows = []
         # Create t-index for a full year (8760 hours)
         t_index = [f"t{str(i).zfill(6)}" for i in range(1, 8760+1)]
         for _, row in df_filtered.iterrows():
-            country = row["country"]
             grid = row["grid"]
-            node_suffix = row.get("node_suffix", "")
-            # Build node name <country>_<grid> or <country>_<grid>_<node_suffix>
-            if pd.notna(node_suffix) and str(node_suffix).strip() != "":
-                node = f"{country}_{grid}_{node_suffix}"
-            else:
-                node = f"{country}_{grid}"
+            node = row["node"]
+
             # Calculate hourly value (assume twh/year is numeric). 
             # Negative value for demands. Round to two decimals.
             hourly_value = round(row["twh/year"] * 1e6 / 8760 * -1, 2)
-            df_temp = pd.DataFrame({
+            row = pd.DataFrame({
                 "grid": grid,
                 "node": node,
                 "f": "f00",
                 "t": t_index,
                 "value": hourly_value
             })
-            result_frames.append(df_temp)
-        if result_frames:
-            df_result = pd.concat(result_frames, ignore_index=True)
+            rows.append(row)
+        if rows:
+            df_result = pd.concat(rows, ignore_index=True)
         else:
             df_result = pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
         return df_result
         
 
     def update_import_timeseries_inc(self, output_folder, file_suffix=None, **kwargs):
+        """
+        Updates the import_timeseries.inc file by generating a GAMS code block that imports
+        parameter data from GDX files. The function looks for matching GDX files in the output folder
+        based on specified parameter names and patterns, then creates the necessary GAMS code to load
+        parameters from these files.
+        
+        Args:
+            output_folder (str): Directory path where GDX files are located and where import_timeseries.inc will be created/updated
+            file_suffix (str, optional): Specific suffix for the GDX file. If None, searches for files with standard patterns
+            **kwargs: Additional parameters including:
+                - bb_parameter (str): Name of the Backbone parameter to import
+                - gdx_name_suffix (str): Suffix to be used in the GDX filename
+        
+        Returns:
+            None: Writes content to import_timeseries.inc file in the output_folder
+        """        
         # Prepare required parameters
         bb_parameter = kwargs.get('bb_parameter')
         gdx_name_suffix = kwargs.get('gdx_name_suffix')
@@ -437,27 +436,20 @@ class create_timeseries:
 
         # Creating a text block with a specific structure to read GDX to Backbone
         if file_suffix is None:
-            text_block = "\n".join([
-                f"// If {bb_parameter}_{gdx_name_suffix} exists",
-                f"$ifthen exist '%input_dir%/{bb_parameter}_{gdx_name_suffix}.gdx'",
-                "    // load input data",
-                f"    $$gdxin '%input_dir%/{bb_parameter}_{gdx_name_suffix}.gdx'",
-                f"    $$loaddcm '{bb_parameter}'",
-                "    $$gdxin",
-                "$endIf",
-                ""
-            ])
+            gdx_name = f"{bb_parameter}_{gdx_name_suffix}.gdx"
         else:
-            text_block = "\n".join([
-                f"// If {bb_parameter}_{gdx_name_suffix}_{file_suffix} exists",
-                f"$ifthen exist '%input_dir%/{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx'",
-                "    // load input data",
-                f"    $$gdxin '%input_dir%/{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx'",
-                f"    $$loaddcm '{bb_parameter}'",
-                "    $$gdxin",
-                "$endIf",
-                ""
-            ])
+            gdx_name = f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx"
+
+        # Constructing text block: 
+        text_block = "\n".join([
+            f"$ifthen exist '%input_dir%/{gdx_name}'",
+            f"    // If {gdx_name} exists, load input data",
+            f"    $$gdxin '%input_dir%/{gdx_name}'",
+            f"    $$loaddcm {bb_parameter}",
+            "    $$gdxin",
+            "$endIf",
+            ""
+        ])
 
         # Define the output file path
         output_file = os.path.join(output_folder, 'import_timeseries.inc')
@@ -467,22 +459,123 @@ class create_timeseries:
             f.write(text_block + "\n")
 
 
+    def update_unique_domains(self, df, possible_domains, ts_domains):
+        """
+        Updates the ts_domains dictionary with unique values from df for each domain in possible_domains.
+        
+        Parameters:
+        - df: DataFrame containing domain columns
+        - possible_domains: list of potential domain column names to check in df
+        - ts_domains: dictionary to update with unique domain values
+        
+        Returns:
+        - ts_domains: updated dictionary with unique domain values
+        """
+        # Find which of the possible domains exist in the DataFrame
+        domains = [domain for domain in possible_domains if domain in df.columns]
+        
+        # For each existing domain
+        for domain in domains:
+            # Find unique values in the domain column
+            domain_unique_values = df[domain].unique()
+            
+            if domain in ts_domains:
+                # If the domain already exists in ts_domains, combine the unique values
+                # Convert both arrays to sets for easy union operation, then back to numpy array
+                ts_domains[domain] = np.array(list(set(ts_domains[domain]) | set(domain_unique_values)))
+            else:
+                # If this is the first time seeing this domain, just add it to ts_domains
+                ts_domains[domain] = domain_unique_values
+        
+        return ts_domains
+
+
+    def update_domain_pairs(self, df, domain_pair, ts_domains):
+        """
+        Extracts unique pairs of domain values from specified columns in a DataFrame
+        and updates the ts_domains dictionary with these pairs.
+
+        Parameters:
+        - df: pandas.DataFrame containing the domain columns
+        - domain_pair: a list containing exactly two domain column names, e.g. ['grid', 'node']
+        - ts_domains: dictionary to update with unique domain pairs
+
+        Returns:
+        - ts_domains: updated dictionary with unique domain pairs
+
+        Raises:
+        - ValueError if domain_pair doesn't contain exactly two items
+        """
+        # Validate input
+        if not isinstance(domain_pair, list) or len(domain_pair) != 2:
+            raise ValueError("domain_pair must be a list containing exactly two domain names")
+
+        domain1, domain2 = domain_pair
+
+        # Check if both domains exist in the DataFrame
+        for domain in domain_pair:
+            if domain not in df.columns:
+                # No update if domains don't exist
+                return ts_domains
+
+        # Extract unique combinations of domain values
+        domain_pairs_df = df[[domain1, domain2]].copy()
+
+        # Drop duplicate pairs
+        domain_pairs_df = domain_pairs_df.drop_duplicates()
+
+        # Create key for the domain pair in the dictionary
+        pair_key = f"{domain1}_{domain2}"
+
+        # Convert domain pairs to tuple list for easier combination
+        new_pairs = list(domain_pairs_df.itertuples(index=False, name=None))
+
+        if not new_pairs:
+            # No pairs to add
+            return ts_domains
+
+        # Initialize if this is the first time seeing this pair combination
+        if pair_key not in ts_domains:
+            ts_domains[pair_key] = []
+
+        # Get existing pairs
+        existing_pairs = ts_domains[pair_key]
+
+        # Combine existing and new pairs, ensuring uniqueness
+        if len(existing_pairs) > 0:
+            # Convert to sets of tuples for easy union operation
+            all_pairs = list(set(existing_pairs) | set(new_pairs))
+        else:
+            all_pairs = new_pairs
+
+        # Update ts_domains with the combined unique pairs
+        ts_domains[pair_key] = all_pairs
+
+        return ts_domains
+
+
     def run(self):
         
-        ## Calculating first timesteps of each year and writing them to a gdx
-        #output_file = os.path.join(self.output_folder, f'year_starts.gdx')
-        #print(f"Writing the first timestep of each year to {output_file}")
-        #self.create_year_start_gdx(self.start_date, self.end_date, output_file)
-        
+        # Secondary_results is an open dictionary for results dropped from timeseries processors
         secondary_results = {}
+        # Initialize an empty dictionary to store merged domains from timeseries processors. Will be merged to secondary results.
+        ts_domains = {}
+        # Define domain titles used in compilations
+        domain_titles = ['grid', 'node', 'flow', 'group']
+        # Define domain pairs used in compilations
+        grid_node = ['grid', 'node']
+        flow_node = ['flow', 'node']
+        
         # Processes each timeseries type according to specification in config file and creates GDX files for Backbone.
         for ts_key, ts_params in self.timeseries_specs.items():
             # --- Preparing the processing -------------------------------
+
             # Retrieve mandatory timeseries specifications
             processor_name = ts_params['processor_name']
             bb_parameter = ts_params['bb_parameter']
             bb_parameter_dimensions = ts_params['bb_parameter_dimensions']
-            # warning and skip if any of above missing
+
+            # warning and skip processing if any of above missing
             if processor_name is None:
                 print(f"   Warning! {ts_key} does not have parameter 'processor_name'! Will skip processing.")
                 continue
@@ -492,6 +585,7 @@ class create_timeseries:
             if bb_parameter_dimensions is None:
                 print(f"   Warning! {ts_key} does not have parameter 'bb_parameter_dimensions'! Will skip processing.")
                 continue
+            
             # Optional values with their defaults
             demand_grid = ts_params.get('demand_grid', None)
             custom_column_value = ts_params.get('custom_column_value', None)
@@ -502,29 +596,46 @@ class create_timeseries:
             secondary_output_name = ts_params.get('secondary_output_name', None)
             quantile_map = ts_params.get('quantile_map', {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'})
 
-            print(f"\n------ {processor_name} --------------------------------------------------------------- ")
-            self.log_time("Processing input data")
+            # Processed values used in file names
+            startyear = self.start_date.year
+            endyear = self.end_date.year
 
-            # --- Processing the main data -------------------------------
             # Dynamically import the required processor class.
             processor_class = self.import_processor_class(processor_name)
             if processor_class is None:
                 print(f"Skipping the processing of {processor_name} due to import error.")
                 continue
 
-            # If a demand grid is defined, ...
-            if demand_grid is not None:
+            # Prepare kwargs for processors
+            kwargs_processor = {'input_folder': self.input_folder,
+                                'country_codes': self.country_codes,
+                                'start_date': self.start_date,
+                                'end_date': self.end_date,
+                                'scenario_year': self.scenario_year
+            }
+            if demand_grid is not None: 
                 # filter the demand of requested grid. df_annual_demands are already filtered by scenario and year
                 df_filtered_demands = self.df_annual_demands[(self.df_annual_demands['grid'].str.lower() == demand_grid.lower())]
+                kwargs_processor['df_annual_demands'] = df_filtered_demands
 
-                # call timeseries processing with additional parameters df_filtered_demands and self.scenario_year
-                processor = processor_class(self.input_folder, self.country_codes,
-                                            self.start_date, self.end_date,
-                                            df_filtered_demands, self.scenario_year)
-            else:
-                # call timeseries processing with default parameters
-                processor = processor_class(self.input_folder, self.country_codes,
-                                            self.start_date, self.end_date)
+            # Prepare kwargs for bb conversion
+            kwargs_bb_conversion = {'processor_name': processor_name,
+                                    'bb_parameter': bb_parameter, 
+                                    'bb_parameter_dimensions': bb_parameter_dimensions, 
+                                    'custom_column_value': custom_column_value,
+                                    'quantile_map': quantile_map,
+                                    'gdx_name_suffix': gdx_name_suffix
+            }
+            if demand_grid is not None: 
+                kwargs_bb_conversion['is_demand'] = True
+
+
+            print(f"\n------ {processor_name} --------------------------------------------------------------- ")
+            # --- Processing the main data -------------------------------
+            self.log_time("Processing input data")
+
+            # call timeseries processor
+            processor = processor_class(**kwargs_processor)
             
             # Run the processor and check if a result was returned.
             result = processor.run()
@@ -539,81 +650,86 @@ class create_timeseries:
             else:
                 summary_df = result        
 
-            # Trim summary_df
+            # Trim summary_df and convert to BB format
             summary_df = self.trim_summary(summary_df, round_precision=rounding_precision)       
+            summary_df_bb = self.prepare_BB_df(summary_df, self.start_date, self.country_codes, **kwargs_bb_conversion)
 
-            # --- Writing output files -------------------------------
+            # Update the lists of unique domains, gridNode pairs, and flowNode pairs
+            ts_domains = self.update_unique_domains(summary_df_bb, domain_titles, ts_domains)
+            ts_domains = self.update_domain_pairs(summary_df_bb, grid_node, ts_domains)
+            ts_domains = self.update_domain_pairs(summary_df_bb, flow_node, ts_domains)
+
+
+            # --- Writing output files
             self.log_time(f"Preparing {processor_name} output files...")
+
             # Write CSV if write_csv_files
             if self.write_csv_files:
-                # File naming based on start/end year.
-                startyear = self.start_date.year
-                endyear = self.end_date.year
                 # Constructing the output csv filename
                 if process_only_single_year:
-                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}_1h_MWh.csv')
+                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}.csv')
                 else:
-                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}_{startyear}-{endyear}_1h_MWh.csv')
+                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}_{startyear}-{endyear}.csv')
                 summary_df.to_csv(output_file_csv)
-                print(f"   Summary csv written to {output_file_csv}")
+                print(f"   Summary csv written to '{output_file_csv}'")
 
-            # Prepare arguments.
-            kwargs = {'processor_name': processor_name,
-                      'bb_parameter': bb_parameter, 
-                      'bb_parameter_dimensions': bb_parameter_dimensions, 
-                      'custom_column_value': custom_column_value,
-                      'quantile_map': quantile_map,
-                      'gdx_name_suffix': gdx_name_suffix
-                      }
-            if demand_grid is not None: 
-                kwargs['is_demand'] = True
-              
-            # Call BB conversion.
-            summary_df = self.prepare_BB_df(summary_df, self.start_date, self.country_codes, **kwargs)
-            # write annual gdx files.      
-            self.write_BB_gdx_annual(summary_df, **kwargs)
-            # add reading instructions to import_timeseries.inc
-            self.update_import_timeseries_inc(self.output_folder, **kwargs)
-            print(f"   Annual GDX files for Backbone written to {self.output_folder}")
+            # Write annual gdx files      
+            self.write_BB_gdx_annual(summary_df_bb, **kwargs_bb_conversion)
+            print(f"   Annual GDX files for Backbone written to '{self.output_folder}'")
+            
+            # Expand timeseries reading instructions in import_timeseries.inc
+            self.update_import_timeseries_inc(self.output_folder, **kwargs_bb_conversion)
 
-            # --- Average year calculations -------------------------------
+
+            # --- Average year ----------------------------------------
             # If average-year calculations are enabled...
             if calculate_average_year:
                 self.log_time(f"Calculating {processor_name} average year and preparing output files...")
 
                 # Calculate average file
-                avg_df = self.calculate_average_year(summary_df, round_precision=rounding_precision, **kwargs)
+                avg_df = self.calculate_average_year(summary_df_bb, round_precision=rounding_precision, **kwargs_bb_conversion)
 
                 # Write CSV if write_csv_files
                 if self.write_csv_files:
                     if process_only_single_year:
-                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year_1h_MWh.csv')
+                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year.csv')
                     else:
-                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year_from_{startyear}-{endyear}_1h_MWh.csv')
+                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year_from_{startyear}-{endyear}.csv')
                     avg_df.to_csv(output_file_avg_csv)
-                    print(f"   Average year csv written to {output_file_avg_csv}")
+                    print(f"   Average year csv written to '{output_file_avg_csv}'")
 
                 # writing gdx file for forecasts
                 output_file_gdx = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_forecasts.gdx')
-                self.write_BB_gdx(avg_df, output_file_gdx, **kwargs)
-                self.update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **kwargs)
-                print(f"   GDX for Backbone written to {output_file_gdx}")
+                self.write_BB_gdx(avg_df, output_file_gdx, **kwargs_bb_conversion)
+                print(f"   GDX for Backbone written to '{output_file_gdx}'")
+                
+                # Expand timeseries reading instructions in import_timeseries.inc
+                self.update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **kwargs_bb_conversion)
 
 
         # --- Process Other Demands Not Yet Processed -------------------------------
         # Query all unique grids in df_annual_demands (convert to lower case for comparison)
         all_demand_grids = set(self.df_annual_demands["grid"].str.lower().unique())
-        # Query all 'demand_grid' values from timeseries_specs that were already processed
+
+        # Query all 'demand_grid' values from timeseries_specs that were processed previously
         processed_demand_grids = set()
         for ts_params in self.timeseries_specs.values():
             if ts_params.get("demand_grid"):
                 processed_demand_grids.add(ts_params["demand_grid"].lower())
+
         # Determine the unprocessed (other) demands.
         unprocessed_grids = all_demand_grids - processed_demand_grids
         if unprocessed_grids:
             print("\n------ Processing Other Demands --------------------------------------------------------------- ")
             self.log_time("Processing other demands")
+            # Creates other demands already in Backbone ready format (grid, node, f, t, value)
             df_other_demands = self.create_other_demands(self.df_annual_demands, unprocessed_grids)
+
+            # Update the lists of unique domains
+            ts_domains = self.update_unique_domains(df_other_demands, domain_titles, ts_domains)
+
+            # Update the list of gridNode pairs
+            ts_domains = self.update_domain_pairs(df_other_demands, grid_node, ts_domains)
 
             # Write CSV if write_csv_files
             if self.write_csv_files:
@@ -627,4 +743,14 @@ class create_timeseries:
             to_gdx(dataframes, path=output_file_other)
             print(f"   GDX for Other Demands written to {output_file_other}")
 
+            # Expand timeseries reading instructions in import_timeseries.inc
+            kwargs_other = {'bb_parameter': 'ts_influx', 
+                            'gdx_name_suffix': 'other_demands'
+            } 
+            self.update_import_timeseries_inc(self.output_folder, **kwargs_other)
+
+
+        # --- Compile output ----------------------------------------------
+        # Merging ts_domains to secondary results
+        secondary_results['ts_domains'] = ts_domains
         return secondary_results

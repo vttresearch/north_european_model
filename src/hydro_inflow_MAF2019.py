@@ -15,15 +15,29 @@ class hydro_inflow_MAF2019:
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date):
-        self.input_folder = input_folder
-        self.country_codes = country_codes
-        self.start_date = start_date
-        self.end_date = end_date
+    def __init__(self, **kwargs_processor):
+        # List of required parameters
+        required_params = [
+            'input_folder', 
+            'country_codes', 
+            'start_date', 
+            'end_date', 
+        ]
+
+        # Check if all required parameters are present
+        missing_params = [param for param in required_params if param not in kwargs_processor]
+        if missing_params:
+            raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
+
+        # Unpack parameters
+        self.input_folder = kwargs_processor['input_folder']
+        self.country_codes = kwargs_processor['country_codes']
+        self.start_date = kwargs_processor['start_date']
+        self.end_date = kwargs_processor['end_date']
 
         # Extract start and end years from the provided dates.
-        self.startyear = pd.to_datetime(start_date).year
-        self.endyear = pd.to_datetime(end_date).year
+        self.startyear = pd.to_datetime(self.start_date).year
+        self.endyear = pd.to_datetime(self.end_date).year
 
         # Define folders and file paths.
         self.file_weekly = os.path.join(self.input_folder, 'PECD-hydro-weekly-inflows-corrected.csv')
@@ -226,8 +240,14 @@ if __name__ == '__main__':
     start_date = '1982-01-01 00:00:00'
     end_date = '2021-01-01 00:00:00'
 
+    kwargs_processor = {'input_folder': input_folder,
+                        'country_codes': country_codes,
+                        'start_date': start_date,
+                        'end_date': end_date
+    }
+
     # Create an instance of process_inflows and run the processing.
-    processor = hydro_inflow_MAF2019(input_folder, country_codes, start_date, end_date)
+    processor = hydro_inflow_MAF2019(**kwargs_processor)
     summary_df = processor.run()
 
     # Ensure the output directory exists.

@@ -15,15 +15,29 @@ class PV_MAF2019:
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date):
-        self.input_folder = input_folder
-        self.country_codes = country_codes
-        self.start_date = start_date
-        self.end_date = end_date
+    def __init__(self, **kwargs_processor):
+        # List of required parameters
+        required_params = [
+            'input_folder', 
+            'country_codes', 
+            'start_date', 
+            'end_date'
+        ]
+
+        # Check if all required parameters are present
+        missing_params = [param for param in required_params if param not in kwargs_processor]
+        if missing_params:
+            raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
+
+        # Unpack parameters
+        self.input_folder = kwargs_processor['input_folder']
+        self.country_codes = kwargs_processor['country_codes']
+        self.start_date = kwargs_processor['start_date']
+        self.end_date = kwargs_processor['end_date']
 
         # Extract start and end years from the provided dates.
-        self.startyear = pd.to_datetime(start_date).year
-        self.endyear = pd.to_datetime(end_date).year
+        self.startyear = pd.to_datetime(self.start_date).year
+        self.endyear = pd.to_datetime(self.end_date).year
 
     # Function to adjust date using row values.
     def adjust_date(self, row):
@@ -138,10 +152,15 @@ if __name__ == '__main__':
     ]
     start_date = '1982-01-01 00:00:00'
     end_date = '2021-01-01 00:00:00'
-    # Example scenario and s_year for scaling.
     
+    kwargs_processor = {'input_folder': input_folder,
+                        'country_codes': country_codes,
+                        'start_date': start_date,
+                        'end_date': end_date
+    }
+
     # Create an instance of processor and run the processing.
-    processor = PV_MAF2019(input_folder, country_codes, start_date, end_date)
+    processor = PV_MAF2019(**kwargs_processor)
     summary_df = processor.run()
     
     if summary_df is not None:
@@ -152,3 +171,5 @@ if __name__ == '__main__':
         # Write the scaled profiles to a CSV file.
         print(f"writing {output_file}")
         summary_df.to_csv(output_file)
+    else: 
+        print("no outputs from processor")

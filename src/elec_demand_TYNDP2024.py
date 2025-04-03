@@ -16,17 +16,33 @@ class elec_demand_TYNDP2024:
         scenario_year (int): Target year for scaling the profiles.
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date, df_annual_demands, scenario_year):
-        self.input_folder = input_folder
-        self.country_codes = country_codes
-        self.start_date = start_date
-        self.end_date = end_date
-        self.df_annual_demands = df_annual_demands
-        self.scenario_year = scenario_year
+    def __init__(self, **kwargs_processor):
+        # List of required parameters
+        required_params = [
+            'input_folder', 
+            'country_codes', 
+            'start_date', 
+            'end_date', 
+            'df_annual_demands', 
+            'scenario_year'
+        ]
+
+        # Check if all required parameters are present
+        missing_params = [param for param in required_params if param not in kwargs_processor]
+        if missing_params:
+            raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
+
+        # Unpack parameters
+        self.input_folder = kwargs_processor['input_folder']
+        self.country_codes = kwargs_processor['country_codes']
+        self.start_date = kwargs_processor['start_date']
+        self.end_date = kwargs_processor['end_date']
+        self.df_annual_demands = kwargs_processor['df_annual_demands']
+        self.scenario_year = kwargs_processor['scenario_year']
 
         # Extract start and end years from the provided dates.
-        self.startyear = pd.to_datetime(start_date).year
-        self.endyear = pd.to_datetime(end_date).year
+        self.startyear = pd.to_datetime(self.start_date).year
+        self.endyear = pd.to_datetime(self.end_date).year
 
         # Choose the appropriate electricity profile file based on scenario_year.
         if self.scenario_year <= 2035:
@@ -294,8 +310,17 @@ if __name__ == '__main__':
 
     df_annual_demands = pd.DataFrame(annual_demands)
 
+    kwargs_processor = {'input_folder': input_folder,
+                        'country_codes': country_codes,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'scenario_year': scenario_year, 
+                        'df_annual_demands': df_annual_demands
+    }
+
+
     # Create an instance of elec_demand_ts and run the processing.
-    processor = elec_demand_TYNDP2024(input_folder, country_codes, start_date, end_date, df_annual_demands, scenario_year)
+    processor = elec_demand_TYNDP2024(**kwargs_processor)
     summary_df = processor.run()
 
     # Ensure the output directory exists.

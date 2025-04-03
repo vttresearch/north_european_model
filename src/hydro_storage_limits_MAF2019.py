@@ -20,13 +20,27 @@ class hydro_storage_limits_MAF2019:
               If no valid combinations are found, returns only the summary_df
     """
 
-    def __init__(self, input_folder, country_codes, start_date, end_date):
-        self.input_folder = input_folder
-        self.country_codes = country_codes
+    def __init__(self, **kwargs_processor):
+        # List of required parameters
+        required_params = [
+            'input_folder', 
+            'country_codes', 
+            'start_date', 
+            'end_date'
+        ]
 
-        # Fixed date range parameters
-        self.start_date = start_date
-        self.end_date = end_date
+        # Check if all required parameters are present
+        missing_params = [param for param in required_params if param not in kwargs_processor]
+        if missing_params:
+            raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
+
+        # Unpack parameters
+        self.input_folder = kwargs_processor['input_folder']
+        self.country_codes = kwargs_processor['country_codes']
+        self.start_date = kwargs_processor['start_date']
+        self.end_date = kwargs_processor['end_date']
+
+        # Date range parameters
         self.startyear = pd.to_datetime(self.start_date).year
         self.endyear = pd.to_datetime(self.end_date).year
 
@@ -318,8 +332,24 @@ if __name__ == '__main__':
     start_date = '2015-01-01 00:00:00'
     end_date = '2015-12-31 23:00:00'
 
-    processor = hydro_storage_limits_MAF2019(input_folder, country_codes, start_date, end_date)
-    summary_df = processor.run()
+    kwargs_processor = {'input_folder': input_folder,
+                        'country_codes': country_codes,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'scenario_year': scenario_year, 
+                        'df_annual_demands': df_annual_demands
+    }
+
+    processor = hydro_storage_limits_MAF2019(**kwargs_processor)
+    result = processor.run()
+
+    # Handle an optional second DataFrame and possible no result
+    if isinstance(result, tuple) and len(result) == 2:
+        summary_df, df_optional = result
+    elif result is None:
+        print(f"processor did not return any DataFrame.")
+    else:
+        summary_df = result 
 
     # Ensure the output directory exists.
     if not os.path.exists(output_folder):

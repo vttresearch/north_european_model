@@ -4,7 +4,7 @@ This repository contains North European energy system model. The model is built 
 
 This readme has the following main sections
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
-- [Installing Julia, Conda, and setting up the environments](#installing-julia-conda-and-setting-up-the-environments)
+- [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
 - [Downloading required time series files](#downloading-required-time-series-files)
 - [Building and copying input files for Backbone](#building-and-copying-input-files-for-backbone)
 - [Running Backbone](#running-backbone)
@@ -15,6 +15,7 @@ This readme has the following main sections
 * Tomi J. Lindroos - model development, time series, testing
 * Anu Purhonen - time series
 * Miika Rämä - district heating data
+* Pauli Hiltinen - district heating data
 * Eric Harrison - testing
 
 
@@ -42,7 +43,11 @@ Use git to clone the repository of North European model. The rest of the instruc
 
 ## Installing Miniconda and setting up the environment
 
+[Back to top](#North-European-energy-system-model)
+
 ** Python via Miniconda ** 
+
+These instructions are written for miniconda, but users can of course choose other conda versions as well.
 
 The recommend approach to install Python and related packages is to set up a new environment in Miniconda. 
   * Install the latest [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html). 
@@ -64,7 +69,7 @@ After these steps, you should have required softwares and environment ready.
 
 NOTE: GamsAPI is possible to install also for much older GAMS versions, see https://github.com/NREL/gdx-pandas
 
-Note: These instructions are written for miniconda, but users can of course choose other conda versions as well. 
+ 
 
 
 ## Downloading required time series files
@@ -89,35 +94,51 @@ Note: EV timeseries are still work-in-progress, but will be added
 
 ## Building and copying input files for Backbone
 
+[Back to top](#North-European-energy-system-model)
+
+### Building input files
+
 Open Miniconda Prompt and activate the northEuropeModel environment (`conda activate northEuropeanModel`). Then
 
-* Go to folder **backbone\north_european_model** (for example, `cd c:\backbone\north_european_model`)
+* Go to folder **backbone\north_european_model** by typing two commands: `c:` and `cd backbone\north_european_model`
 * Run **build_input_data.py** by typing (`python build_input_data.py input_folder=src_files config_file=config_NT2025.ini`) 
 * Output files are written to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
 
-At the time of writing, the total size of created files is about 500 Mb and the time of generating is around 8 minutes. Note: Writing large GDX files might take 20-30secs and the code might seem stuck for those periods.
+At the time of writing, "National Trends" input data is about 500 Mb, is generated in ~12 minutes, and has ~300 files. Writing some larger sets of GDX files might take 60-80secs and the code might seem stuck for those periods, but should eventually proceed.
 
-Python functions to build input data is called as _python build_input_data.py input_folder=<directory> config_file=<filename>_
-	* The source file directory in repository is **src_files**
-	* The repository currently shares config file for **National Trends** scenario
-	* H2 heavy will be added soon
-* users can create their own conversions with the examples in config_NT2025.ini, config_H2heavy.ini (TBD)
-* processed files are written to c:\Backbone\north_european_model\<output_folder>, where
+Python functions to build input data is called with syntax `python build_input_data.py input_folder=<directory> config_file=<filename>` where
+	* input_folder is the directory for excel data, large timeseries files, and GAMS file templates. In repository the default folder is **src_files**.
+	* config_file is a list of instruction to generate the data for the scenario. The repository currently shares following config files:
+		* config_NT2025.ini for **National Trends** scenario
+		* confic_test.ini for faster testing of the model
+		* H2 heavy will be added soon
+
+Users can create their own config files and store them locally. Editing any of the files in git will cause version control issues with git and is not recommended.
+
+Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where
 	* output folder is a combination of <output_folder_prefix>_<scenario>_<year>_<alternative> defined in the called config file
 
 
-### Copying run specification files
+### Checking run specification files
+
+The python script constructs following files
+* import_timeseries.inc - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
+
+In addition, the script automatically copies following run specification files from `src_files\GAMS_files` to the `<output_folder>` and user is free to edit them afterwards. In most cases, users do not need to edit these at all.
+* 1_options.gms - some solver settings documented inside the file
+* timeAndSamples.inc - sets defining timestep and forecast domains in Backbone 
+* modelsInit_example.gms - a default modelsInit file calling scheduleInit.gms
+* scheduleInit.gms - a tailored scheduleInit file for the Northern European Backbone
+* changes.inc - reads possible additional excel data, reads timeseries gdx files, and allows users to add their own project specific changes to the end of the file
+
+Note: Included scheduleInit.gms and changes.inc files have a specific structure so that it works with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to the file.
 
 
-A working Backbone model requires certain run specification files for GAMS
+### Copying input files to c:\backbone\input
 
-* Use a suitable **modelsInit.gms** and **scheduleInit.gms** file, for example, copy **modelsInit_example.gms** and **scheduleInit_example.gms** from backbone\north_european_model\GAMS_files to **backbone\input** folder and rename them to modelsInit.gms and scheduleInit.gms. 
-* Copy **1_options.gms**, **changes.inc** and **timeandsamples.inc** from backbone\north_european_model\GAMS_files to **backbone\input** folder. (Note: If 1_options.gms is missing, copy temp_1_options.gms from backbone\inputTemplates to backbone\input and rename it to 1_options.gms.)
+The default use case often is the copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
 
-Note: Included scheduleInit.gms file has a specific structure so that it works with *tsYear* and *modelledDays* parameters. If using your own file, adapt a similar structure to the file.
-
-Note: changes.inc does additional processing of input data, see the content and introduction at the beginning of the file. User can add their own project specific changes to the end of the file
-
+Alternative approach is to run the model directly from `<output_folder>` by giving `--input_folder='.\north_european_model\<output_folder>'` command line option for the Backbone.
 
 
 
@@ -131,18 +152,17 @@ Run the model by running Backbone.gms in GAMS. The model supports the following 
 * --climateYear [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * --modelledDays [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
-* --input_dir=directory. Default 'input'. Allows custom locations of input directory.
+* --input_dir=directory. Default 'input'. Allows custom locations of input directory
 
 
 Working command line options for backbone.gms would be, for example:
 
 	Running the model with all default assumptions
-	--input_file_excel=inputData.xlsx   	
+	_--input_file_excel=inputData.xlsx_  	
 	running the selected climate year, 1 week test
-	--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995     
-
-The run will abort if following GDX files cannot be found from the input directory
-* TBD
+	_--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995_
+	running the model directly from <output> folder
+	_--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx_  
 
 Results are written to c:\backbone\output\results.gdx
 

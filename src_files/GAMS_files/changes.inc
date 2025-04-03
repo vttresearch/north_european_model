@@ -32,7 +32,7 @@ $offtext
 
 // set values global to be available also when reading other files
 $if not set modelYear $setglobal modelYear 2025
-$if not set tsYear $setglobal tsYear 2015
+$if not set climateYear $setglobal tsYear 2015
 $if not set modelledDays $setglobal modelledDays 365
 $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%

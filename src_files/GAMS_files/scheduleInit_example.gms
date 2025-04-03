@@ -86,8 +86,8 @@ if (mType('schedule'),
 * --- Model Forecast Structure ------------------------------------------------
 * =============================================================================
 
-    Option clear = gn_forecasts;  // By default includes everything, so clear first
-    Option clear = unit_forecasts;  // By default includes everything, so clear first
+    Option clear = gn_forecasts;  // Clearing first, because includes everything by default
+    Option clear = unit_forecasts;  // Clearing first, because includes everything by default
 
 if(%forecastNumber%=1, 
     // Define the number of forecasts used by the model
@@ -179,9 +179,6 @@ if(%forecastNumber%=4,
 
 * --- Define Reserve Properties -----------------------------------------------
 
-    // Define whether reserves are used in the model
-    mSettingsReservesInUse('schedule', restype, up_down) = no;
-
 
 * --- Define Unit Approximations ----------------------------------------------
 
@@ -219,19 +216,6 @@ if(%forecastNumber%=4,
     gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
     gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'length') = 48;
 
-
-* --- z-structure for superpositioned nodes ----------------------------------
-
-    // add the candidate periods to model
-    // no need to touch this part
-    // The set is mainly used in the 'invest' model
-    mz('schedule', z) = no;
-
-    // Mapping between typical periods (=samples) and the candidate periods (z).
-    // Assumption is that candidate periods start from z000 and form a continuous
-    // sequence.
-    // The set is mainly used in the 'invest' model
-    zs(z,s) = no;
 
 
 * --- Solver speed improvements -------------------------------
