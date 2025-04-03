@@ -107,6 +107,12 @@ class build_input_excel:
                     if pd.notna(node_suffix) and node_suffix not in ['', '-']:
                         node_name = f"{node_name}_{node_suffix}"
                             
+                    # get conversionCoeff from tech_row
+                    # note: lower case conversioncoeff when picking values from tech_row
+                    value = tech_row.get(f'conversioncoeff_{put}', 1)
+                    # Check if the value is either an empty string or NaN.
+                    conversionCoeff = 1 if (value == '' or pd.isna(value)) else value
+
                     # Build base row dictionary.
                     base_row = {
                         'grid' : grid,
@@ -114,8 +120,7 @@ class build_input_excel:
                         'unit' : unit_name,
                         'input_output': 'input' if put.startswith('input') else 'output',
                         'capacity' : cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0,
-                        # note: lower case conversioncoeff when picking values from tech_row
-                        'conversionCoeff' : tech_row[f'conversioncoeff_{put}'] if f'conversioncoeff_{put}' in tech_row.index else 1
+                        'conversionCoeff' : conversionCoeff
                     }
 
                     # Build additional parameters with a dictionary comprehension.
