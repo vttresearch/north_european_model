@@ -77,20 +77,19 @@ class build_input_excel:
             unit_name_prefix = cap_row['unit_name_prefix'] if 'unit_name_prefix' in cap_row.index else None
             generator_id = cap_row['generator_id']
 
-            # Build unit name.
-            if pd.notna(unit_name_prefix) and unit_name_prefix not in ['', '-']:
-                unit_name = f"{country}_{unit_name_prefix}_{tech_row['unittype']}"
-            else:
-                unit_name = f"{country}_{tech_row['unittype']}"
-
             # Get the matching technology row.
             try:
                 tech_row = df_unittypes.loc[df_unittypes['generator_id'] == generator_id].iloc[0]
             # print warning and skip unit if unittype data not available
             except:
-                print(f"   !!! Unit '{unit_name}' does not have matching generator_id in any of the unittypedata files. Check spelling of generator_id in all files.")
+                print(f"   !!! Generator_ID '{generator_id}' from unitdata files does not have a matching generator_id in any of the unittypedata files. Check spelling of generator_id in all files.")
                 continue
 
+            # Build unit name.
+            if pd.notna(unit_name_prefix) and unit_name_prefix not in ['', '-']:
+                unit_name = f"{country}_{unit_name_prefix}_{tech_row['unittype']}"
+            else:
+                unit_name = f"{country}_{tech_row['unittype']}"
 
             # Filter only available puts based on whether 'grid_{put}' exists.
             available_puts = [put for put in ['input1', 'input2', 'input3', 'output1', 'output2', 'output3'] 
