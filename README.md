@@ -40,14 +40,13 @@ Contact the authors.
 **CHECKPOINT**: You should have a Backbone installed to e.g. c:\backbone. If not, first install the Backbone master branch. See installation instructions from https://gitlab.vtt.fi/backbone/backbone/-/wikis/home and then proceed to following steps to install the Northern European model. 
 
 **Installing with TortoiseGit**
-Close the North European Model
  * Open file browser and go to the Backbone folder
  * Create a new folder "north_european_model" under the backbone folder (c:\backbone\north_european_model).
  * Right click "north_european_model" folder and select "clone" under the tortoise git selection pane
  * copy "https://github.com/vttresearch/north_european_model" to **URL**
  * double check that the installation **Directory** is `c:\backbone\north_european_model` and not c:\backbone\north_european_model\north_european_model which tortoiseGit might suggest
 
-Switch to timeseries_update branch
+**Switch to timeseries_update branch**
  * Right click "north_european_model" folder and select "Switch/Checkout" under the tortoise git selection pane
  * select timeseries_update from available branches, click ok
  * Right click "north_european_model" folder and select "pull" under the tortoise git selection pane, click ok
@@ -61,37 +60,35 @@ The rest of the instructions are written assuming that the North European Model 
 
 For the moment, the updated North European Model works in timeseries_update and only with the Backbone master branch. 
 
-Check that you are in correct backbone branch
+**Check that you are in correct backbone branch**
  * Right click "backbone" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
  * Switch to master and pull new version
 
-Check that you are in correct North European Model branch
+**Check that you are in correct North European Model branch**
  * Right click "north_european_model" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
  * Switch to timeseries_update and pull new version
 
-Note: if you have edited any of the git files, switchin and pullin will cause an error. In these cases you must revert all changes before.
+**Note:** if you have edited any of the git files, switchin and pullin will cause an error. In these cases you must revert all changes before.
  * right click the folder and select "Revert" from tortoiseGit. 
  * Check the file list and decide if you need backups from those files or not
  * revert all changes
- 
+
 
 ## Installing Miniconda and setting up the environment
 
 [Back to top](#North-European-energy-system-model)
 
-** Python via Miniconda ** 
-
 **CHECKPOINT**: Install [miniConda](https://www.anaconda.com/docs/getting-started/miniconda/install) if not yet installed. 
 
 These instructions are written for miniconda, but users can of course choose other conda versions as well.
   * Open the installed Miniconda Prompt (e.g. type miniconda to windows search bar), 
-  * go to folder **backbone/north_european_model/** (for example, type `c:` and then `cd c:\backbone\north_european_model`)
-  * set up the environment by running the following commands
+  * In the miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
+  * In the miniconda, set up the environment by running the following commands
 
 `   conda env create -f environment.yml
     conda activate northEuropeanModel`
 
-Installed environment needs few additional packages as conda does not automatically find them. After creating and activating the northEuropeanModel environment, install following additional packages by typing:
+Installed environment needs few additional packages as conda does not automatically find them. After creating and activating the northEuropeanModel environment, install following additional packages in the miniconda by typing:
 
     pip install gdxpds
 	pip install gamsapi[transfer]==xx.y.z
@@ -110,12 +107,12 @@ NOTE: GamsAPI is possible to install also for much older GAMS versions, see http
 [Back to top](#North-European-energy-system-model)
 
 The North Europe model has some time series source files that are too large to be shared in this repository. Following time series should be prepared
-* Electricity demand profiles
+* **Electricity demand profiles**
 	* Download [Demand-Profiles.zip](https://2024.entsos-tyndp-scenarios.eu/wp-content/uploads/2024/draft2024-input-output/Demand-Profiles.zip) from ENTSO-E TYNDP 2024 scenarios
 	* extract following two files from the zip: "Demand Profiles\NT\Electricity demand profiles\2030_National Trends.xlsx", and "Demand Profiles\NT\Electricity demand profiles\2040_National Trends.xlsx"
-	* copy file to to "c:/backbone/north_european_model/inputFiles/timeseries\" 
+	* copy file to to `c:/backbone/north_european_model/src_files/timeseries`
 	* rename them to elec_2030_National_Trends.xlsx, and elec_2040_National_Trends.xlsx
-* VRE time series are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Following files are large and should be added in the **c:/backbone/north_european_model/inputFiles/timeseries/** folder manually: 
+* **VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Following files should be copied to the `c:/backbone/north_european_model/src_files/timeseries/` folder: 
 	* PECD-MAF2019-wide-PV.csv
 	* PECD-MAF2019-wide-WindOffshore.csv
 	* PECD-MAF2019-wide-WindOnshore.csv
@@ -131,13 +128,14 @@ Note: EV timeseries are still work-in-progress, but will be added
 
 ### Building input files
 
-Open Miniconda Prompt and activate the northEuropeModel environment (`conda activate northEuropeanModel`). Then
+Inputs are build with python script which is easiest to run in the miniconda handling the packages and environments
+ * Open the installed Miniconda Prompt (e.g. type miniconda to windows search bar), 
+ * In the miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
+ * In the miniconda, activate the northEuropeanModel environment by typing `conda activate northEuropeanModel`
+ * In the miniconda, Run **build_input_data.py** by typing (`python build_input_data.py input_folder=src_files config_file=config_NT2025.ini`) 
+ * Output files are written to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
 
-* Go to folder **backbone\north_european_model** by typing two commands: `c:` and `cd backbone\north_european_model`
-* Run **build_input_data.py** by typing (`python build_input_data.py input_folder=src_files config_file=config_NT2025.ini`) 
-* Output files are written to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
-
-At the time of writing, "National Trends" input data is about 500 Mb, is generated in ~12 minutes, and has ~300 files. Writing some larger sets of GDX files might take 60-80secs and the code might seem stuck for those periods, but should eventually proceed.
+At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~12 minutes, and has ~300 files. Writing some larger sets of GDX files might take 60-80secs and the code might seem stuck for those periods, but should eventually proceed.
 
 Python functions to build input data is called with syntax `python build_input_data.py input_folder=<directory> config_file=<filename>` where
 	* input_folder is the directory for excel data, large timeseries files, and GAMS file templates. In repository the default folder is **src_files**.
