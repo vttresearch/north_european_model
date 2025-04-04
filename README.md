@@ -4,6 +4,7 @@ This repository contains North European energy system model. The model is built 
 
 This readme has the following main sections
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
+- [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
 - [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
 - [Downloading required time series files](#downloading-required-time-series-files)
 - [Building and copying input files for Backbone](#building-and-copying-input-files-for-backbone)
@@ -34,12 +35,45 @@ Contact the authors.
 
 ## Installing Backbone and the North European Model
 
-Make sure you have Backbone installed. For the moment, the North European Model works only in the Backbone master branch. 
+**CHECKPOINT**: Install [tortoiseGit](https://tortoisegit.org/docs/tortoisegit/tgit-intro-install.html) if not yet installed
 
-If you do not have Backbone, use git to clone the Backbone from [master](https://gitlab.vtt.fi/backbone/backbone/). Master is the default branch.
+**CHECKPOINT**: You should have a Backbone installed to e.g. c:\backbone. If not, first install the Backbone master branch. See installation instructions from https://gitlab.vtt.fi/backbone/backbone/-/wikis/home and then proceed to following steps to install the Northern European model. 
 
-Use git to clone the repository of North European model. The rest of the instructions are written assuming that the North European Model is installed under Backbone to `c:\backbone\north_european_model`, but both Backbone and Northern European Model of course support also other installation directories. 
+**Installing with TortoiseGit**
+Close the North European Model
+ * Open file browser and go to the Backbone folder
+ * Create a new folder "north_european_model" under the backbone folder (c:\backbone\north_european_model).
+ * Right click "north_european_model" folder and select "clone" under the tortoise git selection pane
+ * copy "https://github.com/vttresearch/north_european_model" to **URL**
+ * double check that the installation **Directory** is `c:\backbone\north_european_model` and not c:\backbone\north_european_model\north_european_model which tortoiseGit might suggest
 
+Switch to timeseries_update branch
+ * Right click "north_european_model" folder and select "Switch/Checkout" under the tortoise git selection pane
+ * select timeseries_update from available branches, click ok
+ * Right click "north_european_model" folder and select "pull" under the tortoise git selection pane, click ok
+
+For the moment, the updated North European Model works in timeseries_update and only with the Backbone master branch. Pulling after switching the branch guarantees that you have the latest version.
+
+The rest of the instructions are written assuming that the North European Model is installed under Backbone to `c:\backbone\north_european_model`, but both Backbone and Northern European Model of course support also other installation directories. 
+
+
+## Updating Backbone and the North European Model
+
+For the moment, the updated North European Model works in timeseries_update and only with the Backbone master branch. 
+
+Check that you are in correct backbone branch
+ * Right click "backbone" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
+ * Switch to master and pull new version
+
+Check that you are in correct North European Model branch
+ * Right click "north_european_model" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
+ * Switch to timeseries_update and pull new version
+
+Note: if you have edited any of the git files, switchin and pullin will cause an error. In these cases you must revert all changes before.
+ * right click the folder and select "Revert" from tortoiseGit. 
+ * Check the file list and decide if you need backups from those files or not
+ * revert all changes
+ 
 
 ## Installing Miniconda and setting up the environment
 
@@ -47,15 +81,14 @@ Use git to clone the repository of North European model. The rest of the instruc
 
 ** Python via Miniconda ** 
 
-These instructions are written for miniconda, but users can of course choose other conda versions as well.
+**CHECKPOINT**: Install [miniConda](https://www.anaconda.com/docs/getting-started/miniconda/install) if not yet installed. 
 
-The recommend approach to install Python and related packages is to set up a new environment in Miniconda. 
-  * Install the latest [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html). 
+These instructions are written for miniconda, but users can of course choose other conda versions as well.
   * Open the installed Miniconda Prompt (e.g. type miniconda to windows search bar), 
-  * go to folder **backbone/north_european_model/** (for example, type `cd c:\backbone\north_european_model`), and
+  * go to folder **backbone/north_european_model/** (for example, type `c:` and then `cd c:\backbone\north_european_model`)
   * set up the environment by running the following commands
 
-`    conda env create -f environment.yml
+`   conda env create -f environment.yml
     conda activate northEuropeanModel`
 
 Installed environment needs few additional packages as conda does not automatically find them. After creating and activating the northEuropeanModel environment, install following additional packages by typing:
