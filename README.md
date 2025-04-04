@@ -68,7 +68,7 @@ For the moment, the updated North European Model works in timeseries_update and 
  * Right click "north_european_model" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
  * Switch to timeseries_update and pull new version
 
-**Note:** if you have edited any of the git files, switchin and pullin will cause an error. In these cases you must revert all changes before.
+**Note:** if you have edited any of the git files, switchin and pulling will cause an error. In these cases you must revert all changes before.
  * right click the folder and select "Revert" from tortoiseGit. 
  * Check the file list and decide if you need backups from those files or not
  * revert all changes
@@ -80,15 +80,15 @@ For the moment, the updated North European Model works in timeseries_update and 
 
 **CHECKPOINT**: Install [miniConda](https://www.anaconda.com/docs/getting-started/miniconda/install) if not yet installed. 
 
-These instructions are written for miniconda, but users can of course choose other conda versions as well.
-  * Open the installed Miniconda Prompt (e.g. type miniconda to windows search bar), 
-  * In the miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
-  * In the miniconda, set up the environment by running the following commands
+These instructions are written for Miniconda, but users can of course choose other conda versions as well.
+  * Open the installed Miniconda Prompt (e.g. type Miniconda to windows search bar), 
+  * In the Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
+  * In the Miniconda, set up the environment by running the following commands
 
-`   conda env create -f environment.yml
-    conda activate northEuropeanModel`
+    conda env create -f environment.yml
+    conda activate northEuropeanModel
 
-Installed environment needs few additional packages as conda does not automatically find them. After creating and activating the northEuropeanModel environment, install following additional packages in the miniconda by typing:
+Installed environment needs few additional packages as Miniconda does not automatically find them. After creating and activating the northEuropeanModel environment, install following additional packages in the Miniconda by typing:
 
     pip install gdxpds
 	pip install gamsapi[transfer]==xx.y.z
@@ -108,11 +108,11 @@ NOTE: GamsAPI is possible to install also for much older GAMS versions, see http
 
 The North Europe model has some time series source files that are too large to be shared in this repository. Following time series should be prepared
 * **Electricity demand profiles**
-	* Download [Demand-Profiles.zip](https://2024.entsos-tyndp-scenarios.eu/wp-content/uploads/2024/draft2024-input-output/Demand-Profiles.zip) from ENTSO-E TYNDP 2024 scenarios
+	* Download [Demand-Profiles.zip](https://2024-data.entsos-tyndp-scenarios.eu/files/scenarios-inputs/Demand-Profiles.zip) from ENTSO-E TYNDP 2024 scenarios. If the link is broken, try "demand profiles" from https://2024.entsos-tyndp-scenarios.eu/download/
 	* extract following two files from the zip: "Demand Profiles\NT\Electricity demand profiles\2030_National Trends.xlsx", and "Demand Profiles\NT\Electricity demand profiles\2040_National Trends.xlsx"
 	* copy file to to `c:/backbone/north_european_model/src_files/timeseries`
-	* rename them to elec_2030_National_Trends.xlsx, and elec_2040_National_Trends.xlsx
-* **VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Following files should be copied to the `c:/backbone/north_european_model/src_files/timeseries/` folder: 
+	* rename them to `elec_2030_National_Trends.xlsx`, and `elec_2040_National_Trends.xlsx`
+* **VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). copy following files to `c:/backbone/north_european_model/src_files/timeseries/` folder: 
 	* PECD-MAF2019-wide-PV.csv
 	* PECD-MAF2019-wide-WindOffshore.csv
 	* PECD-MAF2019-wide-WindOnshore.csv
@@ -133,9 +133,41 @@ Inputs are build with python script which is easiest to run in the miniconda han
  * In the miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
  * In the miniconda, activate the northEuropeanModel environment by typing `conda activate northEuropeanModel`
  * In the miniconda, Run **build_input_data.py** by typing (`python build_input_data.py input_folder=src_files config_file=config_NT2025.ini`) 
- * Output files are written to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
+
 
 At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~12 minutes, and has ~300 files. Writing some larger sets of GDX files might take 60-80secs and the code might seem stuck for those periods, but should eventually proceed.
+
+The `config_NT2025.ini` writes output files to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
+You can alternatively run Backbone directly from the createed output folder, see instructions from [Running Backbone](#running-backbone).
+
+
+### Copying input files to c:\backbone\input
+
+The default use case often is the copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
+
+Alternative approach is to run the model directly from `<output_folder>` by giving `--input_folder='.\north_european_model\<output_folder>'` command line option for the Backbone.
+
+
+### Checking run specification files
+
+Users might want the check the contents of following files, but this is not needed if default settings are ok.
+
+The script automatically copies following run specification files from `src_files\GAMS_files` to the `<output_folder>` and user is free to edit them afterwards. In most cases, users do not need to edit these at all.
+* 1_options.gms - some solver settings documented inside the file
+* timeAndSamples.inc - sets defining timestep and forecast domains in Backbone 
+* modelsInit_example.gms - a default modelsInit file calling scheduleInit.gms
+* scheduleInit.gms - a tailored scheduleInit file for the Northern European Backbone
+* changes.inc - reads possible additional excel data, reads timeseries gdx files, and allows users to add their own project specific changes to the end of the file
+
+The python script constructs following files
+* import_timeseries.inc - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
+
+Note: Included scheduleInit.gms and changes.inc files have a specific structure so that it works with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to the file.
+
+
+### Building own config files
+
+Users can create their own config files and store them locally. Editing any of the files in git will cause version control issues with git and is not recommended.
 
 Python functions to build input data is called with syntax `python build_input_data.py input_folder=<directory> config_file=<filename>` where
  * input_folder is the directory for excel data, large timeseries files, and GAMS file templates. In repository the default folder is **src_files**.
@@ -144,32 +176,9 @@ Python functions to build input data is called with syntax `python build_input_d
 	* confic_test.ini for faster testing of the model
 	* H2 heavy will be added soon
 
-Users can create their own config files and store them locally. Editing any of the files in git will cause version control issues with git and is not recommended.
-
 Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where
  * output folder is a combination of <output_folder_prefix>\_<scenario>\_<year>\_<alternative> defined in the called config file
 
-
-### Checking run specification files
-
-The python script constructs following files
-* import_timeseries.inc - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
-
-In addition, the script automatically copies following run specification files from `src_files\GAMS_files` to the `<output_folder>` and user is free to edit them afterwards. In most cases, users do not need to edit these at all.
-* 1_options.gms - some solver settings documented inside the file
-* timeAndSamples.inc - sets defining timestep and forecast domains in Backbone 
-* modelsInit_example.gms - a default modelsInit file calling scheduleInit.gms
-* scheduleInit.gms - a tailored scheduleInit file for the Northern European Backbone
-* changes.inc - reads possible additional excel data, reads timeseries gdx files, and allows users to add their own project specific changes to the end of the file
-
-Note: Included scheduleInit.gms and changes.inc files have a specific structure so that it works with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to the file.
-
-
-### Copying input files to c:\backbone\input
-
-The default use case often is the copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
-
-Alternative approach is to run the model directly from `<output_folder>` by giving `--input_folder='.\north_european_model\<output_folder>'` command line option for the Backbone.
 
 
 
@@ -190,7 +199,7 @@ Working command line options for backbone.gms would be, for example:
 
 * Running the model with all default assumptions `--input_file_excel=inputData.xlsx`
 * running the selected climate year, 1 week test `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
-* running the model directly from <output> folder `--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
+* running the model directly from <output_folder> `--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
 
-Results from the model run are written to c:\backbone\output\results.gdx
+Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager.
 
