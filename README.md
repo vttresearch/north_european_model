@@ -138,16 +138,16 @@ Inputs are build with python script which is easiest to run in the miniconda han
 At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~12 minutes, and has ~300 files. Writing some larger sets of GDX files might take 60-80secs and the code might seem stuck for those periods, but should eventually proceed.
 
 Python functions to build input data is called with syntax `python build_input_data.py input_folder=<directory> config_file=<filename>` where
-	* input_folder is the directory for excel data, large timeseries files, and GAMS file templates. In repository the default folder is **src_files**.
-	* config_file is a list of instruction to generate the data for the scenario. The repository currently shares following config files:
-		* config_NT2025.ini for **National Trends** scenario
-		* confic_test.ini for faster testing of the model
-		* H2 heavy will be added soon
+ * input_folder is the directory for excel data, large timeseries files, and GAMS file templates. In repository the default folder is **src_files**.
+ * config_file is a list of instruction to generate the data for the scenario. The repository currently shares following config files:
+   * config_NT2025.ini for **National Trends** scenario
+	* confic_test.ini for faster testing of the model
+	* H2 heavy will be added soon
 
 Users can create their own config files and store them locally. Editing any of the files in git will cause version control issues with git and is not recommended.
 
 Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where
-	* output folder is a combination of <output_folder_prefix>_<scenario>_<year>_<alternative> defined in the called config file
+ * output folder is a combination of <output_folder_prefix>\_<scenario>\_<year>\_<alternative> defined in the called config file
 
 
 ### Checking run specification files
@@ -188,12 +188,9 @@ Run the model by running Backbone.gms in GAMS. The model supports the following 
 
 Working command line options for backbone.gms would be, for example:
 
-	Running the model with all default assumptions
-	_--input_file_excel=inputData.xlsx_  	
-	running the selected climate year, 1 week test
-	_--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995_
-	running the model directly from <output> folder
-	_--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx_  
+* Running the model with all default assumptions `--input_file_excel=inputData.xlsx`
+* running the selected climate year, 1 week test `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
+* running the model directly from <output> folder `--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
 
-Results are written to c:\backbone\output\results.gdx
+Results from the model run are written to c:\backbone\output\results.gdx
 
