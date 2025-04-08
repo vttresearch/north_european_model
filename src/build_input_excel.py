@@ -12,7 +12,7 @@ import re
 
 class build_input_excel:
     def __init__(self, input_folder, output_folder, country_codes, exclude_grids, scen_tags,
-                 df_transfers, df_techs, df_units, df_remove_units, df_storages,
+                 df_transfers, df_unittypedata, df_units, df_remove_units, df_storages,
                  df_fuels, df_emissions, df_demands,
                  secondary_results=None
                  ):
@@ -24,7 +24,7 @@ class build_input_excel:
         self.scen_tags = scen_tags
 
         self.df_transfers = df_transfers
-        self.df_techs = df_techs
+        self.df_unittypedata = df_unittypedata
         self.df_units = df_units
         self.df_remove_units = df_remove_units
         self.df_storages = df_storages
@@ -36,18 +36,18 @@ class build_input_excel:
 
 
 # ------------------------------------------------------
-# Functions creating the main Backbone input parameters: p_gnn and p_gnu
+# Functions create and modify p_gnu_io 
 # ------------------------------------------------------
 
-    def create_p_gnu_io(self, df_unittypes, df_units):
+    def create_p_gnu_io(self, df_unittypedata, df_units):
         """
         Creates a new DataFrame p_gnu_io with specified dimension and parameter columns
 
         For each row in df_units:
-        - Lookup the corresponding generator_id row in df_techs.
+        - Lookup the corresponding generator_id row in df_unittypedata.
         - Build unit name: <country>_<'unit_name_prefix' if defined>_<unittype>
         - for puts=['input', 'output1', 'output2', 'output3']
-            * fetch matching grid <grid>_<{put}> from df_techs
+            * fetch matching grid <grid>_<{put}> from df_unittypedata
             * if grid is defined (not NaN, empty, or -)
                 * Build node name <country>_<grid>_<node_suffix if defined>
                 * Build mandatory base column values            
@@ -79,7 +79,7 @@ class build_input_excel:
 
             # Get the matching technology row.
             try:
-                tech_row = df_unittypes.loc[df_unittypes['generator_id'] == generator_id].iloc[0]
+                tech_row = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id].iloc[0]
             # print warning and skip unit if unittype data not available
             except:
                 print(f"   !!! Generator_ID '{generator_id}' from unitdata files does not have a matching generator_id in any of the unittypedata files. Check spelling of generator_id in all files.")
@@ -113,21 +113,31 @@ class build_input_excel:
                     # Check if the value is either an empty string or NaN.
                     conversionCoeff = 1 if (value == '' or pd.isna(value)) else value
 
-                    # Build base row dictionary.
+                    # Build base row dictionary including values with different default assumptions
                     base_row = {
                         'grid' : grid,
                         'node' : node_name,
                         'unit' : unit_name,
                         'input_output': 'input' if put.startswith('input') else 'output',
-                        'capacity' : cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0,
-                        'conversionCoeff' : conversionCoeff
+                        'conversionCoeff' : conversionCoeff,
+                        'capacity' : (cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0) +
+                                     (cap_row['capacity'] if ('capacity' in cap_row.index and put == 'output1') else 0)
+
                     }
 
                     # Build additional parameters with a dictionary comprehension.
                     additional_params = {
-                        param : (
-                            (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
-                            (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
+                        param: (
+                            # Primary source: cap_row
+                            (
+                                (cap_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in cap_row.index else 0) +
+                                (cap_row[param.lower()] if (param.lower() in cap_row.index and put == 'output1') else 0)
+                            ) or  # Use 'or' to check if primary value is 0
+                            # Secondary source: tech_row
+                            (
+                                (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
+                                (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
+                            )
                         )
                         for param in param_gnu if param not in ['capacity', 'conversionCoeff']
                     }
@@ -136,15 +146,181 @@ class build_input_excel:
                     row = {**base_row, **additional_params}
                     rows.append(row)
 
-        # create p_gnu
-        p_gnu_io = self.create_fake_multiIndex(dimensions, param_gnu, rows)
+        # Define the final columns titles and orders.
+        final_cols = dimensions.copy()
+        final_cols.extend(param_gnu)
+
+        # Create p_gnu_io, fill NaN, and add fake MultiIndex
+        p_gnu_io = pd.DataFrame(rows, columns=final_cols)
+        p_gnu_io = p_gnu_io.fillna(value=0)
+        p_gnu_io = self.create_fake_multiIndex(p_gnu_io, dimensions)
 
         # Sort by unit, input_output, node in a case-insensitive manner.
         p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
+        return p_gnu_io
+
+
+    def remove_units_by_excluding_grids(self, p_gnu_io, exclude_grids):
+        """
+        Remove units from p_gnu_io DataFrame based on excluded grids.
+
+        Parameters:
+        p_gnu_io (pandas.DataFrame): DataFrame containing grid, node, unit, and input_output columns
+        exclude_grids (list): List of grid names to exclude
+
+        Returns:
+        pandas.DataFrame: Filtered DataFrame with excluded grids and affected units removed
+        """
+        import pandas as pd
+
+        # Get unique units and their input/output counts before filtering
+        units = pd.DataFrame({'unit': p_gnu_io['unit'].unique()})
+
+        # Calculate original input counts for each unit
+        input_counts = p_gnu_io[p_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
+        input_counts.columns = ['unit', 'inputCount_orig']
+        units = units.merge(input_counts, on='unit', how='left')
+        units['inputCount_orig'] = units['inputCount_orig'].fillna(0).astype(int)
+
+        # Calculate original output counts for each unit
+        output_counts = p_gnu_io[p_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
+        output_counts.columns = ['unit', 'outputCount_orig']
+        units = units.merge(output_counts, on='unit', how='left')
+        units['outputCount_orig'] = units['outputCount_orig'].fillna(0).astype(int)
+
+        # Remove rows with excluded grids
+        filtered_gnu_io = self.remove_rows(p_gnu_io, 'grid', exclude_grids)
+
+        # Calculate updated input counts after grid removal
+        input_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
+        input_counts_upd.columns = ['unit', 'inputCount_upd']
+        units = units.merge(input_counts_upd, on='unit', how='left')
+        units['inputCount_upd'] = units['inputCount_upd'].fillna(0).astype(int)
+
+        # Calculate updated output counts after grid removal
+        output_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
+        output_counts_upd.columns = ['unit', 'outputCount_upd']
+        units = units.merge(output_counts_upd, on='unit', how='left')
+        units['outputCount_upd'] = units['outputCount_upd'].fillna(0).astype(int)
+
+        # Identify units to remove - those that lost all inputs or all outputs
+        units_to_remove = []
+
+        for _, row in units.iterrows():
+            # Check if unit had inputs before but lost all of them
+            if row['inputCount_upd'] == 0 and row['inputCount_orig'] >= 1:
+                units_to_remove.append(row['unit'])
+            # Check if unit had outputs before but lost all of them
+            elif row['outputCount_upd'] == 0 and row['outputCount_orig'] >= 1:
+                units_to_remove.append(row['unit'])
+
+        # Remove units that lost all inputs or all outputs
+        result = self.remove_rows(filtered_gnu_io, 'unit', units_to_remove)
+
+        return result
+
+
+    def fill_capacities(self, p_gnu_io, p_unit):
+        """
+        Fills missing capacity values of units with a set of rules. Currently
+            * calculates missing input capacity, if unit has just 1 input and 1 output with output capacity
+            * calculates missing output capacity, if unit has just 1 input and 1 output with input capacity
+
+        """
+        # Get a flat version without the fake multi-index
+        p_gnu_io_flat = self.drop_row0(p_gnu_io)
+        p_gnu_io_flat = p_gnu_io_flat.convert_dtypes()
+        p_unit_flat = self.drop_row0(p_unit)
+        p_unit_flat = p_unit_flat.convert_dtypes()
+
+        # Create a dictionary mapping each unit to its maximum efficiency.
+        # Efficiency is taken as the maximum among columns that start with 'eff' (e.g., eff00, eff01, ...)
+        p_unit_eff = {}
+        # Identify efficiency columns (assumes they all start with 'eff')
+        eff_columns = [col for col in p_unit_flat.columns if col.startswith('eff')]
+        for _, unit_row in p_unit_flat.iterrows():
+            # For each unit, compute its max efficiency (assuming one row per unit)
+            p_unit_eff[unit_row['unit']] = unit_row[eff_columns].max()
+
+        # --- Handle input rows missing capacity ---
+        # For each row in p_gnu_io_flat with type 'input' and capacity 0, where its (grid, node, unit) group
+        # has exactly one input row, try to find a matching output row in a different (grid, node)
+        # that has exactly one output row and capacity > 0.
+        for idx, row in p_gnu_io_flat.iterrows():
+            if row['input_output'] == 'input' and row['capacity'] == 0:
+                # Check that within this (grid, node, unit) group there is only one input row.
+                group_input = p_gnu_io_flat[
+                    (p_gnu_io_flat['grid'] == row['grid']) &
+                    (p_gnu_io_flat['node'] == row['node']) &
+                    (p_gnu_io_flat['unit'] == row['unit']) &
+                    (p_gnu_io_flat['input_output'] == 'input')
+                ]
+                if len(group_input) != 1:
+                    continue
+
+                # Look for a corresponding output row for the same unit with positive capacity
+                candidate_outputs = p_gnu_io_flat[
+                    (p_gnu_io_flat['unit'] == row['unit']) &
+                    (p_gnu_io_flat['input_output'] == 'output') &
+                    (p_gnu_io_flat['capacity'] > 0)
+                ]
+                # Require that in the candidate's own (grid, node, unit) group, there is exactly one output row.
+                if not candidate_outputs.empty:
+                    if len(candidate_outputs) == 1:
+                        matched_row = candidate_outputs.iloc[0]
+                        output_capacity = matched_row['capacity']
+                        # Get efficiency for the unit, defaulting to 1 if not found
+                        efficiency = p_unit_eff.get(row['unit'], 1)
+                        # Update the missing input capacity; divide output capacity by efficiency.
+                        new_capacity = output_capacity / efficiency if efficiency != 0 else 0
+                        p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+
+        # --- Handle output rows missing capacity ---
+        # Now, for each row with type 'output' and zero capacity,
+        # check that its (grid, node, unit) group has exactly one output row.
+        # Then, try to find a matching input row from a different (grid, node) with capacity > 0 and exactly one input row.
+        for idx, row in p_gnu_io_flat.iterrows():
+            if row['input_output'] == 'output' and row['capacity'] == 0:
+                # Check that within the (grid, node, unit) group there is only one output row.
+                group_output = p_gnu_io_flat[
+                    (p_gnu_io_flat['grid'] == row['grid']) &
+                    (p_gnu_io_flat['node'] == row['node']) &
+                    (p_gnu_io_flat['unit'] == row['unit']) &
+                    (p_gnu_io_flat['input_output'] == 'output')
+                ]
+                if len(group_output) != 1:
+                    continue
+
+                # Find a candidate input row for the same unit with positive capacity.
+                candidate_inputs = p_gnu_io_flat[
+                    (p_gnu_io_flat['unit'] == row['unit']) &
+                    (p_gnu_io_flat['input_output'] == 'input') &
+                    (p_gnu_io_flat['capacity'] > 0)
+                ]
+                # Ensure the candidate input row's (grid, node, unit) group contains only one row.
+                if not candidate_inputs.empty:
+                    if len(candidate_inputs) == 1:
+                        matched_row = candidate_inputs.iloc[0]
+                        input_capacity = matched_row['capacity']
+                        efficiency = p_unit_eff.get(row['unit'], 1)
+                        # Update the missing output capacity; multiply input capacity by efficiency.
+                        new_capacity = input_capacity * efficiency
+                        p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+
+        # Fill any remaining NaN values in the DataFrame
+        p_gnu_io_flat = p_gnu_io_flat.fillna(value=0)
+
+        # Recreate the fake multi-index using the specified columns.
+        p_gnu_io = self.create_fake_multiIndex(p_gnu_io_flat, ['grid', 'node'])
 
         return p_gnu_io
+
+
+# ------------------------------------------------------
+# Functions create and modify p_gnn, p_gn
+# ------------------------------------------------------
 
     def create_p_gnn(self, df_transfers, p_gnu_io_flat, exclude_grids):
         """
@@ -199,8 +375,14 @@ class build_input_excel:
                         'rampLimit' :                   (rampLimit / to_from_capacity * from_to_capacity ) if to_from_capacity > 0 else 0
                     })
 
-        # create p_gnn
-        p_gnn = self.create_fake_multiIndex(dimensions, param_gnn, rows)
+        # Define the final columns titles and orders.
+        final_cols = dimensions.copy()
+        final_cols.extend(param_gnn)
+
+        # Create p_gnn, fill NaN, and add fake MultiIndex
+        p_gnn = pd.DataFrame(rows, columns=final_cols)
+        p_gnn = p_gnn.fillna(value=0)
+        p_gnn = self.create_fake_multiIndex(p_gnn, dimensions)
         
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gnn.sort_values(by=['grid', 'from_node', 'to_node'], 
@@ -209,129 +391,6 @@ class build_input_excel:
 
         return p_gnn  
 
-
-# ------------------------------------------------------
-# Functions to create unittype based input tables: 
-# unitUnittype, flowUnit, p_unit, effLevelGroupUnit
-# ------------------------------------------------------
-
-    def create_unitUnittype(self, p_gnu_io_flat):
-        # Get unique unit names from the 'unit' column of p_gnu
-        unique_units = p_gnu_io_flat['unit'].unique()
-        # Create the DataFrame using a list comprehension, taking the last part as the unittype
-        unitUnittype = pd.DataFrame(
-            [{'unit': unit, 'unittype': unit.split('_')[-1]} for unit in unique_units],
-            columns=['unit', 'unittype']
-        )
-        return unitUnittype
-    
-    def create_flowUnit(self, df_techs, unitUnittype):
-        # Filter rows in df_techs that have a non-null 'flow' value
-        flowtechs = df_techs[df_techs['flow'].notnull()].copy()
-        # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unittype'
-        merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unittype', how='inner')
-        # Create the final DataFrame with only 'flow' and 'unit' columns
-        flowUnit = merged[['flow', 'unit']]
-        return flowUnit
-    
-    def create_p_unit(self, df_techs, unitUnittype):
-        """
-        Creates a new DataFrame p_unit with specified dimension and parameter columns
-        """      
-        # dimension and parameter columns
-        dimensions = ['unit']
-        param_unit = ['isSource', 'isSink', 'availability', 
-                      'eff00', 'eff01', 'op00', 'op01', 
-                      'startColdAfterXhours', 'startWarmAfterXhours',
-                      'minOperationHours', 'minShutdownHours']
-        # List to collect the new rows 
-        rows = []
-
-        def fetch_from_tech_row(tech_row, param, def_value=0):
-            # Reads value from tech_row in case insensitive manner, 
-            # accepts default value and uses 0 if not given
-            # handles errors by using value 0
-            try:
-                value = tech_row[param.lower()]  if param.lower() in tech_row.index else def_value
-            except:
-                value = 0
-            return value
-
-        # Iterate over each row in unitUnittype
-        for _, u_row in unitUnittype.iterrows():
-            # Retrieve the matching row from df_techs
-            tech_row = df_techs[df_techs['unittype'] == u_row['unittype']].iloc[0]
-
-            minShutdownHours = fetch_from_tech_row(tech_row, 'minShutdownHours')
-            # Build the param_unit dictionary using values from the matching row
-            row_data = {
-                'unit'              : u_row['unit'],
-                'isSource'          : fetch_from_tech_row(tech_row, 'isSource'),
-                'isSink'            : fetch_from_tech_row(tech_row, 'isSink'),
-                'availability'      : fetch_from_tech_row(tech_row, 'availability', 1),
-                'eff00'             : fetch_from_tech_row(tech_row, 'eff00', 1),
-                'eff01'             : fetch_from_tech_row(tech_row, 'eff01', 1),
-                'op00'              : fetch_from_tech_row(tech_row, 'op00'),
-                'op01'              : fetch_from_tech_row(tech_row, 'op01', 1),
-                'minOperationHours' : fetch_from_tech_row(tech_row, 'minOperationHours'),
-                'minShutdownHours'  : minShutdownHours,
-                'startColdAfterXhours' : max(minShutdownHours, fetch_from_tech_row(tech_row, 'startColdAfterXhours')),
-                'startWarmAfterXhours' : fetch_from_tech_row(tech_row, 'startWarmAfterXhours')
-            }
-
-            # Append the unit and its parameter dictionary to the list
-            rows.append(row_data)
-
-        # create p_unit
-        p_unit = self.create_fake_multiIndex(dimensions, param_unit, rows)
-        
-        # Sort by grid, from_node, to_node in a case-insensitive manner.
-        p_unit.sort_values(by=['unit'], 
-                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
-                            inplace=True)
-
-        return p_unit
-    
-    def create_effLevelGroupUnit(self, df_techs, unitUnittype):
-        # List to accumulate new rows
-        rows = []
-
-        # Iterate over each row in unitUnittype
-        for _, u_row in unitUnittype.iterrows():
-            unit = u_row['unit']
-            unittype = u_row['unittype']
-
-            # Retrieve the matching row from df_techs where 'unittype' equals the unittype value
-            tech_matches = df_techs[df_techs['unittype'] == unittype]
-            tech_row = tech_matches.iloc[0]
-
-            # LP/MIP value
-            lp_mip = tech_row['LP/MIP'] if 'minOperationHours' in tech_row.index else None
-
-            if lp_mip in ['LP', 'MIP']:
-                # effLevel1 = MIP/LP
-                rows.append({
-                    'effLevel': f'level{i}',
-                    'effSelector': f'directOn{lp_mip}',
-                    'unit': unit
-                })
-                # effLevel2-3 = LP
-                for i in range(2,4):
-                    rows.append({
-                        'effLevel': f'level{i}',
-                        'effSelector': 'directOnLP',
-                        'unit': unit
-                    })
-
-        # Create a new DataFrame from the list of rows with the desired columns
-        effLevelGroupUnit = pd.DataFrame(rows, columns=['effLevel', 'effSelector', 'unit'])
-        return effLevelGroupUnit                                                                                                                     
-
-
-# ------------------------------------------------------
-# Functions to create node based input tables: 
-# p_gn, p_gnBoundaryPropertiesForStates, ts_priceChange, 
-# ------------------------------------------------------
 
     def create_p_gn(self, p_gnn_flat, p_gnu_io_flat, df_fuels, df_demands, df_storages, **kwargs):
         """
@@ -446,46 +505,218 @@ class build_input_excel:
             }
             rows.append(row_dict)
 
-        # create p_gn
-        p_gn = self.create_fake_multiIndex(dimensions, param_gn, rows)
-        
+      
+        # Define the final columns titles and orders.
+        final_cols = dimensions.copy()
+        final_cols.extend(param_gn)
+
+        # Create p_gn, fill NaN, and add fake MultiIndex
+        p_gn = pd.DataFrame(rows, columns=final_cols)
+        p_gn = p_gn.fillna(value=0)
+        p_gn = self.create_fake_multiIndex(p_gn, dimensions)
+
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
         return p_gn
 
+
+# ------------------------------------------------------
+# Functions to create unittype based input tables: 
+# unitUnittype, flowUnit, p_unit, effLevelGroupUnit
+# ------------------------------------------------------
+
+    def create_unitUnittype(self, p_gnu_io_flat):
+        # Get unique unit names from the 'unit' column of p_gnu
+        unique_units = p_gnu_io_flat['unit'].unique()
+        # Create the DataFrame using a list comprehension, taking the last part as the unittype
+        unitUnittype = pd.DataFrame(
+            [{'unit': unit, 'unittype': unit.split('_')[-1]} for unit in unique_units],
+            columns=['unit', 'unittype']
+        )
+        return unitUnittype
+    
+
+    def create_flowUnit(self, df_unittypedata, unitUnittype):
+        # Filter rows in df_unittypedata that have a non-null 'flow' value
+        flowtechs = df_unittypedata[df_unittypedata['flow'].notnull()].copy()
+        # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unittype'
+        merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unittype', how='inner')
+        # Create the final DataFrame with only 'flow' and 'unit' columns
+        flowUnit = merged[['flow', 'unit']]
+        return flowUnit
+    
+
+    def create_p_unit(self, df_unittypedata, unitUnittype):
+        """
+        Creates a new DataFrame p_unit with specified dimension and parameter columns
+        """      
+        # dimension and parameter columns
+        dimensions = ['unit']
+        param_unit = ['isSource', 'isSink', 'availability', 
+                      'eff00', 'eff01', 'op00', 'op01', 
+                      'startColdAfterXhours', 'startWarmAfterXhours',
+                      'minOperationHours', 'minShutdownHours']
+        # List to collect the new rows 
+        rows = []
+
+        def fetch_from_tech_row(tech_row, param, def_value=0):
+            # Reads value from tech_row in case insensitive manner, 
+            # accepts default value and uses 0 if not given
+            # handles errors by using value 0
+            try:
+                value = tech_row[param.lower()]  if param.lower() in tech_row.index else def_value
+            except:
+                value = 0
+            return value
+
+        # Iterate over each row in unitUnittype
+        for _, u_row in unitUnittype.iterrows():
+            # Retrieve the matching row from df_unittypedata
+            tech_row = df_unittypedata[df_unittypedata['unittype'] == u_row['unittype']].iloc[0]
+
+            minShutdownHours = fetch_from_tech_row(tech_row, 'minShutdownHours')
+            # Build the param_unit dictionary using values from the matching row
+            row_data = {
+                'unit'              : u_row['unit'],
+                'isSource'          : fetch_from_tech_row(tech_row, 'isSource'),
+                'isSink'            : fetch_from_tech_row(tech_row, 'isSink'),
+                'availability'      : fetch_from_tech_row(tech_row, 'availability', 1),
+                'eff00'             : fetch_from_tech_row(tech_row, 'eff00', 1),
+                'eff01'             : fetch_from_tech_row(tech_row, 'eff01', 1),
+                'op00'              : fetch_from_tech_row(tech_row, 'op00'),
+                'op01'              : fetch_from_tech_row(tech_row, 'op01', 1),
+                'minOperationHours' : fetch_from_tech_row(tech_row, 'minOperationHours'),
+                'minShutdownHours'  : minShutdownHours,
+                'startColdAfterXhours' : max(minShutdownHours, fetch_from_tech_row(tech_row, 'startColdAfterXhours')),
+                'startWarmAfterXhours' : fetch_from_tech_row(tech_row, 'startWarmAfterXhours')
+            }
+
+            # Append the unit and its parameter dictionary to the list
+            rows.append(row_data)
+
+
+        # Define the final columns titles and orders.
+        final_cols = dimensions.copy()
+        final_cols.extend(param_unit)
+
+        # Create p_unit, fill NaN, and add fake MultiIndex
+        p_unit = pd.DataFrame(rows, columns=final_cols)
+        p_unit = p_unit.fillna(value=0)
+        p_unit = self.create_fake_multiIndex(p_unit, dimensions)
+
+        # Sort by grid, from_node, to_node in a case-insensitive manner.
+        p_unit.sort_values(by=['unit'], 
+                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+                            inplace=True)
+
+        return p_unit
+    
+
+    def create_effLevelGroupUnit(self, df_unittypedata, unitUnittype):
+        # List to accumulate new rows
+        rows = []
+
+        # Iterate over each row in unitUnittype
+        for _, u_row in unitUnittype.iterrows():
+            unit = u_row['unit']
+            unittype = u_row['unittype']
+
+            # Retrieve the matching row from df_unittypedata where 'unittype' equals the unittype value
+            tech_matches = df_unittypedata[df_unittypedata['unittype'] == unittype]
+            tech_row = tech_matches.iloc[0]
+
+            # LP/MIP value
+            lp_mip = tech_row['LP/MIP'] if 'minOperationHours' in tech_row.index else None
+
+            if lp_mip in ['LP', 'MIP']:
+                # effLevel1 = MIP/LP
+                rows.append({
+                    'effLevel': f'level{i}',
+                    'effSelector': f'directOn{lp_mip}',
+                    'unit': unit
+                })
+                # effLevel2-3 = LP
+                for i in range(2,4):
+                    rows.append({
+                        'effLevel': f'level{i}',
+                        'effSelector': 'directOnLP',
+                        'unit': unit
+                    })
+
+        # Create a new DataFrame from the list of rows with the desired columns
+        effLevelGroupUnit = pd.DataFrame(rows, columns=['effLevel', 'effSelector', 'unit'])
+        return effLevelGroupUnit                                                                                                                     
+
+
+# ------------------------------------------------------
+# Functions to create and modify node based input tables: 
+# p_gnBoundaryPropertiesForStates, ts_priceChange, p_userconstraint
+# ------------------------------------------------------
+
     def create_p_gnBoundaryPropertiesForStates(self, p_gn_flat, df_storages, **kwargs):
         """
-        Creates a new DataFrame p_gnBoundaryPropertiesForStates 
+        Creates a DataFrame that defines boundary properties for nodes in an energy grid system.
 
+        This function generates boundary properties for nodes that have balance requirements 
+        or energy storage capabilities. It processes both constant values from the storage 
+        dataframe and time series data provided in kwargs.
 
-        """   
+        Parameters:
+        -----------
+        p_gn_flat : DataFrame containing node configurations.
+            Must include columns: 'grid', 'node', 'nodeBalance', 'energyStoredPerUnitOfState'
+
+        df_storages : DataFrame containing storage input data specifications.
+            Must include columns: 'grid', 'node', and may include boundary values like
+            'upwardlimit', 'downwardlimit', etc.
+
+        **kwargs : dict of additional keyword arguments.
+            Expected to contain DataFrames with keys starting with 'ts_storage_limits'.
+            These DataFrames should have columns: 'node', 'param_gnBoundaryTypes', 'average_value'.
+
+        Returns:
+        --------
+        DataFrame
+            A fake-multi-indexed DataFrame with dimensions ['grid', 'node', 'param_gnBoundaryTypes'] 
+            and param_gnBoundaryProperties ['useConstant', 'constant', 'useTimeSeries', 'slackCost'].
+            Fake multi-index is a compromise between many aspects, see create_fake_multiIndex()
+            Defines boundary constraints for nodes in the energy system.
+        """ 
+        # Define the dimensions and parameters for the fake-multi-indexed output DataFrame
         dimensions = ['grid', 'node', 'param_gnBoundaryTypes']
+
+        # List of supported boundary types to process
         param_gnBoundaryTypes = ['upwardLimit', 'downwardLimit', 
                                  'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill',
                                  'downwardSlack01']
+        
+        # Properties that will be assigned to each boundary type
         param_gnBoundaryProperties = ['useConstant', 'constant', 'useTimeSeries', 'slackCost']
-        # List to collect the new rows 
+
+        # Initialize an empty list to collect all rows for the output DataFrame 
         rows = []   
 
-        # Filter kwargs {varname: var} where varname starts with 'ts_storage_limits'
+        # Extract time series data from kwargs - only process keys starting with 'ts_storage_limits'
         ts_storage_limits = {key: value for key, value in kwargs.items() if key.startswith("ts_storage_limits")}
 
-        # Initialize an empty dictionary for {(node, param_gnBoundaryTypes): average_value}
+        # Create a lookup dictionary to quickly find average values for node-boundary type combinations
+        # Format: {(node, param_gnBoundaryTypes): average_value}
         ts_node_boundaryTypes = {}
 
-        # Iterate through the filtered DataFrames
+        # Process all time series data frames to populate the lookup dictionary
         for key, df in ts_storage_limits.items():
-            # Verify that the DataFrame has the required columns
+            # Verify the DataFrame has all required columns before processing
             if all(col in df.columns for col in ['node', 'param_gnBoundaryTypes', 'average_value']):
                 # Extract (node, param_gnBoundaryTypes, average_value) tuples and add to dictionary
                 for _, row in df[['node', 'param_gnBoundaryTypes', 'average_value']].iterrows():
                     node_boundaryType = (row['node'], row['param_gnBoundaryTypes'])
                     ts_node_boundaryTypes[node_boundaryType] = row['average_value']
 
-        # Loop through each row in p_gn that has useBalance equal to 1
+        # Process each node in the system that requires balance constraints
         for _, gn_row in p_gn_flat.iterrows():
+            # Only process nodes with balance requirements (nodeBalance = 1)
             if gn_row.get('nodeBalance', 0) == 1:
                 grid = gn_row['grid']
                 node = gn_row['node']
@@ -497,17 +728,15 @@ class build_input_excel:
                 else:
                     storage_row = None
 
-                # Loop through each boundary type and add a row if a value exists
+                # Process each boundary type for this node
                 for p_type in param_gnBoundaryTypes:
 
-                    # looking if storage_row has constant value for this p_type
-                    if storage_row is not None:
-                        value = storage_row.get(p_type.lower(), None)
-                    else:
-                        value = None
+                    # Check if there's a constant value in storage configuration
+                    value = storage_row.get(p_type.lower(), None) if storage_row is not None else None
 
-                    # if (node, p_type) in ts_node_boundaryTypes, flag to use timeseries
-                    if (node, p_type) in ts_node_boundaryTypes:          
+                    # Time series data takes precedence over constant values
+                    if (node, p_type) in ts_node_boundaryTypes:
+                        # Create entry for time series-based boundary         
                         row_dict = {
                             'grid':                     grid,
                             'node':                     node,
@@ -515,19 +744,22 @@ class build_input_excel:
                             'useTimeSeries':            1,
                         }
                         rows.append(row_dict)  
-                        # if timeseries format downwardLimit, activate downwardSlack01
+
+                        # Special case: For downwardLimit with time series, create a slack variable
+                        # to allow minor violations with a smaller penalty
                         if p_type == 'downwardLimit':
                             row_dict = {
                                 'grid':                     grid,
                                 'node':                     node,
                                 'param_gnBoundaryTypes':    'downwardSlack01',
                                 'useConstant':              1,
+                                # Scale down the average value and round it
                                 'constant':                 round(ts_node_boundaryTypes[(node, p_type)]/1000, 0),
-                                'slackCost':                300
+                                'slackCost':                300 # Fixed penalty cost for violations
                             }
                             rows.append(row_dict)      
 
-                    # writing a row for p_type if it has data (value different to zero)
+                    # If no time series but we have a non-zero constant value, use it
                     elif value is not None:
                         if value != 0 and pd.notna(value):
                             row_dict = {
@@ -543,8 +775,7 @@ class build_input_excel:
             if gn_row.get('energyStoredPerUnitOfState', 0) == 1:
                 grid = gn_row['grid']
                 node = gn_row['node']
-                # Add a row for 'downwardLimit' with constant 'Eps' 
-                # if there is no such row for the current grid and node
+                # Ensure all storage nodes have at least an 'Eps' downward limit
                 if not any((r['grid'] == grid and 
                             r['node'] == node and 
                             r['param_gnBoundaryTypes'] == 'downwardLimit') for r in rows):
@@ -558,16 +789,152 @@ class build_input_excel:
                     rows.append(row_dict)
 
 
-        # create p_gnBoundaryPropertiesForStates
-        p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(dimensions, param_gnBoundaryProperties, rows)
-        
+        # Define the final columns titles and orders.
+        final_cols = dimensions.copy()
+        final_cols.extend(param_gnBoundaryProperties)
+
+        # Create p_gnBoundaryPropertiesForStates, fill NaN, and add fake MultiIndex
+        p_gnBoundaryPropertiesForStates = pd.DataFrame(rows, columns=final_cols)
+        p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.fillna(value=0)
+        p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(p_gnBoundaryPropertiesForStates, dimensions)
+
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gnBoundaryPropertiesForStates.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
 
         return p_gnBoundaryPropertiesForStates
+
+
+    def add_storage_starts(self, p_gn, p_gnBoundaryPropertiesForStates, p_gnu_io_flat, **kwargs):
+        """
+        Adds storage start values to nodes with energy storage capabilities. 
+        Converts p_gn and p_gnBoundaryPropertiesForStates to flat versions by removing the fake multi-index.
+        Adds p_gn('boundStart') and p_gnBoundaryPropertiesForStates('reference') for storage nodes
+        Recreates the fake multi-index
+
+        Parameters:
+            p_gn: DataFrame with columns ['grid', 'node'] and possibly 'energyStoredPerUnitOfState'
+            p_gnBoundaryPropertiesForStates: DataFrame with columns ['grid', 'node', 'param_gnBoundaryTypes', 'param_gnBoundaryProperties']
+            **kwargs: Keyword arguments, where keys starting with 'ts_storage_limits' contain DataFrames with storage limit data
+
+        Returns:
+            tuple: (p_gn, p_gnBoundaryPropertiesForStates) with updated values
+        """
+        # Filter kwargs {varname: var} where varname starts with 'ts_storage_limits'
+        ts_storage_limits = {key: value for key, value in kwargs.items() if key.startswith("ts_storage_limits")}
+
+        # Create a lookup dictionary to quickly find average values for node-boundary type combinations
+        # Format: {(node, param_gnBoundaryTypes): average_value}
+        ts_node_boundaryTypes = {}
+
+        # Process all time series data frames to populate the lookup dictionary
+        for key, df in ts_storage_limits.items():
+            # Verify the DataFrame has all required columns before processing
+            if all(col in df.columns for col in ['node', 'param_gnBoundaryTypes', 'average_value']):
+                # Extract (node, param_gnBoundaryTypes, average_value) tuples and add to dictionary
+                for _, row in df[['node', 'param_gnBoundaryTypes', 'average_value']].iterrows():
+                    node_boundaryType = (row['node'], row['param_gnBoundaryTypes'])
+                    ts_node_boundaryTypes[node_boundaryType] = row['average_value']
+
+        # Get a flat versions without the fake multi-index
+        p_gn_flat = self.drop_row0(p_gn)
+        p_gn_flat = p_gn_flat.convert_dtypes()
+        p_gnBoundaryPropertiesForStates_flat = self.drop_row0(p_gnBoundaryPropertiesForStates)
+        p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.convert_dtypes()
+
+        # Identify storage nodes - those where energyStoredPerUnitOfState is 1 or True
+        storage_gn = []
+        if 'energyStoredPerUnitOfState' in p_gn_flat.columns:
+            for _, row in p_gn_flat.iterrows():
+                if row.get('energyStoredPerUnitOfState') == 1 or row.get('energyStoredPerUnitOfState') is True:
+                    storage_gn.append((row['grid'], row['node']))
+
+        # Add 'boundStart' column to p_gn, initializing with 0
+        p_gn_flat['boundStart'] = 0
+
+        # Process each storage node
+        for grid, node in storage_gn:
+
+            # 1) calculate start_value based on the timeseries upwardLimit
+            start_value = ts_node_boundaryTypes.get((node, 'upwardLimit'), 0)
+
+            # 2) check if there's a constant value in p_gnBoundaryPropertiesForStates_flat
+            if start_value == 0:
+                # Find rows that match our criteria
+                mask = ((p_gnBoundaryPropertiesForStates_flat['grid'] == grid) & 
+                       (p_gnBoundaryPropertiesForStates_flat['node'] == node) &
+                       (p_gnBoundaryPropertiesForStates_flat['param_gnBoundaryTypes'] == 'upwardLimit'))
+
+                # Check if any matching rows exist and have constant values > 0
+                if any(mask) and 'constant' in p_gnBoundaryPropertiesForStates_flat.columns:
+                    constant_values = p_gnBoundaryPropertiesForStates_flat.loc[mask, 'constant']
+                    if not constant_values.empty and constant_values.iloc[0] > 0:
+                        start_value = constant_values.iloc[0]
+
+            # 3) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
+            if start_value == 0:
+                subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & 
+                                                (p_gnu_io_flat['node'] == node) & 
+                                                (p_gnu_io_flat['upperLimitCapacityRatio'] > 0)
+                                                ]
+                if not subset_p_gnu_io.empty:
+                        # Use the subset dataframe and get the first row if there are multiple matches
+                        capacity = subset_p_gnu_io['capacity'].iloc[0]
+                        upper_limit = subset_p_gnu_io['upperLimitCapacityRatio'].iloc[0]
+                        start_value = capacity * upper_limit                      
+
+            # Only proceed with adding/updating p_gn and boundary properties if we have a valid start_value
+            if start_value != 0:
+                # Set boundStart to 1 for storage nodes
+                p_gn_flat.loc[(p_gn_flat['grid'] == grid) & (p_gn_flat['node'] == node), 'boundStart'] = 1
+
+                new_constant = round(start_value * 0.7, 0)
+                # Create a mask to find the 'reference' row for this grid and node
+                ref_mask = (
+                    (p_gnBoundaryPropertiesForStates_flat['grid'] == grid) &
+                    (p_gnBoundaryPropertiesForStates_flat['node'] == node) &
+                    (p_gnBoundaryPropertiesForStates_flat['param_gnBoundaryTypes'] == 'reference')
+                )
+
+                if not p_gnBoundaryPropertiesForStates_flat.loc[ref_mask].empty:
+                    # If row exists, update the 'constant' value (and useConstant as needed)
+                    p_gnBoundaryPropertiesForStates_flat.loc[ref_mask, 'constant'] = new_constant
+                    p_gnBoundaryPropertiesForStates_flat.loc[ref_mask, 'useConstant'] = 1
+                else:
+                    # Create new row since one does not exist yet.
+                    new_row = {
+                        'grid': grid,
+                        'node': node,
+                        'param_gnBoundaryTypes': 'reference',
+                        'useConstant': 1,
+                        'constant': new_constant
+                    }
+                    new_row_df = pd.DataFrame([new_row])
+                    # Use pandas concat instead of append (which is deprecated in newer pandas versions)
+                    p_gnBoundaryPropertiesForStates_flat = pd.concat(
+                        [p_gnBoundaryPropertiesForStates_flat, new_row_df],
+                        ignore_index=True
+                    )
+
+        # fill NaN
+        p_gn_flat = p_gn_flat.fillna(value=0)
+        p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.fillna(value=0)
+
         
+        # Sort p_gnBoundaryPropertiesForStates alphabetically by [grid, node] in a case-insensitive manner
+        p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.sort_values(
+                                                    by=['grid', 'node', 'param_gnBoundaryTypes'], 
+                                                    key=lambda x: x.str.lower()
+                                                    ).reset_index(drop=True)
+
+        # recreate fake multi-indexes
+        p_gn = self.create_fake_multiIndex(p_gn_flat, ['grid', 'node'])
+        p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(p_gnBoundaryPropertiesForStates_flat, ['grid', 'node', 'param_gnBoundaryTypes'])
+
+        return (p_gn, p_gnBoundaryPropertiesForStates)
+
+
     def create_ts_priceChange(self, p_gn_flat, df_fuels):
         # Identify the price column in df_fuels (case-insensitive)
         price_col = next((col for col in df_fuels.columns if col.lower() == 'price'), None)
@@ -597,10 +964,6 @@ class build_input_excel:
         ts_priceChange = pd.DataFrame(rows)
         return ts_priceChange
 
-
-# !!!!!!!!!!!!!
-# convert p_userconstraint to ts_gnu(mingen)
-# !!!!!!!!!!!!!
 
     def create_p_userConstraint(self, p_gnu_io_flat, **kwargs):
     
@@ -646,17 +1009,186 @@ class build_input_excel:
 # p_nEmission, ts_emissionPriceChange, 
 # ------------------------------------------------------
 
+    def create_p_nEmission(self, p_gn_flat, df_fuels):
+        """
+        Create p_nEmission['node', 'emission', 'value'] emission factors (tEmission / MWh) for each node.
+
+        Parameters   
+        p_gn_flat : pandas DataFrame with columns 'grid' and 'node'.
+        df_fuels : pandas DataFrame with column 'grid' and optional columns 'emission_XX' 
+            where XX is emission name (e.g., CO2, CH4).
+        """
+
+        # Extract emission names from column names
+        emission_cols = [col for col in df_fuels.columns if col.startswith('emission_')]
+        emissions = [col.replace('emission_', '') for col in emission_cols]
+
+        # Create grid_emission DataFrame with (grid, emission) combinations
+        grid_emission_data = []
+        for grid in df_fuels['grid'].unique():
+            grid_row = df_fuels[df_fuels['grid'] == grid].iloc[0]
+            for col, emission in zip(emission_cols, emissions):
+                if col in grid_row:
+                    if grid_row[col] > 0:
+                        grid_emission_data.append({
+                            'grid': grid,
+                            'emission': emission,
+                            'value': grid_row[col]
+                        })
+
+        grid_emission = pd.DataFrame(grid_emission_data)
+
+        # Filter grid_node to only include grids that are in grid_emission
+        valid_grids = grid_emission['grid'].unique()
+        grid_node = p_gn_flat[p_gn_flat['grid'].isin(valid_grids)][['grid', 'node']]
+
+        # Create p_nEmission by joining grid_node with grid_emission
+        p_nEmission_data = []
+        for _, row in grid_node.iterrows():
+            for emission in emissions:
+                grid_emission_row = grid_emission[(grid_emission['grid'] == row['grid']) & 
+                                                 (grid_emission['emission'] == emission)]
+                if not grid_emission_row.empty:
+                    if grid_emission_row.iloc[0]['value'] > 0:
+                        p_nEmission_data.append({
+                            'node': row['node'],
+                            'emission': emission,
+                            'value': grid_emission_row.iloc[0]['value']
+                        })
+
+        p_nEmission = pd.DataFrame(p_nEmission_data)
+
+        return p_nEmission
+
+
+    def create_ts_emissionPriceChange(self, df_emissions):
+        """
+        Create ts_emissionPriceChange ['emission', 'group', 't', 'value'] DataFrame
+        
+        Parameters: 
+            df_emissions : pandas DataFrame with columns 'emission', 'group', and optional 'price'.
+        """
+
+        # Extract emission_group pairs
+        emission_group = df_emissions[['emission', 'group']].drop_duplicates()
+
+        # Check if price column exists
+        has_price = 'price' in df_emissions.columns
+
+        # Create ts_emissionPriceChange DataFrame
+        ts_emissionPriceChange_data = []
+        for _, row in emission_group.iterrows():
+            emission = row['emission']
+            group = row['group']
+
+            # Get price value if it exists
+            price_value = 0
+            if has_price:
+                emission_row = df_emissions[(df_emissions['emission'] == emission) & 
+                                           (df_emissions['group'] == group)]
+                if not emission_row.empty and not pd.isna(emission_row.iloc[0]['price']):
+                    price_value = emission_row.iloc[0]['price']
+
+            ts_emissionPriceChange_data.append({
+                'emission': emission,
+                'group': group,
+                't': 't000001',
+                'value': price_value
+            })
+
+        ts_emissionPriceChange = pd.DataFrame(ts_emissionPriceChange_data)
+
+        return ts_emissionPriceChange
+
+
+    def create_gnGroup(self, p_nEmission, ts_emissionPriceChange, p_gnu_io_flat, unitUnittype, df_unittypedata, input_dfs=[]):
+        """
+        Creates a gnGroup['grid', 'node', 'group'] DataFrame based on emission groups and input DataFrames.
+
+        Parameters:
+        -----------
+        p_nEmission : DataFrame with columns ['node', 'emission']
+        ts_emissionPriceChange : DataFrame with columns ['emission', 'group']
+        p_gnu_io_flat : DataFrame with columns ['grid', 'node', 'unit']
+        unitUnittype : DataFrame with columns ['unit', 'unittype']
+        df_unittypedata : DataFrame with column ['unittype'] and possibly columns ['emission_group1', 'emission_group2', ...]
+        input_dfs : list of DataFrames, optional. Each with columns ['grid', 'node', 'group'].
+        """
+
+        # Initialize an empty list to store rows
+        rows_list = []
+
+        # Step 1: Process emissions data
+        for _, node_emission in p_nEmission.iterrows():
+            node = node_emission['node']
+            emission = node_emission['emission']
+
+            # Check if emission exists in ts_emissionPriceChange
+            matching_emission = ts_emissionPriceChange[ts_emissionPriceChange['emission'].str.lower() == emission.lower()]
+
+            # Skip the rest of step 1 if no matching emission is found
+            if matching_emission.empty:
+                continue
+
+            # Get the group value from ts_emissionPriceChange
+            group = matching_emission['group'].iloc[0]
+
+            # Find matching grid_node_unit tuples
+            matching_gnu = p_gnu_io_flat[p_gnu_io_flat['node'] == node]
+
+            for _, grid_node_unit in matching_gnu.iterrows():
+                grid = grid_node_unit['grid']
+                unit = grid_node_unit['unit']
+
+                # Find matching unit_unittype tuple
+                matching_unit_type = unitUnittype[unitUnittype['unit'] == unit]
+
+                if not matching_unit_type.empty:
+                    unittype = matching_unit_type['unittype'].iloc[0]
+
+                    # Find correct unittype_row
+                    unittype_rows = df_unittypedata[df_unittypedata['unittype'] == unittype]
+
+                    if not unittype_rows.empty:
+                        unittype_row = unittype_rows.iloc[0]
+
+                        # Find if emission exists in any emission_group column
+                        emission_group_cols = [col for col in df_unittypedata.columns if col.startswith('emission_group')]
+
+                        for col in emission_group_cols:
+                            if col in unittype_row and unittype_row[col] == group:
+                                # Create row and add to rows_list
+                                row = {'grid': grid, 'node': node, 'group': group}
+                                rows_list.append(row)
+
+        # Step 2: Process input DataFrames
+        for df in input_dfs:
+            # Check if df has required columns
+            if all(col in df.columns for col in ['grid', 'node', 'group']):
+                for _, row in df.iterrows():
+                    rows_list.append({
+                        'grid': row['grid'],
+                        'node': row['node'],
+                        'group': row['group']
+                    })
+
+        # Step 3: create the final DataFrame and drop duplicates
+        gnGroup = pd.DataFrame(rows_list)
+        gnGroup = pd.DataFrame(rows_list).drop_duplicates()
+
+        return gnGroup
+
 
 # ------------------------------------------------------
 # Function to create compile domains 
 # ------------------------------------------------------
 
     def compile_domain(self, dfs, domain, **kwargs):
-        """
-        Compile unique domain values from multiple DataFrames and optional time series domains.
-        
-        This function extracts values from a specified column across multiple DataFrames,
+        """   
+        Compiles unique domain values from a specified column across multiple DataFrames,
         and optionally combines them with domain values from time series data.
+
+        Note: case-insensitive 
         
         Parameters:
         -----------
@@ -690,13 +1222,23 @@ class build_input_excel:
 
         # Get unique domain values from both all_domains and all_ts_domains
         all_combined_domains = all_domains + all_ts_domains
-        unique_domains = pd.unique(pd.Series(all_combined_domains))
 
+        # Convert to lowercase for comparison, but keep original case for the first occurrence
+        domain_mapping = {}
+        for d in all_combined_domains:
+            if d is not None and isinstance(d, str):
+                lower_d = d.lower()
+                if lower_d not in domain_mapping:
+                    domain_mapping[lower_d] = d
+        
+        # Use values from the mapping (first occurrence of each case-insensitive unique domain)
+        unique_domains = list(domain_mapping.values())
+    
         # Create a new DataFrame where each unique domain has a corresponding 'yes'
         compiled_df = pd.DataFrame({domain: unique_domains})
-
-        # Sort the DataFrame alphabetically by the domain column
-        compiled_df = compiled_df.sort_values(by=domain).reset_index(drop=True)
+    
+        # Sort the DataFrame alphabetically by the domain column in a case-insensitive manner
+        compiled_df = compiled_df.sort_values(by=domain, key=lambda x: x.str.lower()).reset_index(drop=True)
         
         return compiled_df
 
@@ -741,6 +1283,7 @@ class build_input_excel:
 
         # Save the updated workbook back to the output file
         wb.save(output_file)
+
 
     def adjust_excel(self, output_file):
         """
@@ -842,36 +1385,48 @@ class build_input_excel:
             except Exception as e:
                 raise Exception(f"The Excel file '{file_path}' is currently open. Please close it before proceeding.")
    
-    def create_fake_multiIndex(self, dim_cols, param_cols, rows):
+
+    def create_fake_multiIndex(self, df, dimensions):
         """
-        Creates a fake MultiIndex by 
-            * creating column names from dimension columns and parameter columms
-            * adding the first row where dimension columns have value "" and parameter columns have value as column name
-            * adding row values (the real data) after the first row
+        Creates a fake MultiIndex by:
+        1. Taking an existing DataFrame with single-layer column names
+        2. Creating a new first row with empty strings for dimensions and parameter names for parameter columns
+        3. Shifting existing data down by one row
 
+        Parameters:
+        - df: pandas DataFrame with single-layered column names
+        - dimensions: list of column names that are dimension columns
+
+        Returns:
+        - DataFrame with fake MultiIndex structure
         """
-        # Define the final columns titles and orders.
-        final_cols = dim_cols.copy()
-        final_cols.extend(param_cols)
+        # Identify parameter columns (those not in dimensions)
+        all_columns = list(df.columns)
 
-        # Create an empty DataFrame with the desired columns.
-        df_output = pd.DataFrame(columns=final_cols)
+        # Create a new DataFrame with the same columns
+        df_output = pd.DataFrame(columns=all_columns)
 
-        # Create the first row:
-        # For each column in dimensions: use an empty string ""
-        # For each column in param_gnu: use the corresponding param_gnu value.
-        first_row = [""] * len(dim_cols) + list(param_cols)
-        df_output.loc[len(df_output)] = first_row
+        # Create the first row with empty strings for dimension columns
+        # and parameter names for parameter columns
+        first_row = []
+        for col in all_columns:
+            if col in dimensions:
+                first_row.append("")
+            else:
+                first_row.append(col)
 
-        # Create a DataFrame for the remaining rows.
-        if rows:  # ensure rows is not empty
-            rows_df = pd.DataFrame(rows, columns=final_cols)
-            # Concatenate the header row with the rest of the rows.
-            df_output = pd.concat([df_output, rows_df], ignore_index=True)
-        
-        # Replace NaN values with 0 and return
-        df_output = df_output.fillna(value=0)
+        # Add the first row to the DataFrame
+        df_output.loc[0] = first_row
+
+        # Reset the index of the input DataFrame and add it to the output
+        df_reset = df.reset_index(drop=True)
+        df_reset.index = df_reset.index + 1  # Shift indices to start from 1
+
+        # Concatenate the first row with the original data
+        df_output = pd.concat([df_output, df_reset], axis=0)
+
         return df_output
+    
 
     def drop_row0(self, df):
         # Create a copy of the original DataFrame
@@ -881,6 +1436,7 @@ class build_input_excel:
         df_flat = df_flat.drop(df_flat.index[0]).reset_index(drop=True)
 
         return df_flat
+
 
     def remove_rows(self, df, key_col, values_to_exclude):
         """
@@ -919,65 +1475,6 @@ class build_input_excel:
 
         return filtered_df
 
-    def remove_units_by_excluding_grids(self, p_gnu_io, exclude_grids):
-        """
-        Remove units from p_gnu_io DataFrame based on excluded grids.
-
-        Parameters:
-        p_gnu_io (pandas.DataFrame): DataFrame containing grid, node, unit, and input_output columns
-        exclude_grids (list): List of grid names to exclude
-
-        Returns:
-        pandas.DataFrame: Filtered DataFrame with excluded grids and affected units removed
-        """
-        import pandas as pd
-
-        # Get unique units and their input/output counts before filtering
-        units = pd.DataFrame({'unit': p_gnu_io['unit'].unique()})
-
-        # Calculate original input counts for each unit
-        input_counts = p_gnu_io[p_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
-        input_counts.columns = ['unit', 'inputCount_orig']
-        units = units.merge(input_counts, on='unit', how='left')
-        units['inputCount_orig'] = units['inputCount_orig'].fillna(0).astype(int)
-
-        # Calculate original output counts for each unit
-        output_counts = p_gnu_io[p_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
-        output_counts.columns = ['unit', 'outputCount_orig']
-        units = units.merge(output_counts, on='unit', how='left')
-        units['outputCount_orig'] = units['outputCount_orig'].fillna(0).astype(int)
-
-        # Remove rows with excluded grids
-        filtered_gnu_io = self.remove_rows(p_gnu_io, 'grid', exclude_grids)
-
-        # Calculate updated input counts after grid removal
-        input_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
-        input_counts_upd.columns = ['unit', 'inputCount_upd']
-        units = units.merge(input_counts_upd, on='unit', how='left')
-        units['inputCount_upd'] = units['inputCount_upd'].fillna(0).astype(int)
-
-        # Calculate updated output counts after grid removal
-        output_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
-        output_counts_upd.columns = ['unit', 'outputCount_upd']
-        units = units.merge(output_counts_upd, on='unit', how='left')
-        units['outputCount_upd'] = units['outputCount_upd'].fillna(0).astype(int)
-
-        # Identify units to remove - those that lost all inputs or all outputs
-        units_to_remove = []
-
-        for _, row in units.iterrows():
-            # Check if unit had inputs before but lost all of them
-            if row['inputCount_upd'] == 0 and row['inputCount_orig'] >= 1:
-                units_to_remove.append(row['unit'])
-            # Check if unit had outputs before but lost all of them
-            elif row['outputCount_upd'] == 0 and row['outputCount_orig'] >= 1:
-                units_to_remove.append(row['unit'])
-
-        # Remove units that lost all inputs or all outputs
-        result = self.remove_rows(filtered_gnu_io, 'unit', units_to_remove)
-
-        return result
-
 
 # ------------------------------------------------------
 # Main entry point for the script
@@ -988,10 +1485,21 @@ class build_input_excel:
         print(f"\n------ Building input excel --------------------------------------------------------------- ")
 
         # p_gnu_io
-        p_gnu_io = self.create_p_gnu_io(self.df_techs, self.df_units)
+        p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_units)
         p_gnu_io = self.remove_rows(p_gnu_io, 'unit', self.df_remove_units)
         p_gnu_io = self.remove_units_by_excluding_grids(p_gnu_io, self.exclude_grids)
         p_gnu_io_flat = self.drop_row0(p_gnu_io)
+
+        # unittype based input tables
+        unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
+        p_unit = self.create_p_unit(self.df_unittypedata, unitUnittype)
+        flowUnit = self.create_flowUnit(self.df_unittypedata, unitUnittype)
+        effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unittypedata, unitUnittype)
+
+        # Calculate missing capacities from p_gnu_io
+        p_gnu_io = self.fill_capacities(p_gnu_io, p_unit)
+        p_gnu_io_flat = self.drop_row0(p_gnu_io)
+
 
         # p_gnn
         p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat, self.exclude_grids)
@@ -1003,29 +1511,32 @@ class build_input_excel:
         p_gn = self.remove_rows(p_gn, 'grid', self.exclude_grids)
         p_gn_flat = self.drop_row0(p_gn)
 
-        # unittype based input tables
-        unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
-        flowUnit = self.create_flowUnit(self.df_techs, unitUnittype)
-        p_unit = self.create_p_unit(self.df_techs, unitUnittype)
-        effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_techs, unitUnittype)
-
         # node based input tables
         p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, self.df_storages, **self.secondary_results)
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fuels)
         p_userconstraint = self.create_p_userConstraint(p_gnu_io_flat, **self.secondary_results)
 
-        # emission based input tables
+        # add storage start levels to p_gn and p_gnBoundaryPropertiesForStates
+        (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, p_gnu_io_flat, **self.secondary_results)
+        p_gn_flat = self.drop_row0(p_gn)
 
+
+        # emission based input tables
+        p_nEmission = self.create_p_nEmission(p_gn_flat, self.df_fuels)
+        ts_emissionPriceChange = self.create_ts_emissionPriceChange(self.df_emissions)
+
+        # group sets
+        gnGroup = self.create_gnGroup(p_nEmission, ts_emissionPriceChange, p_gnu_io_flat, unitUnittype, self.df_unittypedata)
 
         # Compile domains
         grid = self.compile_domain([p_gnu_io_flat, p_gnn_flat, p_gn_flat], 'grid', **self.secondary_results)
-        node = self.compile_domain([p_gnu_io_flat, p_gn_flat], 'node', **self.secondary_results)  # cannot use p_gnn as it has domains from_node, to_node
+        node = self.compile_domain([p_gnu_io_flat, p_gn_flat], 'node', **self.secondary_results)  # cannot refer to p_gnn as it has domains from_node, to_node
         flow = self.compile_domain([flowUnit], 'flow', **self.secondary_results)
         unit = self.compile_domain([unitUnittype], 'unit')
         unittype = self.compile_domain([unitUnittype], 'unittype')
-        group = self.compile_domain([p_userconstraint], 'group', **self.secondary_results)
+        group = self.compile_domain([p_userconstraint, ts_emissionPriceChange, gnGroup], 'group', **self.secondary_results)
+        emission = self.compile_domain([ts_emissionPriceChange, p_nEmission], 'emission')
         restype = pd.DataFrame()
-        emission = pd.DataFrame()
 
         # scenario tags to an excel sheet
         scen_tags_df = pd.DataFrame([self.scen_tags])
@@ -1045,29 +1556,38 @@ class build_input_excel:
             # scenario tags
             scen_tags_df.to_excel(writer, sheet_name='add_scen_tags', index=False)  
 
-            # main input tables
-            p_gnn.to_excel(writer, sheet_name='p_gnn', index=False)
-            p_gnu_io.to_excel(writer, sheet_name='p_gnu_io', index=False)
-            # unittype based input tables
-            unitUnittype.to_excel(writer, sheet_name='unitUnittype', index=False)     
-            flowUnit.to_excel(writer, sheet_name='flowUnit', index=False)            
-            p_unit.to_excel(writer, sheet_name='p_unit', index=False)       
-            effLevelGroupUnit.to_excel(writer, sheet_name='effLevelGroupUnit', index=False)          
             # node based input tables
-            p_gn.to_excel(writer, sheet_name='p_gn', index=False)      
+            grid.to_excel(writer, sheet_name='grid', index=False)       
+            node.to_excel(writer, sheet_name='node', index=False) 
+            p_gn.to_excel(writer, sheet_name='p_gn', index=False) 
             p_gnBoundaryPropertiesForStates.to_excel(writer, sheet_name='p_gnBoundaryPropertiesForStates', index=False)        
             ts_priceChange.to_excel(writer, sheet_name='ts_priceChange', index=False)   
+
+            # transfer input tables
+            p_gnn.to_excel(writer, sheet_name='p_gnn', index=False)
+
+            # unit input tables
+            unit.to_excel(writer, sheet_name='unit', index=False)   
+            unittype.to_excel(writer, sheet_name='unittype', index=False)             
+            unitUnittype.to_excel(writer, sheet_name='unitUnittype', index=False)     
+            flowUnit.to_excel(writer, sheet_name='flowUnit', index=False)            
+            effLevelGroupUnit.to_excel(writer, sheet_name='effLevelGroupUnit', index=False)  
+            p_gnu_io.to_excel(writer, sheet_name='p_gnu_io', index=False)
+            p_unit.to_excel(writer, sheet_name='p_unit', index=False)       
             p_userconstraint.to_excel(writer, sheet_name='p_userconstraint', index=False)     
 
-            # domains
-            grid.to_excel(writer, sheet_name='grid', index=False)       
-            node.to_excel(writer, sheet_name='node', index=False)   
-            unit.to_excel(writer, sheet_name='unit', index=False)   
-            unittype.to_excel(writer, sheet_name='unittype', index=False)    
+            # emission based input tables
+            p_nEmission.to_excel(writer, sheet_name='p_nEmission', index=False)   
+            ts_emissionPriceChange.to_excel(writer, sheet_name='ts_emissionPriceChange', index=False)  
+
+            # group sets
+            gnGroup.to_excel(writer, sheet_name='gnGroup', index=False) 
+
+            # remaining domains
             group.to_excel(writer, sheet_name='group', index=False)              
             flow.to_excel(writer, sheet_name='flow', index=False)                                   
-            restype.to_excel(writer, sheet_name='restype', index=False)                                   
             emission.to_excel(writer, sheet_name='emission', index=False)                                   
+            restype.to_excel(writer, sheet_name='restype', index=False)    
 
 
         # Apply the adjustments on the Excel file

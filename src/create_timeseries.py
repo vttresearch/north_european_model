@@ -661,7 +661,7 @@ class create_timeseries:
 
 
             # --- Writing output files
-            self.log_time(f"Preparing {processor_name} output files...")
+            self.log_time(f"Writing {processor_name} output files...")
 
             # Write CSV if write_csv_files
             if self.write_csv_files:
@@ -684,7 +684,7 @@ class create_timeseries:
             # --- Average year ----------------------------------------
             # If average-year calculations are enabled...
             if calculate_average_year:
-                self.log_time(f"Calculating {processor_name} average year and preparing output files...")
+                self.log_time(f"Calculating {processor_name} average year and writing output files...")
 
                 # Calculate average file
                 avg_df = self.calculate_average_year(summary_df_bb, round_precision=rounding_precision, **kwargs_bb_conversion)

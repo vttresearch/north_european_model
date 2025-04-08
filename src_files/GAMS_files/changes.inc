@@ -13,10 +13,7 @@ Contents
     - inputData_add1.xlsx
     - inputData_add2.xlsx
 - reading timeseries
-- additional manual changes 
-    - converting selected units to onlineLP and onlineMIP
-    - creating hydro storage start levels, clearing reference ts
-    - converting constant ts_influx to p_gn('influx')
+- Converting constant timeseries to actual constants
 - project specific modifications
 
 
@@ -116,61 +113,8 @@ $endif
 
 
 * --------------------------------------------------------------------------------
-* Additional manual changes to input data
+* Converting constant timeseries to actual constants
 * --------------------------------------------------------------------------------
-
-* --- converting selected units to onlineLP and onlineMIP --------------
-
-// converting selected units to onlineLP
-* unit efficiency approximations. If op00 > 0 -> LP
-loop(unit,
-    if(p_unit(unit, 'op00')>0,
-        effLevelGroupUnit(effLevel, 'directOff', unit) = no;
-        effLevelGroupUnit('level1', 'directOnLP', unit) = yes;
-        effLevelGroupUnit('level2', 'directOnLP', unit) = yes;
-    );
-);
-
-// converting FI and SE nuclear to MIP units. Deactivated by default 
-$ontext 
-effLevelGroupUnit('level1', 'directOnLP', 'U_FI00_nuclear') = no;
-effLevelGroupUnit('level1', 'directOnMIP', 'U_FI00_nuclear') = yes;
-effLevelGroupUnit('level1', 'directOnLP', 'U_SE03_nuclear') = no;
-effLevelGroupUnit('level1', 'directOnMIP', 'U_SE03_nuclear') = yes;
-$offtext
-
-
-
-
-* --- setting boundStart and clearing values from 'reference' timeseries -----
-
-$ontext
-// if user has given tsYear
-//  * loop gn_hydroStorage
-//  * set boundStart = 1, useConstant =1
-//  * calculate constant value as max(historical ts value, between downward and upward, user given value in the input data)
-// else
-//  * use value from time series
-//  
-// NOTE: will produce wrong values without tsYear
-
-option gn_tmp < ts_node;
-
-loop(gn_hydroStorage(grid, node),
-    p_gn(grid, node, 'boundStart') = 1;
-    p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'useConstant') = 1;
-
-    p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant') 
-        = max{ p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant'),
-               [ts_node(grid, node, 'downwardLimit', 'f00', 't000001') + (ts_node(grid, node, 'upwardLimit', 'f00', 't000001')-ts_node(grid, node, 'downwardLimit', 'f00', 't000001'))/2]${gn_tmp(grid, node)},
-               ts_node(grid, node, 'reference', 'f00', 't000001')
-               };            
-    );
-
-
-// remove data from ts_node(*, *, 'reference', f, t)
-ts_node(gn_tmp(grid, node), 'reference', f, t) = 0;
-$offtext
 
 
 * --- converting constant ts_influx to p_gn('influx') ---------
@@ -184,8 +128,10 @@ option ff < ts_influx;
 // t in ts_influx
 option tt < ts_influx;
 
-// gn that have constant ts_influx 
+// initialize gn_tmp_
 option clear = gn_tmp_;
+
+// find gn that have constant ts_influx 
 loop(gn_tmp(grid, node),
     // if data only in 'f00'
     if(sum(tt, ts_influx(grid, node, 'f01', tt)) = 0,
@@ -198,7 +144,6 @@ loop(gn_tmp(grid, node),
             ${ [smax((ff, tt), ts_influx(grid, node, ff, tt)) = smin((ff, tt), ts_influx(grid, node, ff, tt)) ]
               } = yes;
     ); // END if(more than one f in ts_influx)
-
 ); // END loop(gn_tmp)
 
 // picking value to p_gn('influx') for filtered gn from ts_influx
@@ -207,6 +152,40 @@ p_gn(gn_tmp_(grid, node), 'influx') = ts_influx(grid, node, 'f00', 't000001');
 // clearing ts_influx of filtered gn 
 ts_influx(gn_tmp_, ff, tt) = 0;
 
+
+* --- converting constant ts_node('upwardLimit') to actual constant in p_gnBoundaryProperties ---------
+// gn in ts_node
+option gn_tmp < ts_node;
+// f in ts_node
+option ff < ts_node;
+// t in ts_node
+option tt < ts_node;
+
+// initialize gn_tmp_
+option clear = gn_tmp_;
+
+// find gn that have constant ts_node('upwardLimit')
+loop(gn_tmp(grid, node),
+    // if data only in 'f00'
+    if(sum(tt, ts_node(grid, node, 'upwardLimit', 'f01', tt)) = 0,
+        gn_tmp_(grid, node)
+            ${ [smax(tt, ts_node(grid, node, 'upwardLimit', 'f00', tt)) = smin(tt, ts_node(grid, node, 'upwardLimit', 'f00', tt)) ]
+              } = yes;
+    // if data only also in other forecasts than 'f00'
+    else
+        gn_tmp_(grid, node)
+            ${ [smax((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) = smin((ff, tt), ts_influx(grid, node, ff, tt)) ]
+              } = yes;
+    ); // END if(more than one f in ts_influx)
+); // END loop(gn_tmp)
+
+// replacing values in p_gnBoundaryPropertiesForStates
+p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useTimeSeries') = 0;
+p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useConstant') = 1;
+p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'upwardLimit', 'constant') = ts_node(grid, node, 'upwardLimit', 'f00', 't000001');
+
+// clear timeseries from ts_node to speed up compilation
+ts_node(gn_tmp_, 'upwardLimit', ff, tt) = 0;
 
 
 

@@ -197,9 +197,9 @@ Run the model by running Backbone.gms in GAMS. The model supports the following 
 
 Working command line options for backbone.gms would be, for example:
 
-* Running the model with all default assumptions `--input_file_excel=inputData.xlsx`
-* running the selected climate year, 1 week test `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
-* running the model directly from <output_folder> `--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
+* Running the model with all default assumptions: `--input_file_excel=inputData.xlsx`
+* running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
+* running the model directly from <output_folder>: `--input_folder='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
 
 Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager.
 
