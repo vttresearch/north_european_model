@@ -231,9 +231,7 @@ class build_input_excel:
         """
         # Get a flat version without the fake multi-index
         p_gnu_io_flat = self.drop_row0(p_gnu_io)
-        p_gnu_io_flat = p_gnu_io_flat.convert_dtypes()
         p_unit_flat = self.drop_row0(p_unit)
-        p_unit_flat = p_unit_flat.convert_dtypes()
 
         # Create a dictionary mapping each unit to its maximum efficiency.
         # Efficiency is taken as the maximum among columns that start with 'eff' (e.g., eff00, eff01, ...)
@@ -313,7 +311,7 @@ class build_input_excel:
         p_gnu_io_flat = p_gnu_io_flat.fillna(value=0)
 
         # Recreate the fake multi-index using the specified columns.
-        p_gnu_io = self.create_fake_multiIndex(p_gnu_io_flat, ['grid', 'node'])
+        p_gnu_io = self.create_fake_multiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
 
         return p_gnu_io
 
@@ -580,9 +578,9 @@ class build_input_excel:
             # Build the param_unit dictionary using values from the matching row
             row_data = {
                 'unit'              : u_row['unit'],
+                'availability'      : fetch_from_tech_row(tech_row, 'availability', 1),
                 'isSource'          : fetch_from_tech_row(tech_row, 'isSource'),
                 'isSink'            : fetch_from_tech_row(tech_row, 'isSink'),
-                'availability'      : fetch_from_tech_row(tech_row, 'availability', 1),
                 'eff00'             : fetch_from_tech_row(tech_row, 'eff00', 1),
                 'eff01'             : fetch_from_tech_row(tech_row, 'eff01', 1),
                 'op00'              : fetch_from_tech_row(tech_row, 'op00'),
@@ -839,9 +837,7 @@ class build_input_excel:
 
         # Get a flat versions without the fake multi-index
         p_gn_flat = self.drop_row0(p_gn)
-        p_gn_flat = p_gn_flat.convert_dtypes()
         p_gnBoundaryPropertiesForStates_flat = self.drop_row0(p_gnBoundaryPropertiesForStates)
-        p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.convert_dtypes()
 
         # Identify storage nodes - those where energyStoredPerUnitOfState is 1 or True
         storage_gn = []
@@ -1338,6 +1334,16 @@ class build_input_excel:
                         # set the column width to 6 
                         ws.column_dimensions[col_letter].width = 6       
 
+            # Special handling for 'p_gnu_io' sheet - replace zeros with empty strings in 'capacity' column
+            if ws.title in ['p_gnu_io', 'p_unit', 'p_gn', 'p_gnBoundaryPropertiesForStates']:
+                # Replace all zeros with empty strings in all columns of all sheets
+                # Skip header row (row 1)
+                for row in range(2, ws.max_row + 1):
+                    for col in range(1, ws.max_column + 1):
+                        cell = ws.cell(row=row, column=col)
+                        if cell.value == 0 or cell.value == '0':
+                            cell.value = ''
+
             # Freeze the top row
             ws.freeze_panes = "A2"
 
@@ -1434,6 +1440,10 @@ class build_input_excel:
 
         # Drop the first row by using its index position 0
         df_flat = df_flat.drop(df_flat.index[0]).reset_index(drop=True)
+
+        # convert data types to restore numeric dtypes. 
+        # Fake multi-index sometimes converts dtype to object.
+        df_flat = df_flat.convert_dtypes()
 
         return df_flat
 
