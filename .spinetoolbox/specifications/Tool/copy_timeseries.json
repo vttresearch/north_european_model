@@ -1,0 +1,13 @@
+{
+    "name": "copy_timeseries",
+    "tooltype": "python",
+    "includes": [
+        "copy_input_files.py"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [],
+    "cmdline_args": [],
+    "includes_main_path": "../../.."
+}

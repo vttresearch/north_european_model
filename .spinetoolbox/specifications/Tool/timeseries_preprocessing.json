@@ -1,0 +1,15 @@
+{
+    "name": "Timeseries_preprocessing",
+    "tooltype": "gams",
+    "includes": [
+        "preprocessTimeseries.gms"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [
+        "preprocessTimeseries.lst"
+    ],
+    "cmdline_args": [],
+    "includes_main_path": "../../.."
+}

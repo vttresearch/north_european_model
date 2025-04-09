@@ -1,0 +1,15 @@
+{
+    "name": "convert_excel_to_gdx",
+    "tooltype": "python",
+    "includes": [
+        "convert_excel_to_gdx.py"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [
+        "toolbox_workflow/*.gdx"
+    ],
+    "cmdline_args": [],
+    "includes_main_path": "../../.."
+}

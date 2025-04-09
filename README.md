@@ -83,7 +83,7 @@ For the moment, the updated North European Model works in timeseries_update and 
 These instructions are written for Miniconda, but users can of course choose other conda versions as well.
   * Open the installed Miniconda Prompt (e.g. type Miniconda to windows search bar), 
   * In the Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
-  * In the Miniconda, set up the environment by running the following commands
+  * In the Miniconda, set up the environment by running the following commands:
 
     conda env create -f environment.yml
     conda activate northEuropeanModel
@@ -99,7 +99,38 @@ After these steps, you should have required softwares and environment ready.
 
 NOTE: GamsAPI is possible to install also for much older GAMS versions, see https://github.com/NREL/gdx-pandas
 
- 
+## (Optional) Installing and setting up Spine Toolbox project
+
+You can use the Spine Toolbox for the workflow management if you choose.
+
+First install Spine-Toolbox:
+
+1. Install pipx. pipx helps in creating an isolated environment for Spine Toolbox to avoid package conflicts. Open a terminal and run
+
+ python -m pip install --user pipx
+
+After pipx has been installed, run
+
+ python -m pipx ensurepath
+
+2. Restart the terminal or re-login for the changes of the latest command to take effect.
+
+3. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
+
+ python -m pipx install spinetoolbox
+
+Open toolbox by typing: 
+
+spinetoolbox
+
+File -> Open project -> choose the northernEuropeanModel folder
+
+To get the miniconda python running in toolbox, it needs to be set as the python kernel.
+Go to File -> Settings -> Tools. Under Python click Make Python Kernel. Choose the defaults.
+
+Take a copy of the BB_data.sqlite database in backbone folder. It is located in
+**backbone/.spinetoolbox/items/bb_data**
+You can put it anywhere you like, but next from the toolbox project Input_data, choose the path to this file.
 
 
 ## Downloading required time series files
