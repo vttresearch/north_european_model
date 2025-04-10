@@ -25,28 +25,33 @@ class DH_demand_fromTemperature:
             'df_annual_demands', 
             'scenario_year'
         ]
+        optional_params = {
+            'exclude_grids': [],
+            'exclude_nodes': []
+        }
 
         # Check if all required parameters are present
         missing_params = [param for param in required_params if param not in kwargs_processor]
         if missing_params:
             raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
 
-        # Unpack parameters
-        self.input_folder = kwargs_processor['input_folder']
-        self.country_codes = kwargs_processor['country_codes']
-        self.start_date = kwargs_processor['start_date']
-        self.end_date = kwargs_processor['end_date']
-        self.df_annual_demands = kwargs_processor['df_annual_demands']
-        self.scenario_year = kwargs_processor['scenario_year']
+        # Unpack required parameters
+        for param in required_params:
+            setattr(self, param, kwargs_processor.get(param))        
+
+        # Unpack optional parameters with defaults if not provided
+        for key, default in optional_params.items():
+            setattr(self, key, kwargs_processor.get(key, default))
 
         # Extract start and end years from the provided dates.
         self.startyear = pd.to_datetime(self.start_date).year
         self.endyear = pd.to_datetime(self.end_date).year
 
+        # build input file path
         self.input_file = os.path.join(self.input_folder, 'Temperature.csv')
 
 
-    def get_temperature_profile(self):
+    def get_temperature_profile(self, processed_countries):
         """
         Reads temperature data from csv and converts that to heating profile for each country
             - Calculates sliding 24h average from temperature
@@ -94,7 +99,7 @@ class DH_demand_fromTemperature:
         df_heating_profile = pd.DataFrame(index=full_index)
 
         # Calculate heating profile for each country.
-        for country in self.country_codes:
+        for country in processed_countries:
             # Get the corresponding CSV column name using the mapping.
             csv_country = mapping.get(country, None)
             if csv_country and csv_country in df_temperature.columns:
@@ -112,13 +117,13 @@ class DH_demand_fromTemperature:
         return df_heating_profile
     
 
-    def normalize_profiles(self, df_profiles):
+    def normalize_profiles(self, df_profiles, processed_countries):
         """
         For each country, the profile is normalized so that the sum of the hourly values 
         (over the years that have valid data) equals the number of valid years.
         """
         # --- Normalize country values ---
-        for country in self.country_codes:
+        for country in processed_countries:
             if country not in df_profiles.columns:
                 continue
             s = df_profiles[country]
@@ -145,21 +150,18 @@ class DH_demand_fromTemperature:
         return df_profiles
     
 
-    def build_demands(self, df_profiles_norm, df_annual_demands):
+    def build_demands(self, df_profiles_norm, df_annual_demands, processed_countries):
 
         # Create a new DataFrame to store the computed profiles.
         df_profiles_result = pd.DataFrame(index=df_profiles_norm.index)
 
-        for country in self.country_codes:
+        for country in processed_countries:
             # Check that the base hourly profile exists for this country.
             if country not in df_profiles_norm.columns:
                 continue
 
             # Filter demand rows for the country using case-insensitive matching.
             country_demand = df_annual_demands[df_annual_demands['country'].str.lower() == country.lower()]
-            if country_demand.empty:
-                print(f"      No demand data for {country}..")
-                continue
 
             # Process each demand row for the country.
             for _, row in country_demand.iterrows():
@@ -201,22 +203,27 @@ class DH_demand_fromTemperature:
 
 
     def run(self):
+
+        # Filter countries in country codes that actually have annual demand data
+        countries_with_data = self.df_annual_demands['country'].unique()
+        processed_countries = [code for code in self.country_codes if code in countries_with_data]
+
         # Get the raw hourly profiles.
         print(f"   Constructing heat demand profiles from '{self.input_file}'.. ")
-        df_demand_ts = self.get_temperature_profile()
+        df_demand_ts = self.get_temperature_profile(processed_countries)
 
         print("   Normalizing demand profiles..")
-        summary_df = self.normalize_profiles(df_demand_ts)
+        summary_df = self.normalize_profiles(df_demand_ts, processed_countries)
 
         print("   Building demand time series..")
-        summary_df = self.build_demands(summary_df, self.df_annual_demands)
+        summary_df = self.build_demands(summary_df, self.df_annual_demands, processed_countries)
         
         # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
         # e.g. DE00 -> DE00_dheat and FI00_HKI -> FI00_HKI_dheat
         grid = self.df_annual_demands['grid'].iloc[0]
         new_columns = {}
         for col in summary_df.columns:
-            for country in self.country_codes:
+            for country in processed_countries:
                 if col.startswith(country):
                     # Capture any suffix after the country code.
                     suffix = col[len(country):]  # e.g., '' or '_HKI'

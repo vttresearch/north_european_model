@@ -472,14 +472,16 @@ def run(input_folder, config_file):
 
         # Create the timeseries using the create_timeseries class.
         secondary_results = create_timeseries(timeseries_specs, input_folder, output_folder, 
-                                start_date, end_date, country_codes, scen_tags, 
+                                start_date, end_date, 
+                                country_codes, scen_tags, exclude_grids, exclude_nodes, 
                                 df_f_demanddata, log_start, write_csv_files
                                 ).run()
 
         # Build input excel using the build_input_excel class.    
-        build_input_excel(input_folder, output_folder, country_codes, exclude_grids, exclude_nodes, scen_tags,
-                          df_f_transferdata, df_f_unittypedata, df_f_unitdata, df_f_remove_units, df_f_storagedata,
-                          df_f_fueldata, df_f_emissiondata, df_f_demanddata,
+        build_input_excel(input_folder, output_folder, 
+                          country_codes, scen_tags, exclude_grids, exclude_nodes, 
+                          df_f_transferdata, df_f_unittypedata, df_f_unitdata, df_f_remove_units, 
+                          df_f_storagedata, df_f_fueldata, df_f_emissiondata, df_f_demanddata,
                           secondary_results
                           ).run()
 

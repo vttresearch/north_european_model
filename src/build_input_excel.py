@@ -11,8 +11,8 @@ import re
 
 
 class build_input_excel:
-    def __init__(self, input_folder, output_folder, country_codes, exclude_grids, exclude_nodes, 
-                 scen_tags,
+    def __init__(self, input_folder, output_folder, 
+                 country_codes, scen_tags, exclude_grids, exclude_nodes, 
                  df_transfers, df_unittypedata, df_units, df_remove_units, df_storages,
                  df_fuels, df_emissions, df_demands,
                  secondary_results=None
