@@ -11,7 +11,8 @@ import re
 
 
 class build_input_excel:
-    def __init__(self, input_folder, output_folder, country_codes, exclude_grids, scen_tags,
+    def __init__(self, input_folder, output_folder, country_codes, exclude_grids, exclude_nodes, 
+                 scen_tags,
                  df_transfers, df_unittypedata, df_units, df_remove_units, df_storages,
                  df_fuels, df_emissions, df_demands,
                  secondary_results=None
@@ -20,6 +21,7 @@ class build_input_excel:
         self.output_folder = output_folder
         self.country_codes = country_codes
         self.exclude_grids = exclude_grids
+        self.exclude_nodes = exclude_nodes        
 
         self.scen_tags = scen_tags
 
@@ -156,62 +158,49 @@ class build_input_excel:
         return p_gnu_io
 
 
-    def remove_units_by_excluding_grids(self, p_gnu_io, exclude_grids):
+    def remove_units_by_excluding_col_values(self, p_gnu_io, exclude_col, exclude_list):
         """
-        Remove units from p_gnu_io DataFrame based on excluded grids.
+        Remove units from p_gnu_io DataFrame based on exclusion of values in a specified column.
+        Any unit for which the unique count of values in exclude_col decreases after exclusion is removed entirely.
 
         Parameters:
-        p_gnu_io (pandas.DataFrame): DataFrame containing grid, node, unit, and input_output columns
-        exclude_grids (list): List of grid names to exclude
+            p_gnu_io (pandas.DataFrame): DataFrame with at least the columns 'unit' and one additional column, exclude_col.
+            exclude_col (str): Name of the column where exclusion should be applied.
+            exclude_list (list): List of string values to exclude from the column specified by exclude_col.
 
         Returns:
-        pandas.DataFrame: Filtered DataFrame with excluded grids and affected units removed
+            pandas.DataFrame: Filtered DataFrame with rows for the affected units removed.
         """
-        import pandas as pd
+        # Compute the original unique count per unit for the specified column.
+        orig_counts = (
+            p_gnu_io.groupby('unit')[exclude_col]
+            .nunique()
+            .reset_index()
+            .rename(columns={exclude_col: 'valueCount_orig'})
+        )
 
-        # Get unique units and their input/output counts before filtering
-        units = pd.DataFrame({'unit': p_gnu_io['unit'].unique()})
+        # Remove rows where the specified column's value is in the exclude_list.
+        filtered_data = self.remove_rows(p_gnu_io, exclude_col, exclude_list)
 
-        # Calculate original input counts for each unit
-        input_counts = p_gnu_io[p_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
-        input_counts.columns = ['unit', 'inputCount_orig']
-        units = units.merge(input_counts, on='unit', how='left')
-        units['inputCount_orig'] = units['inputCount_orig'].fillna(0).astype(int)
+        # Compute the updated unique count per unit after exclusion.
+        updated_counts = (
+            filtered_data.groupby('unit')[exclude_col]
+            .nunique()
+            .reset_index()
+            .rename(columns={exclude_col: 'valueCount_upd'})
+        )
 
-        # Calculate original output counts for each unit
-        output_counts = p_gnu_io[p_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
-        output_counts.columns = ['unit', 'outputCount_orig']
-        units = units.merge(output_counts, on='unit', how='left')
-        units['outputCount_orig'] = units['outputCount_orig'].fillna(0).astype(int)
+        # Merge the original and updated counts.
+        counts = orig_counts.merge(updated_counts, on='unit', how='left')
+        counts['valueCount_upd'] = counts['valueCount_upd'].fillna(0).astype(int)
 
-        # Remove rows with excluded grids
-        filtered_gnu_io = self.remove_rows(p_gnu_io, 'grid', exclude_grids)
+        # Identify units that lost one or more values.
+        units_to_remove = counts.loc[
+            counts['valueCount_upd'] < counts['valueCount_orig'], 'unit'
+        ].tolist()
 
-        # Calculate updated input counts after grid removal
-        input_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'input']['unit'].value_counts().reset_index()
-        input_counts_upd.columns = ['unit', 'inputCount_upd']
-        units = units.merge(input_counts_upd, on='unit', how='left')
-        units['inputCount_upd'] = units['inputCount_upd'].fillna(0).astype(int)
-
-        # Calculate updated output counts after grid removal
-        output_counts_upd = filtered_gnu_io[filtered_gnu_io['input_output'] == 'output']['unit'].value_counts().reset_index()
-        output_counts_upd.columns = ['unit', 'outputCount_upd']
-        units = units.merge(output_counts_upd, on='unit', how='left')
-        units['outputCount_upd'] = units['outputCount_upd'].fillna(0).astype(int)
-
-        # Identify units to remove - those that lost all inputs or all outputs
-        units_to_remove = []
-
-        for _, row in units.iterrows():
-            # Check if unit had inputs before but lost all of them
-            if row['inputCount_upd'] == 0 and row['inputCount_orig'] >= 1:
-                units_to_remove.append(row['unit'])
-            # Check if unit had outputs before but lost all of them
-            elif row['outputCount_upd'] == 0 and row['outputCount_orig'] >= 1:
-                units_to_remove.append(row['unit'])
-
-        # Remove units that lost all inputs or all outputs
-        result = self.remove_rows(filtered_gnu_io, 'unit', units_to_remove)
+        # Remove all rows for units that lost values.
+        result = self.remove_rows(filtered_data, 'unit', units_to_remove)
 
         return result
 
@@ -314,7 +303,7 @@ class build_input_excel:
 # Functions create and modify p_gnn, p_gn
 # ------------------------------------------------------
 
-    def create_p_gnn(self, df_transfers, p_gnu_io_flat, exclude_grids):
+    def create_p_gnn(self, df_transfers, p_gnu_io_flat):
         """
         Creates a new DataFrame p_gnn with specified dimension and parameter columns
 
@@ -336,7 +325,7 @@ class build_input_excel:
         # Iterate over each row in df_transfers
         for _, row in df_transfers.iterrows():
             # Check if both nodes are in the allowed country codes
-            if row['grid'] not in exclude_grids and (row['from_node']+'_'+row['grid'] in allowed_nodes) and (row['to_node']+'_'+row['grid'] in allowed_nodes):
+            if (row['from_node']+'_'+row['grid'] in allowed_nodes) and (row['to_node']+'_'+row['grid'] in allowed_nodes):
 
                 # If export capacity is greater than 0, add row with from_node, to_node, export_capacity
                 if row['export_capacity'] > 0:
@@ -1520,7 +1509,8 @@ class build_input_excel:
         # p_gnu_io
         p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_units)
         p_gnu_io = self.remove_rows(p_gnu_io, 'unit', self.df_remove_units)
-        p_gnu_io = self.remove_units_by_excluding_grids(p_gnu_io, self.exclude_grids)
+        p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'grid', self.exclude_grids)
+        p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'node', self.exclude_nodes)
         p_gnu_io_flat = self.drop_row0(p_gnu_io)
 
         # unittype based input tables
@@ -1534,13 +1524,16 @@ class build_input_excel:
         p_gnu_io_flat = self.drop_row0(p_gnu_io)
 
         # p_gnn
-        p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat, self.exclude_grids)
+        p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat)
         p_gnn = self.remove_rows(p_gnn, 'grid', self.exclude_grids)
+        p_gnn = self.remove_rows(p_gnn, 'from_node', self.exclude_nodes)
+        p_gnn = self.remove_rows(p_gnn, 'to_node', self.exclude_nodes)
         p_gnn_flat = self.drop_row0(p_gnn)
 
         # p_gn
         p_gn = self.create_p_gn(p_gnn_flat, p_gnu_io_flat, self.df_fuels, self.df_demands, self.df_storages, **self.secondary_results)
         p_gn = self.remove_rows(p_gn, 'grid', self.exclude_grids)
+        p_gn = self.remove_rows(p_gn, 'node', self.exclude_nodes)
         p_gn_flat = self.drop_row0(p_gn)
 
         # node based input tables

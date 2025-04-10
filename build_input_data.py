@@ -381,6 +381,7 @@ def run(input_folder, config_file):
     scenario_alternatives = ast.literal_eval(config.get('inputdata', 'scenario_alternatives'))
     country_codes = ast.literal_eval(config.get('inputdata', 'country_codes'))
     exclude_grids = ast.literal_eval(config.get('inputdata', 'exclude_grids'))
+    exclude_nodes = ast.literal_eval(config.get('inputdata', 'exclude_nodes'))
     demanddata_files = ast.literal_eval(config.get('inputdata', 'demanddata_files'))
     transferdata_files = ast.literal_eval(config.get('inputdata', 'transferdata_files'))
     unittypedata_files = ast.literal_eval(config.get('inputdata', 'unittypedata_files'))
@@ -401,16 +402,23 @@ def run(input_folder, config_file):
     df_storagedata  = process_dataset(data_folder, storagedata_files, 'storagedata') 
     df_fueldata  = process_dataset(data_folder, fueldata_files, 'fueldata') 
     df_emissiondata  = process_dataset(data_folder, emissiondata_files, 'emissiondata') 
-
+    
     # exclude grids
-    df_demanddata = filter_df_blacklist(df_demanddata, 'demand_files', {'grid': exclude_grids})
+    df_demanddata = filter_df_blacklist(df_demanddata, 'demand_files', {'grid': exclude_grids})     
     df_transferdata = filter_df_blacklist(df_transferdata, 'transfer_files', {'grid': exclude_grids})
 
-    # Build node and unit columns
+    # Build node columns
     df_demanddata = build_node_column(df_demanddata)
     df_storagedata = build_node_column(df_storagedata)
+
+    # exclude nodes
+    df_demanddata = filter_df_blacklist(df_demanddata, 'demand_files', {'node': exclude_nodes})  
+    df_storagedata = filter_df_blacklist(df_storagedata, 'storage_files', {'node': exclude_nodes})      
+
+    # Build unittype unit columns
     df_unitdata = build_unittype_unit_column(df_unitdata, df_unittypedata)
     df_remove_units = build_unittype_unit_column(df_remove_units, df_unittypedata)
+
 
     # Loop over every combination of scenario and scenario year.
     for scenario, scenario_year, scenario_alternative in itertools.product(scenarios, scenario_years, scenario_alternatives or [None]):
@@ -469,7 +477,7 @@ def run(input_folder, config_file):
                                 ).run()
 
         # Build input excel using the build_input_excel class.    
-        build_input_excel(input_folder, output_folder, country_codes, exclude_grids, scen_tags,
+        build_input_excel(input_folder, output_folder, country_codes, exclude_grids, exclude_nodes, scen_tags,
                           df_f_transferdata, df_f_unittypedata, df_f_unitdata, df_f_remove_units, df_f_storagedata,
                           df_f_fueldata, df_f_emissiondata, df_f_demanddata,
                           secondary_results
