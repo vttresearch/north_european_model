@@ -71,11 +71,11 @@ class build_input_excel:
 
         # Process each row in the capacities DataFrame.
         for _, cap_row in df_units.iterrows():
-            
-            # Fetch values for country, unit_name_prefix, and generator_id
+
+            # Fetch country, generator_id, and unit name
             country = cap_row['country']
-            unit_name_prefix = cap_row['unit_name_prefix'] if 'unit_name_prefix' in cap_row.index else None
             generator_id = cap_row['generator_id']
+            unit_name = cap_row['unit']
 
             # Get the matching technology row.
             try:
@@ -84,12 +84,6 @@ class build_input_excel:
             except:
                 print(f"   !!! Generator_ID '{generator_id}' from unitdata files does not have a matching generator_id in any of the unittypedata files. Check spelling of generator_id in all files.")
                 continue
-
-            # Build unit name.
-            if pd.notna(unit_name_prefix) and unit_name_prefix not in ['', '-']:
-                unit_name = f"{country}_{unit_name_prefix}_{tech_row['unittype']}"
-            else:
-                unit_name = f"{country}_{tech_row['unittype']}"
 
             # Filter only available puts based on whether 'grid_{put}' exists.
             available_puts = [put for put in ['input1', 'input2', 'input3', 'output1', 'output2', 'output3'] 
@@ -546,68 +540,98 @@ class build_input_excel:
         return flowUnit
     
 
-    def create_p_unit(self, df_unittypedata, unitUnittype):
+    def create_p_unit(self, df_unittypedata, unitUnittype, df_units):
         """
-        Creates a new DataFrame p_unit with specified dimension and parameter columns
-        """      
-        # dimension and parameter columns
+        Creates a new DataFrame p_unit with specified dimension and parameter columns.
+        Retrieves parameter values from df_units first, then from df_unittypedata if not present.
+        Matching for unittype and unit is done in a case-insensitive manner.
+        Raises an error if no matching tech_row is found.
+        """
+        # Dimension column names.
         dimensions = ['unit']
-        param_unit = ['isSource', 'isSink', 'availability', 
-                      'eff00', 'eff01', 'op00', 'op01', 
-                      'startColdAfterXhours', 'startWarmAfterXhours',
-                      'minOperationHours', 'minShutdownHours']
-        # List to collect the new rows 
+
+        # Single dictionary for parameter names and their default values.
+        param_unit_defaults = {
+            'availability': 1,
+            'isSource': 0,
+            'isSink': 0,
+            'eff00': 1,
+            'eff01': 1,
+            'op00': 0,
+            'op01': 1,
+            'startColdAfterXhours': 0,
+            'startWarmAfterXhours': 0,
+            'minOperationHours': 0,
+            'minShutdownHours': 0
+        }
+
+        # List to collect new rows.
         rows = []
 
-        def fetch_from_tech_row(tech_row, param, def_value=0):
-            # Reads value from tech_row in case insensitive manner, 
-            # accepts default value and uses 0 if not given
-            # handles errors by using value 0
+        def get_value(unit_row, tech_row, param, def_value=0):
+            """
+            Retrieves a value by primarily checking unit_row, then tech_row, and finally returns def_value.
+            Uses a case-insensitive lookup by checking for param.lower() in the Series index.
+            """
             try:
-                value = tech_row[param.lower()]  if param.lower() in tech_row.index else def_value
-            except:
-                value = 0
-            return value
+                lower_param = param.lower()
+                if lower_param in unit_row.index:
+                    return unit_row[lower_param]
+                elif lower_param in tech_row.index:
+                    return tech_row[lower_param]
+                else:
+                    return def_value
+            except Exception:
+                return def_value
 
-        # Iterate over each row in unitUnittype
+        # Process each row in unitUnittype.
         for _, u_row in unitUnittype.iterrows():
-            # Retrieve the matching row from df_unittypedata
-            tech_row = df_unittypedata[df_unittypedata['unittype'] == u_row['unittype']].iloc[0]
+            # Case-insensitive matching for unittype.
+            tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == u_row['unittype'].lower()]
+            if tech_matches.empty:
+                raise ValueError(f"No matching tech row found for unittype: {u_row['unittype']}")
+            tech_row = tech_matches.iloc[0]
 
-            minShutdownHours = fetch_from_tech_row(tech_row, 'minShutdownHours')
-            # Build the param_unit dictionary using values from the matching row
-            row_data = {
-                'unit'              : u_row['unit'],
-                'availability'      : fetch_from_tech_row(tech_row, 'availability', 1),
-                'isSource'          : fetch_from_tech_row(tech_row, 'isSource'),
-                'isSink'            : fetch_from_tech_row(tech_row, 'isSink'),
-                'eff00'             : fetch_from_tech_row(tech_row, 'eff00', 1),
-                'eff01'             : fetch_from_tech_row(tech_row, 'eff01', 1),
-                'op00'              : fetch_from_tech_row(tech_row, 'op00'),
-                'op01'              : fetch_from_tech_row(tech_row, 'op01', 1),
-                'minOperationHours' : fetch_from_tech_row(tech_row, 'minOperationHours'),
-                'minShutdownHours'  : minShutdownHours,
-                'startColdAfterXhours' : max(minShutdownHours, fetch_from_tech_row(tech_row, 'startColdAfterXhours')),
-                'startWarmAfterXhours' : fetch_from_tech_row(tech_row, 'startWarmAfterXhours')
-            }
+            # Case-insensitive matching for unit.
+            unit_matches = df_units[df_units['unit'].str.lower() == u_row['unit'].lower()]
+            if unit_matches.empty:
+                raise ValueError(f"No matching unit row found for unit: {u_row['unit']}")
+            unit_row = unit_matches.iloc[0]
 
-            # Append the unit and its parameter dictionary to the list
+            # Pre-fetch minShutdownHours using its default value from the dictionary.
+            min_shutdown = get_value(unit_row, tech_row, 'minShutdownHours', param_unit_defaults['minShutdownHours'])
+
+            # Start building the row data with the unit column.
+            row_data = {'unit': u_row['unit']}
+
+            # Loop through the parameters defined in param_defaults.
+            for param, default in param_unit_defaults.items():
+                if param == 'minShutdownHours':
+                    row_data[param] = min_shutdown
+                elif param == 'startColdAfterXhours':
+                    # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
+                    fetched_value = get_value(unit_row, tech_row, param, default)
+                    row_data[param] = max(min_shutdown, fetched_value)
+                else:
+                    row_data[param] = get_value(unit_row, tech_row, param, default)
+
             rows.append(row_data)
 
-
-        # Define the final columns titles and orders.
+        # Define final column order.
         final_cols = dimensions.copy()
-        final_cols.extend(param_unit)
+        final_cols.extend(list(param_unit_defaults.keys()))
 
-        # Create p_unit, fill NaN, and add fake MultiIndex
+        # Construct DataFrame, fill NaN, apply a fake MultiIndex, and sort.
         p_unit = pd.DataFrame(rows, columns=final_cols)
-        p_unit = p_unit.fillna(value=0)
+        p_unit = p_unit.fillna(0)
         p_unit = self.create_fake_multiIndex(p_unit, dimensions)
 
-        # Sort by grid, from_node, to_node in a case-insensitive manner.
-        p_unit.sort_values(by=['unit'], 
-                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
-                            inplace=True)
+        # Sort p_unit by the 'unit' column in a case-insensitive manner.
+        p_unit.sort_values(
+            by=['unit'],
+            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+            inplace=True
+        )
 
         return p_unit
     
@@ -1318,8 +1342,7 @@ class build_input_excel:
                 for cell in ws[2]:
                     if cell.value is not None:
                         # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
-                        if len(str(cell.value)) > 5:
-                            ws.cell(row=1, column=cell.col_idx).alignment = Alignment(textRotation=90)
+                        ws.cell(row=1, column=cell.col_idx).alignment = Alignment(textRotation=90)
 
                         # Centre align entire columns that have text in row 2 
                         col_index = cell.column
@@ -1502,14 +1525,13 @@ class build_input_excel:
 
         # unittype based input tables
         unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
-        p_unit = self.create_p_unit(self.df_unittypedata, unitUnittype)
+        p_unit = self.create_p_unit(self.df_unittypedata, unitUnittype, self.df_units)
         flowUnit = self.create_flowUnit(self.df_unittypedata, unitUnittype)
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unittypedata, unitUnittype)
 
         # Calculate missing capacities from p_gnu_io
         p_gnu_io = self.fill_capacities(p_gnu_io, p_unit)
         p_gnu_io_flat = self.drop_row0(p_gnu_io)
-
 
         # p_gnn
         p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat, self.exclude_grids)

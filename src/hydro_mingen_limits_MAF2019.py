@@ -242,8 +242,13 @@ class hydro_mingen_limits_MAF2019:
                 else:
                     summary_df = summary_df.join(result_df, how='left')
 
+        # Drop columns if their sum is zero
+        summary_df = summary_df.loc[:, summary_df.sum() != 0]
+
+        # Pick nodes with active mingen limits
         hydro_mingen_nodes = summary_df.columns.tolist()
 
+        # Return results
         if hydro_mingen_nodes is not None:
             return (summary_df, hydro_mingen_nodes)
         else:
