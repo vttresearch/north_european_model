@@ -428,9 +428,9 @@ class build_input_excel:
             grid = row['grid']
             node = row['node']
 
-            # Determine usePrice: if any fuel record for this grid has price > 0.
+            # Determine usePrice: if any fuel record for this grid has price.
             fuels_for_grid = df_fuels[df_fuels['grid'] == grid]
-            if not fuels_for_grid.empty and (fuels_for_grid['price'] > 0).any():
+            if not fuels_for_grid.empty and (fuels_for_grid['price'] != 0).any():
                 usePrice = True
             else:
                 usePrice = False

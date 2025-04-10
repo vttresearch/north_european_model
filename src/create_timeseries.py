@@ -626,6 +626,8 @@ class create_timeseries:
             process_only_single_year = ts_params.get('process_only_single_year', False)
             secondary_output_name = ts_params.get('secondary_output_name', None)
             quantile_map = ts_params.get('quantile_map', {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'})
+            input_file = ts_params.get('input_file', '')
+            attached_grid = ts_params.get('attached_grid', '')
 
             # skip processing if demand_grid is in exclude_grids
             if demand_grid in self.exclude_grids:
@@ -638,11 +640,13 @@ class create_timeseries:
 
             # Prepare kwargs for processors
             kwargs_processor = {'input_folder': self.input_folder,
+                                'input_file': input_file,
                                 'country_codes': self.country_codes,
                                 'start_date': self.start_date,
                                 'end_date': self.end_date,
                                 'scenario_year': self.scenario_year,
-                                'exclude_nodes': self.exclude_nodes
+                                'exclude_nodes': self.exclude_nodes,
+                                'attached_grid': attached_grid,              
             }
             if demand_grid is not None: 
                 # filter the demand of requested grid. df_annual_demands are already filtered by scenario and year
@@ -661,7 +665,7 @@ class create_timeseries:
                 kwargs_bb_conversion['is_demand'] = True
 
 
-            print(f"\n------ {processor_name} --------------------------------------------------------------- ")
+            print(f"\n------ {processor_name}: {bb_parameter}, {gdx_name_suffix} ------------------------- ")
             # --- Processing the main data -------------------------------
             self.log_time("Processing input data")
 
@@ -698,9 +702,9 @@ class create_timeseries:
             if self.write_csv_files:
                 # Constructing the output csv filename
                 if process_only_single_year:
-                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}.csv')
+                    output_file_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}.csv')
                 else:
-                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}_{startyear}-{endyear}.csv')
+                    output_file_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_{startyear}-{endyear}.csv')
                 summary_df.to_csv(output_file_csv)
                 print(f"   Summary csv written to '{output_file_csv}'")
 
@@ -723,9 +727,9 @@ class create_timeseries:
                 # Write CSV if write_csv_files
                 if self.write_csv_files:
                     if process_only_single_year:
-                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year.csv')
+                        output_file_avg_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_average_year.csv')
                     else:
-                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year_from_{startyear}-{endyear}.csv')
+                        output_file_avg_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_average_year_from_{startyear}-{endyear}.csv')
                     avg_df.to_csv(output_file_avg_csv)
                     print(f"   Average year csv written to '{output_file_avg_csv}'")
 
