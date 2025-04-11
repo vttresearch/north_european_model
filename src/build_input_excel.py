@@ -563,14 +563,15 @@ class build_input_excel:
     def create_p_unit(self, df_unittypedata, unitUnittype, df_units):
         """
         Creates a new DataFrame p_unit with specified dimension and parameter columns.
-        Retrieves parameter values from df_units first, then from df_unittypedata if not present.
+        Retrieves parameter values from df_units first, then from df_unittypedata if not present
+        or if the primary value is deemed "empty" (0, "", NaN, or None).
         Matching for unittype and unit is done in a case-insensitive manner.
         Raises an error if no matching tech_row is found.
         """
         # Dimension column names.
         dimensions = ['unit']
 
-        # Single dictionary for parameter names and their default values.
+        # parameter_unit names and their default values.
         param_unit_defaults = {
             'availability': 1,
             'isSource': 0,
@@ -588,21 +589,35 @@ class build_input_excel:
         # List to collect new rows.
         rows = []
 
+        def is_empty(val):
+            """Return True if val is 0, empty string, None, or NaN."""
+            return val == 0 or val == "" or val is None or pd.isnull(val)
+
         def get_value(unit_row, tech_row, param, def_value=0):
             """
-            Retrieves a value by primarily checking unit_row, then tech_row, and finally returns def_value.
-            Uses a case-insensitive lookup by checking for param.lower() in the Series index.
+            Retrieves a value by primarily checking unit_row and then tech_row if the primary
+            value is considered "empty" (0, "", NaN, or None). Uses a case-insensitive lookup
+            by checking for param.lower() in the Series index.
             """
-            try:
-                lower_param = param.lower()
-                if lower_param in unit_row.index:
-                    return unit_row[lower_param]
-                elif lower_param in tech_row.index:
-                    return tech_row[lower_param]
-                else:
-                    return def_value
-            except Exception:
+            lower_param = param.lower()
+            primary = 0
+            secondary = 0
+            # Try retrieving from unit_row (primary source)
+            if lower_param in unit_row.index:
+                primary = unit_row[lower_param]
+
+            # If the primary value is empty, check the tech_row (secondary source)
+            if is_empty(primary): 
+                if lower_param in tech_row.index:
+                    secondary = tech_row[lower_param]
+                    
+            if not is_empty(primary): 
+                return primary
+            elif not is_empty(secondary):  
+                return secondary
+            else:
                 return def_value
+
 
         # Process each row in unitUnittype.
         for _, u_row in unitUnittype.iterrows():
@@ -630,6 +645,7 @@ class build_input_excel:
                     row_data[param] = min_shutdown
                 elif param == 'startColdAfterXhours':
                     # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
+                    # In Backbone, Units should have p_unit(unit, minShutdownHours) <= p_unit(unit, startWarmAfterXhours) <= p_unit(unit, startColdAfterXhours)
                     fetched_value = get_value(unit_row, tech_row, param, default)
                     row_data[param] = max(min_shutdown, fetched_value)
                 else:
