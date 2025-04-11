@@ -180,7 +180,7 @@ class build_input_excel:
         # Create p_gnu_io, fill NaN, and add fake MultiIndex
         p_gnu_io = pd.DataFrame(rows, columns=final_cols)
         p_gnu_io = p_gnu_io.fillna(value=0)
-        p_gnu_io = self.create_fake_multiIndex(p_gnu_io, dimensions)
+        p_gnu_io = self.create_fake_MultiIndex(p_gnu_io, dimensions)
 
         # Sort by unit, input_output, node in a case-insensitive manner.
         p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
@@ -244,8 +244,8 @@ class build_input_excel:
 
         """
         # Get a flat version without the fake multi-index
-        p_gnu_io_flat = self.drop_row0(p_gnu_io)
-        p_unit_flat = self.drop_row0(p_unit)
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
+        p_unit_flat = self.drop_fake_MultiIndex(p_unit)
 
         # Create a dictionary mapping each unit to its maximum efficiency.
         # Efficiency is taken as the maximum among columns that start with 'eff' (e.g., eff00, eff01, ...)
@@ -325,7 +325,7 @@ class build_input_excel:
         p_gnu_io_flat = p_gnu_io_flat.fillna(value=0)
 
         # Recreate the fake multi-index using the specified columns.
-        p_gnu_io = self.create_fake_multiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
+        p_gnu_io = self.create_fake_MultiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
 
         return p_gnu_io
 
@@ -394,7 +394,7 @@ class build_input_excel:
         # Create p_gnn, fill NaN, and add fake MultiIndex
         p_gnn = pd.DataFrame(rows, columns=final_cols)
         p_gnn = p_gnn.fillna(value=0)
-        p_gnn = self.create_fake_multiIndex(p_gnn, dimensions)
+        p_gnn = self.create_fake_MultiIndex(p_gnn, dimensions)
         
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gnn.sort_values(by=['grid', 'from_node', 'to_node'], 
@@ -459,9 +459,9 @@ class build_input_excel:
             grid = row['grid']
             node = row['node']
 
-            # Determine usePrice: if any fuel record for this grid has price.
+            # Determine usePrice: if any fuel record for this grid.
             fuels_for_grid = df_fuels[df_fuels['grid'] == grid]
-            if not fuels_for_grid.empty and (fuels_for_grid['price'] != 0).any():
+            if not fuels_for_grid.empty:
                 usePrice = True
             else:
                 usePrice = False
@@ -525,7 +525,7 @@ class build_input_excel:
         # Create p_gn, fill NaN, and add fake MultiIndex
         p_gn = pd.DataFrame(rows, columns=final_cols)
         p_gn = p_gn.fillna(value=0)
-        p_gn = self.create_fake_multiIndex(p_gn, dimensions)
+        p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
 
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
@@ -660,7 +660,7 @@ class build_input_excel:
         # Construct DataFrame, fill NaN, apply a fake MultiIndex, and sort.
         p_unit = pd.DataFrame(rows, columns=final_cols)
         p_unit = p_unit.fillna(0)
-        p_unit = self.create_fake_multiIndex(p_unit, dimensions)
+        p_unit = self.create_fake_MultiIndex(p_unit, dimensions)
 
         # Sort p_unit by the 'unit' column in a case-insensitive manner.
         p_unit.sort_values(
@@ -739,7 +739,7 @@ class build_input_excel:
         DataFrame
             A fake-multi-indexed DataFrame with dimensions ['grid', 'node', 'param_gnBoundaryTypes'] 
             and param_gnBoundaryProperties ['useConstant', 'constant', 'useTimeSeries', 'slackCost'].
-            Fake multi-index is a compromise between many aspects, see create_fake_multiIndex()
+            Fake multi-index is a compromise between many aspects, see create_fake_MultiIndex()
             Defines boundary constraints for nodes in the energy system.
         """ 
         # Define the dimensions and parameters for the fake-multi-indexed output DataFrame
@@ -854,7 +854,7 @@ class build_input_excel:
         # Create p_gnBoundaryPropertiesForStates, fill NaN, and add fake MultiIndex
         p_gnBoundaryPropertiesForStates = pd.DataFrame(rows, columns=final_cols)
         p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.fillna(value=0)
-        p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(p_gnBoundaryPropertiesForStates, dimensions)
+        p_gnBoundaryPropertiesForStates = self.create_fake_MultiIndex(p_gnBoundaryPropertiesForStates, dimensions)
 
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gnBoundaryPropertiesForStates.sort_values(by=['grid', 'node'], 
@@ -896,8 +896,8 @@ class build_input_excel:
                     ts_node_boundaryTypes[node_boundaryType] = row['average_value']
 
         # Get a flat versions without the fake multi-index
-        p_gn_flat = self.drop_row0(p_gn)
-        p_gnBoundaryPropertiesForStates_flat = self.drop_row0(p_gnBoundaryPropertiesForStates)
+        p_gn_flat = self.drop_fake_MultiIndex(p_gn)
+        p_gnBoundaryPropertiesForStates_flat = self.drop_fake_MultiIndex(p_gnBoundaryPropertiesForStates)
 
         # Identify storage nodes - those where energyStoredPerUnitOfState is 1 or True
         storage_gn = []
@@ -985,8 +985,8 @@ class build_input_excel:
                                                     ).reset_index(drop=True)
 
         # recreate fake multi-indexes
-        p_gn = self.create_fake_multiIndex(p_gn_flat, ['grid', 'node'])
-        p_gnBoundaryPropertiesForStates = self.create_fake_multiIndex(p_gnBoundaryPropertiesForStates_flat, ['grid', 'node', 'param_gnBoundaryTypes'])
+        p_gn = self.create_fake_MultiIndex(p_gn_flat, ['grid', 'node'])
+        p_gnBoundaryPropertiesForStates = self.create_fake_MultiIndex(p_gnBoundaryPropertiesForStates_flat, ['grid', 'node', 'param_gnBoundaryTypes'])
 
         return (p_gn, p_gnBoundaryPropertiesForStates)
 
@@ -1451,7 +1451,7 @@ class build_input_excel:
                 raise Exception(f"The Excel file '{file_path}' is currently open. Please close it before proceeding.")
    
 
-    def create_fake_multiIndex(self, df, dimensions):
+    def create_fake_MultiIndex(self, df, dimensions):
         """
         Creates a fake MultiIndex by:
         1. Taking an existing DataFrame with single-layer column names
@@ -1493,7 +1493,7 @@ class build_input_excel:
         return df_output
     
 
-    def drop_row0(self, df):
+    def drop_fake_MultiIndex(self, df):
         # Create a copy of the original DataFrame
         df_flat = df.copy()
 
@@ -1558,7 +1558,7 @@ class build_input_excel:
         p_gnu_io = self.remove_rows(p_gnu_io, 'unit', self.df_remove_units)
         p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'grid', self.exclude_grids)
         p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'node', self.exclude_nodes)
-        p_gnu_io_flat = self.drop_row0(p_gnu_io)
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
 
         # unittype based input tables
         unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
@@ -1568,20 +1568,20 @@ class build_input_excel:
 
         # Calculate missing capacities from p_gnu_io
         p_gnu_io = self.fill_capacities(p_gnu_io, p_unit)
-        p_gnu_io_flat = self.drop_row0(p_gnu_io)
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
 
         # p_gnn
         p_gnn = self.create_p_gnn(self.df_transfers, p_gnu_io_flat)
         p_gnn = self.remove_rows(p_gnn, 'grid', self.exclude_grids)
         p_gnn = self.remove_rows(p_gnn, 'from_node', self.exclude_nodes)
         p_gnn = self.remove_rows(p_gnn, 'to_node', self.exclude_nodes)
-        p_gnn_flat = self.drop_row0(p_gnn)
+        p_gnn_flat = self.drop_fake_MultiIndex(p_gnn)
 
         # p_gn
         p_gn = self.create_p_gn(p_gnn_flat, p_gnu_io_flat, self.df_fuels, self.df_demands, self.df_storages, **self.secondary_results)
         p_gn = self.remove_rows(p_gn, 'grid', self.exclude_grids)
         p_gn = self.remove_rows(p_gn, 'node', self.exclude_nodes)
-        p_gn_flat = self.drop_row0(p_gn)
+        p_gn_flat = self.drop_fake_MultiIndex(p_gn)
 
         # node based input tables
         p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, self.df_storages, **self.secondary_results)
@@ -1590,7 +1590,7 @@ class build_input_excel:
 
         # add storage start levels to p_gn and p_gnBoundaryPropertiesForStates
         (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, p_gnu_io_flat, **self.secondary_results)
-        p_gn_flat = self.drop_row0(p_gn)
+        p_gn_flat = self.drop_fake_MultiIndex(p_gn)
 
 
         # emission based input tables
