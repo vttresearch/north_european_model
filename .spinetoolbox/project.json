@@ -9,7 +9,7 @@
             "Tool": [
                 {
                     "type": "path",
-                    "relative": false,
+                    "relative": true,
                     "path": "../spineToolbox.json"
                 },
                 {
@@ -31,22 +31,22 @@
             "Exporter": [
                 {
                     "type": "path",
-                    "relative": false,
+                    "relative": true,
                     "path": "../tools/export_to_bb.json"
                 }
             ],
             "Importer": [
                 {
                     "type": "path",
-                    "relative": false,
+                    "relative": true,
                     "path": "../tools/import_from_gdx.json"
                 }
             ],
             "Data Transformer": [
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/aetart/Documents/backbone/tools/transform_to_bb_sets.json"
+                    "relative": true,
+                    "path": "../tools/transform_to_bb_sets.json"
                 }
             ]
         },
