@@ -155,30 +155,33 @@ You can alternatively run Backbone directly from the createed output folder, see
 Current `config_NT2025.ini` is using MAF2019 timeseries and `config_test.ini` the new PECD timeseries. It is not recommended to edit these files, but instead take a copy, rename it, and edit your own file.
 
 timeseries processors are selected and configured in timeseries_specs = {} dictionary in config files. The default configuration for MAF2019 processor for PV looks like this
-    'PV': {
-        'processor_name': 'VRE_MAF2019',
-        'bb_parameter': 'ts_cf',
-        'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
-        'custom_column_value': {'flow': 'PV'},
-        'gdx_name_suffix': 'PV',
-        'calculate_average_year': True,
-        'rounding_precision': 5,
-        'input_file': 'PECD-MAF2019-wide-PV.csv',
-        'attached_grid': 'elec'
-        },
+
+	'PV': {
+		'processor_name': 'VRE_MAF2019',
+		'bb_parameter': 'ts_cf',
+  		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+		'custom_column_value': {'flow': 'PV'},
+		'gdx_name_suffix': 'PV',
+		'calculate_average_year': True,
+		'rounding_precision': 5,
+		'input_file': 'PECD-MAF2019-wide-PV.csv',
+		'attached_grid': 'elec'
+	},
 
 and the default configuration for MAF2019 processor for onshore wind like this
-    'wind_onshore': {
-        'processor_name': 'VRE_PECD',
-        'bb_parameter': 'ts_cf',
-        'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
-        'custom_column_value': {'flow': 'onshore'},
-        'gdx_name_suffix': 'wind_onshore',
-        'calculate_average_year': True,
-        'rounding_precision': 5,
-        'input_file': 'PECD-onshore/',   # folder, not file
-        'attached_grid': 'elec'
-        },
+
+	'wind_onshore': {
+		'processor_name': 'VRE_PECD',
+		'bb_parameter': 'ts_cf',
+		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+		'custom_column_value': {'flow': 'onshore'},
+		'gdx_name_suffix': 'wind_onshore',
+		'calculate_average_year': True,
+		'rounding_precision': 5,
+		'input_file': 'PECD-onshore/',   # folder, not file
+		'attached_grid': 'elec'
+	},
+
 
 
 ### Copying input files to c:\backbone\input
