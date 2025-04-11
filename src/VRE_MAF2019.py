@@ -208,7 +208,7 @@ class VRE_MAF2019:
             return [ts]
 
 
-# __main__ allows testing by calling this .py file directly.
+# __main__ allows testing by calling this .py file directly for testing
 if __name__ == '__main__':
     # Define the input parameters.
     input_folder = os.path.join("..\\src_files\\timeseries")

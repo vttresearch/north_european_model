@@ -182,6 +182,7 @@ and the default configuration for MAF2019 processor for onshore wind like this
 		'attached_grid': 'elec'
 	},
 
+It is possible to choose between these by copying the examples from either `config_NT2025.ini` or `config_test.ini` to your own config file.
 
 
 ### Copying input files to c:\backbone\input
