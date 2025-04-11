@@ -112,12 +112,22 @@ The North Europe model has some time series source files that are too large to b
 	* extract following two files from the zip: "Demand Profiles\NT\Electricity demand profiles\2030_National Trends.xlsx", and "Demand Profiles\NT\Electricity demand profiles\2040_National Trends.xlsx"
 	* copy file to to `c:/backbone/north_european_model/src_files/timeseries`
 	* rename them to `elec_2030_National_Trends.xlsx`, and `elec_2040_National_Trends.xlsx`
-* **VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). copy following files to `c:/backbone/north_european_model/src_files/timeseries/` folder: 
+* **VRE time series from MAF2019** are from older ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). copy following files to `c:/backbone/north_european_model/src_files/timeseries/` folder: 
 	* PECD-MAF2019-wide-PV.csv
 	* PECD-MAF2019-wide-WindOffshore.csv
 	* PECD-MAF2019-wide-WindOnshore.csv
+* **VRE time series from the new PECD** are from 2025 updated ([PECD datebase](https://cds.climate.copernicus.eu/datasets/sis-energy-pecd?tab=download)). 
+	* download timeseries from PECD portal with you preferred settings, e.g. 
+		* PV: Temporal period - historical, Origin - ERA5 reanalysis, Variable - Energy - Solar Energy - Solar generation capacity factor, Spatial resolution - Region aggregated timeseries - SZON (Onshore bidding zones)
+		* onshore: Temporal period - historical, Origin - ERA5 reanalysis, Variable - Energy - Solar Energy - Wind power onshore capacity factor, Technological specification - onshore wind turbine - 30 (Existing technologies), Spatial resolution - Region aggregated timeseries - PEON (Pan-European Onshore Zones)
+		* offshore: Temporal period - historical, Origin - ERA5 reanalysis, Variable - Energy - Solar Energy - Wind power offshore capacity factor, Technological specification - offshore wind turbine - 21 (SP316 HH155), Spatial resolution - Region aggregated timeseries - PEOF (Pan-European Offshore Zones)
+		* Note: max 20 years can be downloaded at once. Full dataset (PV, onshore, offshore from 1982 to 2016) needs 6 downloads. Other time series limit the years to 1982-2016.
+	* Create following three folders: `c:/backbone/north_european_model/src_files/timeseries/PECD-PV`, `timeseries/PECD-onshore`, and `timeseries/PECD-offshore` 
+	* copy timeseries csv files to these folders
 
-Other time series data (Hydro, District heating, hydrogen, industry) are shared in this repository 
+See [Choosing VRE processor](#Choosing-VRE-processor) how you can choose which VRE datasets to use.
+
+Other time series data (Hydro, District heating, hydrogen, industry) are shared in this repository and do not yet have alternative data sources.
 
 Note: EV timeseries are still work-in-progress, but will be added 
 
@@ -139,6 +149,36 @@ At the time of writing, the created "National Trends" takes about 500 Mb, is gen
 
 The `config_NT2025.ini` writes output files to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
 You can alternatively run Backbone directly from the createed output folder, see instructions from [Running Backbone](#running-backbone).
+
+### Choosing VRE processor
+
+Current `config_NT2025.ini` is using MAF2019 timeseries and `config_test.ini` the new PECD timeseries. It is not recommended to edit these files, but instead take a copy, rename it, and edit your own file.
+
+timeseries processors are selected and configured in timeseries_specs = {} dictionary in config files. The default configuration for MAF2019 processor for PV looks like this
+    'PV': {
+        'processor_name': 'VRE_MAF2019',
+        'bb_parameter': 'ts_cf',
+        'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+        'custom_column_value': {'flow': 'PV'},
+        'gdx_name_suffix': 'PV',
+        'calculate_average_year': True,
+        'rounding_precision': 5,
+        'input_file': 'PECD-MAF2019-wide-PV.csv',
+        'attached_grid': 'elec'
+        },
+
+and the default configuration for MAF2019 processor for onshore wind like this
+    'wind_onshore': {
+        'processor_name': 'VRE_PECD',
+        'bb_parameter': 'ts_cf',
+        'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+        'custom_column_value': {'flow': 'onshore'},
+        'gdx_name_suffix': 'wind_onshore',
+        'calculate_average_year': True,
+        'rounding_precision': 5,
+        'input_file': 'PECD-onshore/',   # folder, not file
+        'attached_grid': 'elec'
+        },
 
 
 ### Copying input files to c:\backbone\input
@@ -163,6 +203,7 @@ The python script constructs following files
 * import_timeseries.inc - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
 
 Note: Included scheduleInit.gms and changes.inc files have a specific structure so that it works with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to the file.
+
 
 
 ### Building own config files

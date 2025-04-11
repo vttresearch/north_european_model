@@ -14,8 +14,7 @@ class VRE_MAF2019:
         input_file : (str) Name of the input file in input_folder
         country_codes (list): List of country codes.
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
-        end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
-        cf : (str) Type of capacity factor, e.g. 'PV', 'Wind'
+        end_date (str): End datetime (e.g., '2021-12-31 23:00:00').
         attached_grid : (str) suffix to append to country codes in output columns
 
     Returns:
@@ -46,9 +45,6 @@ class VRE_MAF2019:
         for param in required_params:
             setattr(self, param, kwargs_processor.get(param))        
 
-        # Extract start and end years from the provided dates.
-        self.startyear = pd.to_datetime(self.start_date).year
-        self.endyear = pd.to_datetime(self.end_date).year
 
     def run(self):
         """
