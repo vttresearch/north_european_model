@@ -43,22 +43,39 @@ class build_input_excel:
 
     def create_p_gnu_io(self, df_unittypedata, df_units):
         """
-        Creates a new DataFrame p_gnu_io with specified dimension and parameter columns
+        Creates a DataFrame representing generator input/output connections with parameters.
 
-        For each row in df_units:
-        - Lookup the corresponding generator_id row in df_unittypedata.
-        - Build unit name: <country>_<'unit_name_prefix' if defined>_<unittype>
-        - for puts=['input', 'output1', 'output2', 'output3']
-            * fetch matching grid <grid>_<{put}> from df_unittypedata
-            * if grid is defined (not NaN, empty, or -)
-                * Build node name <country>_<grid>_<node_suffix if defined>
-                * Build mandatory base column values            
-                * Build additional parameters 
-                    * values can be e.g. vomCosts_input, vomCosts_output2. If no suffix is given, the code assumes output1
-        - Construct 2 levels of column headers: level1 from dimensions and level2 for param_gnu that are present. Using empty name for the counterpart.
-        - Build, sort, and return the final dataframe 
+        This method processes unit data and their type specifications to build a relationship
+        table between generation units and grid nodes, with associated parameters.
 
-        Blacklists grids in self.exclude_grids
+        Parameters:
+        -----------
+        df_unittypedata : DataFrame
+            Contains technical specifications for different generator types (indexed by generator_id)
+            Must include grid connection points (grid_input1, grid_output1, etc.)
+
+        df_units : DataFrame
+            Contains specific unit instances with capacities and country locations
+            Must include 'country', 'generator_id', and 'unit' columns
+
+        Returns:
+        --------
+        DataFrame
+            A multi-index DataFrame with dimensions (grid, node, unit, input_output)
+            and parameter columns (capacity, conversionCoeff, vomCosts, etc.)
+
+        Process:
+        --------
+        1. For each unit in df_units:
+           - Match with its technical specifications from df_unittypedata
+           - For each defined input/output connection:
+             - Build node names using country and grid information
+             - Calculate parameter values, prioritizing unit-specific values over type defaults
+           - Skip connections with undefined generator_id
+
+        2. Structure the resulting data with a two-level column index:
+           - First level: dimensions and parameters
+           - Second level: parameter names within each category
         """
         # dimension and parameter columns
         dimensions = ['grid', 'node', 'unit', 'input_output']
@@ -71,6 +88,33 @@ class build_input_excel:
         # List to collect the new rows 
         rows = []
 
+        def is_empty(val):
+            """Return True if val is 0, empty string, None, or NaN."""
+            return val == 0 or val == "" or val is None or pd.isnull(val)
+        
+        def get_param_value(param, put, cap_row, tech_row):
+            """
+            Determine parameter value with fallback logic.
+
+            Prioritizes:
+            1. Connection-specific value from unit data (e.g., vomCosts_output1)
+            2. Default value from unit data (for output1 only)
+            3. Connection-specific value from technology data
+            4. Default value from technology data (for output1 only)
+            """
+            # First try unit-specific value (with connection suffix or default)
+            primary = (
+                (cap_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in cap_row.index else 0) +
+                (cap_row[param.lower()] if (param.lower() in cap_row.index and put == 'output1') else 0)
+            )
+            # If no unit-specific value, fall back to technology specifications
+            secondary = (
+                (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
+                (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
+            )
+            # Use secondary (technology) value only if primary (unit) value is empty
+            return secondary if is_empty(primary) else primary
+
         # Process each row in the capacities DataFrame.
         for _, cap_row in df_units.iterrows():
 
@@ -79,23 +123,24 @@ class build_input_excel:
             generator_id = cap_row['generator_id']
             unit_name = cap_row['unit']
 
-            # Get the matching technology row.
+            # Find the technical specifications for this generator type
             try:
                 tech_row = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id].iloc[0]
             # print warning and skip unit if unittype data not available
-            except:
+            except IndexError:
                 print(f"   !!! Generator_ID '{generator_id}' from unitdata files does not have a matching generator_id in any of the unittypedata files. Check spelling of generator_id in all files.")
-                continue
+                continue  # Skip this unit if no matching technical data found
 
-            # Filter only available puts based on whether 'grid_{put}' exists.
+            # Identify all defined input/output connections for this generator type
             available_puts = [put for put in ['input1', 'input2', 'input3', 'output1', 'output2', 'output3'] 
                               if f'grid_{put}' in tech_row.index]
 
+            # Process each available input/output connection
             for put in available_puts:
-                # Extract put specific grid value.
+                # Get the grid this connection links to
                 grid = tech_row[f'grid_{put}'] if f'grid_{put}' in tech_row.index else None
 
-                # Only process if put specific grid is defined.
+                 # Only process valid grid connections
                 if pd.notna(grid) and grid not in ['', '-']:
                     # Build node name: <country>_<grid>_<node suffix if defined>
                     node_name = f"{country}_{grid}"
@@ -109,36 +154,22 @@ class build_input_excel:
                     # Check if the value is either an empty string or NaN.
                     conversionCoeff = 1 if (value == '' or pd.isna(value)) else value
 
-                    # Build base row dictionary including values with different default assumptions
+                    # Create base row with essential connection information
                     base_row = {
                         'grid' : grid,
                         'node' : node_name,
                         'unit' : unit_name,
                         'input_output': 'input' if put.startswith('input') else 'output',
                         'conversionCoeff' : conversionCoeff,
-                        'capacity' : (cap_row[f'capacity_{put}'] if f'capacity_{put}' in cap_row.index else 0) +
-                                     (cap_row['capacity'] if ('capacity' in cap_row.index and put == 'output1') else 0)
-
                     }
 
-                    # Build additional parameters with a dictionary comprehension.
+                    # Add all other parameters using the value resolution function
                     additional_params = {
-                        param: (
-                            # Primary source: cap_row
-                            (
-                                (cap_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in cap_row.index else 0) +
-                                (cap_row[param.lower()] if (param.lower() in cap_row.index and put == 'output1') else 0)
-                            ) or  # Use 'or' to check if primary value is 0
-                            # Secondary source: tech_row
-                            (
-                                (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
-                                (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
-                            )
-                        )
-                        for param in param_gnu if param not in ['capacity', 'conversionCoeff']
+                        param: get_param_value(param, put, cap_row, tech_row)
+                        for param in param_gnu if param not in ['conversionCoeff']
                     }
 
-                    # Merge the dictionaries.
+                    # Combine base and additional parameters
                     row = {**base_row, **additional_params}
                     rows.append(row)
 
