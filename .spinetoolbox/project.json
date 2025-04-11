@@ -64,8 +64,7 @@
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Transform_to_BB_sets": {
-                            "scenario_filter": {
-                            },
+                            "scenario_filter": {},
                             "alternative_filter": {
                                 "Base": true
                             }
@@ -92,10 +91,10 @@
                     "known_filters": {
                         "db_url@Input data": {
                             "scenario_filter": {
-                                "asdf": true
+                                "asd": true
                             },
                             "alternative_filter": {
-                                "inputTest_National Trends_2025": true
+                                "input_National Trends_2025": true
                             }
                         }
                     },
@@ -253,15 +252,15 @@
             "cmd_line_args": [
                 {
                     "type": "literal",
-                    "arg": "--modelledDays = 7"
+                    "arg": "--modelledDays=7"
                 },
                 {
                     "type": "literal",
-                    "arg": "--climateYear = 2015"
+                    "arg": "--climateYear=2015"
                 },
                 {
                     "type": "literal",
-                    "arg": "--forecasts =4"
+                    "arg": "--forecasts=4"
                 }
             ],
             "kill_completed_processes": false,
