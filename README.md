@@ -110,7 +110,7 @@ NOTE: GamsAPI is possible to install also for much older GAMS versions, see http
 
 [Back to top](#North-European-energy-system-model)
 
-The North European model has some time series source files that are too large to be shared in this repository. THe following time series should be prepared:
+The North European model has some time series source files that are too large to be shared in this repository. The following time series should be prepared:
 * **Electricity demand profiles**
 	* Download [Demand-Profiles.zip](https://2024-data.entsos-tyndp-scenarios.eu/files/scenarios-inputs/Demand-Profiles.zip) from ENTSO-E TYNDP 2024 scenarios. If the link is broken, try "demand profiles" from https://2024.entsos-tyndp-scenarios.eu/download/.
 	* Extract the following two files from the zip:
