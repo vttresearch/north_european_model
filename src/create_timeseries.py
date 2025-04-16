@@ -614,7 +614,7 @@ class create_timeseries:
             # Dynamically import the required processor class.
             processor_class = self.import_processor_class(processor_name)
             if processor_class is None:
-                print(f"Skipping the processing of {processor_name} due to import error.")
+                print(f"Skipping the processing of {processor_name} due to import error. Check that the file './src/{processor_name}.py' exists and it has method called {processor_name}.")
                 continue
 
             # Optional values with their defaults

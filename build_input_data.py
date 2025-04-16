@@ -234,7 +234,7 @@ def build_node_column(df):
             lambda row: f"{row['country']}_{row['grid']}",
             axis=1
         )
-    
+
     return df
 
 
@@ -354,7 +354,7 @@ def filter_df_blacklist(df_input, df_name, filters):
 # ------------------------------------------------------
 # Main run function to process input data and create timeseries
 # ------------------------------------------------------
-def run(input_folder, config_file):
+def run(input_folder, config_file, input_excel_only=False):
     # Start the timer for the entire run.
     log_start = time.perf_counter()
 
@@ -415,7 +415,7 @@ def run(input_folder, config_file):
     df_demanddata = filter_df_blacklist(df_demanddata, 'demand_files', {'node': exclude_nodes})  
     df_storagedata = filter_df_blacklist(df_storagedata, 'storage_files', {'node': exclude_nodes})      
 
-    # Build unittype unit columns
+    # Build unittype and unit columns
     df_unitdata = build_unittype_unit_column(df_unitdata, df_unittypedata)
     df_remove_units = build_unittype_unit_column(df_remove_units, df_unittypedata)
 
@@ -509,5 +509,8 @@ if __name__ == '__main__':
     
     input_folder = args['input_folder']
     filename = args['config_file']
+    # Extract input_excel_only; default is "False" if not provided.
+    # Convert string values like "True", "true", "1" into a boolean.
+    input_excel_only = args.get('input_excel_only', 'False').lower() in ('true', '1')
     
-    run(input_folder, filename)
+    run(input_folder, filename, input_excel_only)

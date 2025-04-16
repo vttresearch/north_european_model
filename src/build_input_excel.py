@@ -79,12 +79,39 @@ class build_input_excel:
         """
         # dimension and parameter columns
         dimensions = ['grid', 'node', 'unit', 'input_output']
-        param_gnu = [ 'capacity', 'conversionCoeff', 'vomCosts', 'startCostCold', 
-                      'startCostWarm', 'startCostHot', 
-                      'maxRampUp', 'maxRampDown', 'rampCost', 
-                      'cb', 'cv', 
-                      'upperLimitCapacityRatio'
-                    ]
+        # Define param_gnu as a dictionary {param: def_value}
+        param_gnu = {
+            'isActive': 1,
+            'capacity': 0,
+            'conversionCoeff': 1,
+            'useInitialGeneration': 0,
+            'initialGeneration': 0,
+            'maxRampUp': 0,
+            'maxRampDown': 0,
+            'rampUpCost': 0,
+            'rampDownCost': 0,
+            'upperLimitCapacityRatio': 0,
+            'unitSize': 0,
+            'invCosts': 0,
+            'annuityFactor': 0,
+            'invEnergyCost': 0,
+            'fomCosts': 0,
+            'vomCosts': 0,
+            'inertia': 0,
+            'unitSizeMVA': 0,
+            'availabilityCapacityMargin': 0,
+            'startCostCold': 0,
+            'startCostWarm': 0,
+            'startCostHot': 0,
+            'startFuelConsCold': 0,
+            'startFuelConsWarm': 0,
+            'startFuelConsHot': 0,
+            'shutdownCost': 0,
+            'delay': 0,
+            'cb': 0,
+            'cv': 0
+        }
+
         # List to collect the new rows 
         rows = []
 
@@ -92,15 +119,16 @@ class build_input_excel:
             """Return True if val is 0, empty string, None, or NaN."""
             return val == 0 or val == "" or val is None or pd.isnull(val)
         
-        def get_param_value(param, put, cap_row, tech_row):
+        def get_param_value(param, put, cap_row, tech_row, def_value):
             """
             Determine parameter value with fallback logic.
-
+        
             Prioritizes:
             1. Connection-specific value from unit data (e.g., vomCosts_output1)
-            2. Default value from unit data (for output1 only)
+            2. Non-specific value from unit data (for output1 only)
             3. Connection-specific value from technology data
-            4. Default value from technology data (for output1 only)
+            4. Non-specific value from technology data (for output1 only)
+            5. def_value as the last resort if both sources are empty.
             """
             # First try unit-specific value (with connection suffix or default)
             primary = (
@@ -112,8 +140,13 @@ class build_input_excel:
                 (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
                 (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
             )
-            # Use secondary (technology) value only if primary (unit) value is empty
-            return secondary if is_empty(primary) else primary
+            # Return the first non-empty value; if both are empty, fall back to def_value.
+            if not is_empty(primary):
+                return primary
+            elif not is_empty(secondary):
+                return secondary
+            else:
+                return def_value
 
         # Process each row in the capacities DataFrame.
         for _, cap_row in df_units.iterrows():
@@ -148,25 +181,19 @@ class build_input_excel:
                     if pd.notna(node_suffix) and node_suffix not in ['', '-']:
                         node_name = f"{node_name}_{node_suffix}"
                             
-                    # get conversionCoeff from tech_row
-                    # note: lower case conversioncoeff when picking values from tech_row
-                    value = tech_row.get(f'conversioncoeff_{put}', 1)
-                    # Check if the value is either an empty string or NaN.
-                    conversionCoeff = 1 if (value == '' or pd.isna(value)) else value
-
                     # Create base row with essential connection information
                     base_row = {
                         'grid' : grid,
                         'node' : node_name,
                         'unit' : unit_name,
                         'input_output': 'input' if put.startswith('input') else 'output',
-                        'conversionCoeff' : conversionCoeff,
                     }
 
-                    # Add all other parameters using the value resolution function
+                    # Add all other parameters using the value resolution function.
+                    # Pass in the corresponding default value from param_gnu.
                     additional_params = {
-                        param: get_param_value(param, put, cap_row, tech_row)
-                        for param in param_gnu if param not in ['conversionCoeff']
+                        param: get_param_value(param, put, cap_row, tech_row, def_value)
+                        for param, def_value in param_gnu.items()
                     }
 
                     # Combine base and additional parameters
@@ -177,9 +204,10 @@ class build_input_excel:
         final_cols = dimensions.copy()
         final_cols.extend(param_gnu)
 
-        # Create p_gnu_io, fill NaN, and add fake MultiIndex
+        # Create p_gnu_io, fill NaN, remove empty columns, and add fake MultiIndex
         p_gnu_io = pd.DataFrame(rows, columns=final_cols)
         p_gnu_io = p_gnu_io.fillna(value=0)
+        p_gnu_io = self.remove_empty_columns(p_gnu_io)
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io, dimensions)
 
         # Sort by unit, input_output, node in a case-insensitive manner.
@@ -813,7 +841,7 @@ class build_input_excel:
                                 'useConstant':              1,
                                 # Scale down the average value and round it
                                 'constant':                 round(ts_node_boundaryTypes[(node, p_type)]/1000, 0),
-                                'slackCost':                300 # Fixed penalty cost for violations
+                                'slackCost':                1000 # Fixed penalty cost for violations
                             }
                             rows.append(row_dict)      
 
@@ -1543,6 +1571,17 @@ class build_input_excel:
         filtered_df = df[~df[key_col].isin(unique_vals)]
 
         return filtered_df
+
+    def remove_empty_columns(self, df):
+        # Build a boolean DataFrame where each cell is True if it is either "" or 0.
+        empty_cells = ((df == "") | (df == 0))
+
+        # For each column, check if every cell is empty.
+        empty_cols_mask = empty_cells.all(axis=0)
+
+        # Drop the columns that are entirely empty.
+        df_cleaned = df.loc[:, ~empty_cols_mask]
+        return df_cleaned
 
 
 # ------------------------------------------------------

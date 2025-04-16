@@ -171,7 +171,7 @@ class DH_demand_fromTemperature:
                     suffix = str(row['node_suffix'])
 
                 # Build the new column name: if no suffix, use the country code; otherwise, use country+suffix.
-                col_name = country if suffix == '' else country + suffix
+                col_name = country if suffix == '' else country + '_' + suffix
 
                 # Retrieve annual demand from 'mwh/year'.
                 annual_demand = row['twh/year']*10**6
@@ -219,14 +219,14 @@ class DH_demand_fromTemperature:
         summary_df = self.build_demands(summary_df, self.df_annual_demands, processed_countries)
         
         # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
-        # e.g. DE00 -> DE00_dheat and FI00_HKI -> FI00_HKI_dheat
+        # e.g. DE00 -> DE00_dheat and FI00 -> FI00_dheat_HKI
         grid = self.df_annual_demands['grid'].iloc[0]
         new_columns = {}
         for col in summary_df.columns:
             for country in processed_countries:
                 if col.startswith(country):
                     # Capture any suffix after the country code.
-                    suffix = col[len(country):]  # e.g., '' or '_HKI'
+                    suffix = col[len(country):]  # e.g., '' or 'HKI'
                     # Build the new column name
                     new_columns[col] = f"{country}_{grid}" + suffix
                     break  # Found matching country code, move to next column.
@@ -252,7 +252,7 @@ if __name__ == '__main__':
     annual_demands = {
         'country': ['FI00', 'FR00'],
         'grid': ['dheat', 'dheat'],
-        'node_suffix': ['_HKI', ''],
+        'node_suffix': ['HKI', ''],
         'year': [2025, 2025],
         'twh/year': [1000, 100],
         'constant_share': [0.3, 0.4]
