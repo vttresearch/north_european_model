@@ -9,7 +9,8 @@ import glob
 
 class create_timeseries:
     def __init__(self, timeseries_specs, input_folder, output_folder, 
-                 start_date, end_date, country_codes, scen_tags, 
+                 start_date, end_date, 
+                 country_codes, scen_tags, exclude_grids, exclude_nodes, 
                  df_annual_demands, log_start, write_csv_files=False
                  ):
         self.timeseries_specs = timeseries_specs
@@ -19,18 +20,25 @@ class create_timeseries:
         self.end_date = pd.to_datetime(end_date)
         self.country_codes = country_codes
         self.scenario_year = scen_tags['year']
+        self.exclude_grids = exclude_grids
+        self.exclude_nodes = exclude_nodes        
         self.df_annual_demands = df_annual_demands
         self.log_start = log_start
         self.write_csv_files = write_csv_files
 
+# ------------------------------------------------------
+# Smaller utility functions
+# ------------------------------------------------------
 
     def log_time(self, message):
         elapsed = time.perf_counter() - self.log_start
         print(f"[{elapsed:0.2f} s] {message}")
 
     def trim_summary(self, summary_df, round_precision=0):
-        # round and drop empty columns
+        # round to round_precision 
         summary_df = summary_df.round(round_precision)
+
+        # drop empty columns
         summary_df = summary_df.loc[:, summary_df.sum() != 0]
 
         # Remove leading and trailing rows that are fully empty/NaN.
@@ -43,6 +51,26 @@ class create_timeseries:
         # Convert dtypes (so that e.g. rounding to 0 decimals gives integers)
         summary_df = summary_df.convert_dtypes()
         return summary_df
+
+
+    def import_processor_class(self, processor_name):
+        """
+        Dynamically imports and returns a processor class from the src package.
+        Assumes that the module and the class share the same name as processor_name.
+        """
+        module_path = f"src.{processor_name}"
+        try:
+            module = importlib.import_module(module_path)
+            processor_class = getattr(module, processor_name)
+            return processor_class
+        except Exception as e:
+            print(f"Error importing processor class '{processor_name}' from module '{module_path}': {e}")
+            return None
+
+
+# ------------------------------------------------------
+# Functions to calculate forecasts
+# ------------------------------------------------------
 
     def calculate_average_year(self, input_df, round_precision=0, **kwargs):
         """
@@ -144,6 +172,9 @@ class create_timeseries:
         df_final = df_full[bb_parameter_dimensions + ['value']]
         return df_final
 
+# ------------------------------------------------------
+# Functions preparing and writing GDX files
+# ------------------------------------------------------
 
     def prepare_BB_df(self, df, start_date, country_codes, **kwargs):
         """
@@ -336,21 +367,9 @@ class create_timeseries:
             dataframes = {bb_parameter: group_out}
             to_gdx(dataframes, path=file_path)
 
-
-    def import_processor_class(self, processor_name):
-        """
-        Dynamically imports and returns a processor class from the src package.
-        Assumes that the module and the class share the same name as processor_name.
-        """
-        module_path = f"src.{processor_name}"
-        try:
-            module = importlib.import_module(module_path)
-            processor_class = getattr(module, processor_name)
-            return processor_class
-        except Exception as e:
-            print(f"Error importing processor class '{processor_name}' from module '{module_path}': {e}")
-            return None
-
+# ------------------------------------------------------
+# Functions creating specific outputs
+# ------------------------------------------------------
 
     def create_other_demands(self, df_annual_demands, other_demands):
         """
@@ -554,6 +573,12 @@ class create_timeseries:
         return ts_domains
 
 
+
+
+# ------------------------------------------------------
+# Main entry point for the script
+# ------------------------------------------------------
+
     def run(self):
         
         # Secondary_results is an open dictionary for results dropped from timeseries processors
@@ -586,6 +611,12 @@ class create_timeseries:
                 print(f"   Warning! {ts_key} does not have parameter 'bb_parameter_dimensions'! Will skip processing.")
                 continue
             
+            # Dynamically import the required processor class.
+            processor_class = self.import_processor_class(processor_name)
+            if processor_class is None:
+                print(f"Skipping the processing of {processor_name} due to import error. Check that the file './src/{processor_name}.py' exists and it has method called {processor_name}.")
+                continue
+
             # Optional values with their defaults
             demand_grid = ts_params.get('demand_grid', None)
             custom_column_value = ts_params.get('custom_column_value', None)
@@ -595,23 +626,27 @@ class create_timeseries:
             process_only_single_year = ts_params.get('process_only_single_year', False)
             secondary_output_name = ts_params.get('secondary_output_name', None)
             quantile_map = ts_params.get('quantile_map', {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'})
+            input_file = ts_params.get('input_file', '')
+            attached_grid = ts_params.get('attached_grid', '')
+
+            # skip processing if demand_grid is in exclude_grids
+            if demand_grid in self.exclude_grids:
+                print(f"Skipping the processing of {processor_name} because demand grid {demand_grid} is in excluded_grids in config file.")
+                continue
 
             # Processed values used in file names
             startyear = self.start_date.year
             endyear = self.end_date.year
 
-            # Dynamically import the required processor class.
-            processor_class = self.import_processor_class(processor_name)
-            if processor_class is None:
-                print(f"Skipping the processing of {processor_name} due to import error.")
-                continue
-
             # Prepare kwargs for processors
             kwargs_processor = {'input_folder': self.input_folder,
+                                'input_file': input_file,
                                 'country_codes': self.country_codes,
                                 'start_date': self.start_date,
                                 'end_date': self.end_date,
-                                'scenario_year': self.scenario_year
+                                'scenario_year': self.scenario_year,
+                                'exclude_nodes': self.exclude_nodes,
+                                'attached_grid': attached_grid,              
             }
             if demand_grid is not None: 
                 # filter the demand of requested grid. df_annual_demands are already filtered by scenario and year
@@ -630,7 +665,7 @@ class create_timeseries:
                 kwargs_bb_conversion['is_demand'] = True
 
 
-            print(f"\n------ {processor_name} --------------------------------------------------------------- ")
+            print(f"\n------ {processor_name}: {bb_parameter}, {gdx_name_suffix} ------------------------- ")
             # --- Processing the main data -------------------------------
             self.log_time("Processing input data")
 
@@ -667,9 +702,9 @@ class create_timeseries:
             if self.write_csv_files:
                 # Constructing the output csv filename
                 if process_only_single_year:
-                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}.csv')
+                    output_file_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}.csv')
                 else:
-                    output_file_csv = os.path.join(self.output_folder, f'{processor_name}_{startyear}-{endyear}.csv')
+                    output_file_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_{startyear}-{endyear}.csv')
                 summary_df.to_csv(output_file_csv)
                 print(f"   Summary csv written to '{output_file_csv}'")
 
@@ -692,9 +727,9 @@ class create_timeseries:
                 # Write CSV if write_csv_files
                 if self.write_csv_files:
                     if process_only_single_year:
-                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year.csv')
+                        output_file_avg_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_average_year.csv')
                     else:
-                        output_file_avg_csv = os.path.join(self.output_folder, f'{processor_name}_average_year_from_{startyear}-{endyear}.csv')
+                        output_file_avg_csv = os.path.join(self.output_folder, f'{bb_parameter}_{gdx_name_suffix}_average_year_from_{startyear}-{endyear}.csv')
                     avg_df.to_csv(output_file_avg_csv)
                     print(f"   Average year csv written to '{output_file_avg_csv}'")
 

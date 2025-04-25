@@ -214,75 +214,71 @@ def build_node_column(df):
     requires following columns: country, grid
     optional column: node_suffix
     """
-    # Define the required columns
+    # Define and check required columns
     required_columns = ["country", "grid"]
-
-    # Identify any missing columns
     missing_columns = [col for col in required_columns if col not in df.columns]
-
     if missing_columns:
         raise ValueError("DataFrame is missing required columns: " + ", ".join(missing_columns))
-
-    # Check if node_suffix exists in the DataFrame
-    has_node_suffix = "node_suffix" in df.columns
     
-    # Build 'node' column to df
-    if has_node_suffix:
+    # Build df['node'] based on available columns.
+    if "node_suffix" in df.columns:
+        # if node_suffix defined: <country>_<grid>_<node_suffix> 
         df['node'] = df.apply(
             lambda row: f"{row['country']}_{row['grid']}" + 
                         (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
             axis=1
         )
     else:
-        # If node_suffix column doesn't exist, just use country and grid
+        # If node_suffix column doesn't exist, <country>_<grid>
         df['node'] = df.apply(
             lambda row: f"{row['country']}_{row['grid']}",
             axis=1
         )
-    
+
     return df
 
 
-def build_unit_column(df):
+def build_unittype_unit_column(df, df_unittypedata):
     """
-    Add 'unit' column to df: 
-        * if unit_name_prefix defined: <country>_<unit_name_prefix>_<unittype>
+    Adds 'unittype' and 'unit' columns to df: 
+
+    unittype is retrieved from df_unittypedata by matching 
+    df_unittypedata['Generator_ID'] to df['generator_id'] in a case-insensitive manner.
+    
+    unit is constructed by following rules    
+        * if unit_name_prefix is defined: <country>_<unit_name_prefix>_<unittype>
         * else : <country>_<unittype>
-    unittype is generator_id without spaces
-    requires following columns: country, generator_id
-    optional column: unit_name_prefix
+    
+    Required columns in df: country, generator_id
+    Optional column in df: unit_name_prefix
     """
-    # Define the required columns
+    # Define and check the required columns
     required_columns = ["country", "generator_id"]
-
-    # Identify any missing columns
     missing_columns = [col for col in required_columns if col not in df.columns]
-
     if missing_columns:
         raise ValueError("DataFrame is missing required columns: " + ", ".join(missing_columns))
 
-    # Generate unittype from generator_id
-    df['unittype'] = df['generator_id'].str.replace(' ', '')
-
-    # Check if node_suffix exists in the DataFrame
-    has_unit_name_prefix = "unit_name_prefix" in df.columns
+    # Create a case-insensitive mapping from generator_id to unittype in df_unittypedata.
+    unit_mapping = df_unittypedata.set_index(df_unittypedata['generator_id'].str.lower())['unittype']
     
-    # Build 'node' column to df
-    if has_unit_name_prefix:
+    # Map the generator_id in df to the corresponding unittype using case-insensitive matching.
+    df['unittype'] = df['generator_id'].str.lower().map(unit_mapping)
+    
+    # Build df['unit'] based on available columns.
+    if "unit_name_prefix" in df.columns:
         df['unit'] = df.apply(
-            lambda row: f"{row['country']}" + 
-                        (f"_{row['unit_name_prefix']}" if pd.notnull(row['unit_name_prefix']) and row['unit_name_prefix'] != "" else "")
-                        +f"_{row['unittype']}",
+            lambda row: f"{row['country']}"
+                        + (f"_{row['unit_name_prefix']}" if pd.notnull(row['unit_name_prefix']) and row['unit_name_prefix'] != "" else "")
+                        + f"_{row['unittype']}",
             axis=1
         )
     else:
-        # If node_suffix column doesn't exist, just use country and grid
         df['unit'] = df.apply(
             lambda row: f"{row['country']}_{row['unittype']}",
             axis=1
         )
-    
-    return df   
+
+    return df  
 
 
 # ------------------------------------------------------
@@ -358,7 +354,7 @@ def filter_df_blacklist(df_input, df_name, filters):
 # ------------------------------------------------------
 # Main run function to process input data and create timeseries
 # ------------------------------------------------------
-def run(input_folder, config_file):
+def run(input_folder, config_file, input_excel_only=False):
     # Start the timer for the entire run.
     log_start = time.perf_counter()
 
@@ -385,6 +381,7 @@ def run(input_folder, config_file):
     scenario_alternatives = ast.literal_eval(config.get('inputdata', 'scenario_alternatives'))
     country_codes = ast.literal_eval(config.get('inputdata', 'country_codes'))
     exclude_grids = ast.literal_eval(config.get('inputdata', 'exclude_grids'))
+    exclude_nodes = ast.literal_eval(config.get('inputdata', 'exclude_nodes'))
     demanddata_files = ast.literal_eval(config.get('inputdata', 'demanddata_files'))
     transferdata_files = ast.literal_eval(config.get('inputdata', 'transferdata_files'))
     unittypedata_files = ast.literal_eval(config.get('inputdata', 'unittypedata_files'))
@@ -397,23 +394,31 @@ def run(input_folder, config_file):
 
     # Read and process input excels
     data_folder = os.path.join(input_folder, 'data_files')
-    df_demands   = process_dataset(data_folder, demanddata_files, 'demanddata')
-    df_transfers = process_dataset(data_folder, transferdata_files, 'transferdata')
-    df_unittypes  = process_dataset(data_folder, unittypedata_files, 'unittypedata') 
-    df_units  = process_dataset(data_folder, unitdata_files, 'unitdata') 
+    df_demanddata   = process_dataset(data_folder, demanddata_files, 'demanddata')
+    df_transferdata = process_dataset(data_folder, transferdata_files, 'transferdata')
+    df_unittypedata  = process_dataset(data_folder, unittypedata_files, 'unittypedata') 
+    df_unitdata  = process_dataset(data_folder, unitdata_files, 'unitdata') 
     df_remove_units  = process_dataset(data_folder, unitdata_files, 'remove', isMandatory=False) 
-    df_storages  = process_dataset(data_folder, storagedata_files, 'storagedata') 
-    df_fuels  = process_dataset(data_folder, fueldata_files, 'fueldata') 
-    df_emissions  = process_dataset(data_folder, emissiondata_files, 'emissiondata') 
-
+    df_storagedata  = process_dataset(data_folder, storagedata_files, 'storagedata') 
+    df_fueldata  = process_dataset(data_folder, fueldata_files, 'fueldata') 
+    df_emissiondata  = process_dataset(data_folder, emissiondata_files, 'emissiondata') 
+    
     # exclude grids
-    df_demands = filter_df_blacklist(df_demands, 'demand_files', {'grid': exclude_grids})
-    df_transfers = filter_df_blacklist(df_transfers, 'transfer_files', {'grid': exclude_grids})
+    df_demanddata = filter_df_blacklist(df_demanddata, 'demand_files', {'grid': exclude_grids})     
+    df_transferdata = filter_df_blacklist(df_transferdata, 'transfer_files', {'grid': exclude_grids})
 
-    # Build node and unit columns
-    df_demands = build_node_column(df_demands)
-    df_storages = build_node_column(df_storages)
-    df_remove_units = build_unit_column(df_remove_units)
+    # Build node columns
+    df_demanddata = build_node_column(df_demanddata)
+    df_storagedata = build_node_column(df_storagedata)
+
+    # exclude nodes
+    df_demanddata = filter_df_blacklist(df_demanddata, 'demand_files', {'node': exclude_nodes})  
+    df_storagedata = filter_df_blacklist(df_storagedata, 'storage_files', {'node': exclude_nodes})      
+
+    # Build unittype and unit columns
+    df_unitdata = build_unittype_unit_column(df_unitdata, df_unittypedata)
+    df_remove_units = build_unittype_unit_column(df_remove_units, df_unittypedata)
+
 
     # Loop over every combination of scenario and scenario year.
     for scenario, scenario_year, scenario_alternative in itertools.product(scenarios, scenario_years, scenario_alternatives or [None]):
@@ -429,25 +434,25 @@ def run(input_folder, config_file):
             scen_and_alt.extend(scenario_alternatives)
 
         # Process global input files to get the data for the current scenario and year.
-        df_f_unittypes = filter_df_whitelist(df_unittypes, 'techdata_files', {'scenario':scen_and_alt, 'year':scenario_year})     
-        df_f_fuels = filter_df_whitelist(df_fuels, 'fueldata_files', {'scenario':scen_and_alt, 'year':scenario_year})
-        df_f_emissions = filter_df_whitelist(df_emissions, 'emissiondata_files' , {'scenario':scen_and_alt, 'year':scenario_year})
-        df_f_transfers = filter_df_whitelist(df_transfers, 'transfer_files', {'scenario':scen_and_alt, 'year':scenario_year})
+        df_f_unittypedata = filter_df_whitelist(df_unittypedata, 'techdata_files', {'scenario':scen_and_alt, 'year':scenario_year})     
+        df_f_fueldata = filter_df_whitelist(df_fueldata, 'fueldata_files', {'scenario':scen_and_alt, 'year':scenario_year})
+        df_f_emissiondata = filter_df_whitelist(df_emissiondata, 'emissiondata_files' , {'scenario':scen_and_alt, 'year':scenario_year})
+        df_f_transferdata = filter_df_whitelist(df_transferdata, 'transfer_files', {'scenario':scen_and_alt, 'year':scenario_year})
 
         # Process country specific input files to get the data for the current scenario, year, and country.
-        df_f_demands = filter_df_whitelist(df_demands, 'demand_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
-        df_f_units = filter_df_whitelist(df_units, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})        
+        df_f_demanddata = filter_df_whitelist(df_demanddata, 'demand_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
+        df_f_unitdata = filter_df_whitelist(df_unitdata, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})        
         df_f_remove_units = filter_df_whitelist(df_remove_units, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})
-        df_f_storages = filter_df_whitelist(df_storages, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})  
+        df_f_storagedata = filter_df_whitelist(df_storagedata, 'unitcapacity_files', {'scenario':scen_and_alt, 'year':scenario_year, 'country': country_codes})  
 
         # remove duplicates. Keep the last value. This implicitly handles overwriting earlier values with the latest.
-        df_f_demands = keep_last_occurance(df_f_demands, ['country', 'grid', 'node'])
-        df_f_transfers = keep_last_occurance(df_f_transfers, ['from-to', 'grid'])
-        df_f_unittypes = keep_last_occurance(df_f_unittypes, ['generator_id'])
-        df_f_units = keep_last_occurance(df_f_units, ['country', 'generator_id', 'unit_name_prefix'])
-        df_f_storages = keep_last_occurance(df_f_storages, ['country', 'grid', 'node'])
-        df_f_fuels = keep_last_occurance(df_f_fuels, ['fuel'])
-        df_f_emissions = keep_last_occurance(df_f_emissions, ['emission'])
+        df_f_demanddata = keep_last_occurance(df_f_demanddata, ['country', 'grid', 'node'])
+        df_f_transferdata = keep_last_occurance(df_f_transferdata, ['from-to', 'grid'])
+        df_f_unittypedata = keep_last_occurance(df_f_unittypedata, ['generator_id'])
+        df_f_unitdata = keep_last_occurance(df_f_unitdata, ['country', 'generator_id', 'unit_name_prefix'])
+        df_f_storagedata = keep_last_occurance(df_f_storagedata, ['country', 'grid', 'node'])
+        df_f_fueldata = keep_last_occurance(df_f_fueldata, ['fuel'])
+        df_f_emissiondata = keep_last_occurance(df_f_emissiondata, ['emission'])
         
         # Create an output folder specific to the current scenario and year
         if scenario_alternative:
@@ -467,14 +472,16 @@ def run(input_folder, config_file):
 
         # Create the timeseries using the create_timeseries class.
         secondary_results = create_timeseries(timeseries_specs, input_folder, output_folder, 
-                                start_date, end_date, country_codes, scen_tags, 
-                                df_f_demands, log_start, write_csv_files
+                                start_date, end_date, 
+                                country_codes, scen_tags, exclude_grids, exclude_nodes, 
+                                df_f_demanddata, log_start, write_csv_files
                                 ).run()
 
         # Build input excel using the build_input_excel class.    
-        build_input_excel(input_folder, output_folder, country_codes, exclude_grids, scen_tags,
-                          df_f_transfers, df_f_unittypes, df_f_units, df_f_remove_units, df_f_storages,
-                          df_f_fuels, df_f_emissions, df_f_demands,
+        build_input_excel(input_folder, output_folder, 
+                          country_codes, scen_tags, exclude_grids, exclude_nodes, 
+                          df_f_transferdata, df_f_unittypedata, df_f_unitdata, df_f_remove_units, 
+                          df_f_storagedata, df_f_fueldata, df_f_emissiondata, df_f_demanddata,
                           secondary_results
                           ).run()
 
@@ -502,5 +509,8 @@ if __name__ == '__main__':
     
     input_folder = args['input_folder']
     filename = args['config_file']
+    # Extract input_excel_only; default is "False" if not provided.
+    # Convert string values like "True", "true", "1" into a boolean.
+    input_excel_only = args.get('input_excel_only', 'False').lower() in ('true', '1')
     
-    run(input_folder, filename)
+    run(input_folder, filename, input_excel_only)
