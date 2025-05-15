@@ -5,6 +5,10 @@
 
 # python specific subfolders
 /*/__pycache__
+/*/*/__pycache__
+
+# sub-folders under src_files/timeseries
+/src_files/timeseries/*/
 
 # GAMS specific
 *.gdx

@@ -11,13 +11,13 @@ This readme has the following main sections
 - [Running Backbone](#running-backbone)
 
 
-## Authors and acknowledgment
-* Jussi Ikäheimo - model development, time series, testing
-* Tomi J. Lindroos - model development, time series, testing
-* Anu Purhonen - time series
-* Miika Rämä - district heating data
-* Pauli Hiltinen - district heating data
-* Eric Harrison - testing
+## Authors and acknowledgments
+* Jussi Ikäheimo - Model development, time series, testing
+* Tomi J. Lindroos - Model development, time series, testing
+* Anu Purhonen - Time series
+* Miika Rämä - District heating data
+* Pauli Hiltunen - District heating data, testing
+* Eric Harrison - Testing
 
 
 ## License
@@ -27,10 +27,14 @@ This work is licenced under a Creative Commons Attribution-NonCommercial-ShareAl
 https://creativecommons.org/licenses/by-nc-sa/4.0/ 
 
 
+## Citation
+
+Ikäheimo, J., Lindroos, T.J., Purhonen, A., Rämä, M., Hiltunen, P., and Harrison, E. North European energy system model. https://github.com/vttresearch/north_european_model
+
+
 ## Support
 
 Contact the authors.
-
 
 
 ## Installing Backbone and the North European Model
@@ -54,6 +58,7 @@ The rest of the instructions are written assuming that the North European Model 
  * Right click the "north_european_model" folder and select "pull" under the tortoise git selection pane, click ok.
 
 Pulling after switching the branch guarantees that you have the latest version. 
+
 
 ## Updating Backbone and the North European Model
 
@@ -162,13 +167,15 @@ Inputs are build with a python script which is easiest to run with Miniconda han
  * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to Windows search bar), 
  * In Miniconda, go to folder `backbone\north_european_model\` by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
  * In Miniconda, activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
- * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py input_folder=src_files config_file=config_NT2025.ini`).
+ * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2025.ini`).
 
 
-At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~12 minutes, and has ~300 files. Writing some larger sets of GDX files might take 60-80secs and the code might seem stuck for those periods, but should eventually proceed.
+At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~9 minutes, and has ~300 files. Writing some larger sets of GDX files might take up to 60 seconds and the code might seem stuck for those periods, but should eventually proceed.
 
 The `config_NT2025.ini` writes output files to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
+
 You can alternatively run Backbone directly from the created output folder, see instructions from [Running Backbone](#running-backbone).
+
 
 ### Choosing VRE processor
 
@@ -234,9 +241,9 @@ Note: the included `scheduleInit.gms` and `changes.inc` files have a specific st
 
 Users can create their own config files and store them locally. Editing any of the files in git will cause version control issues with git and is not recommended.
 
-Python functions to build input data is called with syntax `python build_input_data.py input_folder=<directory> config_file=<filename>` where
- * `input_folder` is the directory for Excel data, large timeseries files and GAMS file templates. In the repository, the default folder is `src_files`.
- * `config_file` is a list of instruction to generate the data for the scenario. The repository currently shares following config files:
+Python functions to build input data is called with syntax `python build_input_data.py <input_folder> <config_file_name>` where
+ * `input_folder` is the directory for Excel data, large timeseries files, and GAMS file templates. In the repository, the default folder is `src_files`.
+ * `config_file_name` is a list of instruction to generate the data for the scenario. The repository currently shares following config files:
     * `config_NT2025.ini` for the **National Trends** scenario.
 	* `config_test.ini` for faster testing of the model.
 	* H2 heavy will be added soon.
@@ -265,5 +272,5 @@ Working command line options for `backbone.gms` would be, for example:
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
 * running the model directly from <output_folder>: `--input_dir='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
 
-Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager.
+Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 
