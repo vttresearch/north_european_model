@@ -1,0 +1,15 @@
+{
+    "name": "build_input_data",
+    "tooltype": "python",
+    "includes": [
+        "build_input_data_toolbox_wrapper.py"
+    ],
+    "description": "",
+    "inputfiles": [],
+    "inputfiles_opt": [],
+    "outputfiles": [
+        "toolbox_workflow/input/inputData.xlsx"
+    ],
+    "cmdline_args": [],
+    "includes_main_path": "../../.."
+}

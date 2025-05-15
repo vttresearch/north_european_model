@@ -1,0 +1,399 @@
+{
+    "project": {
+        "version": 13,
+        "description": "",
+        "settings": {
+            "enable_execute_all": true
+        },
+        "specifications": {
+            "Tool": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "../spineToolbox.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/convert_excel_to_gdx.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/copy_timeseries.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/build_input_data.json"
+                }
+            ],
+            "Exporter": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "../tools/export_to_bb.json"
+                }
+            ],
+            "Importer": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "../tools/import_from_gdx.json"
+                }
+            ],
+            "Data Transformer": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "../tools/transform_to_bb_sets.json"
+                }
+            ]
+        },
+        "connections": [
+            {
+                "name": "from Transform_to_BB_sets to Export_to_BB",
+                "from": [
+                    "Transform_to_BB_sets",
+                    "right"
+                ],
+                "to": [
+                    "Export_to_BB",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Transform_to_BB_sets": {
+                            "scenario_filter": {},
+                            "alternative_filter": {
+                                "Base": true
+                            }
+                        }
+                    },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Input data to Transform_to_BB_sets",
+                "from": [
+                    "Input data",
+                    "right"
+                ],
+                "to": [
+                    "Transform_to_BB_sets",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Input data": {
+                            "scenario_filter": {
+                                "asd": true
+                            },
+                            "alternative_filter": {
+                                "input_National Trends_2025": true
+                            }
+                        }
+                    },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Export_to_BB to Copy_timeseries",
+                "from": [
+                    "Export_to_BB",
+                    "right"
+                ],
+                "to": [
+                    "Copy_timeseries",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from convert_excel_to_gdx to Import_from_GDX",
+                "from": [
+                    "convert_excel_to_gdx",
+                    "right"
+                ],
+                "to": [
+                    "Import_from_GDX",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Import_from_GDX to Input data",
+                "from": [
+                    "Import_from_GDX",
+                    "right"
+                ],
+                "to": [
+                    "Input data",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Add data to convert_excel_to_gdx",
+                "from": [
+                    "Add data",
+                    "right"
+                ],
+                "to": [
+                    "convert_excel_to_gdx",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Copy_timeseries to Backbone",
+                "from": [
+                    "Copy_timeseries",
+                    "right"
+                ],
+                "to": [
+                    "Backbone",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from build_input_data to convert_excel_to_gdx",
+                "from": [
+                    "build_input_data",
+                    "right"
+                ],
+                "to": [
+                    "convert_excel_to_gdx",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Config to build_input_data",
+                "from": [
+                    "Config",
+                    "right"
+                ],
+                "to": [
+                    "build_input_data",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            }
+        ],
+        "jumps": []
+    },
+    "items": {
+        "Backbone": {
+            "type": "Tool",
+            "description": "",
+            "x": 266.95356392781554,
+            "y": -62.777443191509576,
+            "specification": "Backbone",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "literal",
+                    "arg": "--modelledDays=7"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--climateYear=2015"
+                },
+                {
+                    "type": "literal",
+                    "arg": "--forecasts=4"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Export_to_BB": {
+            "type": "Exporter",
+            "description": "",
+            "x": -5.912975620167174,
+            "y": -60.880572983364345,
+            "output_time_stamps": false,
+            "cancel_on_error": true,
+            "output_labels": [
+                {
+                    "in_label": "db_url@Transform_to_BB_sets",
+                    "out_label": "inputData.gdx"
+                }
+            ],
+            "specification": "Export_to_BB"
+        },
+        "Transform_to_BB_sets": {
+            "type": "Data Transformer",
+            "description": "",
+            "x": -127.63219679607047,
+            "y": -58.59441492394001,
+            "specification": "Transform_to_BB_sets"
+        },
+        "Input data": {
+            "type": "Data Store",
+            "description": "",
+            "x": -274.80391608172516,
+            "y": -57.50573111811137,
+            "url": {
+                "dialect": "sqlite",
+                "host": "",
+                "port": "",
+                "database": {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/items/input_data/bb_data_test.sqlite"
+                },
+                "schema": ""
+            }
+        },
+        "convert_excel_to_gdx": {
+            "type": "Tool",
+            "description": "",
+            "x": -516.2151834563517,
+            "y": -61.51273320777793,
+            "specification": "convert_excel_to_gdx",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "toolbox_workflow/input/inputData.xlsx"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Import_from_GDX": {
+            "type": "Importer",
+            "description": "",
+            "x": -401.7042313172171,
+            "y": -58.428459570670285,
+            "specification": "Import_from_GDX",
+            "cancel_on_error": false,
+            "on_conflict": "merge",
+            "file_selection": [
+                [
+                    "toolbox_workflow/*.gdx",
+                    true
+                ]
+            ]
+        },
+        "Copy_timeseries": {
+            "type": "Tool",
+            "description": "",
+            "x": 122.64462078112916,
+            "y": -61.96075314708334,
+            "specification": "copy_timeseries",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "inputData.gdx"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "build_input_data": {
+            "type": "Tool",
+            "description": "",
+            "x": -639.7258887381437,
+            "y": -130.63180420180873,
+            "specification": "build_input_data",
+            "execute_in_work": false,
+            "cmd_line_args": [
+                {
+                    "type": "resource",
+                    "arg": "<project>/src_files/config_NT2025.ini"
+                }
+            ],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "Config": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -768.0195416687312,
+            "y": -132.4138399810813,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "src_files/config_test.ini"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "src_files/config_NT2025.ini"
+                }
+            ],
+            "db_references": []
+        },
+        "Add data": {
+            "type": "Data Connection",
+            "description": "",
+            "x": -677.458185466565,
+            "y": 7.771381354186729,
+            "file_references": [],
+            "db_references": []
+        }
+    }
+}
