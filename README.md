@@ -156,6 +156,41 @@ Other time series data (Hydro, District heating, hydrogen, industry) are shared 
 
 Note: EV timeseries are still work-in-progress, but will be added.
 
+## (Optional) Installing and setting up a Spine Toolbox project
+
+Spine Toolbox is an open source Python package to manage data, scenarios and workflows for modelling and simulation.
+You can use the Spine Toolbox for the workflow management if you so choose.
+
+First install Spine-Toolbox:
+
+1. Install pipx. pipx helps in creating an isolated environment for Spine Toolbox to avoid package conflicts. Open a terminal and run
+
+ python -m pip install --user pipx
+
+After pipx has been installed, run
+
+ python -m pipx ensurepath
+
+2. Restart the terminal or re-login for the changes of the latest command to take effect.
+
+3. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
+
+ python -m pipx install spinetoolbox
+
+Open toolbox by typing: 
+
+spinetoolbox
+
+Go to:
+File -> Open project -> choose the northernEuropeanModel folder. You can see a spine toolbox logo next to it. If your north european model is installed under backbone, it is not enough to just choose the backbone folder as it is a separate toolbox project.
+
+To get the miniconda environment 'northEuropeanModel' running in toolbox, it needs to be set as the python kernel.
+Go to File -> Settings -> Tools. Under Python click Make Python Kernel. Choose the defaults.
+
+Take a copy of the BB_data.sqlite database from backbone folder. It is located in
+**backbone/.spinetoolbox/items/bb_data**
+You can put it anywhere you like.
+Go to the toolbox Design View and click the Input_data database editor. Choose the path to that copied file from the Data Store Properties window that opened to the right side.
 
 ## Building and copying input files for Backbone
 
