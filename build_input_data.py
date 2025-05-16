@@ -12,17 +12,13 @@ from src.build_input_excel import BuildInputExcel
 from datetime import datetime
 
  
-def main():
+def main(input_folder, config_file):
     # --- 1. setup ---
     # Timer to follow the progress
     start_time = time.time()
 
     # Check package versions
     check_dependencies()
-
-    # Parse CLI arguments 
-    input_folder, config_file = parse_sys_args()
-    print(f"\nLaunching pipelines defined in: {config_file}")
 
     # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
     config = load_config(config_file)
@@ -186,4 +182,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Parse CLI arguments 
+    input_folder, config_file = parse_sys_args()
+    print(f"\nLaunching pipelines defined in: {config_file}")
+    main(input_folder, config_file)

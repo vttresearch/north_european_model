@@ -361,6 +361,10 @@
             "execute_in_work": false,
             "cmd_line_args": [
                 {
+                    "type": "literal",
+                    "arg": "src_files"
+                },
+                {
                     "type": "resource",
                     "arg": "<project>/src_files/config_NT2025.ini"
                 }

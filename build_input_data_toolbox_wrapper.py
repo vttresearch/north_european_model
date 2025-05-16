@@ -4,16 +4,11 @@ import os
 import ast
 import configparser
 import build_input_data
+from src.utils import parse_sys_args
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment
-from openpyxl.worksheet.table import Table, TableStyleInfo
 
 if __name__ == '__main__':
-    config_file = sys.argv[1]
-    input_folder = "src_files"
-    filename = os.path.basename(config_file)
-
+    input_folder, config_file = parse_sys_args()
     #get the folder name
     config = configparser.ConfigParser()
     config.read(config_file)
@@ -27,7 +22,7 @@ if __name__ == '__main__':
         output_folder = os.path.join(f"{output_folder_prefix}_{scenarios[0]}_{str(scenario_years[0])}")
 
     #call the actual script
-    build_input_data.run(input_folder, filename)
+    build_input_data.main(input_folder, config_file)
     
     #copy the inputdata excel to another folder for workflow use
     shutil.copy(f'{output_folder}/inputData.xlsx', "./toolbox_workflow/input/inputData.xlsx")
