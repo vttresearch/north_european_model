@@ -224,6 +224,9 @@ def build_unittype_unit_column(
     # Add unittype column by mapping generator_id (converted to lowercase) to the corresponding unittype
     df['unittype'] = df['generator_id'].str.lower().map(unit_mapping)
 
+    # Fill in missing unittype with original generator_id (used as fallback)
+    df['unittype'] = df['unittype'].fillna(df['generator_id'])
+
     # Create unit column with optional prefix if available
     if "unit_name_prefix" in df.columns:
         # Apply function to each row: combine country and unittype, add prefix if it exists and is not empty
