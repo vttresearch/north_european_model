@@ -207,6 +207,7 @@ def build_unittype_unit_column(
     - The 'unittype' is determined by case-insensitive lookup in df_unittypedata
     - The 'unit' format is: "{country}_{unittype}" or "{country}_{unit_name_prefix}_{unittype}"
       when unit_name_prefix is present and not empty
+    - If 'generator_id' does not have any matching 'unittype', the code uses 'generator_id' instead of 'unittype'
     """
     # Return input data if empty unittypedata
     if df.empty or df_unittypedata.empty:
