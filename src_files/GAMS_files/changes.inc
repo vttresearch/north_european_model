@@ -189,6 +189,29 @@ ts_node(gn_tmp_, 'upwardLimit', ff, tt) = 0;
 
 
 
+
+* --------------------------------------------------------------------------------
+* temporary manual fixes
+* --------------------------------------------------------------------------------
+
+option group_tmp < ts_groupPolicy;
+loop(group_tmp,
+
+    option clear = gnu_tmp;
+
+    gnu_tmp(grid, node, unit)
+    $ {p_userconstraint(group_tmp, grid, node, unit, '-', 'v_gen')}
+    = yes;
+
+    tmp = sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'));
+    ts_groupPolicy(group_tmp, 'userConstraintRHS', t)
+        $ ts_groupPolicy(group_tmp, 'userConstraintRHS', t)
+        = min( ts_groupPolicy(group_tmp, 'userConstraintRHS', t),
+               sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'))*0.3 
+               );
+);
+
+
 * --------------------------------------------------------------------------------
 * project specific modifications
 * --------------------------------------------------------------------------------
