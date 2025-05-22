@@ -97,7 +97,7 @@ class SourceExcelDataPipeline:
 
         # remove duplicates. Keep the last value. This implicitly handles overwriting earlier values with the latest.
         self.df_demanddata   = keep_last_occurance(self.df_demanddata, ['country', 'grid', 'node'])
-        self.df_transferdata = keep_last_occurance(self.df_transferdata, ['from', 'to', 'grid'])
+        self.df_transferdata = keep_last_occurance(self.df_transferdata, ['from', 'from_suffix', 'to', 'to_suffix', 'grid'])
         self.df_unittypedata = keep_last_occurance(self.df_unittypedata, ['generator_id'])
         self.df_unitdata     = keep_last_occurance(self.df_unitdata, ['country', 'generator_id', 'unit_name_prefix'])
         self.df_storagedata  = keep_last_occurance(self.df_storagedata, ['country', 'grid', 'node'])

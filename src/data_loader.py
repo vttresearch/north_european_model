@@ -179,7 +179,7 @@ def build_from_to_columns(df: pd.DataFrame) -> pd.DataFrame:
 def build_unittype_unit_column(
     df: pd.DataFrame,
     df_unittypedata: pd.DataFrame
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Add 'unittype' and 'unit' columns to DataFrame based on generator mappings.
     
@@ -312,7 +312,7 @@ def filter_df_blacklist(
     df_input: pd.DataFrame,
     df_name: str,
     filters: Dict[str, Union[str, int, List[Union[str, int]]  ]  ]
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Filter DataFrame by excluding rows containing blacklisted values.
     
