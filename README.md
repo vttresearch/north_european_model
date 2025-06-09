@@ -52,25 +52,18 @@ The rest of the instructions are written assuming that the North European Model 
  * Copy "https://github.com/vttresearch/north_european_model" to **URL**.
  * Double check that the installation **Directory** is `c:\backbone\north_european_model` and not `c:\backbone\north_european_model\north_european_model` which tortoiseGit might suggest.
 
-**Switch to timeseries_update branch**
- * Right click the "north_european_model" folder and select "Switch/Checkout" under the tortoise git selection pane.
- * Select `timeseries_update` from available branches, click ok.
- * Right click the "north_european_model" folder and select "pull" under the tortoise git selection pane, click ok.
-
-Pulling after switching the branch guarantees that you have the latest version. 
-
 
 ## Updating Backbone and the North European Model
 
-For the moment, the updated North European Model works in `timeseries_update` and only with the Backbone `master` branch. 
+For the moment, the North European Model works only with the Backbone `master` branch. 
 
 **Check that you are in correct backbone branch**
  * Right click "backbone" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
  * Switch to `master` and pull the new version.
 
 **Check that you are in correct North European Model branch**
- * Right click "north_european_model" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
- * Switch to `timeseries_update` and pull the new version.
+ * Right click "north_european_model" folder and "Pull" new version with the TortoiseGit. 
+ * In case, you are still in "timeseries_update" branch, switch to `main` and pull the new version.
 
 **Note:** if you have edited any of the git files, switching and pulling will cause an error. In these cases you must revert all changes before.
  * Right click the folder and select "Revert" from tortoiseGit. 
@@ -295,7 +288,7 @@ Processed input files are written to `c:\Backbone\north_european_model\<output_f
 Run the model by running Backbone.gms in GAMS. The model supports the following command line options (use two hyphens in the beginning)
 
 * `--input_file_excel` is a mandatory parameter for defining the used input Excel file name (e.g. inputData.xlsx)
-* -`-climateYear` [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
+* `--climateYear` [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * `--modelledDays` [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * `--forecasts` [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
 * `--input_dir` allows setting a custom location for the input directory. The default value is 'input'. 
@@ -305,7 +298,7 @@ Working command line options for `backbone.gms` would be, for example:
 
 * Running the model with all default assumptions: `--input_file_excel=inputData.xlsx`
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
-* running the model directly from <output_folder>: `--input_dir='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
+* running the model directly from <output_folder>: `--input_dir=".\north_european_model\input_National Trends_2025" --input_file_excel=inputData.xlsx`
 
 Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 
