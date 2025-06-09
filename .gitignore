@@ -1,18 +1,58 @@
+# All folders except
+/*/
+!/src/
+!/src_files/
+!/.spinetoolbox/
 
-#entso-e VRE files which are used as input
-input/**/PECD*
+#toolbox stuff
+/.spinetoolbox/items
+/.spinetoolbox/local
 
-#output files
-#output/
+# python specific subfolders
+/*/__pycache__
+/*/*/__pycache__
+
+# sub-folders under src_files/timeseries
+/src_files/timeseries/*/
+
+# GAMS specific
+*.gdx
+*.gpr
+*.gsp
+*.lst
+*.lxi
+*.tmp
+*.put
+*.log*
+*.gchf
+*.lic
+/*/*.lic
+
+# Temporary files 
+*.~*
+*~$*
+*.tmp*
+/*/*.~*
+/*/*~$*
+/*/*.tmp
+
 
 # kde directory files
 .directory
-
-# Byte-compiled / optimized / DLL files
-__pycache__/
+.vscode
+*.code-workspace
 
 #temporary files
 *~lock*
 
-# configuration files
-starthere_my.jl
+# certain large input files instructed for separate download
+inputfiles/timeseries/elec_2030_National_Trends.xlsx
+inputfiles/timeseries/elec_2040_National_Trends.xlsx
+inputfiles/timeseries/PECD-MAF2019-wide-PV.csv
+inputfiles/timeseries/PECD-MAF2019-wide-WindOffshore.csv
+inputfiles/timeseries/PECD-MAF2019-wide-WindOnshore.csv
+src_files/timeseries/elec_2030_National_Trends.xlsx
+src_files/timeseries/elec_2040_National_Trends.xlsx
+src_files/timeseries/PECD-MAF2019-wide-PV.csv
+src_files/timeseries/PECD-MAF2019-wide-WindOffshore.csv
+src_files/timeseries/PECD-MAF2019-wide-WindOnshore.csv

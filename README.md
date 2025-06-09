@@ -1,169 +1,289 @@
 # North European energy system model
 
-This repository contains North European energy system model. The model is built for the Backbone modelling framework. 
+This repository contains the North European energy system model. The model is built for the Backbone modelling framework. 
 
 This readme has the following main sections
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
-- [Installing Julia, Conda, and setting up the environments](#installing-julia-conda-and-setting-up-the-environments)
+- [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
+- [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
 - [Downloading required time series files](#downloading-required-time-series-files)
 - [Building and copying input files for Backbone](#building-and-copying-input-files-for-backbone)
 - [Running Backbone](#running-backbone)
 
+
+## Authors and acknowledgments
+* Jussi Ikäheimo - Model development, time series, testing
+* Tomi J. Lindroos - Model development, time series, testing
+* Anu Purhonen - Time series
+* Miika Rämä - District heating data
+* Pauli Hiltunen - District heating data, testing
+* Eric Harrison - Testing
+
+
+## License
+
+This work is licenced under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) license.
+
+https://creativecommons.org/licenses/by-nc-sa/4.0/ 
+
+
+## Citation
+
+Ikäheimo, J., Lindroos, T.J., Purhonen, A., Rämä, M., Hiltunen, P., and Harrison, E. North European energy system model. https://github.com/vttresearch/north_european_model
+
+
+## Support
+
+Contact the authors.
+
+
 ## Installing Backbone and the North European Model
 
-Make sure you have Backbone installed. For the moment, the North European Model works only in the Backbone master branch. 
+**CHECKPOINT**: Install [tortoiseGit](https://tortoisegit.org/docs/tortoisegit/tgit-intro-install.html) if not yet installed.
 
-If you do not have Backbone, use git to clone the Backbone from [release-3.x](https://gitlab.vtt.fi/backbone/backbone/). Master is the default branch, but you can use git to [switch between braches](https://gitlab.vtt.fi/backbone/backbone/-/wikis/Versions).
+**CHECKPOINT**: You should have Backbone installed to e.g. c:\backbone. If not, first install the Backbone `master` branch (not e.g. the `release-3.x` branch). See installation instructions from https://gitlab.vtt.fi/backbone/backbone/-/wikis/home and then proceed to the following steps to install the North European model. 
 
-Use git to clone the repository of North European model. The easiest approach is to install North European model under Backbone, e.g. c:\backbone\north_european_model. The rest of the instructions are written assuming that the North European Model is installed under Backbone.
+The rest of the instructions are written assuming that the North European Model is installed under Backbone to `c:\backbone\north_european_model`, but both Backbone and North European Model of course support also other installation directories.
+
+**Installing with TortoiseGit**
+ * Open a file browser and go to the Backbone folder.
+ * Create a new folder "north_european_model" under the backbone folder (c:\backbone\north_european_model).
+ * Right click the `north_european_model` folder and select "clone" under the tortoise git selection pane.
+ * Copy "https://github.com/vttresearch/north_european_model" to **URL**.
+ * Double check that the installation **Directory** is `c:\backbone\north_european_model` and not `c:\backbone\north_european_model\north_european_model` which tortoiseGit might suggest.
+
+**Switch to timeseries_update branch**
+ * Right click the "north_european_model" folder and select "Switch/Checkout" under the tortoise git selection pane.
+ * Select `timeseries_update` from available branches, click ok.
+ * Right click the "north_european_model" folder and select "pull" under the tortoise git selection pane, click ok.
+
+Pulling after switching the branch guarantees that you have the latest version. 
 
 
-## Installing Julia, Conda, and setting up the environments
+## Updating Backbone and the North European Model
 
-Make sure you have [Julia](https://julialang.org/)  version >= 1.5 installed. Install the Julia dependencies by starting Julia interactive session (e.g. typing 'Julia' in command prompt) in **backbone/north_european_model/** folder and running following commands:
+For the moment, the updated North European Model works in `timeseries_update` and only with the Backbone `master` branch. 
 
-	using Pkg
-	Pkg.activate(".") 
-    Pkg.instantiate()
+**Check that you are in correct backbone branch**
+ * Right click "backbone" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
+ * Switch to `master` and pull the new version.
 
-Note: Building PyCall might be slow, but do not interrupt it. 
+**Check that you are in correct North European Model branch**
+ * Right click "north_european_model" folder and select "Switch/Checkout" from tortoiseGit. This shows the current branch. 
+ * Switch to `timeseries_update` and pull the new version.
 
-> _Tips for Windows users:_  You can navigate in the command prompt from one folder to another using `cd` commands, for example, `cd c:\backbone\north_european_model`. Instead of using the command prompt, you can also start Julia REPL and type, for example, `cd("c:/backbone/north_european_model")` to move to the right folder and continue by running the commands starting from `using Pkg`. As a third alternative, type `cmd` and press Enter in File Explorer when you are in your North European Model folder, and you don't need to move between folders before starting Julia interactive session. You can also start Julia REPL directly in the right folder by typing `julia` in File Explorer when you are in your North European Model folder. Note also that in some cases it may help to run Julia using admin rights.
+**Note:** if you have edited any of the git files, switching and pulling will cause an error. In these cases you must revert all changes before.
+ * Right click the folder and select "Revert" from tortoiseGit. 
+ * Check the file list and decide if you need backups from those files or not.
+ * Revert all changes.
 
-The recommend approach to install Python dependencies is to set up a new environment in [Anaconda](https://www.anaconda.com/products/distribution). New users might want to use [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html) instead of more complicated Anaconda. 
 
-Open the installed Anaconda Prompt, go to folder **backbone/north_european_model/timeseries/** (type, for example, `cd c:\backbone\north_european_model\timeseries`), and set up the environment by running the following commands
+## Installing Miniconda and setting up the environment
 
-    conda env create -f environment.yml
-    conda activate northEuropeanModel
+[Back to top](#North-European-energy-system-model)
 
-Installed environment does not contain [entsoe-py](https://github.com/EnergieID/entsoe-py) as conda does not automatically find it. After creating and activating the northEuropeanModel environment, install entsoe-py by following command:
+**CHECKPOINT**: Install [miniConda](https://www.anaconda.com/docs/getting-started/miniconda/install) if not yet installed. 
 
-    python -m pip install entsoe-py
-   
-ENTSO-E user-specific API token is needed for automated data queries from the ENTSO-E Transparency platform. To set up your API key
-* go to ENTSO-E transparency platform, https://transparency.entsoe.eu/dashboard/show
-* create a user account by clicking login at the top right of the page
-* request API by sending and email to transparency@entsoe.eu with “Restful API access” in the subject line
-* create file timeseries\Basic_processing\Elec_demand\input\API_token.txt and add the received token there. 
+These instructions are written for Miniconda, but users can of course choose other conda versions as well.
+  * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to windows search bar), 
+  * In Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
+  * In Miniconda, set up the environment by running the following commands:
+	
+    ```
+	conda env create -f environment.yml
+	conda activate northEuropeanModel
+	```
+	
 
-After these steps, you should have required softwares and environments ready. 
+The installed environment needs a few additional packages as Miniconda does not automatically find them. After creating and activating the `northEuropeanModel` environment, install the following additional packages in Miniconda by typing:
 
-Python scripts are tested with python 3.10. Python environment is tested with miniconda.
+```
+pip install gdxpds
+pip install gamsapi[transfer]==xx.y.z
+```
+
+where xx.y.z is your GAMS version. You can find the correct version by opening GAMS Studio, clicking **Help** -> **GAMS Licensing** -> check GAMS Distribution xx.y.z.
+
+After these steps, you should have the required software and environment ready. 
+
+NOTE: GamsAPI is possible to install also for much older GAMS versions, see https://github.com/NREL/gdx-pandas
+
+ 
 
 
 ## Downloading required time series files
 
 [Back to top](#North-European-energy-system-model)
 
-The North Europe model has extensive time series that are too large to be shared in this repository. Time series data are collected in two steps: for VRE (wind, solar) and others (electricity, hydro, and district heat). 
+The North European model has some time series source files that are too large to be shared in this repository. The following time series should be prepared:
+* **Electricity demand profiles**
+	* Download [Demand-Profiles.zip](https://2024-data.entsos-tyndp-scenarios.eu/files/scenarios-inputs/Demand-Profiles.zip) from ENTSO-E TYNDP 2024 scenarios. If the link is broken, try "demand profiles" from https://2024.entsos-tyndp-scenarios.eu/download/.
+	* Extract the following two files from the zip:
+		* `Demand Profiles\NT\Electricity demand profiles\2030_National Trends.xlsx`
+		* `Demand Profiles\NT\Electricity demand profiles\2040_National Trends.xlsx`
+	* Copy the files to `c:/backbone/north_european_model/src_files/timeseries`.
+	* Rename them to `elec_2030_National_Trends.xlsx`, and `elec_2040_National_Trends.xlsx` (note the underscore in "National_Trends").
+* **VRE time series from MAF2019** are from an older ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Copy the following files to `c:/backbone/north_european_model/src_files/timeseries/` folder: 
+	* `PECD-MAF2019-wide-PV.csv`
+	* `PECD-MAF2019-wide-WindOffshore.csv`
+	* `PECD-MAF2019-wide-WindOnshore.csv`
+* **The new, updated VRE time series from PECD** are from 2025 ([PECD database](https://cds.climate.copernicus.eu/datasets/sis-energy-pecd?tab=download)). 
+	* download timeseries from PECD portal with you preferred settings, e.g. 
+		* PV:
+			* Temporal period - historical
+			* Origin - ERA5 reanalysis
+			* Variable - Energy - Solar Energy - Solar generation capacity factor
+			* Spatial resolution - Region aggregated timeseries - SZON (Onshore bidding zones)
+		* Onshore:
+			* Temporal period - historical
+			* Origin - ERA5 reanalysis
+			* Variable - Energy - Wind Energy - Wind power onshore capacity factor
+			* Technological specification - onshore wind turbine - 30 (Existing technologies)
+			* Spatial resolution - Region aggregated timeseries - PEON (Pan-European Onshore Zones)
+		* Offshore
+			* Temporal period - historical
+			* Origin - ERA5 reanalysis
+			* Variable - Energy - Wind Energy - Wind power offshore capacity factor
+			* Technological specification - offshore wind turbine - 20 (Existing technologies)
+			* Spatial resolution - Region aggregated timeseries - PEOF (Pan-European Offshore Zones)
+		* Note: max 20 years can be downloaded at once. The full dataset (PV, onshore, offshore from 1982 to 2016) needs 6 downloads. Other time series limit the years to 1982-2016.
+	* Create the following three folders: `c:/backbone/north_european_model/src_files/timeseries/PECD-PV`, `timeseries/PECD-onshore`, and `timeseries/PECD-offshore` 
+	* Copy the timeseries csv files to these folders.
 
-**VRE time series** are from ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Following files are large and should be added in the **backbone/north_european_model/input/vre/** folder manually: 
-* PECD-MAF2019-wide-PV.csv
-* PECD-MAF2019-wide-WindOffshore.csv
-* PECD-MAF2019-wide-WindOnshore.csv
+See [Choosing VRE processor](#Choosing-VRE-processor) for how you can choose which VRE datasets to use.
 
-Note: that these are older results with very low capacity factors. There is an option to use newer results but the processing of the input files is not yet included in this repository.
+Other time series data (Hydro, District heating, hydrogen, industry) are shared in this repository and do not yet have alternative data sources.
 
-**Other time series data** are shared in this repository or queried from the ENTSO-E transparency platform. 
+Note: EV timeseries are still work-in-progress, but will be added.
 
-* Open Anaconda Prompt and activate the northEuropeanModel environment (`conda activate northEuropeanModel`)
-* Go to folder **backbone\north_european_model\timeseries\Basic_processing** (for example, `cd c:\backbone\north_european_model\timeseries\Basic_processing`)
-* Run **start_inputdata.py** (`python start_inputdata.py`) to create the uniform timeseries-files from the original input data. The run time is from 20 to 40 min and requires internet connection.
-* Run **copyIntermediateCSVs.py** (`python copyIntermediateCSVs.py`) to copy created intermediate files to **backbone\north_european_model\timeseries\input** folder. Note that these are not model input, but intermediate storages for downloaded data.
+## (Optional) Installing and setting up a Spine Toolbox project
 
-If needed, each subfolder in backbone\north_european_model\timeseries\basic_processing\ contains a separate readme file explaining the data processing and requirements in greater detail.
+Spine Toolbox is an open source Python package to manage data, scenarios and workflows for modelling and simulation.
+You can use the Spine Toolbox for the workflow management if you so choose.
 
-Note: If you receive errors from missing packages, API key, or other, see previous section "Installing Julia, Conda, and setting up the environments".
+First install Spine-Toolbox:
 
-Note: Basic processing has EV folder, but that is still work in progress and cannot be run with the currently shared files.
+1. Install pipx. pipx helps in creating an isolated environment for Spine Toolbox to avoid package conflicts. Open a terminal and run
 
+ python -m pip install --user pipx
+
+After pipx has been installed, run
+
+ python -m pipx ensurepath
+
+2. Restart the terminal or re-login for the changes of the latest command to take effect.
+
+3. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
+
+ python -m pipx install spinetoolbox
+
+Open toolbox by typing: 
+
+spinetoolbox
+
+Go to:
+File -> Open project -> choose the northernEuropeanModel folder. You can see a spine toolbox logo next to it. If your north european model is installed under backbone, it is not enough to just choose the backbone folder as it is a separate toolbox project.
+
+To get the miniconda environment 'northEuropeanModel' running in toolbox, it needs to be set as the python kernel.
+Go to File -> Settings -> Tools. Under Python click Make Python Kernel. Choose the defaults.
+
+Take a copy of the BB_data.sqlite database from backbone folder. It is located in
+**backbone/.spinetoolbox/items/bb_data**
+You can put it anywhere you like.
+Go to the toolbox Design View and click the Input_data database editor. Choose the path to that copied file from the Data Store Properties window that opened to the right side.
 
 ## Building and copying input files for Backbone
 
 [Back to top](#North-European-energy-system-model)
 
-The package contains functions for building 
-* the main excel input file for Backbone containing the energy system description (Julia), 
-* VRE time series csv files (Julia),
-* other time series csv files (Python)
+### Building input files
 
-Time series are built in two steps: for VRE (wind, solar) and others (electricity, hydro, and district heat). 
-
-### Running julia for bb-input and VRE timeseries
-
-The Julia script 'starthere.jl' in backbone\north_european_model folder runs three main functions 'convert_entsoe', 'convert_vre', and 'make_other_demands'. Check that all of these are active at the end of the file (not commented out).
-
-Note: each scenario currently needs a manual adjustment 
-* open backbone\north_european_model\starthere.jl
-* edit 'filenames["plantsourcefiles"]', 'filenames["linesourcefiles"]', 'scenario' and 'year'
-
-Run the script **starthere.jl**, e.g. by typing `julia` in command prompt in **backbone\north_european_model** folder and running the following commands:
-
-	using Pkg
-	Pkg.activate(".") 
-    Pkg.instantiate()
-    include("starthere.jl")
-	
-> _Tips for Windows users:_ For running Julia in a specific folder, see tips in [Installing Julia, Conda, and setting up the environments](#installing-julia-conda-and-setting-up-the-environments).
-
-In certain cases, Julia's PyCall might use different python version that does not find all packages. If julia crashes complaining, e.g. that pandas is not found, run 
-
-	using PyCall
-	pyimport_conda("pandas", "pandas")
-
-And then rerun starthere.jl:
-
-    include("starthere.jl")
-
-By default, the output files in backbone\north_european_model\output will be 
-* bb_input1-3x.xlsx
-* bb_ts_cf_io.csv
-* bb_ts_cf_io_10p.csv
-* bb_ts_cf_io_50p.csv
-* bb_ts_cf_io_90p.csv
-* bb_ts_influx_other.csv
-
-Copy these files to **backbone\input** folder.
+Inputs are build with a python script which is easiest to run with Miniconda handling the packages and environments.
+ * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to Windows search bar), 
+ * In Miniconda, go to folder `backbone\north_european_model\` by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
+ * In Miniconda, activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
+ * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2025.ini`).
 
 
-### Running python for other timeseries
+At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~9 minutes, and has ~300 files. Writing some larger sets of GDX files might take up to 60 seconds and the code might seem stuck for those periods, but should eventually proceed.
 
-Open Anaconda Prompt and activate the northEuropeModel environment (`conda activate northEuropeanModel`). Then
+The `config_NT2025.ini` writes output files to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
 
-* Go to folder **backbone\north_european_model\timeseries** (for example, `cd c:\backbone\north_european_model\timeseries`)
-* Run **start_modelform.py** (`python start_modelform.py`) to convert intermediate timeseries files to the correct model format. 
-* Output csv files are printed to **backbone\north_european_model\timeseries\output** folder. Copy these files to **backbone\input**
-
-At the time of writing, the total size of files from Julia and Python are slightly below 2 Gb. 
-
-Note: electricity time series for each scenario currently needs a manual adjustment 
-* open north_european_model\timeseries\Basic_processing\Elec_demand\Elec_demand_timeseries.py
-* edit 'scenario' and 'year'
+You can alternatively run Backbone directly from the created output folder, see instructions from [Running Backbone](#running-backbone).
 
 
-### Additional data outside julia generated main input file
+### Choosing VRE processor
 
-While we are working on the input data to be comprehensive and automated, there are still some data that you need to add manually.
+Current `config_NT2025.ini` is using MAF2019 timeseries and `config_test.ini` the new PECD timeseries. It is not recommended to edit these files, but instead take a copy, rename it, and edit your own file.
 
-* Copy bb_input_addData1.xlsx file from .\north_european_model\manual_additions\ to backbone\input folder
-* If using "H2 heavy" scenario, copy bb_input_addData2-h2HeavyOnly.xlsx from .\north_european_model\manual_additions\ to backbone \input folder and rename it to bb_input_addData2.xlsx
+Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The default configuration for MAF2019 processor for PV looks like this:
 
-The updated changes.inc reads these additional data files and integrates them to the main input data. *bb_input_addData1.xlsx* is intended for all scenarios and *bb_input_addData2-h2HeavyOnly.xlsx* for H2 heavy only, and requires renaming.
+	'PV': {
+		'processor_name': 'VRE_MAF2019',
+		'bb_parameter': 'ts_cf',
+  		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+		'custom_column_value': {'flow': 'PV'},
+		'gdx_name_suffix': 'PV',
+		'calculate_average_year': True,
+		'rounding_precision': 5,
+		'input_file': 'PECD-MAF2019-wide-PV.csv',
+		'attached_grid': 'elec'
+	},
+
+and the default configuration for the new PECD processor for onshore wind like this:
+
+	'wind_onshore': {
+		'processor_name': 'VRE_PECD',
+		'bb_parameter': 'ts_cf',
+		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+		'custom_column_value': {'flow': 'onshore'},
+		'gdx_name_suffix': 'wind_onshore',
+		'calculate_average_year': True,
+		'rounding_precision': 5,
+		'input_file': 'PECD-onshore/',   # folder, not file
+		'attached_grid': 'elec'
+	},
+
+It is possible to choose between these by copying the examples from either `config_NT2025.ini` or `config_test.ini` to your own config file.
+
+
+### Copying input files to c:\backbone\input
+
+The default use case often is the copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
+
+An alternative approach is to run the model directly from `<output_folder>` by giving the `--input_folder='.\north_european_model\<output_folder>'` command line option for Backbone.
+
+
+### Checking run specification files
+
+Users might want the check the contents of following files, but this is not needed if the default settings are ok.
+
+The script automatically copies the following run specification files from `src_files\GAMS_files` to `<output_folder>`, and the user is free to edit them afterwards. In most cases, users do not need to edit these at all.
+* `1_options.gms` - some solver settings documented inside the file
+* `timeAndSamples.inc` - sets defining timestep and forecast domains in Backbone 
+* `modelsInit_example.gms` - a default modelsInit file calling scheduleInit.gms
+* `scheduleInit.gms` - a tailored scheduleInit file for the Northern European Backbone
+* `changes.inc` - reads possible additional excel data, reads timeseries gdx files, and allows users to add their own project specific changes to the end of the file
+
+The python script constructs following files
+* `import_timeseries.inc` - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
+
+Note: the included `scheduleInit.gms` and `changes.inc` files have a specific structure to make them work with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to them.
 
 
 
-### Copying run specification files
+### Building own config files
 
+Users can create their own config files and store them locally. Editing any of the files in git will cause version control issues with git and is not recommended.
 
-A working Backbone model requires certain run specification files for GAMS
+Python functions to build input data is called with syntax `python build_input_data.py <input_folder> <config_file_name>` where
+ * `input_folder` is the directory for Excel data, large timeseries files, and GAMS file templates. In the repository, the default folder is `src_files`.
+ * `config_file_name` is a list of instruction to generate the data for the scenario. The repository currently shares following config files:
+    * `config_NT2025.ini` for the **National Trends** scenario.
+	* `config_test.ini` for faster testing of the model.
+	* H2 heavy will be added soon.
 
-* Use a suitable **modelsInit.gms** and **scheduleInit.gms** file, for example, copy **modelsInit_example.gms** and **scheduleInit_example.gms** from backbone\north_european_model\GAMS_files to **backbone\input** folder and rename them to modelsInit.gms and scheduleInit.gms. 
-* Copy **1_options.gms**, **changes.inc** and **timeandsamples.inc** from backbone\north_european_model\GAMS_files to **backbone\input** folder. (Note: If 1_options.gms is missing, copy temp_1_options.gms from backbone\inputTemplates to backbone\input and rename it to 1_options.gms.)
-
-Note: Included scheduleInit.gms file has a specific structure so that it works with *tsYear* and *modelledDays* parameters. If using your own file, adapt a similar structure to the file.
-
-Note: changes.inc does additional processing of input data, see the content and introduction at the beginning of the file. User can add their own project specific changes to the end of the file
+Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where the output folder name is a combination of `<output_folder_prefix>_<scenario>_<year>_<alternative>`, defined in the called config file.
 
 
 
@@ -172,68 +292,20 @@ Note: changes.inc does additional processing of input data, see the content and 
 
 [Back to top](#North-European-energy-system-model)
 
-The Model is run in two steps: 
-* preprocessTimeseries.gms handles certain heavier timeseries calculations by selecting the wanted year, amount of forecasts, etc. The file is located at backbone\north_european_model and installed as a part of the North European model
-* backbone.gms runs the actual optimization. The file is located at the backbone root folder and installed as a part of Backbone.
-
-
-### Timeseries preprocessing
-
-Copy preprocessTimeseries.gms from backbone\north_european_model to backbone. Run preprocessTimeseries.gms from GAMS with the following options
-* **--input_file_excel** is a mandatory parameter for both defining the used input excel file name (e.g. bb_input1-3x.xlsx)
-* --modelYear [2025, 2030]. Default 2025. This parameter currently two options and impacts only district heating demand. Generation and transfer capacities for different model years are changed in the starthere.jl
-* --tsYear [0, 2011-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
-* --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling. 
-* --input_dir=< directory >. Default input. Allows custom locations of input directory.
-
-
-Working command line options for preprocessTimeseries.gms would be, for example:
-
-	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 
-	--input_file_excel=bb_input1-3x.xlsx --tsYear=2015 --modelYear=2030
-
-The preprocessTimeseries.gms program writes ts_cf.gdx, ts_influx.gdx, and ts_node.gdx to input directory (c:\backbone\input\ in these instructions).
-
-The backbone\north_european_model folder contains timeseries-for-2015.cmd that can be run from file explorer. You can also copy it to the same folder and rename it, e.g. to timeseries-for-2015-myversion.cmd. Then you can edit it and run it without modifying a file that is tracked by git. Note that timeseries-for-2015.cmd assumes that north_european_model is located in the backbone root folder.
-
-*Note:* preprocessTimeseries.gms needs to be rerun only when changing timeseries year.
-
-*Note:* preprocessTimeseries.gms calls csv2gdx and some older versions of csv2gdx do not support very long time series. In this case, install also a more recent GAMS and manually add a hard coded file path to preprocessTimeseries.gms, e.g. converting `$call 'csv2gdx ...` to `$call 'c:\GAMS\47\csv2gdx ...`
-
-
-### Running the optimization
-
 Run the model by running Backbone.gms in GAMS. The model supports the following command line options (use two hyphens in the beginning)
 
-* **--input_file_excel** is a mandatory parameter for both defining the used input excel file name (e.g. bb_input1-3x.xlsx)
-* --modelledDays [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
-* --forecasts [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
-* --input_dir=< directory >. Default input. Allows custom locations of input directory.
+* `--input_file_excel` is a mandatory parameter for defining the used input Excel file name (e.g. inputData.xlsx)
+* -`-climateYear` [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
+* `--modelledDays` [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
+* `--forecasts` [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
+* `--input_dir` allows setting a custom location for the input directory. The default value is 'input'. 
 
 
-Working command line options for backbone.gms would be, for example:
+Working command line options for `backbone.gms` would be, for example:
 
-	--input_file_excel=bb_input1-3x.xlsx   running the selected timeseries year, full year run
-	--input_file_excel=bb_input1-3x.xlsx --modelledDays=7     running the selected timeseries year, 1 week test
+* Running the model with all default assumptions: `--input_file_excel=inputData.xlsx`
+* running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
+* running the model directly from <output_folder>: `--input_dir='.\north_european_model\input_National Trends_2025' --input_file_excel=inputData.xlsx `
 
-The run will abort if ts_cf.gdx, ts_influx.gdx, and ts_node.gdx cannot be found from the input directory
-
-Results are written to c:\backbone\output\results.gdx
-
-
-## Support
-
-[Back to top](#North-European-energy-system-model)
-
-Contact the authors.
-
-## Authors and acknowledgment
-* Jussi Ikäheimo - model development, time series, testing
-* Tomi J. Lindroos - time series, testing
-* Anu Purhonen - time series
-* Miika Rämä - district heating data
-* Eric Harrison - testing
-
-## License
-To be specified.
+Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 

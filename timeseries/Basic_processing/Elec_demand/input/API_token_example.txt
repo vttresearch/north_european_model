@@ -1,1 +1,0 @@
-Write your Entso-e API token here and rename the file to API_token.txt
