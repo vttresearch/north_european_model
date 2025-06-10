@@ -261,7 +261,7 @@ The script automatically copies the following run specification files from `src_
 The python script constructs following files
 * `import_timeseries.inc` - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
 
-Note: the included `scheduleInit.gms` and `changes.inc` files have a specific structure to make them work with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to them.
+**Note:** The included `scheduleInit.gms` and `changes.inc` files have a specific structure to make them work with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to them.
 
 
 
@@ -293,12 +293,13 @@ Run the model by running Backbone.gms in GAMS. The model supports the following 
 * `--forecasts` [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
 * `--input_dir` allows setting a custom location for the input directory. The default value is 'input'. 
 
-
 Working command line options for `backbone.gms` would be, for example:
 
 * Running the model with all default assumptions: `--input_file_excel=inputData.xlsx`
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
 * running the model directly from <output_folder>: `--input_dir=".\north_european_model\input_National Trends_2025" --input_file_excel=inputData.xlsx`
+
+**Note:** Use " instead of ' when writing e.g. folder names with spaces. Single ' does not work in many workflows.
 
 Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 
