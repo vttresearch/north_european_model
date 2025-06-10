@@ -299,7 +299,7 @@ Working command line options for `backbone.gms` would be, for example:
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
 * running the model directly from <output_folder>: `--input_dir=".\north_european_model\input_National Trends_2025" --input_file_excel=inputData.xlsx`
 
-**Note:** Use " instead of ' when writing e.g. folder names with spaces. Single ' does not work in many workflows.
+**Note:** Use " instead of ' when writing e.g. folder names with spaces. For example, --input_dir='.\dir with spaces' does not work in many workflows, but --input_dir=".\dir with spaces" should work.
 
 Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 
