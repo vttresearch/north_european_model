@@ -155,7 +155,7 @@ def main(input_folder, config_file):
         log_path = output_folder / "summary.log"
         
         if cache_manager.topology_changed:
-            # If full rerun, remove import_timeseries.inc and start a new log
+            # If full rerun, remove summary.log and start a new log
             log_path.unlink(missing_ok=True)
             log_status(f"Writing a new log to {log_path}", log_messages, level="run", add_empty_line_before=True)
         else:
