@@ -38,7 +38,12 @@ class CacheManager:
         self.input_file_folder = Path(input_folder) / "data_files"
         self.config = config
 
-        # storing specific rerun switches
+        # source code related rerun switches
+        self.source_data_pipeline_code_updated = False
+        self.timeseries_pipeline_code_updated = False
+        self.bb_excel_pipeline_code_updated = False
+
+        # config file related rerun switches
         self.topology_changed = False
         self.date_range_expanded = False
         self.csv_writer_requested = False
@@ -56,6 +61,41 @@ class CacheManager:
     def run(self) -> list[str]:
         validation_log = []
 
+        # Check source excel data pipeline code files
+        files = [
+            Path("./src/pipeline/source_excel_data_pipeline.py"),
+            Path("./src/data_loader.py")
+        ]
+        cache_name = "source_data_pipeline_hashes.json"
+        self.source_data_pipeline_code_updated = self.check_source_code_changes(files, cache_name)
+        if self.source_data_pipeline_code_updated:
+            log_status('Source excel data pipeline code updated, rerunning all timeseries and generating new input excel for Backbone.', validation_log, level="run")
+
+        # Check timeseries pipeline code files
+        files = [
+            Path("./src/pipeline/timeseries_pipeline.py"),
+            Path("./src/pipeline/timeseries_processor.py"),
+            Path("./src/GDX_exchange.py")
+        ]
+        cache_name = "timeseries_pipeline_hashes.json"
+        self.timeseries_pipeline_code_updated = self.check_source_code_changes(files, cache_name)
+        if self.timeseries_pipeline_code_updated:
+            log_status('Timeseries pipeline code updated, rerunning all timeseries and generating new input excel for Backbone.', validation_log, level="run")
+
+        # Check BB input excel pipeline code files
+        files = [
+            Path("./src/pipeline/bb_excel_context.py"),
+            Path("./src/build_input_excel.py"),
+            Path("./src/excel_exchange.py")
+        ]
+        cache_name = "bb_excel_pipeline_hashes.json"
+        self.bb_excel_pipeline_code_updated = self.check_source_code_changes(files, cache_name)
+        if self.bb_excel_pipeline_code_updated:
+            log_status('BB input excel pipeline code updated, generating new input excel for Backbone.', validation_log, level="run")
+        
+
+
+
         # Checking changes since previous run
         log = self.validate_topology(self.config)
         validation_log.extend(log)
@@ -69,26 +109,30 @@ class CacheManager:
         log = self.validate_csv_writer(self.config)
         validation_log.extend(log)
 
-        self.rerun_all_ts = self.topology_changed or self.date_range_expanded or self.csv_writer_requested
+        self.rerun_all_ts = (self.topology_changed  
+                            or self.date_range_expanded 
+                            or self.csv_writer_requested
+                            or self.source_data_pipeline_code_updated
+                            or self.timeseries_pipeline_code_updated
+                            )
         log = self.validate_timeseries(self.config, self.rerun_all_ts, self.demand_files_changed)
         validation_log.extend(log)
 
         # Save current config
         self.save_structural_config(self.config)
 
+
+
         # Checking if source excels should be re-imported
         self.reimport_source_excels = (self.topology_changed
                                        or self.demand_files_changed
                                        or self.other_input_files_changed
                                        or self.rerun_all_ts
+                                       or self.bb_excel_pipeline_code_updated
         )        
 
         # Checking if BB input excel needs to be rebuilt
-        self.rebuild_bb_excel = (self.topology_changed
-                                 or self.demand_files_changed
-                                 or self.other_input_files_changed
-                                 or self.rerun_all_ts
-        )
+        self.rebuild_bb_excel = self.reimport_source_excels
 
         return validation_log
 
@@ -150,6 +194,37 @@ class CacheManager:
             log_status('Config file now wants to print csv files, rerunning all timeseries.', validation_log, level="run")
 
         return validation_log
+
+
+    def check_source_code_changes(self, files: list[Path], cache_name: str) -> bool:
+        """
+        Check if any of the given source code files have changed since the last run.
+
+        This method computes the current hash of each specified file, compares it to the
+        previously cached hash values (stored under a specified filename), and returns
+        True if any differences are found. It updates the cached hashes regardless.
+
+        Args:
+            files (list[Path]): List of source file paths to monitor for changes.
+            cache_name (str): Filename (within cache folder) to store the file hash record.
+
+        Returns:
+            bool: True if any file has changed since the last check, otherwise False.
+        """
+        # Compute current hashes for the specified files
+        current_hashes = {str(f): compute_file_hash(f) for f in files}
+
+        # Load previously stored hashes from cache
+        hash_store_path = self.cache_folder / cache_name
+        previous_hashes = self.load_json(hash_store_path)
+
+        # Determine if any file has changed by comparing hashes
+        changed = any(previous_hashes.get(str(f)) != h for f, h in current_hashes.items())
+
+        # Update cache with current hashes
+        self.save_json(hash_store_path, current_hashes)
+
+        return changed
 
 
     def validate_input_files(self, config: dict, input_folder: Path) -> list[str]:
