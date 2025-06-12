@@ -62,9 +62,9 @@ $ifthen.addData1 exist '%input_dir%/inputData_add1.xlsx'
     //    /^[$]/!d; - deletes any line that does not start with a dollar sign.
     //    /^\$LOAD add_/d; - drops any line starting with $LOAD add_.
     //    s/\$LOAD.. /\$LOADDCM /I - replaces occurrences of $LOAD followed by any two characters with $LOADDCM (case-insensitive).
-    $$hiddencall sed %QTE%/^[$]/!d; /^\$LOAD add_/d; s/\$LOAD.. /\$LOADDCM /I%QTE%  "%input_dir%/inputData_add1.inc" > "%input_dir%/inputData_add1.inc"
-    // importing data from the input data gdx as specified by the %inputDataInc_%
-    $$INCLUDE %inputDataInc_%
+    $$hiddencall sed %QTE%/^[$]/!d; /^\$LOAD add_/d; s/\$LOAD.. /\$LOADDCM /I%QTE%  "%input_dir%/inputData_add1.inc" > "%input_dir%/inputData_add1_.inc"
+    // importing data to GAMS
+    $$INCLUDE "%input_dir%/inputData_add1_.inc"
     // closing the input file
     $$gdxin
 
@@ -91,9 +91,9 @@ $ifthen.addData2 exist '%input_dir%/inputData_add2.xlsx'
     //    /^[$]/!d; - deletes any line that does not start with a dollar sign.
     //    /^\$LOAD add_/d; - drops any line starting with $LOAD add_.
     //    s/\$LOAD.. /\$LOADDCM /I - replaces occurrences of $LOAD followed by any two characters with $LOADDCM (case-insensitive).
-    $$hiddencall sed %QTE%/^[$]/!d; /^\$LOAD add_/d; s/\$LOAD.. /\$LOADDCM /I%QTE%  "%input_dir%/inputData_add2.inc" > "%input_dir%/inputData_add2.inc"
-    // importing data from the input data gdx as specified by the %inputDataInc_%
-    $$INCLUDE %inputDataInc_%
+    $$hiddencall sed %QTE%/^[$]/!d; /^\$LOAD add_/d; s/\$LOAD.. /\$LOADDCM /I%QTE%  "%input_dir%/inputData_add2.inc" > "%input_dir%/inputData_add2_.inc"
+    // importing data to GAMS
+    $$INCLUDE "%input_dir%/inputData_add2_.inc"
     // closing the input file
     $$gdxin
 
@@ -194,6 +194,7 @@ ts_node(gn_tmp_, 'upwardLimit', ff, tt) = 0;
 * temporary manual fixes
 * --------------------------------------------------------------------------------
 
+// setting hydro power hourly minimum generation to min(timeseries data, 30% from capacity)
 option group_tmp < ts_groupPolicy;
 loop(group_tmp,
 
@@ -210,6 +211,36 @@ loop(group_tmp,
                sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'))*0.3 
                );
 );
+
+
+
+// setting cautious forecasts for hydro power nodes with timeseries downward limit
+option gn_tmp < ts_node;
+ts_node(gn_tmp, 'upwardLimit', 'f01', t) $ ts_node(gn_tmp, 'upwardLimit', 'f00', t) = ts_node(gn_tmp, 'upwardLimit', 'f00', t);
+ts_node(gn_tmp, 'upwardLimit', 'f02', t) $ ts_node(gn_tmp, 'upwardLimit', 'f00', t) = ts_node(gn_tmp, 'upwardLimit', 'f00', t) * 0.9;
+ts_node(gn_tmp, 'upwardLimit', 'f03', t) $ ts_node(gn_tmp, 'upwardLimit', 'f00', t) = ts_node(gn_tmp, 'upwardLimit', 'f00', t) * 1.1;
+
+ts_node(gn_tmp, 'downwardLimit', 'f01', t) $ ts_node(gn_tmp, 'downwardLimit', 'f00', t) = ts_node(gn_tmp, 'downwardLimit', 'f00', t);
+ts_node(gn_tmp, 'downwardLimit', 'f02', t) $ ts_node(gn_tmp, 'downwardLimit', 'f00', t) = ts_node(gn_tmp, 'downwardLimit', 'f00', t) * 1.1;
+ts_node(gn_tmp, 'downwardLimit', 'f03', t) $ ts_node(gn_tmp, 'downwardLimit', 'f00', t) = ts_node(gn_tmp, 'downwardLimit', 'f00', t) * 0.9;
+
+
+
+
+// Increasing storage start levels for psOpen and reservoir hydro
+option clear = gn_tmp;
+gn_tmp(grid, node) 
+    $ {[sameAs(grid, 'psOpen') or sameAs(grid, 'reservoir')]
+       and p_gn(grid, node, 'boundStart') = 1
+       and p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant') > 0
+       }
+    = yes;
+p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant')
+    = max(0.9 * p_gnBoundaryPropertiesForStates(gn_tmp, 'upwardLimit', 'constant'),
+          0.9 * ts_node(gn_tmp, 'upwardLimit', 'f00', 't000001')
+          );
+
+
 
 
 * --------------------------------------------------------------------------------
