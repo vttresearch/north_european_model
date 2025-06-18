@@ -198,7 +198,7 @@ class CacheManager:
         new_start = parse(config["start_date"])
         new_end = parse(config["end_date"])
 
-        self.date_range_expanded = new_start < old_start or new_end > old_end
+        self.date_range_expanded = new_start != old_start or new_end != old_end
 
         # Printing to log
         validation_log = []
