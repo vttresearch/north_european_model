@@ -2,8 +2,8 @@ from pathlib import Path
 from src.data_loader import process_dataset
 from src.data_loader import filter_df_blacklist, filter_df_whitelist, keep_last_occurance
 from src.data_loader import build_node_column, build_from_to_columns, build_unittype_unit_column
-from src.data_loader import fill_numeric_nan, filter_nonzero_numeric_rows
-from src.utils import log_status
+from src.data_loader import filter_nonzero_numeric_rows
+
 
 
 class SourceExcelDataPipeline:
