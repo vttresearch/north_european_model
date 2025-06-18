@@ -1514,10 +1514,14 @@ class BuildInputExcel:
             p_gnu_io = pd.DataFrame() 
         if not p_gnu_io.empty:
             # Filter out certain units, grids, and nodes
-            p_gnu_io, warning_log = self.remove_rows_by_values(p_gnu_io, 'unit', self.df_remove_units, printWarnings=True)
-            if warning_log != []: self.builder_logs.extend(warning_log)
-            p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'grid', self.exclude_grids)
-            p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'node', self.exclude_nodes)
+            if not self.df_remove_units.empty:
+                p_gnu_io, warning_log = self.remove_rows_by_values(p_gnu_io, 'unit', self.df_remove_units, printWarnings=True)
+            if warning_log != []: 
+                self.builder_logs.extend(warning_log)
+            if self.exclude_grids:
+                p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'grid', self.exclude_grids)
+            if self.exclude_nodes:
+                p_gnu_io = self.remove_units_by_excluding_col_values(p_gnu_io, 'node', self.exclude_nodes)
             # Create flat version for easier use in other functions
             p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
         else:
