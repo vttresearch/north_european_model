@@ -20,6 +20,10 @@ def main(input_folder, config_file):
     # Check package versions
     check_dependencies()
 
+    # Reset workflow_run_successfully
+    workflow_run_successfully = False
+
+
 
     # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
     config = load_config(config_file)
@@ -69,11 +73,6 @@ def main(input_folder, config_file):
 
         # Run cache manager to check which parts of code need rerunning, pick logs to log messages
         log_messages.extend(cache_manager.run())
-
-        # Reset workflow_run_successfully
-        workflow_run_successfully = False
-        status_dict = {"workflow_run_successfully": workflow_run_successfully}
-        cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # if full rerun, clear all files from output folder, keep subfolders and their files
         if cache_manager.full_rerun:
