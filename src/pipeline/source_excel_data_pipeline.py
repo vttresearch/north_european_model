@@ -105,14 +105,5 @@ class SourceExcelDataPipeline:
         self.df_fueldata     = keep_last_occurance(self.df_fueldata, ['fuel'])
         self.df_emissiondata = keep_last_occurance(self.df_emissiondata, ['emission'])
 
-        # fill NaN from numerical columns
-        self.df_demanddata   = fill_numeric_nan(self.df_demanddata  , value=0.0)
-        self.df_transferdata = fill_numeric_nan(self.df_transferdata, value=0.0)
-        self.df_unittypedata = fill_numeric_nan(self.df_unittypedata, value=0.0)
-        self.df_unitdata     = fill_numeric_nan(self.df_unitdata    , value=0.0)
-        self.df_storagedata  = fill_numeric_nan(self.df_storagedata , value=0.0)
-        self.df_fueldata     = fill_numeric_nan(self.df_fueldata    , value=0.0)
-        self.df_emissiondata = fill_numeric_nan(self.df_emissiondata, value=0.0)
-
         # Remove zero rows from demanddata
         self.df_demanddata = filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])

@@ -217,7 +217,7 @@ def build_unittype_unit_column(
     required_columns = ["country", "generator_id"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        raise ValueError(f"DataFrame is missing required columns: {', '.join(missing_columns)}")
+        raise ValueError(f"Remove units dataFrame is missing required columns: {', '.join(missing_columns)}. Check all unitdata_files.")
 
     # Create a mapping from generator_id (lowercase) to unittype for efficient lookup
     unit_mapping = df_unittypedata.set_index(df_unittypedata['generator_id'].str.lower())['unittype']
@@ -397,21 +397,6 @@ def keep_last_occurance(
         df_input = df_input.drop_duplicates(subset=key_columns, keep='last')
     
     return df_input
-
-
-def fill_numeric_nan(df: pd.DataFrame, value: float) -> pd.DataFrame:
-    """
-    Replace NaN values in numeric columns with value
-    
-    Parameters:
-        df (pd.DataFrame): Input DataFrame.
-
-    Returns:
-        pd.DataFrame: DataFrame with NaNs in numeric columns filled with 0.0.
-    """
-    numeric_cols = df.select_dtypes(include='number').columns
-    df[numeric_cols] = df[numeric_cols].fillna(value)
-    return df
 
 
 def filter_nonzero_numeric_rows(df: pd.DataFrame, exclude: list[str] = None) -> pd.DataFrame:
