@@ -129,9 +129,10 @@ class TimeseriesPipeline:
     def run(self) -> dict:
 
         # If full rerun, remove import_timeseries.inc
-        if self.cache_manager.rerun_all_ts:
+        if self.cache_manager.full_rerun:
             p = Path(self.output_folder) / "import_timeseries.inc"
             p.unlink(missing_ok=True)
+
 
         log_status("Checking the status of timeseries processors", self.logs, level="run")
 
@@ -139,13 +140,13 @@ class TimeseriesPipeline:
         spec_changes = self.cache_manager.timeseries_changed
 
         # Get processors marked for rerun based on code change
-        code_reruns = self._determine_processors_to_rerun(self.cache_manager.rerun_all_ts)
+        code_reruns = self._determine_processors_to_rerun(self.cache_manager.full_rerun)
 
         # Merge rerun set by human_name
         processors_to_rerun = set()
         for proc in self.processors:
             human_name = proc["human_name"]
-            if self.cache_manager.rerun_all_ts or spec_changes.get(human_name, False) or human_name in code_reruns:
+            if self.cache_manager.full_rerun or spec_changes.get(human_name, False) or human_name in code_reruns:
                 processors_to_rerun.add(human_name)
 
         # Print processors that will be rerun
@@ -218,12 +219,21 @@ class TimeseriesPipeline:
 
                 update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
-        # Populating self.secondary_results if the code needs to rebuild bb excel
+        # merge all_ts_domains to the ones in cache, load the merged dictionary
+        self.cache_manager.merge_dict_to_cache(all_ts_domains, "all_ts_domains.json")
+        all_ts_domains = self.cache_manager.load_dict_from_cache("all_ts_domains.json")
+        # all_ts_domain_pairs
+        self.cache_manager.merge_dict_to_cache(all_ts_domain_pairs, "all_ts_domain_pairs.json")        
+        all_ts_domain_pairs = self.cache_manager.load_dict_from_cache("all_ts_domain_pairs.json")
+
+        # Populating self.secondary_results if rebuilding bb excel
         if self.cache_manager.rebuild_bb_excel:
             log_status("Loading secondary results from cache.", self.logs, level="run")
             self.secondary_results = self.cache_manager.load_all_secondary_results()
         else:
             self.secondary_results = {}
+
+        # populating all_ts_domains and all_ts_domain_pairs if rebuilding bb excel
 
         # Returning TimeseriesRunResult dataclass
         return TimeseriesRunResult(

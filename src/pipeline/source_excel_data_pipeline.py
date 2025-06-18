@@ -2,6 +2,7 @@ from pathlib import Path
 from src.data_loader import process_dataset
 from src.data_loader import filter_df_blacklist, filter_df_whitelist, keep_last_occurance
 from src.data_loader import build_node_column, build_from_to_columns, build_unittype_unit_column
+from src.data_loader import fill_numeric_nan, filter_nonzero_numeric_rows
 from src.utils import log_status
 
 
@@ -103,3 +104,15 @@ class SourceExcelDataPipeline:
         self.df_storagedata  = keep_last_occurance(self.df_storagedata, ['country', 'grid', 'node'])
         self.df_fueldata     = keep_last_occurance(self.df_fueldata, ['fuel'])
         self.df_emissiondata = keep_last_occurance(self.df_emissiondata, ['emission'])
+
+        # fill NaN from numerical columns
+        self.df_demanddata   = fill_numeric_nan(self.df_demanddata  , value=0.0)
+        self.df_transferdata = fill_numeric_nan(self.df_transferdata, value=0.0)
+        self.df_unittypedata = fill_numeric_nan(self.df_unittypedata, value=0.0)
+        self.df_unitdata     = fill_numeric_nan(self.df_unitdata    , value=0.0)
+        self.df_storagedata  = fill_numeric_nan(self.df_storagedata , value=0.0)
+        self.df_fueldata     = fill_numeric_nan(self.df_fueldata    , value=0.0)
+        self.df_emissiondata = fill_numeric_nan(self.df_emissiondata, value=0.0)
+
+        # Remove zero rows from demanddata
+        self.df_demanddata = filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])

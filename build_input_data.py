@@ -20,6 +20,7 @@ def main(input_folder, config_file):
     # Check package versions
     check_dependencies()
 
+
     # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
     config = load_config(config_file)
 
@@ -68,7 +69,27 @@ def main(input_folder, config_file):
 
         # Run cache manager to check which parts of code need rerunning, pick logs to log messages
         log_messages.extend(cache_manager.run())
-        
+
+        # Reset workflow_run_successfully
+        workflow_run_successfully = False
+        status_dict = {"workflow_run_successfully": workflow_run_successfully}
+        cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
+
+        # if full rerun, clear all files from output folder, keep subfolders and their files
+        if cache_manager.full_rerun:
+            output_path = Path(output_folder)
+
+            # Find all files under output_folder
+            files = list(output_path.glob("*"))
+            files = [f for f in files if f.is_file()]
+
+            # If there were any, log once and delete them
+            if files:
+                log_status(f"Clearing {len(files)} files from the output folder: {output_folder}, keeping subfolders and their files.",
+                           log_messages, level="info")
+                for f in files:
+                    f.unlink(missing_ok=True)
+
 
         # --- 3.3. Input data phase ---
         # Initialize source excel pipeline
@@ -93,7 +114,7 @@ def main(input_folder, config_file):
         # --- 3.4. Timeseries processing phase ---
         # Running timeseries if any processor needs rerunning or bb input excel needs to be created
         # Note: BB input excel needs correct ts_results from previous runs
-        if cache_manager.rerun_all_ts or cache_manager.timeseries_changed or cache_manager.rebuild_bb_excel:
+        if cache_manager.full_rerun or cache_manager.timeseries_changed or cache_manager.rebuild_bb_excel:
             # Instantiate pipeline and run
             ts_pipeline = TimeseriesPipeline(config, input_folder, output_folder, cache_manager, source_excel_data_pipeline)
             ts_results = ts_pipeline.run()
@@ -135,17 +156,32 @@ def main(input_folder, config_file):
             )  
             builder = BuildInputExcel(excel_context)
             # run builder, pick builder logs to log messages
-            log_messages.extend(builder.run())
+            builder_logs, bb_excel_succesfully_built = builder.run()
+            log_messages.extend(builder_logs)
         else:
             log_status("Backbone input excel is up-to-date. Skipping build phase.", log_messages, level="skip")
+            # Flagging bb excel succesfully built to pass checks at the end
+            bb_excel_succesfully_built = True
 
+        # Update the general flag for succesfull BB excel building
+        if not bb_excel_succesfully_built:
+            log_status("Backbone input excel building failed. Rerun the python script.", log_messages, level="warn")
+        status_dict = {"bb_excel_succesfully_built": bb_excel_succesfully_built}
+        cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # --- 3.6. Finalizing ---
+
         log_status("Finalizing", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
 
         # Copying GAMS files for a new run or changed topology
-        if cache_manager.topology_changed:
+        if cache_manager.full_rerun:
+            log_status("Copying GAMS files to input folder.", log_messages, level="run")
             log_messages.extend(copy_gams_files(input_folder, output_folder))
+
+        # Flagging the run successful and writing the flag status
+        workflow_run_successfully = True
+        status_dict = {"workflow_run_successfully": workflow_run_successfully}
+        cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # Printing elapsed time
         minutes, seconds = elapsed_time(start_time)
@@ -153,28 +189,19 @@ def main(input_folder, config_file):
 
         # Define log path
         log_path = output_folder / "summary.log"
+        log_status(f"Writing the log to {log_path}", log_messages, level="run", add_empty_line_before=True)
         
-        if cache_manager.topology_changed:
-            # If full rerun, remove summary.log and start a new log
-            log_path.unlink(missing_ok=True)
-            log_status(f"Writing a new log to {log_path}", log_messages, level="run", add_empty_line_before=True)
-        else:
-            # otherwise extend the existing log
-            log_status(f"Writing the log to {log_path}", log_messages, level="run", add_empty_line_before=True)
-        
-            # If file exists, add its contents to a "Previous logs" section
-            if log_path.exists():
-                log_status("Previous logs found and added to current log", log_messages, level="info")
-                log_status(f"Previous logs", 
-                           log_messages, level="none", 
-                           add_empty_line_before=True, 
-                           section_start_length=90, 
-                           print_to_screen=False)
-
-                with open(log_path, "r", encoding="utf-8") as f:
-                    previous_logs = f.read().splitlines()
-
-                log_messages.extend(previous_logs)
+        # If previous log exist, add its contents to a "Previous logs" section
+        if log_path.exists():
+            log_status("Previous logs found and added to current log", log_messages, level="info")
+            log_status(f"Previous logs", 
+                       log_messages, level="none", 
+                       add_empty_line_before=True, 
+                       section_start_length=90, 
+                       print_to_screen=False)
+            with open(log_path, "r", encoding="utf-8") as f:
+                previous_logs = f.read().splitlines()
+            log_messages.extend(previous_logs)
 
         # Write final merged log
         with open(log_path, "w", encoding="utf-8") as log_file:

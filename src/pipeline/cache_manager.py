@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 from src.hash_utils import compute_file_hash
+from src.json_exchange import load_json, save_json
 from src.utils import log_status
 import pickle
 from datetime import datetime
+import shutil
 
 class CacheManager:
     """
@@ -61,30 +63,33 @@ class CacheManager:
     def run(self) -> list[str]:
         validation_log = []
 
+        # --- Config file validation ---
         # Checking overall topology in config file
-        log = self.validate_topology(self.config)
+        log = self._validate_topology(self.config)
         validation_log.extend(log)
 
-        log = self.validate_start_and_end(self.config)
+        log = self._validate_start_and_end(self.config)
         validation_log.extend(log)
 
-        log = self.validate_csv_writer(self.config)
+        log = self._validate_csv_writer(self.config)
         validation_log.extend(log)
         
         # Checking input files in config file
-        log = self.validate_input_files(self.config, self.input_file_folder)
+        log = self._validate_input_files(self.config, self.input_file_folder)
         validation_log.extend(log)
       
         # Save current config
         self.save_structural_config(self.config)
 
+
+        # --- Source code validation ---
         # Check changes in source excel data pipeline code files
         files = [
             Path("./src/pipeline/source_excel_data_pipeline.py"),
             Path("./src/data_loader.py")
         ]
         cache_name = "source_data_pipeline_hashes.json"
-        self.source_data_pipeline_code_updated = self.validate_source_code_changes(files, cache_name)
+        self.source_data_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.source_data_pipeline_code_updated and not self.topology_changed:
             log_status('Source excel data pipeline code updated, rerunning all timeseries and generating new input excel for Backbone.', validation_log, level="run")
 
@@ -95,7 +100,7 @@ class CacheManager:
             Path("./src/GDX_exchange.py")
         ]
         cache_name = "timeseries_pipeline_hashes.json"
-        self.timeseries_pipeline_code_updated = self.validate_source_code_changes(files, cache_name)
+        self.timeseries_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.timeseries_pipeline_code_updated and not self.topology_changed:
             log_status('Timeseries pipeline code updated, rerunning all timeseries and generating new input excel for Backbone.', validation_log, level="run")
 
@@ -106,36 +111,62 @@ class CacheManager:
             Path("./src/excel_exchange.py")
         ]
         cache_name = "bb_excel_pipeline_hashes.json"
-        self.bb_excel_pipeline_code_updated = self.validate_source_code_changes(files, cache_name)
+        self.bb_excel_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.bb_excel_pipeline_code_updated and not self.topology_changed:
             log_status('BB input excel pipeline code updated, generating new input excel for Backbone.', validation_log, level="run")
         
 
+        # --- General flags validation ---
+        general_flags = self.load_dict_from_cache("general_flags.json")
+        workflow_run_successfully = general_flags.get("workflow_run_successfully", False)
+        bb_excel_succesfully_built = general_flags.get("bb_excel_succesfully_built", False)
+
+
+        # --- Deciding what sections to rerun ---
         # checking if all timeseries need rerunning
-        self.rerun_all_ts = (self.topology_changed  
-                            or self.date_range_expanded 
-                            or self.csv_writer_requested
-                            or self.source_data_pipeline_code_updated
-                            or self.timeseries_pipeline_code_updated
-                            )
+        self.full_rerun = (self.topology_changed  
+                           or self.date_range_expanded 
+                           or self.csv_writer_requested
+                           or self.source_data_pipeline_code_updated
+                           or self.timeseries_pipeline_code_updated
+                           or not workflow_run_successfully
+                           )
         # checking if specific timeseries need rerunning
-        log = self.validate_timeseries(self.config, self.rerun_all_ts, self.demand_files_changed)
+        log = self._validate_timeseries(self.config, self.full_rerun, self.demand_files_changed)
         validation_log.extend(log)
 
         # Checking if source excels should be re-imported
-        self.reimport_source_excels = (self.rerun_all_ts
+        self.reimport_source_excels = (self.full_rerun
                                        or self.demand_files_changed
                                        or self.other_input_files_changed
                                        or self.bb_excel_pipeline_code_updated
+                                       or not bb_excel_succesfully_built
         )        
 
         # Checking if BB input excel needs to be rebuilt
         self.rebuild_bb_excel = self.reimport_source_excels
 
+
+        # --- postprocessing ---
+        # If full rerun, clear certain data from cache
+        if self.full_rerun:    
+            # General flags
+            p = Path(self.cache_folder) / "general_flags.json"
+            p.unlink(missing_ok=True)               
+            # all_ts_domains
+            p = Path(self.cache_folder) / "all_ts_domains.json"
+            p.unlink(missing_ok=True)
+            # all_ts_domain_pairs
+            p = Path(self.cache_folder) / "all_ts_domain_pairs.json"
+            p.unlink(missing_ok=True)
+            # Secondary results
+            shutil.rmtree(self.secondary_results_folder, ignore_errors=True)
+            self.secondary_results_folder.mkdir(parents=True, exist_ok=True)            
+
         return validation_log
 
 
-    def validate_topology(self, config: dict) -> list[str]:
+    def _validate_topology(self, config: dict) -> list[str]:
         prev = self.load_structural_config()
 
         # If previous config was never saved, treat it as a change
@@ -153,7 +184,7 @@ class CacheManager:
         return validation_log
     
 
-    def validate_start_and_end(self, config: dict) -> list[str]:
+    def _validate_start_and_end(self, config: dict) -> list[str]:
         prev = self.load_structural_config()
 
         # If previous config was never saved, treat it as a change
@@ -177,7 +208,7 @@ class CacheManager:
         return validation_log
 
 
-    def validate_csv_writer(self, config: dict) -> list[str]:
+    def _validate_csv_writer(self, config: dict) -> list[str]:
         prev = self.load_structural_config()
 
         # If previous config was never saved, treat it as a change
@@ -194,7 +225,7 @@ class CacheManager:
         return validation_log
 
 
-    def validate_source_code_changes(self, files: list[Path], cache_name: str) -> bool:
+    def _validate_source_code_changes(self, files: list[Path], cache_name: str) -> bool:
         """
         Check if any of the given source code files have changed since the last run.
 
@@ -214,18 +245,18 @@ class CacheManager:
 
         # Load previously stored hashes from cache
         hash_store_path = self.cache_folder / cache_name
-        previous_hashes = self.load_json(hash_store_path)
+        previous_hashes = load_json(hash_store_path)
 
         # Determine if any file has changed by comparing hashes
         changed = any(previous_hashes.get(str(f)) != h for f, h in current_hashes.items())
 
         # Update cache with current hashes
-        self.save_json(hash_store_path, current_hashes)
+        save_json(hash_store_path, current_hashes)
 
         return changed
 
 
-    def validate_input_files(self, config: dict, input_folder: Path) -> list[str]:
+    def _validate_input_files(self, config: dict, input_folder: Path) -> list[str]:
         """
         Checks if input excel files have changed by comparing the file lists in config file and 
         with stored hashes of the included files.
@@ -237,7 +268,7 @@ class CacheManager:
         Returns:
             dictionary: {'changed_status': {category: boolean}, 'log': str}
         """
-        prev_input_hashes = self.load_json(self.input_data_hash_file)
+        prev_input_hashes = load_json(self.input_data_hash_file)
         validation_log = []
         category_status = {}
 
@@ -264,7 +295,7 @@ class CacheManager:
                 log_status(f"Input data files changed in category '{category}', rerunning necessary steps.", validation_log, level="run")
 
         # Save all current hashes
-        self.save_json(self.input_data_hash_file, all_hashes_to_save)
+        save_json(self.input_data_hash_file, all_hashes_to_save)
 
         # Check flags used in the main logic
         self.demand_files_changed = category_status['demanddata_files']
@@ -276,7 +307,7 @@ class CacheManager:
         return validation_log
 
 
-    def validate_timeseries(self, config: dict, rerun_all_ts: bool = False, demand_files_changed: bool = False) -> list[str]:
+    def _validate_timeseries(self, config: dict, rerun_all_ts: bool = False, demand_files_changed: bool = False) -> list[str]:
         """
         Compare current timeseries specs to previously cached ones and detect changes.
 
@@ -307,7 +338,7 @@ class CacheManager:
         changed_keys = [k for k, v in self.timeseries_changed.items() if v]
         if changed_keys and not self.topology_changed:
             log_status(
-                f'Noticed changes in timeseries specifications, rerunning following timeseries: {", ".join(changed_keys)}',
+                f'Rerunning following timeseries: {", ".join(changed_keys)}',
                 validation_log,
                 level="info"
             )
@@ -315,35 +346,8 @@ class CacheManager:
         return validation_log
 
 
-
-    def load_json(self, path: Path):
-        """
-        Load a JSON file from a given path.
-
-        Args:
-            path (Path): Path to the JSON file.
-
-        Returns:
-            dict: Parsed JSON content.
-        """
-        if path.exists():
-            with open(path, "r") as f:
-                return json.load(f)
-        return {}
-
-    def save_json(self, path: Path, data: dict):
-        """
-        Save a dictionary to a JSON file.
-
-        Args:
-            path (Path): Path where JSON will be saved.
-            data (dict): Data to save.
-        """
-        with open(path, "w") as f:
-            json.dump(data, f, indent=4)
-
     def load_structural_config(self) -> dict:
-        return self.load_json(self.cache_folder / "config_structural.json")
+        return load_json(self.cache_folder / "config_structural.json")
 
     def save_structural_config(self, config: dict):
         relevant_keys = [
@@ -351,7 +355,103 @@ class CacheManager:
             "start_date", "end_date", "write_csv_files", "timeseries_specs"
         ]
         data = {k: config[k] for k in relevant_keys if k in config}
-        self.save_json(self.cache_folder / "config_structural.json", data)
+        save_json(self.cache_folder / "config_structural.json", data)
+
+    def save_dict_to_cache(self, data: dict, filename: str):
+        """
+        Save a dictionary into a cache folder at the given filename.
+
+        Args:
+            dict (dict): The data to cache.
+            filename (str):  name of the JSON file.
+        """
+        file_path = Path(self.cache_folder) / filename
+
+        # convert any top-level sets into lists
+        clean_data = {
+            k: (list(v) if isinstance(v, set) else v)
+            for k, v in data.items()
+        }
+
+        save_json(file_path, clean_data)
+
+
+    def load_dict_from_cache(self, filename: str):
+        """
+        Load a dictionary from the cache folder under the given filename,
+        reconstructing any sets or list-of-tuples that were serialized as JSON arrays.
+    
+        Args:
+            filename (str): Name of the JSON file (e.g. "my_cache.json").
+    
+        Returns:
+            dict: The data with outer lists converted back into sets or list-of-tuples.
+        """
+        file_path = Path(self.cache_folder) / filename
+        try:
+            raw = load_json(file_path)  # returns a dict with JSON types
+        except:
+            return {}
+    
+        reconstructed = {}
+        for key, val in raw.items():
+            if isinstance(val, list):
+                # case 1: list-of-2-lists → list-of-tuples
+                if all(isinstance(item, list) and len(item) == 2 for item in val):
+                    reconstructed[key] = [tuple(item) for item in val]
+                else:
+                    # assume list of scalars → set
+                    reconstructed[key] = set(val)
+            else:
+                # leave anything else untouched
+                reconstructed[key] = val
+    
+        return reconstructed
+
+    def merge_dict_to_cache(self, data: dict, filename: str):
+        """
+        Merge new data into the existing cache entry (if any), then save the result.
+
+        - For set-valued keys: union old and new.
+        - For list-of-2-tuples keys: append any new tuples (preserving order).
+        - For any other types or brand-new keys: overwrite/take new.
+
+        Args:
+            data (dict): New data to merge (values as sets or list-of-2-tuples).
+            filename (str): Name of the JSON cache file.
+        """
+        # 1) Load existing (or get empty dict if none)
+        try:
+            merged = self.load_dict_from_cache(filename)
+        except (FileNotFoundError, json.JSONDecodeError):
+            merged = {}
+
+        # 2) Merge in new values
+        for key, new_val in data.items():
+            old_val = merged.get(key)
+            if old_val is None:
+                # brand new key
+                merged[key] = new_val
+            elif isinstance(old_val, set) and isinstance(new_val, set):
+                merged[key] = old_val.union(new_val)
+            elif (
+                isinstance(old_val, list)
+                and isinstance(new_val, list)
+                and all(isinstance(t, tuple) and len(t) == 2 for t in old_val)
+                and all(isinstance(t, tuple) and len(t) == 2 for t in new_val)
+            ):
+                # list-of-2-tuples: append uniques
+                combined = list(old_val)
+                for tup in new_val:
+                    if tup not in combined:
+                        combined.append(tup)
+                merged[key] = combined
+            else:
+                # fallback: overwrite
+                merged[key] = new_val
+
+        # 3) Save back to cache
+        self.save_dict_to_cache(merged, filename)
 
 
     def save_processor_hash(self, processor_name: str, hash_value: str):
@@ -362,9 +462,9 @@ class CacheManager:
             processor_name (str): Name of the processor.
             hash_value (str): Hash of the processor file.
         """
-        hashes = self.load_json(self.processor_hash_file)
+        hashes = load_json(self.processor_hash_file)
         hashes[processor_name] = hash_value
-        self.save_json(self.processor_hash_file, hashes)
+        save_json(self.processor_hash_file, hashes)
 
     def load_processor_hashes(self):
         """
@@ -373,7 +473,7 @@ class CacheManager:
         Returns:
             dict: Processor names mapped to their hashes.
         """
-        return self.load_json(self.processor_hash_file)
+        return load_json(self.processor_hash_file)
 
     def save_secondary_result(self, processor_name: str, data, secondary_result_name: str):
         """

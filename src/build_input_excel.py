@@ -57,6 +57,9 @@ class BuildInputExcel:
         # Define the merged output file
         self.output_file = os.path.join(self.output_folder, 'inputData.xlsx')
 
+        # Initiate a flag for successful code excecution
+        self.bb_excel_succesfully_built = False
+
 
 
 # ------------------------------------------------------
@@ -1496,6 +1499,13 @@ class BuildInputExcel:
 
     def run(self):
 
+        # Check if the Excel file is already open before proceeding
+        try: 
+            check_if_bb_excel_open(self.output_file)
+        except Exception as e:
+            log_status(f"{e}", self.builder_logs, level="warn")
+            return self.builder_logs, self.bb_excel_succesfully_built
+
         # Create p_gnu_io
         if not self.df_unittypedata.empty and not self.df_unitdata.empty:
             p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
@@ -1600,13 +1610,6 @@ class BuildInputExcel:
         # scenario tags to an excel sheet
         scen_tags_df = pd.DataFrame([self.scen_tags], columns=['scenario', 'year', 'alternative'])
 
-        # Check if the Excel file is already open before proceeding
-        try: 
-            check_if_bb_excel_open(self.output_file)
-        except Exception as e:
-            print(e)
-            sys.exit(1)
-
         # Write DataFrames to different sheets of the merged Excel file
         with pd.ExcelWriter(self.output_file) as writer:
             # scenario tags
@@ -1650,5 +1653,6 @@ class BuildInputExcel:
         adjust_excel(self.output_file)
 
         log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
+        self.bb_excel_succesfully_built = True
 
-        return self.builder_logs
+        return self.builder_logs, self.bb_excel_succesfully_built

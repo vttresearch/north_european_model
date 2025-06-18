@@ -397,3 +397,37 @@ def keep_last_occurance(
         df_input = df_input.drop_duplicates(subset=key_columns, keep='last')
     
     return df_input
+
+
+def fill_numeric_nan(df: pd.DataFrame, value: float) -> pd.DataFrame:
+    """
+    Replace NaN values in numeric columns with value
+    
+    Parameters:
+        df (pd.DataFrame): Input DataFrame.
+
+    Returns:
+        pd.DataFrame: DataFrame with NaNs in numeric columns filled with 0.0.
+    """
+    numeric_cols = df.select_dtypes(include='number').columns
+    df[numeric_cols] = df[numeric_cols].fillna(value)
+    return df
+
+
+def filter_nonzero_numeric_rows(df: pd.DataFrame, exclude: list[str] = None) -> pd.DataFrame:
+    """
+    Removes rows from the DataFrame where the sum of numeric columns is zero.
+    Optionally excludes specific numeric columns from the summation.
+
+    Parameters:
+        df (pd.DataFrame): Input DataFrame.
+        exclude (list[str], optional): List of column names to exclude from summing.
+
+    Returns:
+        pd.DataFrame: Filtered DataFrame with only rows having non-zero numeric data.
+    """
+    if exclude is None:
+        exclude = []
+
+    numeric_cols = df.select_dtypes(include='number').columns.difference(exclude)
+    return df[df[numeric_cols].sum(axis=1) != 0]

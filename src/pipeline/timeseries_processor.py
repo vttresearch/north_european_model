@@ -195,15 +195,16 @@ class ProcessorRunner:
             secondary_output_name = spec.get("secondary_output_name")
             self.cache_manager.save_secondary_result(processor_name, secondary_result, secondary_output_name)
 
-        # Save processor hash
-        hash_value = compute_processor_code_hash(processor_file)
-        self.cache_manager.save_processor_hash(processor_name, hash_value)
-
         # collect domains and domain pairs
         domains = ['grid', 'node', 'flow', 'group']
         domain_pairs = [['grid', 'node'], ['flow', 'node']]
         local_ts_domains = collect_domains(main_result_bb, domains)
         local_ts_domain_pairs = collect_domain_pairs(main_result_bb, domain_pairs)
+
+
+        # Save processor hash
+        hash_value = compute_processor_code_hash(processor_file)
+        self.cache_manager.save_processor_hash(processor_name, hash_value)
 
         return processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages
 
