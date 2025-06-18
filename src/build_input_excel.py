@@ -420,27 +420,39 @@ class BuildInputExcel:
             # If export capacity is greater than 0, add row with from_node, to_node, export_capacity
             if from_to_capacity > 0:
                 rows.append({
-                    'grid' :                        row['grid'],
-                    'from_node' :                   row['from_node'],
-                    'to_node' :                     row['to_node'],
-                    'transferCap' :                 from_to_capacity,                       
-                    'availability' :                row['availability'] if 'availability' in row.index else 1,                        
-                    'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
-                    'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
-                    'rampLimit' :                   rampLimit  
+                    'grid' :                 row['grid'],
+                    'from_node' :            row['from_node'],
+                    'to_node' :              row['to_node'],
+                    'transferCap' :          from_to_capacity,                       
+                    'availability' :         row['availability'] if 'availability' in row.index else 1,                        
+                    'variableTransCost' :    row['vomcost'] if 'vomcost' in row.index else 0,
+                    'transferLoss' :         row['losses'] if 'losses' in row.index else 0,
+                    'rampLimit' :            rampLimit,  
+                    'diffCoeff' :            row['diffCoeff'] if 'diffCoeff' in row.index else 0,
+                    'diffLosses' :           row['diffLosses'] if 'diffLosses' in row.index else 0,
+                    'transferCapInvLimit' :  row['transferCapInvLimit'] if 'transferCapInvLimit' in row.index else 0,
+                    'investMIP' :            row['investMIP'] if 'investMIP' in row.index else 0,
+                    'invCost' :              row['invCost'] if 'invCost' in row.index else 0,
+                    'annuityFactor' :        row['annuityFactor'] if 'annuityFactor' in row.index else 0
                 })
 
             # If import capacity is greater than 0, add row with to_node, from_node, import_capacity
             if to_from_capacity > 0:
                 rows.append({
-                    'grid' :                        row['grid'],
-                    'from_node' :                   row['to_node'],
-                    'to_node' :                     row['from_node'],
-                    'transferCap' :                 to_from_capacity,  
-                    'availability' :                row['availability'] if 'availability' in row.index else 1,                        
-                    'variableTransCost' :           row['vomcost'] if 'vomcost' in row.index else 0,
-                    'transferLoss' :                row['losses'] if 'losses' in row.index else 0,
-                    'rampLimit' :                   (rampLimit / to_from_capacity * from_to_capacity ) if to_from_capacity > 0 else 0
+                    'grid' :                 row['grid'],
+                    'from_node' :            row['to_node'],
+                    'to_node' :              row['from_node'],
+                    'transferCap' :          to_from_capacity,  
+                    'availability' :         row['availability'] if 'availability' in row.index else 1,                        
+                    'variableTransCost' :    row['vomcost'] if 'vomcost' in row.index else 0,
+                    'transferLoss' :         row['losses'] if 'losses' in row.index else 0,
+                    'rampLimit' :            (rampLimit / to_from_capacity * from_to_capacity ) if to_from_capacity > 0 else 0,
+                    'diffCoeff' :            row['diffCoeff'] if 'diffCoeff' in row.index else 0,
+                    'diffLosses' :           row['diffLosses'] if 'diffLosses' in row.index else 0,
+                    'transferCapInvLimit' :  row['transferCapInvLimit'] if 'transferCapInvLimit' in row.index else 0,
+                    'investMIP' :            row['investMIP'] if 'investMIP' in row.index else 0,
+                    'invCost' :              row['invCost'] if 'invCost' in row.index else 0,
+                    'annuityFactor' :        row['annuityFactor'] if 'annuityFactor' in row.index else 0
                 })
 
         # Define the final columns titles and orders.
@@ -655,6 +667,8 @@ class BuildInputExcel:
             'availability': 1,
             'isSource': 0,
             'isSink': 0,
+            'fixedFlow': 0,
+            'unitCount': 0,
             'eff00': 1,
             'eff01': 1,
             'op00': 0,
@@ -662,7 +676,14 @@ class BuildInputExcel:
             'startColdAfterXhours': 0,
             'startWarmAfterXhours': 0,
             'minOperationHours': 0,
-            'minShutdownHours': 0
+            'minShutdownHours': 0,
+            'useTimeseries': 0,
+            'useTimeseriesAvailability': 0,
+            'investMIP': 0,
+            'maxUnitCount': 0,
+            'minUnitCount': 0,
+            'becomeAvailable': 0,
+            'becomeUnavailable': 0
         }
 
         # List to collect new rows.
