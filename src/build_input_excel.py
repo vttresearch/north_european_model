@@ -552,16 +552,18 @@ class BuildInputExcel:
                 is_storage = 1
 
             # 3. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
-            if not p_gnu_io_flat.empty:
+            if not p_gnu_io_flat.empty and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
                 subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & (p_gnu_io_flat['node'] == node)]
                 if not is_storage and not subset_p_gnu_io.empty:
                     is_storage = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) 
                                   & (subset_p_gnu_io['upperLimitCapacityRatio'] != 0)
                                   ).any()
+            else:
+                subset_p_gnu_io = pd.DataFrame()
 
             # 4. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demanddata
             # if gn is in p_gnu with both 'input' and 'output' roles
-            if not p_gnu_io_flat.empty:
+            if not subset_p_gnu_io.empty and 'input_output' in subset_p_gnu_io.columns:
                 io_roles = set(subset_p_gnu_io['input_output'])
                 has_both_io = ('input' in io_roles) and ('output' in io_roles)
             else:
@@ -1506,6 +1508,9 @@ class BuildInputExcel:
             log_status(f"{e}", self.builder_logs, level="warn")
             return self.builder_logs, self.bb_excel_succesfully_built
 
+        # Instantiate warning log
+        warning_log = []
+
         # Create p_gnu_io
         if not self.df_unittypedata.empty and not self.df_unitdata.empty:
             p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
@@ -1546,9 +1551,11 @@ class BuildInputExcel:
             p_gnn = pd.DataFrame()
         if not p_gnn.empty:
             # Filter out certain grids and nodes
-            p_gnn = self.remove_rows_by_values(p_gnn, 'grid', self.exclude_grids)
-            p_gnn = self.remove_rows_by_values(p_gnn, 'from_node', self.exclude_nodes)
-            p_gnn = self.remove_rows_by_values(p_gnn, 'to_node', self.exclude_nodes)
+            if self.exclude_grids:
+                p_gnn = self.remove_rows_by_values(p_gnn, 'grid', self.exclude_grids)
+            if self.exclude_nodes:
+                p_gnn = self.remove_rows_by_values(p_gnn, 'from_node', self.exclude_nodes)
+                p_gnn = self.remove_rows_by_values(p_gnn, 'to_node', self.exclude_nodes)
             # Create flat version for easier use in other functions
             p_gnn_flat = self.drop_fake_MultiIndex(p_gnn)
         else:
@@ -1558,8 +1565,10 @@ class BuildInputExcel:
         p_gn = self.create_p_gn(p_gnu_io_flat, self.df_fueldata, self.df_demanddata, self.df_storagedata, self.ts_storage_limits, self.ts_domain_pairs)
         if not p_gn.empty:
             # Filter out certain grids and nodes        
-            p_gn = self.remove_rows_by_values(p_gn, 'grid', self.exclude_grids)
-            p_gn = self.remove_rows_by_values(p_gn, 'node', self.exclude_nodes)
+            if self.exclude_grids:
+                p_gn = self.remove_rows_by_values(p_gn, 'grid', self.exclude_grids)
+            if self.exclude_nodes:
+                p_gn = self.remove_rows_by_values(p_gn, 'node', self.exclude_nodes)
             # Create flat version for easier use in other functions
             p_gn_flat = self.drop_fake_MultiIndex(p_gn)
         else:
