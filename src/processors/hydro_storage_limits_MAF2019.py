@@ -235,6 +235,8 @@ class hydro_storage_limits_MAF2019:
             log_status(f"Error reading input CSV file: {e}", self.processor_log, level="warn")
             return
 
+        log_status(f"Processing input files...", self.processor_log, level="info")
+
         # Filter data by year range
         df_levels = df_levels[(df_levels["year"] >= self.startyear) & (df_levels["year"] <= self.endyear)]
         df_levels["year"] = pd.to_numeric(df_levels["year"])

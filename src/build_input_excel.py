@@ -7,6 +7,7 @@ from src.excel_exchange import add_index_sheet, adjust_excel, check_if_bb_excel_
 from src.pipeline.bb_excel_context import BBExcelBuildContext
 
 
+
 class BuildInputExcel:
     def __init__(self, context: BBExcelBuildContext) -> None:
         self.context = context
@@ -898,19 +899,19 @@ class BuildInputExcel:
                         }
                         rows.append(row_dict)  
 
-                        # Special case: For downwardLimit with time series, create a slack variable
-                        # to allow minor violations with a smaller penalty
-                        if p_type == 'downwardLimit':
-                            row_dict = {
-                                'grid':                     grid,
-                                'node':                     node,
-                                'param_gnBoundaryTypes':    'downwardSlack01',
-                                'useConstant':              1,
-                                # Scale down the average value and round it
-                                'constant':                 round(ts_node_boundaryTypes[(node, p_type)]/1000, 0),
-                                'slackCost':                1000 # Fixed penalty cost for violations
-                            }
-                            rows.append(row_dict)      
+                        ## Special case: For downwardLimit with time series, create a slack variable
+                        ## to allow minor violations with a smaller penalty
+                        #if p_type == 'downwardLimit':
+                        #    row_dict = {
+                        #        'grid':                     grid,
+                        #        'node':                     node,
+                        #        'param_gnBoundaryTypes':    'downwardSlack01',
+                        #        'useConstant':              1,
+                        #        # Scale down the average value and round it
+                        #        'constant':                 round(ts_node_boundaryTypes[(node, p_type)]/1000, 0),
+                        #        'slackCost':                1000 # Fixed penalty cost for violations
+                        #    }
+                        #    rows.append(row_dict)      
 
                     # If no time series but we have a non-zero constant value, use it
                     elif value is not None:

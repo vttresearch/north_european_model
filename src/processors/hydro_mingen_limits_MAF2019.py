@@ -222,6 +222,7 @@ class hydro_mingen_limits_MAF2019:
 
         # Prepare the summary DataFrame 
         summary_df = pd.DataFrame()
+        log_status(f"Processing the input file...", self.processor_log, level="info")
 
         # Process each country.
         for country in self.country_codes:

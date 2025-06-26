@@ -232,7 +232,7 @@ if(%forecastNumber%=4,
 
     // Additionally dropping ramp dummies to speed up the solve
     mSettings('schedule', 'reducedVqGenRamp') = 20000;
-    
+    mSettings('schedule', 'reducedVqUserconstraint') = 20000;
                        
     // Scaling the model with a factor of 10^N. 0 = off = default. Accepted values 1-6.                                         
     // This option might improve the model behaviour in case the model has "infeasibilities after unscaling" issue.
