@@ -297,9 +297,11 @@ class BuildInputExcel:
 
     def fill_capacities(self, p_gnu_io, p_unit):
         """
-        Fills missing capacity values of units with a set of rules. Currently
-            * calculates missing input capacity, if unit has just 1 input and 1 output with output capacity
-            * calculates missing output capacity, if unit has just 1 input and 1 output with input capacity
+        Fills missing capacity values of units with a set of rules. 
+        Currently calculates missing input capacity, if 
+            * unit has 1 input without capacity and 1 output with capacity
+            * unit has 1 input without capacity, 2 outputs with capacity, and no 'cv' parameter
+            * unit has 1 input with capacity and 1 output without capacity
 
         """
         # Skip processing if either of the source dataframes are empty
@@ -319,16 +321,14 @@ class BuildInputExcel:
             # For each unit, compute its max efficiency (assuming one row per unit)
             p_unit_eff[unit_row['unit']] = unit_row[eff_columns].max()
 
-        # --- Handle input rows missing capacity ---
-        # For each row in p_gnu_io_flat with type 'input' and capacity 0, where its (grid, node, unit) group
-        # has exactly one input row, try to find a matching output row in a different (grid, node)
+        # --- 1 input without capacity and 1 output with capacity ---
+        # For each row in p_gnu_io_flat with type 'input' and capacity 0, if unit
+        # has exactly one input row, try to find a matching output row for the same unit
         # that has exactly one output row and capacity > 0.
         for idx, row in p_gnu_io_flat.iterrows():
             if row['input_output'] == 'input' and row['capacity'] == 0:
-                # Check that within this (grid, node, unit) group there is only one input row.
+                # Check that for this unit, there is only one input row.
                 group_input = p_gnu_io_flat[
-                    (p_gnu_io_flat['grid'] == row['grid']) &
-                    (p_gnu_io_flat['node'] == row['node']) &
                     (p_gnu_io_flat['unit'] == row['unit']) &
                     (p_gnu_io_flat['input_output'] == 'input')
                 ]
@@ -341,18 +341,62 @@ class BuildInputExcel:
                     (p_gnu_io_flat['input_output'] == 'output') &
                     (p_gnu_io_flat['capacity'] > 0)
                 ]
-                # Require that in the candidate's own (grid, node, unit) group, there is exactly one output row.
+                # Require that there is exactly one output row.
                 if not candidate_outputs.empty:
                     if len(candidate_outputs) == 1:
                         matched_row = candidate_outputs.iloc[0]
                         output_capacity = matched_row['capacity']
-                        # Get efficiency for the unit, defaulting to 1 if not found
-                        efficiency = p_unit_eff.get(row['unit'], 1)
-                        # Update the missing input capacity; divide output capacity by efficiency.
-                        new_capacity = output_capacity / efficiency if efficiency != 0 else 0
+                        # Get efficiency for the unit, defaulting to 0 if not found
+                        efficiency = p_unit_eff.get(row['unit'], 0)
+                        if efficiency > 0:
+                            # Update the missing input capacity; divide output capacity by efficiency.
+                            new_capacity = output_capacity / efficiency if efficiency != 0 else 0
+                            p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+
+        # --- 1 input without capacity and 2 outputs with capacity (no 'cv' parameter) ---
+        # For each row with type 'input' and capacity 0, if unit has exactly one input row, 
+        # check if there are exactly 2 output rows with capacity > 0
+        # and neither has a 'cv' parameter.
+        for idx, row in p_gnu_io_flat.iterrows():
+            if row['input_output'] == 'input' and row['capacity'] == 0:
+                # Check that for this unit, there is only one input row.
+                group_input = p_gnu_io_flat[
+                    (p_gnu_io_flat['unit'] == row['unit']) &
+                    (p_gnu_io_flat['input_output'] == 'input')
+                ]
+                if len(group_input) != 1:
+                    continue
+
+                # Look for output rows for the same unit with positive capacity
+                candidate_outputs = p_gnu_io_flat[
+                    (p_gnu_io_flat['unit'] == row['unit']) &
+                    (p_gnu_io_flat['input_output'] == 'output') &
+                    (p_gnu_io_flat['capacity'] > 0)
+                ]
+
+                # Check if there are exactly 2 outputs and neither has 'cv' parameter
+                if len(candidate_outputs) == 2:
+                    # Check if 'cv' column exists and if so, ensure neither output has it
+                    has_cv_column = 'cv' in p_gnu_io_flat.columns
+                    if has_cv_column:
+                        # Skip if either output has a non-zero/non-null cv value
+                        cv_values = candidate_outputs['cv'].fillna(0)
+                        if any(cv_values > 0):
+                            continue
+                        
+                    # Calculate total output capacity
+                    total_output_capacity = candidate_outputs['capacity'].sum()
+
+                    # Get efficiency for the unit, defaulting to 0 if not found
+                    efficiency = p_unit_eff.get(row['unit'], 0)
+                    if efficiency > 0:
+                        # Calculate required input capacity
+                        new_capacity = total_output_capacity / efficiency
+                        # Update the missing input capacity
                         p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
 
-        # --- Handle output rows missing capacity ---
+
+        # --- 1 output without capacity and 1 input with capacity ---
         # Now, for each row with type 'output' and zero capacity,
         # check that its (grid, node, unit) group has exactly one output row.
         # Then, try to find a matching input row from a different (grid, node) with capacity > 0 and exactly one input row.
@@ -360,8 +404,6 @@ class BuildInputExcel:
             if row['input_output'] == 'output' and row['capacity'] == 0:
                 # Check that within the (grid, node, unit) group there is only one output row.
                 group_output = p_gnu_io_flat[
-                    (p_gnu_io_flat['grid'] == row['grid']) &
-                    (p_gnu_io_flat['node'] == row['node']) &
                     (p_gnu_io_flat['unit'] == row['unit']) &
                     (p_gnu_io_flat['input_output'] == 'output')
                 ]
@@ -379,17 +421,18 @@ class BuildInputExcel:
                     if len(candidate_inputs) == 1:
                         matched_row = candidate_inputs.iloc[0]
                         input_capacity = matched_row['capacity']
-                        efficiency = p_unit_eff.get(row['unit'], 1)
-                        # Update the missing output capacity; multiply input capacity by efficiency.
-                        new_capacity = input_capacity * efficiency
-                        p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+                        # Get efficiency for the unit, defaulting to 0 if not found
+                        efficiency = p_unit_eff.get(row['unit'], 0)
+                        if efficiency > 0:
+                            # Update the missing output capacity; multiply input capacity by efficiency.
+                            new_capacity = input_capacity * efficiency
+                            p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
 
         # Fill any remaining NaN values in the DataFrame
         p_gnu_io_flat = p_gnu_io_flat.fillna(value=0)
 
         # Recreate the fake multi-index using the specified columns.
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
-
         return p_gnu_io
 
 
