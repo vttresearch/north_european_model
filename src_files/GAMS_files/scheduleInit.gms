@@ -229,10 +229,6 @@ if(%forecastNumber%=4,
     // NOTE: this changes the shape of the problem and there are typically differences in the decimals of the solutions
     // NOTE: It is the best to keep 0 here when editing and updating the model and drop the dummies only when running a stable model.      
     mSettings('schedule', 'reducedDummies') = 1;  
-
-    // Additionally dropping ramp dummies to speed up the solve
-    mSettings('schedule', 'reducedVqGenRamp') = 20000;
-    mSettings('schedule', 'reducedVqUserconstraint') = 20000;
                        
     // Scaling the model with a factor of 10^N. 0 = off = default. Accepted values 1-6.                                         
     // This option might improve the model behaviour in case the model has "infeasibilities after unscaling" issue.
