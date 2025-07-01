@@ -1190,6 +1190,10 @@ class BuildInputExcel:
             p_userConstraint.loc[len(p_userConstraint)] = [
                 group_UC, "userconstraintRHS", "-", "-", "-", "ts_groupPolicy", 1
             ]
+            # Add custom penalty value for userconstraint equations
+            p_userConstraint.loc[len(p_userConstraint)] = [
+                group_UC, "-", "-", "-", "-", "penalty", 2000
+            ]
 
         return p_userConstraint
 
