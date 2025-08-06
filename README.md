@@ -158,21 +158,29 @@ First install Spine Toolbox:
 
 1. Install pipx. pipx helps in creating an isolated environment for Spine Toolbox to avoid package conflicts. Open a terminal and run
 
- python -m pip install --user pipx
+```
+python -m pip install --user pipx
+```
 
-After pipx has been installed, run
+2. After pipx has been installed, run
 
- python -m pipx ensurepath
+```
+python -m pipx ensurepath
+```
 
-2. Restart the terminal or re-login for the changes of the latest command to take effect.
+3. Restart the terminal or re-login for the changes of the latest command to take effect.
 
-3. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
+4. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
 
- python -m pipx install spinetoolbox
+```
+python -m pipx install spinetoolbox
+```
 
 Open Spine Toolbox by typing in the terminal: 
 
- spinetoolbox
+```
+spinetoolbox
+```
 
 Go to:
 File -> Open project -> choose the north_european_model folder. You can see a Spine Toolbox logo next to it. If your North European Model is installed under Backbone, it is not enough to just choose the Backbone folder as it is a separate Spine Toolbox project.
