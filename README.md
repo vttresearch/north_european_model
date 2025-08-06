@@ -151,10 +151,10 @@ Note: EV timeseries are still work-in-progress, but will be added.
 
 ## (Optional) Installing and setting up a Spine Toolbox project
 
-Spine Toolbox is an open source Python package to manage data, scenarios and workflows for modelling and simulation.
+[Spine Toolbox](https://github.com/spine-tools/Spine-Toolbox) is an open source Python package to manage data, scenarios and workflows for modelling and simulation.
 You can use the Spine Toolbox for the workflow management if you so choose.
 
-First install Spine-Toolbox:
+First install Spine Toolbox:
 
 1. Install pipx. pipx helps in creating an isolated environment for Spine Toolbox to avoid package conflicts. Open a terminal and run
 
@@ -170,20 +170,29 @@ After pipx has been installed, run
 
  python -m pipx install spinetoolbox
 
-Open toolbox by typing: 
+Open Spine Toolbox by typing in the terminal: 
 
-spinetoolbox
+ spinetoolbox
 
 Go to:
-File -> Open project -> choose the northernEuropeanModel folder. You can see a spine toolbox logo next to it. If your north european model is installed under backbone, it is not enough to just choose the backbone folder as it is a separate toolbox project.
+File -> Open project -> choose the north_european_model folder. You can see a Spine Toolbox logo next to it. If your North European Model is installed under Backbone, it is not enough to just choose the Backbone folder as it is a separate Spine Toolbox project.
 
-To get the miniconda environment 'northEuropeanModel' running in toolbox, it needs to be set as the python kernel.
-Go to File -> Settings -> Tools. Under Python click Make Python Kernel. Choose the defaults.
+To get the Miniconda environment 'northEuropeanModel' running in Spine Toolbox, it needs to be set as the Python kernel:
 
-Take a copy of the BB_data.sqlite database from backbone folder. It is located in
-**backbone/.spinetoolbox/items/bb_data**
-You can put it anywhere you like.
-Go to the toolbox Design View and click the Input_data database editor. Choose the path to that copied file from the Data Store Properties window that opened to the right side.
+1. Open Miniconda Prompt.
+
+2. Activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
+   
+3. Install an additional package by typing `pip install ipykernel`.
+
+4. In Spine Toolbox, double-click the `build_input_data` project item in the Design View, which will open the Tool specification editor.
+
+5. In the Tool specification editor, select Jupyter Console and then, next to `Kernel`, select the northEuropeanModel environment.
+
+Take a copy of the BB_data_template.sqlite database from the Backbone folder. It is located in
+**backbone/.spinetoolbox/items/bb_data_template**
+You can put it anywhere you like and rename it if you wish.
+Go to the Spine Toolbox Design View and click the Input_data project item. Choose the path to that copied database file from the Data Store Properties window that opened to the right side.
 
 ## Building and copying input files for Backbone
 
