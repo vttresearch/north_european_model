@@ -4,27 +4,43 @@ import pandas as pd
 import os
 
 r"""
-What this script does
 
-In short, this script processes TYNDP 2024 Excel files into a format suitable to be used as input for the North European model.
-It produces an output Excel file (TYNDP-2024_National_Trends.xlsx) that can be inserted in \src_files\data_files\
-The output Excel file contains the following NE model input sheets:
+--- Required input ---
+
+- TYNDP 2024 Excel files from https://2024.entsos-tyndp-scenarios.eu/download/
+    * (1) 20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx
+        download "Electricity and Hydrogen Reference Grid & Investment Candidates After Public Consultation"
+    * (2) MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx
+    * (3) MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx
+        download "NT+ 2030 Modelling Results - Climate Year 2009" (and/or similar 2040 file)
+
+- Older NE model Excel input from https://github.com/vttresearch/north_european_model (\north_european_model\src_files\data_files\)
+    * (4) unittypedata_maf2020.xlsx
+    * (5) transferdata_TYNDP2020.xlsx
+
+--- What this script does ---
+
+- Processes TYNDP 2024 data into NE model input.
+- Adds ramp limits from transferdata_TYNDP2020.xlsx
+- Renames and aggregates some TYNDP 2024 Generator_IDs as well as transmission lines to make them match with existing IDs/lines in the NE model
+    * see gen_id_renamings and gen_id_aggregations_loc
+    * unittypedata_maf2020.xlsx is only needed to check that Generator_IDs exist in the NE model
+- Produces an output Excel file (TYNDP-2024_National_Trends.xlsx) that can be placed in \src_files\data_files\
+- The output Excel file contains the following NE model input sheets:
     unitdata, demanddata_elec, transferdata
-In addition, the following sheets are created for documentation:
+- In addition, the following sheets are created for documentation:
     trans_capacities, trans_missing_ref_capacities, trans_self_loops
 
-Required input:
+--- Sheet-level info ---
 
-# TYNDP 2024 files from https://2024.entsos-tyndp-scenarios.eu/download/
-    20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx
-        download "Electricity and Hydrogen Reference Grid & Investment Candidates After Public Consultation"
-    MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx
-    MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx
-        download "NT+ 2030 Modelling Results – Climate Year 2009" (and/or similar 2040 file)
-
-NE model files from https://github.com/vttresearch/north_european_model (\north_european_model\src_files\data_files\)
-    unittypedata_maf2020.xlsx
-    transferdata_TYNDP2020.xlsx
+- unitdata
+    * Processed unit data from sources 2 and 3 ("Yearly Outputs" sheet)
+- demanddata_elec
+    * native electricity demands from sources 2 and 3 ("Yearly Outputs" sheet), values converted from GWh to TWh
+    * ramp limits from transferdata_TYNDP2020.xlsx
+- transferdata
+    * processed transmission line capacities from sources 1, 2 and 3
+    * reference grid capacities from source 1 are compared with modelled maximum flows in sources 2 and 3 -> whichever is higher is chosen as the final capacity
 """
 
 # --- USER SETTINGS ---
@@ -279,7 +295,11 @@ def preprocess_transmission_data(ref_capacities, min_max_exchanges, agg_plexos_l
     # rename min_max_exchanges columns (just for clarity)
     min_max_exchanges = min_max_exchanges.rename(columns={'Min [MW]:': 'max_modelled_import',
                                                         'Max [MW]:': 'max_modelled_export'}).copy()
-    # imports need to be positive values
+    
+    # assert that all Min [MW] values are initially negative (i.e. actual imports)
+    assert (min_max_exchanges['max_modelled_import'] < 0).all()
+
+    # take absolute values for imports
     min_max_exchanges['max_modelled_import'] = min_max_exchanges['max_modelled_import'].abs()
 
     return ref_capacities, min_max_exchanges
@@ -321,8 +341,9 @@ def aggregate_transmission_data(ref_capacities, min_max_exchanges, agg_plexos_lo
 
 def combine_reversed_lines(ref_capacities_agg, min_max_exchanges_agg):
     """
-    In ref_grid_df, combine capacities of aggregated transmission lines that exist in both directions.
-    Keep only the directions that exist in the plexos DataFrame (plexos_df).
+    The aggregation may lead to identical lines pointing in opposite directions.
+    Combine capacities of such aggregated transmission lines.
+    For each line, keep only the direction that exists in the Plexos DataFrame (plexos_df).
     
     For example, if we have lines:
         DE00-PL00 (export: 1000, import: 2000),
@@ -379,10 +400,6 @@ def combine_reversed_lines(ref_capacities_agg, min_max_exchanges_agg):
 # --- merging ref_capacities_agg with min_max_exchanges_agg -> choosing NE model capacities ---
 
 def merge_transmission_data(ref_capacities_agg, min_max_exchanges_agg, year):
-# NOTE: lines in 2030 plexos results that are missing in the ref grid:
-#   DE00-DKBH: 1200 exports, 2000 imports (not in invest candidates either)
-#   BEOF-UK00: 1400 exports, 1400 imports (1400 available in invest candidates for BE00-UK00 in 2035 but not 2030)
-#   NLLL-UK00: 1800 exports, 1800 imports (not in invest candidates either)
 
     merged_cap = ref_capacities_agg.merge(min_max_exchanges_agg, how='left', on=['from-to', 'from', 'to'])
     # positive values mean that modelled exports/imports are higher than the capacity
@@ -390,7 +407,7 @@ def merge_transmission_data(ref_capacities_agg, min_max_exchanges_agg, year):
     merged_cap['import_diff'] = merged_cap['max_modelled_import'] - merged_cap['import_capacity']
     #merged_cap.query('export_within_limits == False or import_within_limits == False')
 
-    # for the NE model, we choose either the reference capacity or the maximum modelled capacity, whichever is higher
+    # for the NE model, we choose, as capacity, either the reference capacity or the maximum modelled flow, whichever is higher
     merged_cap['ne_model_export'] = merged_cap[['export_capacity', 'max_modelled_export']].max(axis=1)
     merged_cap['ne_model_import'] = merged_cap[['import_capacity', 'max_modelled_import']].max(axis=1)
 
