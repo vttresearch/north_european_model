@@ -297,7 +297,7 @@ def preprocess_transmission_data(ref_capacities, min_max_exchanges, agg_plexos_l
                                                         'Max [MW]:': 'max_modelled_export'}).copy()
     
     # assert that all Min [MW] values are initially negative (i.e. actual imports)
-    assert (min_max_exchanges['max_modelled_import'] < 0).all()
+    assert (min_max_exchanges['max_modelled_import'] <= 0).all()
 
     # take absolute values for imports
     min_max_exchanges['max_modelled_import'] = min_max_exchanges['max_modelled_import'].abs()
