@@ -2,6 +2,7 @@
 # Tested with Python 3.12.7
 import pandas as pd
 import os
+import sys
 
 r"""
 
@@ -64,10 +65,19 @@ tyndp_2020_ramp_limits_file_path = os.path.normpath(f'./{tyndp_2020_ramp_limits_
 
 # name for the output file of the script
 output_filename = 'TYNDP-2024_National_Trends.xlsx'
-
-
+output_filename_path = os.path.normpath(f'./{output_filename}')
 
 # --- END OF USER SETTINGS ---
+
+
+# check if the output will be overwritten
+def check_chosen_output(output_filename_path:str):
+    if os.path.exists(output_filename_path):
+        print(f'\nWARNING: {output_filename_path} already exists.')
+        user_answer = input('\n Do you want to overwrite it (write "yes" to proceed)?\n')
+        if user_answer != 'yes':
+            sys.exit('\nScript aborted to avoid overwriting output file.')
+
 
 assert len(chosen_NT_years) > 0, "No years entered in chosen_NT_years."
 for year in chosen_NT_years:
@@ -597,6 +607,7 @@ def process_year_data(year):
 
 
 if __name__ == "__main__":
+    check_chosen_output(output_filename_path)
     # unittypedata
     unittypedata_maf2020 = pd.read_excel(unittypedata_maf2020_file_path, sheet_name='unittypedata').copy()
 
