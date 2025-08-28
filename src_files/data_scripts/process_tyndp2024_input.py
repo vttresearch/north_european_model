@@ -11,7 +11,7 @@ r"""
 - TYNDP 2024 Excel files from https://2024.entsos-tyndp-scenarios.eu/download/
     * (1) "20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx"
         download "Electricity and Hydrogen Reference Grid & Investment Candidates After Public Consultation"
-    From ENTSO-E & ENTSOG TYNDP 2024 Scenarios  – Outputs, 
+    From ENTSO-E & ENTSOG TYNDP 2024 Scenarios  - Outputs, 
     download "NT+ 2030 Modelling Results - Climate Year 2009" (and/or similar 2040 file) for 
     * (2) "MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx"
     * (3) "MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx"
@@ -69,8 +69,7 @@ output_filename = 'Data_for_TYNDP-2024_National_Trends.xlsx'
 output_filename_path = os.path.normpath(f'./{output_filename}')
 
 
-
-# --- TRANSLATING PLEXOS MAPPINGS TO NE MODEL ---
+# --- MAPPING PLEXOS TO NE MODEL ---
 
 # a dict to determine which country codes in the plexos results will be aggregated together in the NE model
 # a slightly modified version of this is defined below for the reference grid excel file
@@ -185,6 +184,7 @@ def process_native_demands(plexos_caps_demands, year):
 
 
 # --- INSTALLED CAPACITIES ---
+
 def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_aggregations_loc, year):
     capacities = plexos_caps_demands[plexos_caps_demands['Output type'] == 'Installed Capacities [MW]']
     capacities = capacities.rename(columns={'Output type.1':'Generator_ID'}).copy()
@@ -206,6 +206,7 @@ def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_a
     installed_capacities_ne_input['capacity_input1'] = None
     installed_capacities_ne_input['Note'] = None
 
+    # a check that entries in gen_id_renamings exist in data
     for k, v in gen_id_renamings.items():
         if k not in installed_capacities_ne_input['Generator_ID'].values:
             print(f"Warning: TYNDP2024 entry missing in gen_id_renamings: {k}")
@@ -608,13 +609,13 @@ def process_year_data(year):
 
 
 if __name__ == "__main__":
+
     # check if output would be overwritten
     check_chosen_output(output_filename_path)
-
     # the reference grid (transmission capacities before investments in 2030)
     ref_capacities = pd.read_excel(path_to_ref_grid_inv_candidates_file, sheet_name='1. Elec Ref Grid').set_index('Border')
 
-    # ramp limits. For now, we use the TYNDP2020 calculations
+    # ramp limits from historical ramp limits
     ramp_limits = pd.read_excel(historical_ramp_limits_file_path, sheet_name='summary', skiprows=9, usecols='AZ:BG')
 
     processed_data = {
