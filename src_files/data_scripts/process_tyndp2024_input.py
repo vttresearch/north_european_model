@@ -118,6 +118,7 @@ gen_id_renamings =    {
     'Lignite biofuel':                      'Lignite old 1 Bio',        # Lignite old 2 Bio
     'Gas biofuel':                          'Gas CCGT old 2 Bio',       # Gas conventional old 2 Bio
 
+    'Electrolyser (load)':                  'Electrolyser',
     'Oil shale biofuel':                    'Oil shale new Bio',
     'Others non-renewable':                 'Industry non-renewable CHP',
     'Others renewable':                     'Industry renewable CHP',
