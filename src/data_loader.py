@@ -193,13 +193,14 @@ def build_unittype_unit_column(
         
     df_unittypedata : pandas.DataFrame
         Reference DataFrame mapping 'generator_id' to 'unittype' values
+
+    source_data_logs: list[str]
+        An input list of strings where new log events are added.
     
     Returns:
     --------
     pandas.DataFrame
         Input DataFrame with new 'unittype' and 'unit' columns added
-    source_data_logs
-        list of strings where new log events are added to the input log event list
     
     Raises:
     -------
