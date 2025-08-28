@@ -2,34 +2,35 @@
 # Tested with Python 3.12.7
 import pandas as pd
 import os
+import sys
 
 r"""
 
 --- Required input ---
 
 - TYNDP 2024 Excel files from https://2024.entsos-tyndp-scenarios.eu/download/
-    * (1) 20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx
+    * (1) "20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx"
         download "Electricity and Hydrogen Reference Grid & Investment Candidates After Public Consultation"
-    * (2) MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx
-    * (3) MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx
-        download "NT+ 2030 Modelling Results - Climate Year 2009" (and/or similar 2040 file)
+    From ENTSO-E & ENTSOG TYNDP 2024 Scenarios  – Outputs, 
+    download "NT+ 2030 Modelling Results - Climate Year 2009" (and/or similar 2040 file) for 
+    * (2) "MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx"
+    * (3) "MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx"
 
-- Older NE model Excel input from https://github.com/vttresearch/north_european_model (\north_european_model\src_files\data_files\)
-    * (4) unittypedata_maf2020.xlsx
-    * (5) transferdata_TYNDP2020.xlsx
+- One additional file shared as a part of this repository (./src_files/data_scripts)
+    * (4) historical_transfer_ramps.xlsx
 
 --- What this script does ---
 
 - Processes TYNDP 2024 data into NE model input.
-- Adds ramp limits from transferdata_TYNDP2020.xlsx
-- Renames and aggregates some TYNDP 2024 Generator_IDs as well as transmission lines to make them match with existing IDs/lines in the NE model
+- Adds ramp limits from historical_transfer_ramps.xlsx
+- Renames and aggregates some TYNDP 2024 Generator_IDs as well as transmission lines to make them 
+    match with existing IDs/lines in the NE model
     * see gen_id_renamings and gen_id_aggregations_loc
-    * unittypedata_maf2020.xlsx is only needed to check that Generator_IDs exist in the NE model
-- Produces an output Excel file (TYNDP-2024_National_Trends.xlsx) that can be placed in \src_files\data_files\
-- The output Excel file contains the following NE model input sheets:
-    unitdata, demanddata_elec, transferdata
-- In addition, the following sheets are created for documentation:
-    trans_capacities, trans_missing_ref_capacities, trans_self_loops
+- Produces an output Excel file (Data_for_TYNDP-2024_National_Trends.xlsx) that 
+    * contains NE model input sheets unitdata, demanddata_elec, transferdata
+    * These should be copied into \src_files\data_files\TYNDP-2024_National_Trends.xlsx
+    * additional documentation sheets trans_capacities, trans_missing_ref_capacities, trans_self_loops
+- See TYNDP-2024_National_Trends.xlsx for further instructions    
 
 --- Sheet-level info ---
 
@@ -37,16 +38,20 @@ r"""
     * Processed unit data from sources 2 and 3 ("Yearly Outputs" sheet)
 - demanddata_elec
     * native electricity demands from sources 2 and 3 ("Yearly Outputs" sheet), values converted from GWh to TWh
-    * ramp limits from transferdata_TYNDP2020.xlsx
+    * ramp limits from historical_transfer_ramps.xlsx
 - transferdata
     * processed transmission line capacities from sources 1, 2 and 3
     * reference grid capacities from source 1 are compared with modelled maximum flows in sources 2 and 3 -> whichever is higher is chosen as the final capacity
+
 """
 
 # --- USER SETTINGS ---
 
 # choose National Trends scenario years
 chosen_NT_years = [2030, 2040]
+assert len(chosen_NT_years) > 0, "No years entered in chosen_NT_years."
+for year in chosen_NT_years:
+    assert year in [2030, 2040], f"Invalid year entered in chosen_NT_years: {year}. Only 2030 and 2040 are allowed."
 
 plexos_results_filename, path_to_MMStandardOutputFile = [{}, {}]
 for year in chosen_NT_years:
@@ -56,54 +61,51 @@ for year in chosen_NT_years:
 ref_grid_inv_candidate_filename = '20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx'
 path_to_ref_grid_inv_candidates_file = os.path.normpath(f'./{ref_grid_inv_candidate_filename}')
 
-
-unittypedata_maf2020_filename = 'unittypedata_maf2020.xlsx'
-unittypedata_maf2020_file_path = os.path.normpath(f'./{unittypedata_maf2020_filename}')
-tyndp_2020_ramp_limits_filename = 'transferdata_TYNDP2020.xlsx'
-tyndp_2020_ramp_limits_file_path = os.path.normpath(f'./{tyndp_2020_ramp_limits_filename}')
+historical_ramp_limits_filename = 'historical_transfer_ramps.xlsx'
+historical_ramp_limits_file_path = os.path.normpath(f'./{historical_ramp_limits_filename}')
 
 # name for the output file of the script
-output_filename = 'TYNDP-2024_National_Trends.xlsx'
+output_filename = 'Data_for_TYNDP-2024_National_Trends.xlsx'
+output_filename_path = os.path.normpath(f'./{output_filename}')
 
 
 
-# --- END OF USER SETTINGS ---
-
-assert len(chosen_NT_years) > 0, "No years entered in chosen_NT_years."
-for year in chosen_NT_years:
-    assert year in [2030, 2040], f"Invalid year entered in chosen_NT_years: {year}. Only 2030 and 2040 are allowed."
+# --- TRANSLATING PLEXOS MAPPINGS TO NE MODEL ---
 
 # a dict to determine which country codes in the plexos results will be aggregated together in the NE model
 # a slightly modified version of this is defined below for the reference grid excel file
 agg_plexos_locations = {
-    'FI00':['FI00'],
-    'SE01':['SE01'],
-    'SE02':['SE02'],
-    'SE03':['SE03'],
-    'SE04':['SE04'],
-    'NOS0':['NOS0'],
-    'NOM1':['NOM1'],
-    'NON1':['NON1'],
-    'DE00':['DE00', 'DEKF'],
-    'DKE1':['DKE1', 'DKBH', 'DKKF'],
-    'DKW1':['DKW1'],
-    'PL00':['PL00'],
-    'EE00':['EE00', 'EEOF'],
-    'LV00':['LV00'],
-    'LT00':['LT00', 'LTOF'],
-    'NL00':['NL00', 'NLLL'],
-    'FR00':['FR00', 'FR15'],
-    'BE00':['BE00', 'BEOF'],
-    'UK00':['UK00', 'UKNI'],
-    'ES00':['ES00']
+    'AT00': ['AT00'],
+    'BE00': ['BE00', 'BEOF'],
+    'CH00': ['CH00'],
+    'DE00': ['DE00', 'DEKF'],
+    'DKE1': ['DKE1', 'DKBH', 'DKKF'],
+    'DKW1': ['DKW1'],
+    'EE00': ['EE00', 'EEOF'],
+    'ES00': ['ES00'],
+    'FI00': ['FI00'],
+    'FR00': ['FR00', 'FR15'],
+    'LT00': ['LT00', 'LTOF'],
+    'LV00': ['LV00'],
+    'NL00': ['NL00', 'NLLL'],
+    'NOM1': ['NOM1'],
+    'NON1': ['NON1'],
+    'NOS0': ['NOS0'],
+    'PL00': ['PL00'],
+    'SE01': ['SE01'],
+    'SE02': ['SE02'],
+    'SE03': ['SE03'],
+    'SE04': ['SE04'],
+    'UK00': ['UK00', 'UKNI']
 }
 
 # the reference grid contains additional country codes for Poland
+# the code uses either agg_plexos_locations or agg_ref_grid_locations depending on the Excel file
 agg_ref_grid_locations = agg_plexos_locations.copy()
 agg_ref_grid_locations['PL00'] = ['PL00', 'PL00I', 'PL00E']
 
-# NOTE: the TYNDP2024 data has Generator_IDs with no direct equivalent in unittypedata_maf2020.xlsx
-# this renames some of them to existing counterparts in unittypedata_maf2020.xlsx
+# NOTE: the TYNDP2024 data has Generator_IDs with no direct equivalent in NE model data set
+# this renames some of them to existing counterparts in the existing data
 gen_id_renamings =    {
     # same value (as in key-value pair) twice -> capacities will be aggregated after renaming
     'Demand Side Response Explicit':        'DR cutoff tier 1', 
@@ -144,7 +146,19 @@ gen_id_aggregations_loc = {
              'Run-of-River': 'PS Open turbine'}
 }
 
-# NATIVE DEMANDS
+
+# --- UTILITY FUNCTIONS ---
+
+# check if the output will be overwritten
+def check_chosen_output(output_filename_path:str):
+    if os.path.exists(output_filename_path):
+        print(f'\nWARNING: {output_filename_path} already exists.')
+        user_answer = input('\n Do you want to overwrite it (write "yes" to proceed)?\n')
+        if user_answer != 'yes':
+            sys.exit('\nScript aborted to avoid overwriting output file.')
+
+
+# --- NATIVE DEMANDS ---
 
 def process_native_demands(plexos_caps_demands, year):
     # fill up missing values in 'Output type'
@@ -170,9 +184,8 @@ def process_native_demands(plexos_caps_demands, year):
     return native_demands_ne_input
 
 
-# INSTALLED CAPACITIES
-
-def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_aggregations_loc, unittypedata_maf2020, year):
+# --- INSTALLED CAPACITIES ---
+def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_aggregations_loc, year):
     capacities = plexos_caps_demands[plexos_caps_demands['Output type'] == 'Installed Capacities [MW]']
     capacities = capacities.rename(columns={'Output type.1':'Generator_ID'}).copy()
 
@@ -193,10 +206,9 @@ def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_a
     installed_capacities_ne_input['capacity_input1'] = None
     installed_capacities_ne_input['Note'] = None
 
-    # a check that entries in gen_id_renamings are valid (keys and values must exist)
     for k, v in gen_id_renamings.items():
-        assert k in list(installed_capacities_ne_input['Generator_ID']), f'Unfound TYNDP2024 entry in gen_id_renamings: {k}'
-        assert v in list(unittypedata_maf2020['Generator_ID']), f'Unfound MAF2020 entry in gen_id_renamings: {v}'
+        if k not in installed_capacities_ne_input['Generator_ID'].values:
+            print(f"Warning: TYNDP2024 entry missing in gen_id_renamings: {k}")
 
     installed_capacities_ne_input['Generator_ID'] = installed_capacities_ne_input['Generator_ID'].replace(gen_id_renamings)
 
@@ -554,7 +566,6 @@ def process_year_data(year):
     installed_capacities_ne_input = process_installed_capacities(plexos_caps_demands,
                                                                  gen_id_renamings,
                                                                  gen_id_aggregations_loc,
-                                                                 unittypedata_maf2020,
                                                                  year)
     
     ref_capacities_year, min_max_exchanges_year = preprocess_transmission_data(ref_capacities,
@@ -597,14 +608,14 @@ def process_year_data(year):
 
 
 if __name__ == "__main__":
-    # unittypedata
-    unittypedata_maf2020 = pd.read_excel(unittypedata_maf2020_file_path, sheet_name='unittypedata').copy()
+    # check if output would be overwritten
+    check_chosen_output(output_filename_path)
 
     # the reference grid (transmission capacities before investments in 2030)
     ref_capacities = pd.read_excel(path_to_ref_grid_inv_candidates_file, sheet_name='1. Elec Ref Grid').set_index('Border')
 
     # ramp limits. For now, we use the TYNDP2020 calculations
-    ramp_limits = pd.read_excel(tyndp_2020_ramp_limits_file_path, sheet_name='TYNDP2020, NT', skiprows=9, usecols='AZ:BG')
+    ramp_limits = pd.read_excel(historical_ramp_limits_file_path, sheet_name='summary', skiprows=9, usecols='AZ:BG')
 
     processed_data = {
         year: process_year_data(year) for year in chosen_NT_years
@@ -616,7 +627,12 @@ if __name__ == "__main__":
         sheet_name: pd.concat([processed_data[year][sheet_name] for year in chosen_NT_years], axis=0, ignore_index=True)
         for sheet_name in sheet_names
     }
-    
+
+    # Rename 'from' -> 'from_node' and 'to' -> 'to_node' where present
+    for sheet, df in processed_data_concatenated.items():
+        processed_data_concatenated[sheet] = df.rename(
+            columns={'from': 'from_node', 'to': 'to_node'}
+        )
 
     # Write concatenated data to Excel
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
@@ -625,8 +641,8 @@ if __name__ == "__main__":
         
         processed_data_concatenated['unitdata'].to_excel(writer, index=False, sheet_name='unitdata')
         processed_data_concatenated['demanddata_elec'].to_excel(writer, index=False, sheet_name='demanddata_elec')
-        processed_data_concatenated['transferdata'].to_excel(writer, sheet_name='transferdata', index=False)
+        processed_data_concatenated['transferdata'].to_excel(writer, index=False, sheet_name='transferdata')
         remove_units_sheet.to_excel(writer, index=False, sheet_name='remove_units')
-        processed_data_concatenated['trans_capacities'].to_excel(writer, sheet_name='trans_capacities', index=False)
-        processed_data_concatenated['trans_missing_ref_capacities'].to_excel(writer, sheet_name='trans_missing_ref_capacities', index=False)
-        processed_data_concatenated['trans_self_loops'].to_excel(writer, sheet_name='trans_self_loops', index=False)
+        processed_data_concatenated['trans_capacities'].to_excel(writer, index=False, sheet_name='trans_capacities')
+        processed_data_concatenated['trans_missing_ref_capacities'].to_excel(writer, index=False, sheet_name='trans_missing_ref_capacities')
+        processed_data_concatenated['trans_self_loops'].to_excel(writer, index=False, sheet_name='trans_self_loops')
