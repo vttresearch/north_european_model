@@ -629,12 +629,6 @@ if __name__ == "__main__":
         for sheet_name in sheet_names
     }
 
-    # Rename 'from' -> 'from_node' and 'to' -> 'to_node' where present
-    for sheet, df in processed_data_concatenated.items():
-        processed_data_concatenated[sheet] = df.rename(
-            columns={'from': 'from_node', 'to': 'to_node'}
-        )
-
     # Write concatenated data to Excel
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
         # also add a remove_units sheet with no content other than the headers
