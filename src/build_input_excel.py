@@ -174,6 +174,9 @@ class BuildInputExcel:
             else:
                 return def_value
 
+        # Keep a set of generator_ids already warned about
+        warned_generator_ids = set()
+
         # Process each row in the capacities DataFrame.
         for _, cap_row in df_unitdata.iterrows():
 
@@ -187,7 +190,15 @@ class BuildInputExcel:
                 tech_row = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id].iloc[0]
             # print warning and skip unit if unittype data not available
             except IndexError:
-                log_status(f"Generator_ID '{generator_id}' does not have a matching generator_id in any of the unittypedata files, check spelling.", self.builder_logs, level="warn")
+                # Only warn once per generator_id
+                if generator_id not in warned_generator_ids:
+                    log_status(
+                        f"Generator_ID '{generator_id}' does not have a matching generator_id "
+                        "in any of the unittypedata files, check spelling.",
+                        self.builder_logs,
+                        level="warn"
+                    )
+                    warned_generator_ids.add(generator_id)
                 continue
 
             # Identify all defined input/output connections for this generator type
@@ -516,7 +527,9 @@ class BuildInputExcel:
         return p_gnn  
 
 
-    def create_p_gn(self, p_gnu_io_flat, df_fueldata, df_demanddata, df_storagedata, ts_storage_limits, ts_domain_pairs):
+    def create_p_gn(self, p_gnu_io_flat, df_fueldata, 
+                    df_demanddata, df_storagedata, 
+                    ts_storage_limits, ts_domain_pairs):
         """
         Creates a new DataFrame p_gn with specified dimension and parameter columns
 

@@ -1,9 +1,8 @@
 import pandas as pd
-import os
 import sys
 from pathlib import Path
-from typing import Union, List, Dict, Optional
-from src.excel_exchange import merge_excel_files
+from typing import Union, List, Dict, Optional, Tuple
+
 
 def process_dataset(
     input_folder: Union[Path, str],
@@ -26,6 +25,8 @@ def process_dataset(
     Returns:
         pd.DataFrame: The processed DataFrame after merging and quality check.
     """
+    from src.excel_exchange import merge_excel_files
+
     try:
         # First step: merge all Excel files into one DataFrame
         df = merge_excel_files(input_folder, files, prefix, isMandatory)
@@ -178,7 +179,8 @@ def build_from_to_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_unittype_unit_column(
     df: pd.DataFrame,
-    df_unittypedata: pd.DataFrame
+    df_unittypedata: pd.DataFrame,
+    source_data_logs: list[str] = None
     ) -> pd.DataFrame:
     """
     Add 'unittype' and 'unit' columns to DataFrame based on generator mappings.
@@ -196,6 +198,8 @@ def build_unittype_unit_column(
     --------
     pandas.DataFrame
         Input DataFrame with new 'unittype' and 'unit' columns added
+    source_data_logs
+        list of strings where new log events are added to the input log event list
     
     Raises:
     -------
@@ -209,6 +213,8 @@ def build_unittype_unit_column(
       when unit_name_prefix is present and not empty
     - If 'generator_id' does not have any matching 'unittype', the code uses 'generator_id' instead of 'unittype'
     """
+    from src.utils import log_status
+
     # Return input data if empty unittypedata
     if df.empty or df_unittypedata.empty:
         return df
@@ -217,15 +223,26 @@ def build_unittype_unit_column(
     required_columns = ["country", "generator_id"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        raise ValueError(f"Remove units dataFrame is missing required columns: {', '.join(missing_columns)}. Check all unitdata_files.")
+        raise ValueError(f"DataFrame is missing required columns: {', '.join(missing_columns)}. Check all unitdata_files and remove_files.")
 
     # Create a mapping from generator_id (lowercase) to unittype for efficient lookup
     unit_mapping = df_unittypedata.set_index(df_unittypedata['generator_id'].str.lower())['unittype']
 
-    # Add unittype column by mapping generator_id (converted to lowercase) to the corresponding unittype
+    # Add unittype column by mapping lowercase generator_id to the corresponding unittype
     df['unittype'] = df['generator_id'].str.lower().map(unit_mapping)
 
-    # Fill in missing unittype with original generator_id (used as fallback)
+    # Identify generator_ids without match
+    missing_mask = df['unittype'].isna()
+    if missing_mask.any() and log_status is not None:
+        for generator_id in df.loc[missing_mask, 'generator_id'].unique():
+            log_status(
+                f"unitdata generator_id '{generator_id}' does not have a matching generator_id "
+                "in any of the unittypedata files, check spelling.",
+                source_data_logs,
+                level="warn"
+            )
+
+    # Fallback: Fill in missing unittype with original generator_id
     df['unittype'] = df['unittype'].fillna(df['generator_id'])
 
     # Create unit column with optional prefix if available

@@ -11,7 +11,9 @@ class SourceExcelDataPipeline:
     InputDataPipeline handles reading, merging, filtering, and validating all input Excel files.
     """
 
-    def __init__(self, config: dict, input_folder: Path, scenario: str, scenario_year: int, scenario_alternative: str = None, country_codes: list = None):
+    def __init__(self, config: dict, input_folder: Path, 
+                 scenario: str, scenario_year: int, 
+                 scenario_alternative: str = None, country_codes: list = None):
         """
         Initialize InputDataPipeline.
 
@@ -40,6 +42,8 @@ class SourceExcelDataPipeline:
         self.df_storagedata = None
         self.df_fueldata = None
         self.df_emissiondata = None
+
+        self.logs = []
 
     def run(self):
         """
@@ -74,10 +78,6 @@ class SourceExcelDataPipeline:
         self.df_transferdata = filter_df_blacklist(self.df_transferdata, 'transferdata_files', {'from_node': exclude_nodes})
         self.df_transferdata = filter_df_blacklist(self.df_transferdata, 'transferdata_files', {'to_node': exclude_nodes})
 
-        # Build unittype and unit columns
-        self.df_unitdata =     build_unittype_unit_column(self.df_unitdata,     self.df_unittypedata)
-        self.df_remove_units = build_unittype_unit_column(self.df_remove_units, self.df_unittypedata)
-
         # Make a combination of scenario and alternative
         scen_and_alt = [self.scenario]
         if self.scenario_alternative:
@@ -104,6 +104,10 @@ class SourceExcelDataPipeline:
         self.df_storagedata  = keep_last_occurance(self.df_storagedata, ['country', 'grid', 'node'])
         self.df_fueldata     = keep_last_occurance(self.df_fueldata, ['fuel'])
         self.df_emissiondata = keep_last_occurance(self.df_emissiondata, ['emission'])
+
+        # Build unittype and unit columns
+        self.df_unitdata =     build_unittype_unit_column(self.df_unitdata, self.df_unittypedata, self.logs)
+        self.df_remove_units = build_unittype_unit_column(self.df_remove_units, self.df_unittypedata, self.logs)
 
         # Remove zero rows from demanddata
         self.df_demanddata = filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])
