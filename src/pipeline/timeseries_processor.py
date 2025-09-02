@@ -79,7 +79,7 @@ class ProcessorRunner:
         Run a single processor and return its secondary result.
 
         Returns:
-            tuple: (processor_name, secondary_result)
+            tuple: (processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages)
         """
         spec = self.processor_spec["spec"]
         processor_name = self.processor_spec["name"]
@@ -88,6 +88,11 @@ class ProcessorRunner:
         
         log_messages = []
         log_status(f"{human_name}", log_messages, section_start_length=45)
+
+        # Helper function updating processor hash
+        def update_processor_hash():
+            hash_value = compute_processor_code_hash(processor_file)
+            self.cache_manager.save_processor_hash(processor_name, hash_value)
 
         # Extract config values
         start_date = pd.to_datetime(self.config.get("start_date"))
@@ -109,7 +114,7 @@ class ProcessorRunner:
 
         ProcessorClass = getattr(module, processor_name)
 
-        # Prepare kwargs
+        # Prepare processor kwargs
         processor_kwargs = {
             "input_folder": os.path.join(self.input_folder, "timeseries"),
             "input_file": spec.get("input_file", ""),
@@ -121,15 +126,44 @@ class ProcessorRunner:
             "attached_grid": spec.get("attached_grid"),
             **spec
         }
-
         # Demand data
         demand_grid = spec.get("demand_grid")
         if demand_grid:
             df_annual_demands = self.source_excel_data_pipeline.df_demanddata
-            df_filtered = df_annual_demands[df_annual_demands["grid"].str.lower() == demand_grid.lower()]
-            processor_kwargs["df_annual_demands"] = df_filtered
+            if df_annual_demands.empty:
+                log_status(
+                    f"All annual demands empty. Skipping processor '{human_name}'.",
+                    log_messages,
+                    level="warn",
+                )
+                # Keep hash bookkeeping consistent even when skipping
+                update_processor_hash()
+                # Return: (processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages)
+                return processor_name, None, {}, {}, log_messages
+            else: 
+                df_filtered = df_annual_demands[df_annual_demands["grid"].str.lower() == demand_grid.lower()]
 
-        # BB Conversion kwargs
+            if df_filtered.empty:
+                log_status(
+                    f"No annual demand rows found for grid '{demand_grid}'. Skipping processor '{human_name}'.",
+                    log_messages,
+                    level="warn",
+                )
+                # Keep hash bookkeeping consistent even when skipping
+                update_processor_hash()
+                # Return: (processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages)
+                return processor_name, None, {}, {}, log_messages
+
+            # Only pass demands onward if non-empty
+            processor_kwargs["df_annual_demands"] = df_filtered
+        ## Demand data
+        #demand_grid = spec.get("demand_grid")
+        #if demand_grid:
+        #    df_annual_demands = self.source_excel_data_pipeline.df_demanddata
+        #    df_filtered = df_annual_demands[df_annual_demands["grid"].str.lower() == demand_grid.lower()]
+        #    processor_kwargs["df_annual_demands"] = df_filtered
+
+        # Prepare BB Conversion kwargs
         bb_conversion_kwargs = {
             "processor_name": processor_name,
             "bb_parameter": bb_parameter,
@@ -203,9 +237,9 @@ class ProcessorRunner:
 
 
         # Save processor hash
-        hash_value = compute_processor_code_hash(processor_file)
-        self.cache_manager.save_processor_hash(processor_name, hash_value)
+        update_processor_hash()
 
+        # Return: (processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages)
         return processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages
 
 
