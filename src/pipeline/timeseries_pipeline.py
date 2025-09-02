@@ -210,6 +210,8 @@ class TimeseriesPipeline:
                 self.logs.extend(processor_log)
 
             # --- Process Other Demands Not Yet Processed -------------------------------
+            log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
+            
             all_demand_grids = set()
             if not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
                 # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
@@ -223,7 +225,11 @@ class TimeseriesPipeline:
             unprocessed_grids = all_demand_grids - processed_demand_grids
 
             if unprocessed_grids:
-                log_status("Processing other demands", self.logs, level="run", add_empty_line_before=True)
+                log_status("Processing other demands", self.logs, level="run")
+                for g in unprocessed_grids:
+                    log_status(f" .. {g}", self.logs, level="None")
+
+                # Create timeseries for other demands
                 df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
                 # Collect new domain info
