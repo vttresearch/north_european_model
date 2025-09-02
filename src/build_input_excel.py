@@ -241,7 +241,7 @@ class BuildInputExcel:
         final_cols = dimensions.copy()
         final_cols.extend(param_gnu)
 
-        # Create p_gnu_io, fill NaN, and remove empty columns
+        # Create p_gnu_io, fill NaN, and remove empty columns except certain mandatory columns
         p_gnu_io = pd.DataFrame(rows, columns=final_cols)
         p_gnu_io = p_gnu_io.fillna(value=0)
         p_gnu_io = self.remove_empty_columns(p_gnu_io)
@@ -1572,7 +1572,11 @@ class BuildInputExcel:
         # For each column, check if every cell is empty.
         empty_cols_mask = empty_cells.all(axis=0)
 
-        # Drop the columns that are entirely empty.
+        # Keep 'capacity' and 'isActive' even if they are empty
+        cols_to_keep = {"capacity"}
+        empty_cols_mask[empty_cols_mask.index.isin(cols_to_keep)] = False
+
+        # Drop the columns that are entirely empty (except the protected ones).
         df_cleaned = df.loc[:, ~empty_cols_mask]
         return df_cleaned
 
