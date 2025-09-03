@@ -174,6 +174,9 @@ class BuildInputExcel:
             else:
                 return def_value
 
+        # Keep a set of generator_ids already warned about
+        warned_generator_ids = set()
+
         # Process each row in the capacities DataFrame.
         for _, cap_row in df_unitdata.iterrows():
 
@@ -187,7 +190,15 @@ class BuildInputExcel:
                 tech_row = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id].iloc[0]
             # print warning and skip unit if unittype data not available
             except IndexError:
-                log_status(f"Generator_ID '{generator_id}' does not have a matching generator_id in any of the unittypedata files, check spelling.", self.builder_logs, level="warn")
+                # Only warn once per generator_id
+                if generator_id not in warned_generator_ids:
+                    log_status(
+                        f"Generator_ID '{generator_id}' does not have a matching generator_id "
+                        "in any of the unittypedata files, check spelling.",
+                        self.builder_logs,
+                        level="warn"
+                    )
+                    warned_generator_ids.add(generator_id)
                 continue
 
             # Identify all defined input/output connections for this generator type
@@ -230,10 +241,10 @@ class BuildInputExcel:
         final_cols = dimensions.copy()
         final_cols.extend(param_gnu)
 
-        # Create p_gnu_io, fill NaN, and remove empty columns
+        # Create p_gnu_io, fill NaN, and remove empty columns except certain mandatory columns
         p_gnu_io = pd.DataFrame(rows, columns=final_cols)
         p_gnu_io = p_gnu_io.fillna(value=0)
-        p_gnu_io = self.remove_empty_columns(p_gnu_io)
+        p_gnu_io = self.remove_empty_columns(p_gnu_io, cols_to_keep=['capacity'])
 
         # if dataframe has content
         if not p_gnu_io.empty:
@@ -516,7 +527,9 @@ class BuildInputExcel:
         return p_gnn  
 
 
-    def create_p_gn(self, p_gnu_io_flat, df_fueldata, df_demanddata, df_storagedata, ts_storage_limits, ts_domain_pairs):
+    def create_p_gn(self, p_gnu_io_flat, df_fueldata, 
+                    df_demanddata, df_storagedata, 
+                    ts_storage_limits, ts_domain_pairs):
         """
         Creates a new DataFrame p_gn with specified dimension and parameter columns
 
@@ -532,9 +545,34 @@ class BuildInputExcel:
         """      
         # dimension and parameter columns
         dimensions = ['grid', 'node']
-        param_gn = ['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState']
+        param_gn = ['isActive',
+                    'nodeBalance', 
+                    'usePrice',
+                    'selfDischargeLoss', 
+                    'energyStoredPerUnitOfState',
+                    'boundStart',
+                    'boundStartOfSamples',     
+                    'boundStartAndEnd',        
+                    'boundStartToEnd',         
+                    'boundEnd',                
+                    'boundEndOfSamples',       
+                    'boundAll',                
+                    'boundSumOverInterval',    
+                    'capacityMargin',          
+                    'storageValueUseTimeSeries', 
+                    'influx'
+                    ]
+        
         # List to collect the new rows 
         rows = []
+
+        # Build a lower-case column map for df_storagedata to support case-insensitive lookup
+        if not df_storagedata.empty:
+            storage_colmap = {c.lower(): c for c in df_storagedata.columns}
+            storage_cols_lower = set(storage_colmap.keys())
+        else:
+            storage_colmap = {}
+            storage_cols_lower = set()
 
         # Initialize an empty set for storage nodes
         ts_storage_nodes = set()   
@@ -549,7 +587,7 @@ class BuildInputExcel:
         if 'grid_node' in ts_domain_pairs:
             ts_grid_node = pd.DataFrame(ts_domain_pairs['grid_node'], columns=['grid', 'node'])
         else:
-            ts_grid_node = pd.DataFrame()
+            ts_grid_node = pd.DataFrame(columns=['grid', 'node'])
 
         # Extract gn pairs from df_storagedata and p_gnu
         if not df_storagedata.empty:
@@ -559,11 +597,17 @@ class BuildInputExcel:
         if not p_gnu_io_flat.empty:
             pairs_gnu = p_gnu_io_flat[['grid', 'node']]
         else:
-            pairs_gnu = pd.DataFrame()
+            pairs_gnu = pd.DataFrame(columns=['grid', 'node'])
+
+        parts = [ts_grid_node, pairs_df_storagedata, pairs_gnu]
+        parts = [p for p in parts if not p.empty]
 
         # Concatenate and drop duplicates
-        unique_gn_pairs = pd.concat([ts_grid_node, pairs_df_storagedata, pairs_gnu]).drop_duplicates()
-
+        unique_gn_pairs = (
+            pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
+            if parts else pd.DataFrame(columns=['grid', 'node'])
+        )
+        
         # Grids in df_demanddata for quick membership test
         if not df_demanddata.empty:
             demand_grids = df_demanddata['grid'].unique()
@@ -571,88 +615,94 @@ class BuildInputExcel:
             demand_grids = []
 
         # Process each (grid, node) pair:
-        for idx, row in unique_gn_pairs.iterrows():
+        for _, row in unique_gn_pairs.iterrows():
             grid = row['grid']
             node = row['node']
 
-            # Inititate value
-            usePrice = False
-            # Determine usePrice: if any fuel record for this grid.
-            if not df_fueldata.empty:
-                fuels_for_grid = df_fueldata[df_fueldata['grid'] == grid]
-                if not fuels_for_grid.empty:
-                    usePrice = True
+            # Subset of storagedata for this (grid,node)
+            if not df_storagedata.empty:
+                node_storage_data = df_storagedata[(df_storagedata['grid'] == grid) & (df_storagedata['node'] == node)]
+            else:
+                node_storage_data = pd.DataFrame()
 
-            # nodeBalance is simply the opposite of usePrice.
-            nodeBalance = not usePrice
-
-            # Initialize storage status to no storage
+            # ---- Storage classification ----
             is_storage = 0
 
-            # check if node is a storage node based on multiple criteria:
-            # 1. if gn has upwardLimit, downwardLimit, or reference in df_storagedata -> storage node
+            # 1) upwardLimit / downwardLimit / reference present and > 0
             cols_to_check = ['upwardLimit', 'downwardLimit', 'reference']
-            existing_cols = [col for col in cols_to_check if col.lower() in df_storagedata.columns]
-          
-            # Only check further if at least one column exists
-            if existing_cols:
-                node_storage_data = df_storagedata[(df_storagedata['grid'] == grid) & (df_storagedata['node'] == node)]
-                # Check each existing column: if any value is greater than 0, mark as storage
-                for col in existing_cols:
-                    if (node_storage_data[col.lower()] > 0).any():
+            existing_lower = [c.lower() for c in cols_to_check if c.lower() in storage_cols_lower]
+            if existing_lower and not node_storage_data.empty:
+                for low in existing_lower:
+                    real_col = storage_colmap[low]
+                    if (node_storage_data[real_col].fillna(0) > 0).any():
                         is_storage = 1
                         break
 
-            # 2. if node is in ts_storage_limits
+            # 2) node in ts_storage_limits
             if not is_storage and node in ts_storage_nodes:
                 is_storage = 1
 
-            # 3. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
-            if not p_gnu_io_flat.empty and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
+            # 3) upperLimitCapacityRatio defined (non-null & non-zero) in p_gnu_io_flat
+            if not is_storage and not p_gnu_io_flat.empty and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
                 subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & (p_gnu_io_flat['node'] == node)]
-                if not is_storage and not subset_p_gnu_io.empty:
-                    is_storage = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) 
-                                  & (subset_p_gnu_io['upperLimitCapacityRatio'] != 0)
-                                  ).any()
+                if not subset_p_gnu_io.empty:
+                    is_storage = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) &
+                                  (subset_p_gnu_io['upperLimitCapacityRatio'] != 0)).any()
             else:
                 subset_p_gnu_io = pd.DataFrame()
 
-            # 4. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demanddata
-            # if gn is in p_gnu with both 'input' and 'output' roles
-            if not subset_p_gnu_io.empty and 'input_output' in subset_p_gnu_io.columns:
+            # 4) both input & output roles and grid not in demands
+            has_both_io = False
+            if not is_storage and not subset_p_gnu_io.empty and 'input_output' in subset_p_gnu_io.columns:
                 io_roles = set(subset_p_gnu_io['input_output'])
                 has_both_io = ('input' in io_roles) and ('output' in io_roles)
+                if has_both_io and (grid not in demand_grids):
+                    is_storage = 1
+
+            # Derived flags
+            energyStoredPerUnitOfState = 1 if is_storage else 0
+
+            # ---- usePrice / nodeBalance ----
+            if is_storage:
+                usePrice = False        # ensure defined
+                nodeBalance = True
             else:
-                has_both_io = False
-            # if grid does not appear in df_demanddata
-            grid_not_in_demands = grid not in demand_grids
-            # compiling all conditions
-            if not is_storage and (has_both_io and grid_not_in_demands):
-                is_storage = 1
+                # usePrice if any fuel record for this grid
+                if not df_fueldata.empty:
+                    usePrice = not df_fueldata[df_fueldata['grid'] == grid].empty
+                else:
+                    usePrice = False
+                nodeBalance = not usePrice
 
-            # Determine storage nodes based on previous tests:
-            if is_storage: energyStoredPerUnitOfState = 1
-            else: energyStoredPerUnitOfState = 0
-
-            # Build the data row for (grid,node)
+            # ---- Build row with mandatory fields ----
             row_dict = {
-                'grid' :                        grid,
-                'node' :                        node,
-                'usePrice' :                    usePrice,
-                'nodeBalance' :                 nodeBalance,
-                'energyStoredPerUnitOfState' :  energyStoredPerUnitOfState
+                'isActive':                   1,
+                'grid':                       grid,
+                'node':                       node,
+                'usePrice':                   usePrice,
+                'nodeBalance':                nodeBalance,
+                'energyStoredPerUnitOfState': energyStoredPerUnitOfState
             }
+
+            # ---- Add optional params if present in storagedata (case-insensitive) ----
+            if not node_storage_data.empty:
+                for key in (k for k in param_gn if k not in row_dict):
+                    low = key.lower()
+                    if low in storage_colmap:
+                        real_col = storage_colmap[low]
+                        val = node_storage_data[real_col].iloc[0]
+                        if val is not None:
+                            row_dict[key] = val
             rows.append(row_dict)
 
       
-        # Define the final columns titles and orders.
-        final_cols = dimensions.copy()
-        final_cols.extend(param_gn)
-
-        # Create p_gn, fill NaN, and add fake MultiIndex
+        # Build p_gn
+        final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
         p_gn = p_gn.fillna(value=0)
+        p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'])
         p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
+
 
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
@@ -708,19 +758,25 @@ class BuildInputExcel:
 
         # parameter_unit names and their default values.
         param_unit_defaults = {
-            'availability': 1,
+            'isActive': 1,  
             'isSource': 0,
             'isSink': 0,
             'fixedFlow': 0,
+            'availability': 1,
             'unitCount': 0,
-            'eff00': 1,
-            'eff01': 1,
-            'op00': 0,
-            'op01': 1,
+            'useInitialOnlineStatus': 0,
+            'initialOnlineStatus': 0,
             'startColdAfterXhours': 0,
             'startWarmAfterXhours': 0,
+            'rampSpeedToMinLoad': 0,
+            'rampSpeedFromMinLoad': 0,
             'minOperationHours': 0,
             'minShutdownHours': 0,
+            'eff00': 1,
+            'eff01': 1,
+            'opFirstCross': 0,
+            'op00': 0,
+            'op01': 1,
             'useTimeseries': 0,
             'useTimeseriesAvailability': 0,
             'investMIP': 0,
@@ -1552,16 +1608,40 @@ class BuildInputExcel:
             return filtered_df
 
 
-    def remove_empty_columns(self, df):
-        # Build a boolean DataFrame where each cell is True if it is either "" or 0.
-        empty_cells = ((df == "") | (df == 0))
+    def remove_empty_columns(self, df: pd.DataFrame, cols_to_keep=None, treat_nan_as_empty=True):
+        from pandas.api.types import is_numeric_dtype, is_bool_dtype
 
-        # For each column, check if every cell is empty.
-        empty_cols_mask = empty_cells.all(axis=0)
+        cols_to_keep = set(cols_to_keep or [])
 
-        # Drop the columns that are entirely empty.
-        df_cleaned = df.loc[:, ~empty_cols_mask]
-        return df_cleaned
+        def col_is_empty(s: pd.Series) -> bool:
+            # Booleans: usually don't drop just because all False; only NaNs count as empty
+            if is_bool_dtype(s):
+                return s.isna().all() if treat_nan_as_empty else False
+
+            # Numeric (excluding bool): empty if all zeros (and optionally NaN→0)
+            if is_numeric_dtype(s) and not is_bool_dtype(s):
+                s_cmp = s.fillna(0) if treat_nan_as_empty else s
+                return (s_cmp == 0).all()
+
+            # Non-numeric: empty if all are "" (optionally allow NaN)
+            if treat_nan_as_empty:
+                na_mask = s.isna()
+            else:
+                na_mask = pd.Series(False, index=s.index)
+
+            # Safe elementwise test; no vectorized == on arbitrary objects
+            empty_str_mask = s.map(lambda v: isinstance(v, str) and v.strip() == "")
+            return (na_mask | empty_str_mask).all()
+
+        empty_cols_mask = df.apply(col_is_empty, axis=0)
+
+        # Keep protected columns even if empty
+        keep = list(cols_to_keep & set(df.columns))
+        if keep:
+            empty_cols_mask.loc[keep] = False
+
+        return df.loc[:, ~empty_cols_mask]
+
 
 
 # ------------------------------------------------------

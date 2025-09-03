@@ -164,6 +164,7 @@ class TimeseriesPipeline:
             processor_iter = (p for p in self.processors if p['human_name'] in processors_to_rerun)
 
             for processor in processor_iter:
+                # --- run processor ---
                 runner = ProcessorRunner(
                     processor_spec=processor,
                     config=self.config,
@@ -175,6 +176,29 @@ class TimeseriesPipeline:
                 log_status(f"Running: {processor['name']}", self.logs, level="run", add_empty_line_before=True)
                 name, secondary_result, ts_domains, ts_domain_pairs, processor_log = runner.run()
 
+                # --- Normalize outputs from runner so merges don't explode ---
+                # ts_domains: expect dict[str, Iterable]
+                if not ts_domains:
+                    ts_domains = {}
+                elif not isinstance(ts_domains, dict):
+                    ts_domains = {}
+
+                # ts_domain_pairs: expect dict[str, Iterable[tuple]]
+                if not ts_domain_pairs:
+                    ts_domain_pairs = {}
+                elif not isinstance(ts_domain_pairs, dict):
+                    # Legacy or accidental set/other types → discard for safety
+                    ts_domain_pairs = {}
+
+                # processor_log: expect list[str]
+                if not processor_log:
+                    processor_log = []
+                elif isinstance(processor_log, str):
+                    processor_log = [processor_log]
+
+                # secondary_result can be anything or None; no normalization needed
+
+                # --- process outputs ---
                 self.secondary_results[name] = secondary_result
 
                 for dom, vals in ts_domains.items():
@@ -186,7 +210,13 @@ class TimeseriesPipeline:
                 self.logs.extend(processor_log)
 
             # --- Process Other Demands Not Yet Processed -------------------------------
-            all_demand_grids = set(self.df_annual_demands["grid"].str.lower().unique())
+            log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
+            
+            all_demand_grids = set()
+            if not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
+                # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
+                all_demand_grids = set(self.df_annual_demands["grid"].dropna().astype(str).str.lower().unique())
+
             processed_demand_grids = {
                 spec.get("demand_grid").lower()
                 for spec in self.config.get("timeseries_specs", {}).values()
@@ -195,7 +225,11 @@ class TimeseriesPipeline:
             unprocessed_grids = all_demand_grids - processed_demand_grids
 
             if unprocessed_grids:
-                log_status("Processing other demands", self.logs, level="run", add_empty_line_before=True)
+                log_status("Processing other demands", self.logs, level="run")
+                for g in unprocessed_grids:
+                    log_status(f" .. {g}", self.logs, level="None")
+
+                # Create timeseries for other demands
                 df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
                 # Collect new domain info

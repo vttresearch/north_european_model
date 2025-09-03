@@ -105,6 +105,7 @@ def main(input_folder, config_file):
         if cache_manager.reimport_source_excels:
             log_status("Processing source Excel files.", log_messages, level="run")
             source_excel_data_pipeline.run()
+            log_messages.extend(source_excel_data_pipeline.logs)
             log_status("Source excel files processed successfully.", log_messages, level="info")
         else:
             log_status("Skipping source excel processing.", log_messages, level="skip")
