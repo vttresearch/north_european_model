@@ -599,9 +599,15 @@ class BuildInputExcel:
         else:
             pairs_gnu = pd.DataFrame(columns=['grid', 'node'])
 
-        # Concatenate and drop duplicates
-        unique_gn_pairs = pd.concat([ts_grid_node, pairs_df_storagedata, pairs_gnu], ignore_index=True).drop_duplicates()
+        parts = [ts_grid_node, pairs_df_storagedata, pairs_gnu]
+        parts = [p for p in parts if not p.empty]
 
+        # Concatenate and drop duplicates
+        unique_gn_pairs = (
+            pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
+            if parts else pd.DataFrame(columns=['grid', 'node'])
+        )
+        
         # Grids in df_demanddata for quick membership test
         if not df_demanddata.empty:
             demand_grids = df_demanddata['grid'].unique()
