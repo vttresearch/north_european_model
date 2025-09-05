@@ -548,8 +548,8 @@ class BuildInputExcel:
         param_gn = ['isActive',
                     'nodeBalance', 
                     'usePrice',
-                    'selfDischargeLoss', 
                     'energyStoredPerUnitOfState',
+                    'selfDischargeLoss', 
                     'boundStart',
                     'boundStartOfSamples',     
                     'boundStartAndEnd',        
@@ -566,6 +566,44 @@ class BuildInputExcel:
         # List to collect the new rows 
         rows = []
 
+
+
+        # --- Collect grid-node pairs ---
+
+        # Get grid_node from ts_domain_pairs and convert to DataFrame
+        if 'grid_node' in ts_domain_pairs:
+            ts_grid_node = pd.DataFrame(ts_domain_pairs['grid_node'], columns=['grid', 'node'])
+        else:
+            ts_grid_node = pd.DataFrame(columns=['grid', 'node'])
+
+        # Extract gn pairs from df_storagedata
+        if not df_storagedata.empty:
+            pairs_df_storagedata = df_storagedata[['grid', 'node']]
+        else:
+            pairs_df_storagedata = pd.DataFrame(columns=['grid', 'node'])
+
+        # Extract gn pairs from p_gnu_io_flat
+        if not p_gnu_io_flat.empty:
+            pairs_gnu = p_gnu_io_flat[['grid', 'node']]
+        else:
+            pairs_gnu = pd.DataFrame(columns=['grid', 'node'])
+
+        # Concatenate and drop duplicates
+        parts = [ts_grid_node, pairs_df_storagedata, pairs_gnu]
+        parts = [p for p in parts if not p.empty]
+        unique_gn_pairs = (
+            pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
+            if parts else pd.DataFrame(columns=['grid', 'node'])
+        )
+
+        # --- Preprocess data for the loop ---
+
+        # Grids in df_demanddata for quick membership test
+        if not df_demanddata.empty:
+            demand_grids = {str(g).lower() for g in df_demanddata['grid'].dropna().unique()}
+        else:
+            demand_grids = set()
+        print(demand_grids)
         # Build a lower-case column map for df_storagedata to support case-insensitive lookup
         if not df_storagedata.empty:
             storage_colmap = {c.lower(): c for c in df_storagedata.columns}
@@ -583,38 +621,8 @@ class BuildInputExcel:
                 # Add all nodes to the set
                 ts_storage_nodes.update(df['node'].unique())
 
-        # Get grid_node from ts_domain_pairs and convert to DataFrame
-        if 'grid_node' in ts_domain_pairs:
-            ts_grid_node = pd.DataFrame(ts_domain_pairs['grid_node'], columns=['grid', 'node'])
-        else:
-            ts_grid_node = pd.DataFrame(columns=['grid', 'node'])
 
-        # Extract gn pairs from df_storagedata and p_gnu
-        if not df_storagedata.empty:
-            pairs_df_storagedata = df_storagedata[['grid', 'node']]
-        else:
-            pairs_df_storagedata = pd.DataFrame()
-        if not p_gnu_io_flat.empty:
-            pairs_gnu = p_gnu_io_flat[['grid', 'node']]
-        else:
-            pairs_gnu = pd.DataFrame(columns=['grid', 'node'])
-
-        parts = [ts_grid_node, pairs_df_storagedata, pairs_gnu]
-        parts = [p for p in parts if not p.empty]
-
-        # Concatenate and drop duplicates
-        unique_gn_pairs = (
-            pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
-            if parts else pd.DataFrame(columns=['grid', 'node'])
-        )
-        
-        # Grids in df_demanddata for quick membership test
-        if not df_demanddata.empty:
-            demand_grids = df_demanddata['grid'].unique()
-        else:
-            demand_grids = []
-
-        # Process each (grid, node) pair:
+        # --- Process each (grid, node) pair ---
         for _, row in unique_gn_pairs.iterrows():
             grid = row['grid']
             node = row['node']
@@ -625,66 +633,79 @@ class BuildInputExcel:
             else:
                 node_storage_data = pd.DataFrame()
 
-            # ---- Storage classification ----
-            is_storage = 0
+            # ---- Basic classifications ----
+            isActive = node_storage_data['isActive'].iloc[0] if 'isActive' in node_storage_data.columns else None
+            usePrice = node_storage_data['usePrice'].iloc[0] if 'usePrice' in node_storage_data.columns else None
+            nodeBalance = node_storage_data['nodeBalance'].iloc[0] if 'nodeBalance' in node_storage_data.columns else None
+            energyStoredPerUnitOfState = node_storage_data['energyStoredPerUnitOfState'].iloc[0] if 'energyStoredPerUnitOfState' in node_storage_data.columns else None
+
+            if usePrice == 1 and nodeBalance == 1:
+                log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'nodeBalance'=1, check the data.", self.builder_logs, level="warn")    
+
+            if usePrice == 1 and energyStoredPerUnitOfState == 1:
+                log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'energyStoredPerUnitOfState'=1, check the data.", self.builder_logs, level="warn")    
+
+            # --- Check if price node ---
+
+            # usePrice if any fuel record for this grid
+            if not usePrice and not df_fueldata.empty:
+                usePrice = not df_fueldata[df_fueldata['grid'] == grid].empty
+                usePrice = 1 if usePrice else 0
+
+            # --- Check if balance node ---
+
+            # if demand node
+            if nodeBalance == None and grid in demand_grids:
+                nodeBalance = 1
+
+            # if has any data in node_storage_data
+            if nodeBalance == None and not node_storage_data.empty:
+                nodeBalance = 1
+
+            # --- Check if storage node ---
 
             # 1) upwardLimit / downwardLimit / reference present and > 0
             cols_to_check = ['upwardLimit', 'downwardLimit', 'reference']
             existing_lower = [c.lower() for c in cols_to_check if c.lower() in storage_cols_lower]
-            if existing_lower and not node_storage_data.empty:
+            if not usePrice and existing_lower and not node_storage_data.empty:
                 for low in existing_lower:
                     real_col = storage_colmap[low]
                     if (node_storage_data[real_col].fillna(0) > 0).any():
-                        is_storage = 1
+                        energyStoredPerUnitOfState = 1
                         break
 
             # 2) node in ts_storage_limits
-            if not is_storage and node in ts_storage_nodes:
-                is_storage = 1
+            if not usePrice and not energyStoredPerUnitOfState and node in ts_storage_nodes:
+                energyStoredPerUnitOfState = 1
 
             # 3) upperLimitCapacityRatio defined (non-null & non-zero) in p_gnu_io_flat
-            if not is_storage and not p_gnu_io_flat.empty and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
+            if not usePrice and not energyStoredPerUnitOfState and not p_gnu_io_flat.empty and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
                 subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & (p_gnu_io_flat['node'] == node)]
                 if not subset_p_gnu_io.empty:
-                    is_storage = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) &
+                    energyStoredPerUnitOfState = ((subset_p_gnu_io['upperLimitCapacityRatio'].notnull()) &
                                   (subset_p_gnu_io['upperLimitCapacityRatio'] != 0)).any()
+                    energyStoredPerUnitOfState = 1 if energyStoredPerUnitOfState else 0
             else:
                 subset_p_gnu_io = pd.DataFrame()
 
-            # 4) both input & output roles and grid not in demands
-            has_both_io = False
-            if not is_storage and not subset_p_gnu_io.empty and 'input_output' in subset_p_gnu_io.columns:
-                io_roles = set(subset_p_gnu_io['input_output'])
-                has_both_io = ('input' in io_roles) and ('output' in io_roles)
-                if has_both_io and (grid not in demand_grids):
-                    is_storage = 1
 
-            # Derived flags
-            energyStoredPerUnitOfState = 1 if is_storage else 0
+            # ---- Build the data row ----            
+            # Derivatice flags
+            if energyStoredPerUnitOfState and usePrice == None: usePrice = 0 
+            if energyStoredPerUnitOfState and nodeBalance == None: nodeBalance = 1            
 
-            # ---- usePrice / nodeBalance ----
-            if is_storage:
-                usePrice = False        # ensure defined
-                nodeBalance = True
-            else:
-                # usePrice if any fuel record for this grid
-                if not df_fueldata.empty:
-                    usePrice = not df_fueldata[df_fueldata['grid'] == grid].empty
-                else:
-                    usePrice = False
-                nodeBalance = not usePrice
 
-            # ---- Build row with mandatory fields ----
+            # Build row with options used for every gn
             row_dict = {
-                'isActive':                   1,
                 'grid':                       grid,
                 'node':                       node,
+                'isActive':                   isActive,
                 'usePrice':                   usePrice,
                 'nodeBalance':                nodeBalance,
                 'energyStoredPerUnitOfState': energyStoredPerUnitOfState
             }
 
-            # ---- Add optional params if present in storagedata (case-insensitive) ----
+            # Add optional params if present in storagedata (case-insensitive)
             if not node_storage_data.empty:
                 for key in (k for k in param_gn if k not in row_dict):
                     low = key.lower()
@@ -700,11 +721,12 @@ class BuildInputExcel:
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
         p_gn = p_gn.fillna(value=0)
+        #p_gn = p_gn.replace({True: 1, False: 0})
         p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'])
         p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
 
 
-        # Sort by grid, from_node, to_node in a case-insensitive manner.
+        # Sort by grid, node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
