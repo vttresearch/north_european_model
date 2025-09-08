@@ -16,29 +16,37 @@ if __name__ == '__main__':
     scenarios = ast.literal_eval(config.get('inputdata', 'scenarios'))
     scenario_years = ast.literal_eval(config.get('inputdata', 'scenario_years'))
     scenario_alternatives = ast.literal_eval(config.get('inputdata', 'scenario_alternatives'))
-    if scenario_alternatives:
-        output_folder = os.path.join(f"{output_folder_prefix}_{scenarios[0]}_{str(scenario_years[0])}_{scenario_alternatives[0]}")
-    else:
-        output_folder = os.path.join(f"{output_folder_prefix}_{scenarios[0]}_{str(scenario_years[0])}")
+    output_folders = []
+    for scenario in scenarios:
+        for scenario_year in scenario_years:
+            if scenario_alternatives:
+                for scenario_alternative in scenario_alternatives:
+                    output_folders.append(os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}_{scenario_alternative}"))
+            else:
+                output_folders.append(os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}"))
 
     #call the actual script
     build_input_data.main(input_folder, config_file)
     
-    #copy the inputdata excel to another folder for workflow use
-    shutil.copy(f'{output_folder}/inputData.xlsx', "./toolbox_workflow/input/inputData.xlsx")
-    
-    #add folder information
-    wb = load_workbook("./toolbox_workflow/input/inputData.xlsx")          
-    table_name = "scenario_folder"
-    wb.create_sheet(table_name)
-    for i, name in enumerate(wb.sheetnames):
-        if name == "index":
-            last_row = len(wb.worksheets[i]['A'])
-            wb.worksheets[i].cell(row=last_row + 1, column=1).value = "Set"
-            wb.worksheets[i].cell(row=last_row + 1, column=2).value = table_name
-            wb.worksheets[i].cell(row=last_row + 1, column=3).value = f'{table_name}!A2'
-            wb.worksheets[i].cell(row=last_row + 1, column=4).value = 1
-        if name == table_name:
-            wb.worksheets[i].cell(row=1, column=1).value = table_name
-            wb.worksheets[i].cell(row=2, column=1).value = output_folder
-    wb.save("./toolbox_workflow/input/inputData.xlsx")
+    for j, output_folder in enumerate(output_folders):
+        print(j)
+        print(output_folder)
+        #copy the inputdata excel to another folder for workflow use
+        os.makedirs(f'./toolbox_workflow/input/{j}', exist_ok=True)
+        shutil.copy(f'./{output_folder}/inputData.xlsx', f'./toolbox_workflow/input/{j}/inputData.xlsx')
+        
+        #add folder information
+        wb = load_workbook(f'./toolbox_workflow/input/{j}/inputData.xlsx')          
+        table_name = "scenario_folder"
+        wb.create_sheet(table_name)
+        for i, name in enumerate(wb.sheetnames):
+            if name == "index":
+                last_row = len(wb.worksheets[i]['A'])
+                wb.worksheets[i].cell(row=last_row + 1, column=1).value = "Set"
+                wb.worksheets[i].cell(row=last_row + 1, column=2).value = table_name
+                wb.worksheets[i].cell(row=last_row + 1, column=3).value = f'{table_name}!A2'
+                wb.worksheets[i].cell(row=last_row + 1, column=4).value = 1
+            if name == table_name:
+                wb.worksheets[i].cell(row=1, column=1).value = table_name
+                wb.worksheets[i].cell(row=2, column=1).value = output_folder
+        wb.save(f'./toolbox_workflow/input/{j}/inputData.xlsx')
