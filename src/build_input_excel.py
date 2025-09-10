@@ -150,7 +150,7 @@ class BuildInputExcel:
             Determine parameter value with fallback logic.
         
             Prioritizes:
-            1. Connection-specific value from unit data (e.g., vomCosts_output1)
+            1. Connection-specific value from unit data (e.g., vomCosts_input2)
             2. Non-specific value from unit data (for output1 only)
             3. Connection-specific value from technology data
             4. Non-specific value from technology data (for output1 only)
@@ -451,80 +451,101 @@ class BuildInputExcel:
 # Functions create p_gnn, p_gn
 # ------------------------------------------------------
 
-    def create_p_gnn(self, df_transferdata):
+    def create_p_gnn(self, df_transferdata: pd.DataFrame) -> pd.DataFrame:
         """
-        Creates a new DataFrame p_gnn with specified dimension and parameter columns
-        """          
-        # If df_transferdata is empty, return empty DataFrame
+        Build p_gnn by looping over 'dimensions' and 'param_gnn'.
+        Special cases:
+          - transferCap: from export/import capacity depending on direction
+          - rampLimit: forward = row['ramplimit'] (default 0),
+                       reverse = scaled by (export/import) if both > 0
+        """
         if df_transferdata.empty:
             return pd.DataFrame()
-        
-        # dimension and parameter columns
+
         dimensions = ['grid', 'from_node', 'to_node']
-        param_gnn = ['transferCap', 'availability', 'variableTransCost', 'transferLoss', 'rampLimit']
-        # List to collect the new rows 
+        param_gnn = [
+            'transferCap',
+            'availability',
+            'variableTransCost',
+            'transferLoss',
+            'rampLimit',
+            'diffCoeff',
+            'diffLosses',
+            'transferCapInvLimit',
+            'investMIP',
+            'invCost',
+            'annuityFactor',
+        ]
+        # lowercase names for lookup in normalized input
+        param_lower = {p: p.lower() for p in param_gnn}
+
+        # Defaults; others default to 0
+        defaults = {
+            'availability': 1,
+        }
+
+        def get_or_default(row, out_param):
+            """Return row[param_lower[out_param]] unless NaN/missing → defaults[out_param] or 0."""
+            key = param_lower[out_param]
+            if key in row:
+                val = row.get(key)
+                return val if pd.notna(val) else defaults.get(out_param, 0)
+            return defaults.get(out_param, 0)
+
         rows = []
-
-        # Iterate over each row in df_transferdata
         for _, row in df_transferdata.iterrows():
+            # If upstream always lowercases columns, we can access directly:
+            export_cap = row.get('export_capacity', 0) or 0
+            if pd.isna(export_cap): export_cap = 0
+            import_cap = row.get('import_capacity', 0) or 0
+            if pd.isna(import_cap): import_cap = 0
+            ramp_base  = row.get('ramplimit', 0) or 0
+            if pd.isna(ramp_base): ramp_base = 0
 
-            from_to_capacity = row['export_capacity'] if 'export_capacity' in row.index else 0
-            to_from_capacity = row['import_capacity'] if 'import_capacity' in row.index else 0
-            rampLimit = row['ramplimit'] if 'ramplimit' in row.index else 0
+            grid      = row.get('grid')
+            from_node = row.get('from_node')
+            to_node   = row.get('to_node')
 
-            # If export capacity is greater than 0, add row with from_node, to_node, export_capacity
-            if from_to_capacity > 0:
-                rows.append({
-                    'grid' :                 row['grid'],
-                    'from_node' :            row['from_node'],
-                    'to_node' :              row['to_node'],
-                    'transferCap' :          from_to_capacity,                       
-                    'availability' :         row['availability'] if 'availability' in row.index else 1,                        
-                    'variableTransCost' :    row['vomcost'] if 'vomcost' in row.index else 0,
-                    'transferLoss' :         row['losses'] if 'losses' in row.index else 0,
-                    'rampLimit' :            rampLimit,  
-                    'diffCoeff' :            row['diffCoeff'] if 'diffCoeff' in row.index else 0,
-                    'diffLosses' :           row['diffLosses'] if 'diffLosses' in row.index else 0,
-                    'transferCapInvLimit' :  row['transferCapInvLimit'] if 'transferCapInvLimit' in row.index else 0,
-                    'investMIP' :            row['investMIP'] if 'investMIP' in row.index else 0,
-                    'invCost' :              row['invCost'] if 'invCost' in row.index else 0,
-                    'annuityFactor' :        row['annuityFactor'] if 'annuityFactor' in row.index else 0
-                })
+            if not (pd.notna(grid) and pd.notna(from_node) and pd.notna(to_node)):
+                continue  # skip incomplete defs
 
-            # If import capacity is greater than 0, add row with to_node, from_node, import_capacity
-            if to_from_capacity > 0:
-                rows.append({
-                    'grid' :                 row['grid'],
-                    'from_node' :            row['to_node'],
-                    'to_node' :              row['from_node'],
-                    'transferCap' :          to_from_capacity,  
-                    'availability' :         row['availability'] if 'availability' in row.index else 1,                        
-                    'variableTransCost' :    row['vomcost'] if 'vomcost' in row.index else 0,
-                    'transferLoss' :         row['losses'] if 'losses' in row.index else 0,
-                    'rampLimit' :            (rampLimit / to_from_capacity * from_to_capacity ) if to_from_capacity > 0 else 0,
-                    'diffCoeff' :            row['diffCoeff'] if 'diffCoeff' in row.index else 0,
-                    'diffLosses' :           row['diffLosses'] if 'diffLosses' in row.index else 0,
-                    'transferCapInvLimit' :  row['transferCapInvLimit'] if 'transferCapInvLimit' in row.index else 0,
-                    'investMIP' :            row['investMIP'] if 'investMIP' in row.index else 0,
-                    'invCost' :              row['invCost'] if 'invCost' in row.index else 0,
-                    'annuityFactor' :        row['annuityFactor'] if 'annuityFactor' in row.index else 0
-                })
+            def build_row(dir_from, dir_to, cap_value, is_reverse: bool):
+                out = {
+                    'grid': grid,
+                    'from_node': dir_from,
+                    'to_node': dir_to,
+                    'transferCap': cap_value,
+                }
+                for p in param_gnn:
+                    if p == 'transferCap':
+                        continue
+                    if p == 'rampLimit':
+                        if not is_reverse:
+                            out[p] = ramp_base or 0
+                        else:
+                            out[p] = (ramp_base * (export_cap / import_cap)) if (import_cap and export_cap) else 0
+                    else:
+                        out[p] = get_or_default(row, p)
+                return out
 
-        # Define the final columns titles and orders.
-        final_cols = dimensions.copy()
-        final_cols.extend(param_gnn)
+            # forward (export)
+            rows.append(build_row(from_node, to_node, export_cap, is_reverse=False))
 
-        # Create p_gnn, fill NaN, and add fake MultiIndex
-        p_gnn = pd.DataFrame(rows, columns=final_cols)
-        p_gnn = p_gnn.fillna(value=0)
+            # reverse (import)
+            rows.append(build_row(to_node, from_node, import_cap, is_reverse=True))
+
+        final_cols = dimensions + param_gnn
+        p_gnn = pd.DataFrame(rows, columns=final_cols).fillna(0)
+
         p_gnn = self.create_fake_MultiIndex(p_gnn, dimensions)
-        
-        # Sort by grid, from_node, to_node in a case-insensitive manner.
-        p_gnn.sort_values(by=['grid', 'from_node', 'to_node'], 
-                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
-                            inplace=True)
-        
-        return p_gnn  
+        p_gnn.sort_values(
+            by=['grid', 'from_node', 'to_node'],
+            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+            inplace=True
+        )
+        return p_gnn
+
+
 
 
     def create_p_gn(self, p_gnu_io_flat, df_fueldata, 

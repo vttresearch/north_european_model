@@ -61,7 +61,7 @@ class SourceExcelDataPipeline:
         self.df_emissiondata = process_dataset(self.data_folder, self.config.get('emissiondata_files', []), 'emissiondata')
 
         # Process to get the data for the current scenario and year.
-        self.df_unittypedata = filter_df_whitelist(self.df_unittypedata, 'techdata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
+        self.df_unittypedata = filter_df_whitelist(self.df_unittypedata, 'unittypedata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
         self.df_fueldata     = filter_df_whitelist(self.df_fueldata, 'fueldata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
         self.df_emissiondata = filter_df_whitelist(self.df_emissiondata, 'emissiondata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
 
