@@ -476,35 +476,30 @@ class BuildInputExcel:
             'invCost',
             'annuityFactor',
         ]
-        # lowercase names for lookup in normalized input
-        param_lower = {p: p.lower() for p in param_gnn}
 
         # Defaults; others default to 0
         defaults = {
             'availability': 1,
         }
 
-        def get_or_default(row, out_param):
+        def get_or_default(row, param):
             """Return row[param_lower[out_param]] unless NaN/missing → defaults[out_param] or 0."""
-            key = param_lower[out_param]
+            key = param.lower()
             if key in row:
                 val = row.get(key)
-                return val if pd.notna(val) else defaults.get(out_param, 0)
-            return defaults.get(out_param, 0)
+                return val if pd.notna(val) else defaults.get(param, 0)
+            return defaults.get(param, 0)
 
         rows = []
         for _, row in df_transferdata.iterrows():
-            # If upstream always lowercases columns, we can access directly:
-            export_cap = row.get('export_capacity', 0) or 0
-            if pd.isna(export_cap): export_cap = 0
-            import_cap = row.get('import_capacity', 0) or 0
-            if pd.isna(import_cap): import_cap = 0
-            ramp_base  = row.get('ramplimit', 0) or 0
-            if pd.isna(ramp_base): ramp_base = 0
-
+            # domains
             grid      = row.get('grid')
             from_node = row.get('from_node')
             to_node   = row.get('to_node')
+            # specific values
+            export_cap = get_or_default(row, 'export_capacity')
+            import_cap = get_or_default(row, 'import_capacity')
+            ramp_base = get_or_default(row, 'ramplimit')
 
             if not (pd.notna(grid) and pd.notna(from_node) and pd.notna(to_node)):
                 continue  # skip incomplete defs
@@ -528,21 +523,26 @@ class BuildInputExcel:
                         out[p] = get_or_default(row, p)
                 return out
 
-            # forward (export)
+            # left-to-right (export)
             rows.append(build_row(from_node, to_node, export_cap, is_reverse=False))
 
-            # reverse (import)
+            # right-to-left (import)
             rows.append(build_row(to_node, from_node, import_cap, is_reverse=True))
 
+        # construct p_gnn
         final_cols = dimensions + param_gnn
         p_gnn = pd.DataFrame(rows, columns=final_cols).fillna(0)
 
-        p_gnn = self.create_fake_MultiIndex(p_gnn, dimensions)
+        # sort by grid, from_node, to_node
         p_gnn.sort_values(
             by=['grid', 'from_node', 'to_node'],
             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
             inplace=True
         )
+
+        # add fake multi-index
+        p_gnn = self.create_fake_MultiIndex(p_gnn, dimensions)
+
         return p_gnn
 
 
