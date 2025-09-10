@@ -13,7 +13,10 @@ def main(include_db= False):
         folder_names = get_input_file_folder(gdx_file)
     for folder_name in folder_names:
         input_folder = pathlib.Path(f"./{folder_name}")
-        copy_files(input_folder)
+        if input_folder.exists() and input_folder.is_dir():
+            copy_files(input_folder)
+        else:
+            print(f"Warning: {input_folder} does not exist or is not a directory.")
 
 
 def get_input_file_folder(gdx_file):
@@ -31,9 +34,9 @@ def get_input_file_folder(gdx_file):
 
 def copy_files(input_folder):
     for filename in os.listdir(input_folder):
+        print(f"Copying {filename} from {input_folder} to {output_folder}")
         if filename.endswith(".csv") or filename.endswith(".gdx") or filename.endswith(".inc") or filename.endswith(".gms"):
             file_path = os.path.join(input_folder, filename)
-            print(output_folder)
             if os.path.isfile(file_path):
                 shutil.copy(file_path, output_folder)
             else:
