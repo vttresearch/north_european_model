@@ -91,9 +91,10 @@
                     "known_filters": {
                         "db_url@Input data": {
                             "scenario_filter": {
-                                "asd": true
+                                "testing": true
                             },
                             "alternative_filter": {
+                                "asd": true,
                                 "input_National Trends_2025": true,
                                 "input_National Trends_2030": true
                             }
@@ -253,9 +254,10 @@
                     "known_filters": {
                         "db_url@Input data": {
                             "scenario_filter": {
-                                "asd": true
+                                "testing": true
                             },
                             "alternative_filter": {
+                                "asd": true,
                                 "input_National Trends_2025": true,
                                 "input_National Trends_2030": true
                             }
@@ -409,14 +411,9 @@
         "Config": {
             "type": "Data Connection",
             "description": "",
-            "x": -767.0010805186986,
-            "y": -133.43230113111412,
+            "x": -765.9835332785278,
+            "y": -134.44984837128504,
             "file_references": [
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "src_files/config_test.ini"
-                },
                 {
                     "type": "path",
                     "relative": true,
