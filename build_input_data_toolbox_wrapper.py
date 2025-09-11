@@ -4,22 +4,22 @@ import os
 import ast
 import configparser
 import build_input_data
+from src.config_reader import load_config
 from src.utils import parse_sys_args
 from openpyxl import load_workbook
 
 if __name__ == '__main__':
     input_folder, config_file = parse_sys_args()
     #get the folder name
-    config = configparser.ConfigParser()
-    config.read(config_file)
-    output_folder_prefix = config.get('inputdata', 'output_folder_prefix')
-    scenarios = ast.literal_eval(config.get('inputdata', 'scenarios'))
-    scenario_years = ast.literal_eval(config.get('inputdata', 'scenario_years'))
-    scenario_alternatives = ast.literal_eval(config.get('inputdata', 'scenario_alternatives'))
+    config = load_config(config_file)
+    output_folder_prefix = config.get('output_folder_prefix')
+    scenarios = config.get('scenarios')
+    scenario_years = config.get('scenario_years')
+    scenario_alternatives = config.get('scenario_alternatives')
     output_folders = []
     for scenario in scenarios:
         for scenario_year in scenario_years:
-            if scenario_alternatives:
+            if scenario_alternatives and scenario_alternatives != ['']:
                 for scenario_alternative in scenario_alternatives:
                     output_folders.append(os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}_{scenario_alternative}"))
             else:
