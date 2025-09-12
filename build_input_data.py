@@ -23,6 +23,21 @@ def main(input_folder, config_file):
     # Reset workflow_run_successfully
     workflow_run_successfully = False
 
+    # Normalize paths
+    input_folder = Path(input_folder)
+    cfg_path = Path(config_file)
+    if not cfg_path.is_absolute():
+        cfg_path = input_folder / cfg_path
+
+    # Check input folder exists
+    if not input_folder.exists() or not input_folder.is_dir():
+        print(f"Could not find directory {input_folder.resolve()}, please check spelling")
+        return 1  # or: sys.exit(1)
+
+    # Check config file exists
+    if not cfg_path.exists() or not cfg_path.is_file():
+        print(f"Could not find file {cfg_path.resolve()}, please check spelling")
+        return 1  # or: sys.exit(1)
 
 
     # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
