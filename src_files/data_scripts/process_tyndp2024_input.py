@@ -179,7 +179,7 @@ def process_native_demands(plexos_caps_demands, year):
     native_demands_ne_input.insert(2, 'Node_suffix', None)
     native_demands_ne_input.insert(3, 'Scenario', 'National Trends')
     native_demands_ne_input.insert(4, 'Year', year)
-    native_demands_ne_input.insert(6, 'Constant share', None)
+    native_demands_ne_input.insert(6, 'Constant_share', None)
 
     return native_demands_ne_input
 

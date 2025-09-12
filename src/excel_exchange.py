@@ -6,76 +6,132 @@ from openpyxl.styles import Alignment
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import re
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Sequence
 from src.utils import log_status
 
 
-
-def merge_excel_files(
+def read_input_excels(
     input_folder: Union[Path, str],
-    excel_files: List[str],
+    files: Sequence[str],
     sheet_name_prefix: str,
-    isMandatory: bool = True
-) -> pd.DataFrame:
+    logs: List[str],
+    *,
+    is_mandatory: bool = True,
+    drop_note_columns: bool = True,
+    add_source_cols: bool = True,
+) -> List[pd.DataFrame]:
     """
-    Merges multiple Excel files:
-      - Reads only sheets starting with sheet_name_prefix from each file.
-      - Checks for duplicate entries within each sheet except 'value'
-      - 'note' and 'Note' columns are dropped from the final DataFrame
-      - Merges into one DataFrame.
+    Read Excel sheets whose names start with `sheet_name_prefix` (case-insensitive) from
+    each file in `files` and return one DataFrame per matched sheet.
 
-    Parameters:
-        input_folder (Path or str): Folder containing Excel files.
-        excel_files (list of str): List of file names.
-        sheet_name_prefix (str): Prefix to match sheet names.
-        isMandatory (bool): Fail if sheets not found.
+    Cleaning steps
+    --------------
+    - Drop columns whose header is empty/whitespace or auto-generated as 'Unnamed: x'.
+    - Optionally drop any column named 'note' (any casing).
+    - Truncate the DataFrame at the first fully empty row (drop that row and all below).
+      An "empty" cell is NA or a string consisting only of whitespace.
 
-    Returns:
-        pd.DataFrame: Merged DataFrame.
+    Parameters
+    ----------
+    input_folder : Union[Path, str]
+        Directory containing the Excel files.
+    files : Sequence[str]
+        Filenames (relative to `input_folder`) to scan.
+    sheet_name_prefix : str
+        Case-insensitive prefix used to select sheets within each workbook.
+    logs : List[str]
+        Log accumulator passed to `log_status`.
+    is_mandatory : bool, default True
+        If True, missing sheets/files emit warnings; otherwise informational logs.
+    drop_note_columns : bool, default True
+        If True, drop any column named 'note' (any casing).
+    add_source_cols : bool, default True
+        If True, append '_source_file' and '_source_sheet'.
 
-    Raises:
-        FileNotFoundError: If unable to open any Excel file
-        ValueError: If mandatory sheets are missing or duplicates are detected
-
+    Returns
+    -------
+    List[pd.DataFrame]
+        One DataFrame per matched sheet. Returns [] if nothing was loaded.
     """
-    excel_sheets: List[pd.DataFrame] = []
+    dataframes: List[pd.DataFrame] = []
+    input_folder = str(input_folder)
 
-    for file_name in excel_files:
-        # Construct full path to the Excel file
+    log_status(
+        f"Reading Excel files for '{sheet_name_prefix}': {len(files)} file(s)",
+        logs, level="run"
+    )
+
+    for file_name in files:
         file_path = os.path.join(input_folder, file_name)
         try:
-            # Open the Excel file
-            excel_file = pd.ExcelFile(file_path)
+            xls = pd.ExcelFile(file_path)
         except Exception as e:
-            raise FileNotFoundError(f"Unable to open {file_path}: {e}")
+            log_status(f"Unable to open {file_path}: {e}", logs, level="warn")
+            continue
 
-        # Find all sheets with names starting with the specified prefix (case-insensitive)
-        sheet_names = [sheet for sheet in excel_file.sheet_names if sheet.lower().startswith(sheet_name_prefix.lower())]
+        # Match sheets by prefix (case-insensitive)
+        matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
+        if not matched:
+            level = "warn" if is_mandatory else "info"
+            log_status(
+                f"No sheets starting with '{sheet_name_prefix}' in '{file_name}'.",
+                logs, level=level
+            )
+            continue
 
-        # If sheets are mandatory but none are found, raise an error
-        if isMandatory and not sheet_names:
-            raise ValueError(f"Excel file '{file_name}' does not contain any sheet starting with '{sheet_name_prefix}'.")
-
-        # Process each matching sheet
-        for sheet in sheet_names:
-            df = pd.read_excel(excel_file, sheet_name=sheet, header=0)
-
-            # Check for duplicates based on all columns except 'value'
-            columns_to_check = [col for col in df.columns if col.lower() != 'value']
-            if df.duplicated(subset=columns_to_check).any():
-                duplicates = df[df.duplicated(subset=columns_to_check, keep=False)]
-                raise ValueError(
-                    f"Duplicate entries detected in file '{file_name}', sheet '{sheet}' based on {columns_to_check}.\n"
-                    f"Duplicates:\n{duplicates}"
+        for sheet in matched:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet, header=0)
+            except Exception as e:
+                log_status(
+                    f"Failed reading sheet '{sheet}' in '{file_name}': {e}",
+                    logs, level="warn"
                 )
+                continue
 
-            # Remove note columns if they exist
-            df = df.drop(['note', 'Note'], axis=1, errors='ignore')
-            excel_sheets.append(df)
+            # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
+            # Consider empty if None, whitespace-only, or header starts with 'unnamed:' (case-insensitive).
+            empty_title_cols = [
+                c for c in df.columns
+                if c is None
+                or (isinstance(c, str) and (c.strip() == "" or c.lower().startswith("unnamed:")))
+            ]
+            if empty_title_cols:
+                df = df.drop(columns=empty_title_cols, errors="ignore")
 
-    # Merge all sheets or return empty DataFrame if no sheets were found
-    merged_df = pd.concat(excel_sheets, ignore_index=True) if excel_sheets else pd.DataFrame()
-    return merged_df
+            # Optionally drop 'note' columns (any casing)
+            if drop_note_columns:
+                note_cols = [c for c in df.columns if isinstance(c, str) and c.lower() == "note"]
+                if note_cols:
+                    df = df.drop(columns=note_cols, errors="ignore")
+
+            # --- Truncate at the first fully empty row ---
+            # Treat empty strings/whitespace as NA, then find first all-NA row.
+            _tmp = df.replace(r"^\s*$", pd.NA, regex=True)
+            row_is_empty = _tmp.isna().all(axis=1)
+
+            if row_is_empty.any():
+                first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
+                dropped_rows = len(df) - first_empty_pos
+                df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
+
+            # Optionally add provenance columns
+            if add_source_cols:
+                df = df.copy()
+                df["_source_file"] = file_name
+                df["_source_sheet"] = sheet
+
+            dataframes.append(df)
+
+    if not dataframes:
+        level = "warn" if is_mandatory else "info"
+        log_status(
+            f"No dataframes loaded for prefix '{sheet_name_prefix}'. Returning empty list.",
+            logs, level=level
+        )
+        return []
+
+    return dataframes
 
 
 

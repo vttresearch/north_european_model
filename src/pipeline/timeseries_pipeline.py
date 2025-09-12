@@ -134,7 +134,7 @@ class TimeseriesPipeline:
             p.unlink(missing_ok=True)
 
 
-        log_status("Checking the status of timeseries processors", self.logs, level="run")
+        log_status("Checking the status of timeseries processors", self.logs, level="run", add_empty_line_before=True)
 
         # Get processors marked as changed by config
         spec_changes = self.cache_manager.timeseries_changed

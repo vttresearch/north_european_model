@@ -29,7 +29,6 @@ class BuildInputExcel:
         self.df_transferdata = context.df_transferdata
         self.df_unittypedata = context.df_unittypedata
         self.df_unitdata = context.df_unitdata
-        self.df_remove_units = context.df_remove_units
         self.df_storagedata = context.df_storagedata
         self.df_fueldata = context.df_fueldata
         self.df_emissiondata = context.df_emissiondata
@@ -624,7 +623,7 @@ class BuildInputExcel:
             demand_grids = {str(g).lower() for g in df_demanddata['grid'].dropna().unique()}
         else:
             demand_grids = set()
-        print(demand_grids)
+
         # Build a lower-case column map for df_storagedata to support case-insensitive lookup
         if not df_storagedata.empty:
             storage_colmap = {c.lower(): c for c in df_storagedata.columns}
@@ -741,8 +740,11 @@ class BuildInputExcel:
         # Build p_gn
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
-        p_gn = p_gn.fillna(value=0)
-        #p_gn = p_gn.replace({True: 1, False: 0})
+       
+        # Fill possible NA in numeric columns
+        num_cols = p_gn.select_dtypes(include="number").columns
+        p_gn[num_cols] = p_gn[num_cols].fillna(0)
+
         p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'])
         p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
 
@@ -1403,20 +1405,22 @@ class BuildInputExcel:
         return ts_emissionPriceChange
 
 
-    def create_gnGroup(self, p_nEmission, ts_emissionPriceChange, p_gnu_io_flat, unitUnittype, df_unittypedata, input_dfs=[]):
+    def create_gnGroup(self,
+                   p_nEmission: pd.DataFrame,
+                   ts_emissionPriceChange: pd.DataFrame,
+                   p_gnu_io_flat: pd.DataFrame,
+                   unitUnittype: pd.DataFrame,
+                   df_unittypedata: pd.DataFrame,
+                   input_dfs=[]) -> pd.DataFrame:
         """
-        Creates a gnGroup['grid', 'node', 'group'] DataFrame based on emission groups and input DataFrames.
+        Build gnGroup['grid','node','group'] by matching:
+          p_nEmission(node, emission)
+            -> ts_emissionPriceChange(emission -> group)
+            -> p_gnu_io_flat(node -> grid, unit)
+            -> unitUnittype(unit -> unittype)
+            -> df_unittypedata(unittype has any emission_group* == group)
 
-        Parameters:
-        -----------
-        p_nEmission : DataFrame with columns ['node', 'emission']
-        ts_emissionPriceChange : DataFrame with columns ['emission', 'group']
-        p_gnu_io_flat : DataFrame with columns ['grid', 'node', 'unit']
-        unitUnittype : DataFrame with columns ['unit', 'unittype']
-        df_unittypedata : DataFrame with column ['unittype'] and possibly columns ['emission_group1', 'emission_group2', ...]
-        input_dfs : list of DataFrames, optional. Each with columns ['grid', 'node', 'group'].
         """
-
         # Initialize an empty list to store rows
         rows_list = []
 
@@ -1459,7 +1463,6 @@ class BuildInputExcel:
 
                         # Find if emission exists in any emission_group column
                         emission_group_cols = [col for col in df_unittypedata.columns if col.startswith('emission_group')]
-
                         for col in emission_group_cols:
                             if col in unittype_row and unittype_row[col] == group:
                                 # Create row and add to rows_list
@@ -1711,8 +1714,6 @@ class BuildInputExcel:
             p_gnu_io = pd.DataFrame() 
         if not p_gnu_io.empty:
             # Filter out certain units, grids, and nodes
-            if not self.df_remove_units.empty:
-                p_gnu_io, warning_log = self.remove_rows_by_values(p_gnu_io, 'unit', self.df_remove_units, printWarnings=True)
             if warning_log != []: 
                 self.builder_logs.extend(warning_log)
             if self.exclude_grids:

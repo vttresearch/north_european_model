@@ -1,92 +1,14 @@
 import pandas as pd
-import sys
-from pathlib import Path
-from typing import Union, List, Dict, Optional, Tuple
+from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence
+from src.utils import log_status
+import math
 
 
-def process_dataset(
-    input_folder: Union[Path, str],
-    files: List[str],
-    prefix: str,
-    isMandatory: bool = True
-) -> pd.DataFrame:
-    """
-    Merge Excel files and perform a quality check for a given dataset.
-
-    The function first merges Excel files and then performs quality checks.
-    If any errors occur during processing, the program will exit with status code 1.
-
-    Parameters:
-        input_folder (Path or str): Location of files.
-        files (list): List of file paths (filenames).
-        prefix (str): A string prefix to be used for the dataset.
-        isMandatory (bool): Whether missing data should abort the run.
-
-    Returns:
-        pd.DataFrame: The processed DataFrame after merging and quality check.
-    """
-    from src.excel_exchange import merge_excel_files
-
-    try:
-        # First step: merge all Excel files into one DataFrame
-        df = merge_excel_files(input_folder, files, prefix, isMandatory)
-    except (FileNotFoundError, ValueError) as e:
-        # Exit if there are issues with finding or merging files
-        print(e)
-        sys.exit(1)
-
-    try:
-        # Second step: perform quality checks on the merged data
-        df = quality_check(df, prefix)
-    except (TypeError, ValueError) as e:
-        # Exit if the data doesn't pass quality checks
-        print(e)
-        sys.exit(1)
-
-    return df
 
 
-def quality_check(
-    df_input: pd.DataFrame,
-    df_identifier: str
-) -> pd.DataFrame:
-    """
-    Perform quality checks and standardization on an input DataFrame.
-    - Converts column names to lowercase
-    - Converts 'scenario' and 'generator_id' values to lowercase if present
-    - Checks grid columns for invalid underscore characters
-
-    Args:
-        df_input (pd.DataFrame): DataFrame to validate.
-        df_identifier (str): Name for error messages.
-
-    Returns:
-        pd.DataFrame: Cleaned DataFrame.
-    """
-    # Skip processing if DataFrame is empty
-    if df_input.empty:
-        return pd.DataFrame()
-
-    # Standardize column names to lowercase
-    df_input.columns = df_input.columns.str.lower()
-
-    # Standardize specific columns to lowercase strings
-    cols = ['scenario', 'generator_id']
-    for col in cols:
-        if col in df_input.columns:
-            df_input[col] = df_input[col].astype(str).str.lower()
-
-    # Check grid columns for invalid underscores
-    grid_columns = [col for col in df_input.columns if 'grid' in col.lower()]
-    for col in grid_columns:
-        if df_input[col].astype(str).str.contains('_', na=False).any():
-            bad_values = df_input.loc[df_input[col].astype(str).str.contains('_', na=False), col].unique()
-            raise ValueError(f"Invalid values in '{df_identifier}' column '{col}' containing underscores: {bad_values}")
-
-    return df_input
-
-
-def build_node_column(df: pd.DataFrame) -> pd.DataFrame:
+def build_node_column(
+        df: pd.DataFrame
+        ) -> pd.DataFrame:
     """
     Add a 'node' column to the DataFrame by concatenating country and grid identifiers.
     
@@ -134,7 +56,9 @@ def build_node_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_from_to_columns(df: pd.DataFrame) -> pd.DataFrame:
+def build_from_to_columns(
+        df: pd.DataFrame
+        ) -> pd.DataFrame:
     """
     Constructs 'from_node' and 'to_node' columns using 'from', 'to', 'grid', and optional suffixes.
 
@@ -265,68 +189,318 @@ def build_unittype_unit_column(
     return df
 
 
-def filter_df_whitelist(
-    df_input: pd.DataFrame,
-    df_name: str,
-    filters: Dict[str, Union[str, int, List[Union[str, int]]  ]  ]
+def normalize_dataframe(
+    df: pd.DataFrame,
+    df_identifier: str,
+    logs: List[str],
+    *,
+    allowed_methods: Sequence[str] = ("replace", "add", "multiply", "remove"),
+    lowercase_value_cols: Sequence[str] = ("scenario", "generator_id", "method"),
+    check_underscores: bool = True,
+    drop_invalid_strings: bool = True,
+    standardize_column_case: bool = True,
+    treat_empty_as_na: bool = True,
 ) -> pd.DataFrame:
     """
-    Filter DataFrame based on whitelist of allowed values.
-    
-    Parameters:
-    -----------
-    df_input : pandas.DataFrame
-        The DataFrame to be filtered
-    df_name : str
-        Name of the DataFrame (used for error reporting)
-    filters : dict
-        Dictionary of {column_name: allowed_values} pairs
-    
-    Returns:
-    --------
+    Normalize a DataFrame with consistent column naming, 'method' handling,
+    optional underscore checks across string columns, and automatic dtype normalization.
+
+    What it does
+    ------------
+    1) Column names: optionally lower-cases all column names.
+    2) 'method' column: ensures existence; trims/lower-cases values; unknown methods
+       are warned and coerced to 'replace' against `allowed_methods`.
+    3) Value case: lower-cases selected identifier-like columns (e.g. 'scenario').
+    4) Missing/empties: optionally treat empty/whitespace as NA, then globally fill NA with 0.
+    5) Dtypes:
+       - Columns that are fully numeric after coercion -> numeric dtype (downcast to int when possible).
+    6) Column rename: for **numeric** columns named `*_output1`, drop the suffix to become the base
+       name; skip and warn if renaming would collide with an existing column.
+    7) Underscore check (quality gate): for **all** string-typed columns whose **column name
+       does not start with "_"**, detect underscores in values; warn with examples and either
+       drop those rows (default) or keep them based on `drop_invalid_strings`.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame to be normalized. `None` or empty are skipped.
+    df_identifier : str
+        Fallback identifier for logging. If a DataFrame contains any of
+        `['_source_file','_source_sheet','file','sheet','source_file','source_sheet']`,
+        a per-DataFrame identifier is derived from their uniform values.
+    logs : list[str]
+        Log sink passed to `log_status(...)`. Messages (warn/info) are appended there.
+    allowed_methods : list[str]
+        Allowed values for the 'method' column (case-insensitive). Unknown values default to 'replace'.
+    lowercase_value_cols : Sequence[str], default ("scenario","generator_id","method")
+        Columns whose **values** should be lower-cased. (The 'method' column is canonicalized separately.)
+    check_underscores : bool, default True
+        If True, scan string columns (excluding columns whose name starts with "_") for underscores in values.
+    drop_invalid_strings : bool, default True
+        Backward-compatible flag name. If True, **drop** rows that contained underscores in any checked column.
+        If False, keep rows and only log.
+    standardize_column_case : bool, default True
+        If True, convert column **names** to lower-case.
+    treat_empty_as_na : bool, default True
+        If True, empty/whitespace-only strings are treated as NA before the global fillna(0).
+
+    Returns
+    -------
     pandas.DataFrame
-        Filtered DataFrame containing only rows where column values match the whitelist
-    
-    Notes:
-    ------
-    - Always accepts 'all' for scenario column and 1 for year column
-    - String comparisons are case-insensitive
+        A normalized DataFrame (order preserved, empty inputs removed). Returns empty DataFrame if all inputs are empty.
     """
-    # Skip processing if df_input is empty
-    if df_input.empty:
-        return df_input
 
-    # Check if all filter columns exist in the DataFrame
-    missing_cols = [col for col in filters if col not in df_input.columns]
-    if missing_cols:
-        raise Exception(f"Missing columns in {df_name}: {missing_cols}")
+    allowed_set = {str(m).strip().lower() for m in allowed_methods}
 
-    # Create a copy to avoid modifying the original DataFrame
-    df_filtered = df_input.copy()
-    
-    # Apply each filter condition
-    for col, val in filters.items():
-        # Ensure val is a list for consistent processing
-        if not isinstance(val, list):
-            val = [val]
+    def _infer_identifier_from_df(df: pd.DataFrame, fallback: str) -> str:
+        # Build an identifier from common source columns if available
+        parts = []
+        for col in ("_source_file", "_source_sheet", "file", "sheet", "source_file", "source_sheet"):
+            if col in df.columns:
+                vals = df[col].dropna().astype(str).unique()
+                if len(vals) > 0:
+                    parts.append(vals[0])
+        return ":".join(parts) if parts else fallback
 
-        # Add special always-included values
-        if col == 'scenario': val.append('all')  # Always include 'all' scenario
-        if col == 'year': val.append(1)          # Always include year 1
+    def _canonicalize_method_series(s: pd.Series, *, ident: str) -> pd.Series:
+        # Normalize 'method' values to lower-case, strip, default unknowns to 'replace'
+        s2 = s.astype("string").replace(r"^\s*$", pd.NA, regex=True).str.strip().str.lower()
+        s2 = s2.fillna("replace")
+        unknown_vals = sorted(set(s2.unique()) - allowed_set - {"replace"})
+        if unknown_vals:
+            log_status(
+                f"[{ident}] Unknown method(s) {unknown_vals} encountered; defaulting to 'replace'.",
+                logs, level="warn"
+            )
+            s2 = s2.where(~s2.isin(unknown_vals), "replace")
+        return s2
 
-        # Handle string columns with case-insensitive comparison
-        if pd.api.types.is_string_dtype(df_filtered[col]):
-            # Convert filter values to lowercase if they're strings
-            lowered_vals = [v.lower() if isinstance(v, str) else v for v in val]
-            df_filtered = df_filtered[df_filtered[col].str.lower().isin(lowered_vals)]
+    # Skip None / empty DataFrames
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df_out = df.copy()
+
+    # 1) Standardize column name case
+    if standardize_column_case:
+        df_out.columns = df_out.columns.str.lower()
+
+    ident = _infer_identifier_from_df(df_out, df_identifier)
+
+    # 2) Ensure and normalize 'method'
+    if "method" not in df_out.columns:
+        df_out["method"] = "replace"
+    df_out["method"] = _canonicalize_method_series(df_out["method"], ident=ident)
+
+    # 3) Lower-case selected value columns (excluding 'method' which is already canonicalized)
+    for col in lowercase_value_cols:
+        if col in df_out.columns and col != "method":
+            df_out[col] = df_out[col].astype("string").str.lower()
+
+    # 4) Treat empty strings as NA (optional)
+    if treat_empty_as_na:
+        df_out = df_out.replace(r"^\s*$", pd.NA, regex=True)
+
+    # 5) Auto-type columns: numeric vs string
+    numeric_cols: List[str] = []
+    string_cols: List[str] = []
+    for c in df_out.columns:
+        converted = pd.to_numeric(df_out[c], errors="coerce")
+        if converted.isna().sum() == 0:
+            numeric_cols.append(c)
         else:
-            # Direct comparison for non-string columns
-            df_filtered = df_filtered[df_filtered[col].isin(val)]
+            string_cols.append(c)
 
-    return df_filtered
+    # 5a) Apply numeric dtype (downcast ints where possible)
+    for c in numeric_cols:
+        df_out[c] = pd.to_numeric(df_out[c], errors="coerce")
+        if pd.api.types.is_float_dtype(df_out[c]):
+            as_int = pd.to_numeric(df_out[c], downcast="integer")
+            if pd.api.types.is_integer_dtype(as_int):
+                df_out[c] = as_int
+        if df_out[c].isna().any():
+            df_out[c] = df_out[c].fillna(0)
+
+    # 6) Drop '_output1' suffix from **numeric** column names (avoid collisions)
+    num_cols_now = set(df_out.select_dtypes(include="number").columns)  # work on the typed df_out
+    to_rename: Dict[str, str] = {}
+    collisions: Dict[str, str] = {}
+    for c in num_cols_now:
+        if isinstance(c, str) and c.endswith("_output1"):
+            new = c[:-8]
+            if new in df_out.columns:  # would collide -> skip + warn
+                collisions[c] = new
+            else:
+                to_rename[c] = new
+
+    if collisions:
+        pairs = ", ".join(f"{old} -> {new}" for old, new in collisions.items())
+        log_status(
+            f"[{ident}] Skipped renaming due to existing column name(s): {pairs}.",
+            logs, level="warn"
+        )
+
+    if to_rename:
+        df_out = df_out.rename(columns=to_rename)
+
+    # 7) Underscore check in string columns (exclude columns starting with "_")
+    if check_underscores:
+        cols_to_check = [
+            c for c in df_out.columns
+            if not str(c).startswith("_") and pd.api.types.is_string_dtype(df_out[c])
+        ]
+
+        bad_mask = pd.Series(False, index=df_out.index)
+        examples_per_col: Dict[str, List[str]] = {}
+
+        for c in cols_to_check:
+            m = df_out[c].astype("string").str.contains("_", na=False)
+            if m.any():
+                bad_mask |= m
+                examples_per_col[c] = list(df_out.loc[m, c].dropna().astype(str).unique()[:5])
+
+        if bad_mask.any():
+            total_bad = int(bad_mask.sum())
+            example_str = "; ".join(f"{col}: {vals}" for col, vals in list(examples_per_col.items())[:4])
+            log_status(
+                f"[{ident}] Underscores detected in {total_bad} row(s) across columns "
+                f"[{', '.join(examples_per_col.keys())}]. Examples -> {example_str}",
+                logs, level="warn"
+            )
+            if drop_invalid_strings:
+                df_out = df_out.loc[~bad_mask].copy()
+                log_status(
+                    f"[{ident}] Dropped {total_bad} row(s) containing underscores per configuration.",
+                    logs, level="info"
+                )
+            else:
+                log_status(
+                    f"[{ident}] Kept rows with underscores per configuration.",
+                    logs, level="info"
+                )
+
+    return df_out
 
 
-def filter_df_blacklist(
+def apply_whitelist(
+    df: pd.DataFrame,
+    filters: Optional[Dict[str, Union[str, int, List[Union[str, int]]]]],
+    logs: List[str],
+    df_identifier: str,
+) -> pd.DataFrame:
+    """
+    Apply AND-combined whitelist filters to a DataFrame, tolerantly.
+    Missing filter columns never raise; they are logged and skipped.
+
+    Matching semantics
+    ------------------
+    - Applies each (column -> allowed values) filter sequentially (logical AND).
+    - Case-insensitive matching for string-typed columns.
+    - Special always-include values (if the corresponding filter key is present):
+        * scenario: include 'all' (case-insensitive) in addition to provided values
+        * year    : include 1 in addition to provided values
+
+    Specificity collapse (priority)
+    --------------------------------
+    After filtering, if 'scenario' and/or 'year' were among the filters and present
+    in the DataFrame, the result is collapsed to the most specific rows:
+      - Rows with scenario != 'all' are more specific than scenario == 'all'.
+      - Rows with year != 1 are more specific than year == 1.
+      - Scenario specificity outranks year specificity.
+    Only rows with the highest specificity are retained (ties kept).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    filters : dict[str, str|int|list[str|int]] or None
+    logs : list[str]
+    df_identifier : str
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered copy. If `filters` is falsy or df is empty, returns original copy.
+
+    Logging
+    -------
+    - WARN  "[ident] Whitelist skipped: missing column 'col'."
+    """
+    # Fast exits for None/empty/no-filters
+    if df is None:
+        return pd.DataFrame()
+    if df.empty or not filters:
+        return df
+
+    df_out = df.copy()
+
+    # Track which special filters are actually applied and available
+    scenario_filter_applied = False
+    year_filter_applied = False
+
+    # Apply each filter with AND semantics
+    for col, val in filters.items():
+        if col not in df_out.columns:
+            log_status(f"[{df_identifier}] Whitelist skipped: missing column '{col}'.", logs, level="warn")
+            continue
+
+        vals = val if isinstance(val, list) else [val]
+
+        if col == "scenario":
+            scenario_filter_applied = True
+            # Include 'all' (universal)
+            allowed = {str(v).lower() for v in (vals + ["all"])}
+            s = df_out[col].astype(str).str.lower()
+            df_out = df_out[s.isin(allowed)]
+
+        elif col == "year":
+            year_filter_applied = True
+            # Include 1 (universal)
+            allowed_set = set(vals + [1])
+            df_out = df_out[df_out[col].isin(allowed_set)]
+
+        else:
+            # Case-insensitive for strings; exact for non-strings
+            if pd.api.types.is_string_dtype(df_out[col]):
+                allowed = {str(v).lower() for v in vals}
+                s = df_out[col].astype(str).str.lower()
+                df_out = df_out[s.isin(allowed)]
+            else:
+                df_out = df_out[df_out[col].isin(vals)]
+
+        if df_out.empty:
+            return df_out  # Short-circuit: nothing left
+
+    # If nothing left or no special priority applicable, return
+    if df_out.empty:
+        return df_out
+
+    # Scenario specificity: True if not 'all'
+    if scenario_filter_applied and ("scenario" in df_out.columns):
+        scen_is_specific = df_out["scenario"].astype(str).str.lower() != "all"
+    else:
+        scen_is_specific = pd.Series(False, index=df_out.index)
+
+    # Year specificity: True if not 1 (handles string/int robustly)
+    if year_filter_applied and ("year" in df_out.columns):
+        col_y = df_out["year"]
+        if pd.api.types.is_numeric_dtype(col_y):
+            year_is_specific = col_y != 1
+        else:
+            year_is_specific = col_y.astype(str).str.strip() != "1"
+    else:
+        year_is_specific = pd.Series(False, index=df_out.index)
+
+    # Weight: scenario more important than year
+    score = (scen_is_specific.astype(int) * 2) + (year_is_specific.astype(int) * 1)
+
+    if score.max() > 0 or (scenario_filter_applied or year_filter_applied):
+        max_score = int(score.max())
+        df_out = df_out[score == max_score]
+
+    return df_out
+
+
+def apply_blacklist(
     df_input: pd.DataFrame,
     df_name: str,
     filters: Dict[str, Union[str, int, List[Union[str, int]]  ]  ]
@@ -383,41 +557,251 @@ def filter_df_blacklist(
     return df_filtered
 
 
-def keep_last_occurance(
-    df_input: pd.DataFrame,
-    key_columns: Optional[List[str]] = None
+def merge_row_by_row(
+    dfs: Iterable[pd.DataFrame],
+    logs: List[str],
+    *,
+    key_columns: Optional[Sequence[str]] = None,  # e.g. ['generator_id']
+    allowed_methods: Sequence[str] = ("replace", "add", "multiply", "remove"),
+    measure_cols: Sequence[str] = (),
+    not_measure_cols: Sequence[str] = ("year",),
 ) -> pd.DataFrame:
     """
-    Keep only the last occurrence of rows with duplicate values in key columns.
-    
-    Parameters:
-    -----------
-    df_input : pandas.DataFrame
-        The DataFrame to process
-    key_columns : list or None
-        Columns to consider when identifying duplicates. 
-        If None, all columns except 'value' are used.
-    
-    Returns:
+    Merge DataFrames row-by-row in order, applying a per-row 'method'.
+
+    Methods
+    -------
+    - 'replace'  : Overwrite entire row (last row wins), empties/zeros included.
+    - 'add'      : Sum into `measure_cols` (NaN/None/"" -> 0.0).
+    - 'multiply' : Multiply into `measure_cols` with default 1.0 for missing new values and
+                   0.0 to missing old values.
+    - 'remove'   : Delete any previously merged row for the same key; the incoming row
+                   is not added.
+
+    Behavior
     --------
-    pandas.DataFrame
-        DataFrame with duplicates removed, keeping only the last occurrence
+    - If 'method' column is missing in a frame, rows default to 'replace'.
+    - Unknown methods fall back to 'replace' (one summary warning).
+    - If `measure_cols` is empty (None, empty, or only blank strings), it is inferred as
+      all numeric (non-bool) columns seen across inputs, excluding not_measure_cols
+    - If `key_columns` is None, key = all columns except `measure_cols`,
+      {'_source_file','_source_sheet'}, and 'method'.
+    - Drops {'_source_file','_source_sheet'} if present.
     """
-    # If key_columns is not provided, default to all columns except 'value'
-    if key_columns is None:
-        key_columns = [col for col in df_input.columns if col.lower() != 'value']
+    # --- Preparations ---
+    # Logging helper
+    def _log(msg: str, level: str = "info"):
+        try:
+            log_status(msg, logs, level=level)  # type: ignore[name-defined]
+        except Exception:
+            logs.append(f"[{level.upper()}] {msg}")
+
+    # Normalize inputs
+    frames = [df for df in dfs if df is not None and not getattr(df, "empty", True)]
+    if not frames:
+        _log("merge_row_by_row: No data provided. Returning empty DataFrame.", level="warn")
+        return pd.DataFrame()
+
+    # Column union (preserve first-seen order)
+    cols_union: List[str] = []
+    for df in frames:
+        for c in df.columns:
+            if c not in cols_union:
+                cols_union.append(c)
+
+    meta_cols = {"_source_file", "_source_sheet"}
+
+    # --- Infer measure columns if requested (empty measure_cols) ---
+    def _is_effectively_empty(seq: Optional[Sequence[str]]) -> bool:
+        if seq is None:
+            return True
+        if len(seq) == 0:
+            return True
+        # Treat [""] or ["", "  "] etc. as empty
+        return all((s is None) or (str(s).strip() == "") for s in seq)
+
+    if _is_effectively_empty(measure_cols):
+        # Gather numeric (non-bool) columns seen in any frame; keep union-order
+        numeric_candidates_ordered: List[str] = []
+        for df in frames:
+            # numeric excluding bool
+            num_cols = df.select_dtypes(include=["number"]).columns.tolist()
+            bool_cols = set(df.select_dtypes(include=["bool"]).columns.tolist())
+            for c in num_cols:
+                if c in bool_cols:
+                    continue
+                if c in not_measure_cols:
+                    continue
+                if c not in numeric_candidates_ordered:
+                    numeric_candidates_ordered.append(c)
+        present_measures = [c for c in cols_union if c in set(numeric_candidates_ordered)]
+
     else:
-        # Keep only the columns that exist in the DataFrame
-        key_columns = [col for col in key_columns if col in df_input.columns]
-    
-    # If the DataFrame is not empty and we have valid key columns, drop duplicates
-    if not df_input.empty and key_columns:
-        df_input = df_input.drop_duplicates(subset=key_columns, keep='last')
-    
-    return df_input
+        present_measures = [c for c in (measure_cols or []) if c in set(cols_union)]
+        missing = [c for c in (measure_cols or []) if c not in set(cols_union)]
+        if missing:
+            _log(
+                f"[merge_row_by_row] Some measure_cols not present in inputs and will be ignored: {missing}",
+                level="warn",
+            )
 
 
-def filter_nonzero_numeric_rows(df: pd.DataFrame, exclude: list[str] = None) -> pd.DataFrame:
+    # Infer key if needed
+    if key_columns is None:
+        key_columns = [c for c in cols_union if c not in set(present_measures) | meta_cols | {"method"}]
+
+    if not key_columns:
+        _log("merge_row_by_row: No key columns available; using full-row 'last occurrence wins'.", level="warn")
+        merged = pd.concat(frames, ignore_index=True, sort=False).drop_duplicates(subset=None, keep="last")
+        merged = merged.drop(columns=list(meta_cols), errors="ignore")
+        return merged
+
+    # Ensure every frame has all key columns; fill missing with NA
+    if key_columns:
+        new_frames = []
+        for df in frames:
+            if any(k not in df.columns for k in key_columns):
+                df = df.copy()
+                for k in key_columns:
+                    if k not in df.columns:
+                        df[k] = pd.NA
+            new_frames.append(df)
+        frames = new_frames
+
+    # --- Helpers ---
+    def _num(x, *, default: float) -> float:
+        if x is None:
+            return default
+        try:
+            if isinstance(x, str):
+                xs = x.strip()
+                if xs == "" or xs.lower() in {"nan", "none"}:
+                    return default
+                return float(xs)
+            f = float(x)
+            if math.isnan(f):
+                return default
+            return f
+        except Exception:
+            return default
+        
+    # Canonicalize key values so NaN/None/""/"nan"/"null"/"n/a" all compare equal
+    def _norm_key_val(x):
+        if x is None:
+            return None
+        # Handle pandas/NumPy NA
+        try:
+            if pd.isna(x):
+                return None
+        except Exception:
+            pass
+        # Normalize strings (trim & common NA tokens)
+        if isinstance(x, str):
+            xs = x.strip()
+            if xs == "" or xs.lower() in {"nan", "none", "null", "n/a"}:
+                return None
+            return xs
+        # Fallback for plain float NaN
+        try:
+            if isinstance(x, float) and math.isnan(x):
+                return None
+        except Exception:
+            pass
+        return x
+
+    def _key_tuple(row_dict: Dict[str, object]) -> Tuple:
+        return tuple(_norm_key_val(row_dict.get(k)) for k in key_columns)
+
+    # --- Merge ---
+    allowed_set = {m.lower().strip() for m in allowed_methods}
+    acc: Dict[Tuple, Dict[str, object]] = {}
+
+    # unknown methods seen
+    unknown_seen: set = set()
+
+    for df in frames:
+        # Ensure 'method'
+        if "method" not in df.columns:
+            df = df.copy()
+            df["method"] = "replace"
+
+        for row_dict in df.to_dict(orient="records"):
+            method = str(row_dict.get("method", "replace")).strip().lower()
+            if method not in allowed_set:
+                unknown_seen.add(method)
+                method = "replace"
+
+            k = _key_tuple(row_dict)
+            existing = acc.get(k)
+
+            if method == "remove":
+                if existing is not None:
+                    del acc[k]
+                continue
+
+            if existing is None:
+                # First occurrence
+                new_rec = {c: row_dict.get(c, None) for c in cols_union}
+                if present_measures:
+                    if method == "add":
+                        for mc in present_measures:
+                            new_rec[mc] = _num(new_rec.get(mc), default=0.0)
+                    elif method == "multiply":
+                        # Default previous is 0.0 -> product becomes 0.0 regardless of current
+                        for mc in present_measures:
+                            cur = _num(new_rec.get(mc), default=0.0)
+                            new_rec[mc] = 0.0 * cur  # stays 0.0
+                new_rec["method"] = method
+                acc[k] = new_rec
+            else:
+                # Update existing
+                if method == "replace" or not present_measures:
+                    new_rec = {c: row_dict.get(c, None) for c in cols_union}
+                    new_rec["method"] = method
+                    acc[k] = new_rec
+                elif method == "add":
+                    for mc in present_measures:
+                        prev = _num(existing.get(mc), default=0.0)
+                        cur = _num(row_dict.get(mc), default=0.0)
+                        existing[mc] = prev + cur
+                    existing["method"] = method
+                elif method == "multiply":
+                    for mc in present_measures:
+                        # Default old is 0 to avoid injecting values if none existed
+                        prev = _num(existing.get(mc), default=0.0) 
+                        # Default new is 1 to maintain previous values if no multiplier
+                        cur = _num(row_dict.get(mc), default=1.0) 
+                        existing[mc] = prev * cur
+                    existing["method"] = method
+                else:
+                    # Safety: treat any other as replace
+                    new_rec = {c: row_dict.get(c, None) for c in cols_union}
+                    new_rec["method"] = "replace"
+                    acc[k] = new_rec
+
+    merged = pd.DataFrame.from_records(list(acc.values()), columns=cols_union)
+
+    # Drop columns
+    merged = merged.drop(columns=list(meta_cols), errors="ignore")
+    merged = merged.drop(columns=["year", "scenario", "method"], errors="ignore")
+
+    # convert object columns to strings
+    obj_cols = merged.select_dtypes(include=["object"]).columns
+    merged[obj_cols] = merged[obj_cols].astype("string")
+
+    if unknown_seen:
+        _log(
+            f"[merge_row_by_row] Unknown method(s) {sorted(unknown_seen)} encountered; defaulting to 'replace'.",
+            level="warn",
+        )
+
+
+    return merged
+
+
+def filter_nonzero_numeric_rows(
+        df: pd.DataFrame, exclude: list[str] = None
+        ) -> pd.DataFrame:
     """
     Removes rows from the DataFrame where the sum of numeric columns is zero.
     Optionally excludes specific numeric columns from the summation.

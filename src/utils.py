@@ -141,6 +141,7 @@ def trim_df(df, round_precision=0):
     return df
 
 
+
 def collect_domains(df, possible_domains: list[str]) -> dict[str, list]:
     """
     Collect unique values for each domain column in the given list.

@@ -103,7 +103,7 @@ def main(input_folder, config_file):
 
         # Run if needed, otherwise print skip message
         if cache_manager.reimport_source_excels:
-            log_status("Processing source Excel files.", log_messages, level="run")
+            log_status("Processing source Excel files.", log_messages, level="run", add_empty_line_before=True)
             source_excel_data_pipeline.run()
             log_messages.extend(source_excel_data_pipeline.logs)
             log_status("Source excel files processed successfully.", log_messages, level="info")
@@ -145,7 +145,6 @@ def main(input_folder, config_file):
                 df_transferdata=source_excel_data_pipeline.df_transferdata,
                 df_unittypedata=source_excel_data_pipeline.df_unittypedata,
                 df_unitdata=source_excel_data_pipeline.df_unitdata,
-                df_remove_units=source_excel_data_pipeline.df_remove_units,
                 df_storagedata=source_excel_data_pipeline.df_storagedata,
                 df_fueldata=source_excel_data_pipeline.df_fueldata,
                 df_emissiondata=source_excel_data_pipeline.df_emissiondata,

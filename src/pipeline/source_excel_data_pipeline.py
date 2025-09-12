@@ -1,8 +1,11 @@
 from pathlib import Path
-from src.data_loader import process_dataset
-from src.data_loader import filter_df_blacklist, filter_df_whitelist, keep_last_occurance
+from src.data_loader import apply_whitelist, apply_blacklist
+from src.data_loader import normalize_dataframe, merge_row_by_row
 from src.data_loader import build_node_column, build_from_to_columns, build_unittype_unit_column
 from src.data_loader import filter_nonzero_numeric_rows
+from src.excel_exchange import read_input_excels
+from src.utils import log_status
+import pandas as pd
 
 
 
@@ -49,70 +52,182 @@ class SourceExcelDataPipeline:
         """
         Run the full pipeline: load, process, and filter all input DataFrames.
         """
+        input_folder = self.data_folder
+
         # Make a combination of scenario and alternative
         scen_and_alt = [self.scenario]
         if self.scenario_alternative:
             scen_and_alt.append(self.scenario_alternative)
 
+        # --- global datasets ---
+        # unittypedata
+        files = self.config.get('unittypedata_files', [])
+        if len(files) > 0:
+            dfs = read_input_excels(input_folder, files, 'unittypedata', self.logs)
+            dfs = [normalize_dataframe(df, 'unittypedata', self.logs)
+                   for df in dfs
+                   ]
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'unittypedata')
+                   for df in dfs
+                   ]
+            self.df_unittypedata = merge_row_by_row(dfs, self.logs, key_columns=['generator_id'])
+        else:
+            log_status(
+                f"skipping Excel files for 'unittypedata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )
+            self.df_unittypedata = pd.DataFrame()
 
-        # Load global datasets
-        self.df_unittypedata = process_dataset(self.data_folder, self.config.get('unittypedata_files', []), 'unittypedata')
-        self.df_fueldata     = process_dataset(self.data_folder, self.config.get('fueldata_files', []), 'fueldata')
-        self.df_emissiondata = process_dataset(self.data_folder, self.config.get('emissiondata_files', []), 'emissiondata')
+        # fueldata
+        files = self.config.get('fueldata_files', [])
+        if len(files) > 0:
+            dfs = read_input_excels(input_folder, files, 'fueldata', self.logs)
+            dfs = [normalize_dataframe(df, 'fueldata', self.logs)
+                   for df in dfs
+                   ]
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'fueldata')
+                   for df in dfs
+                   ]
+            self.df_fueldata = merge_row_by_row(dfs, self.logs, key_columns=['grid'])
+        else:
+            log_status(
+                f"skipping Excel files for 'fueldata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )            
+            self.df_fueldata = pd.DataFrame()            
 
-        # Process to get the data for the current scenario and year.
-        self.df_unittypedata = filter_df_whitelist(self.df_unittypedata, 'unittypedata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
-        self.df_fueldata     = filter_df_whitelist(self.df_fueldata, 'fueldata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
-        self.df_emissiondata = filter_df_whitelist(self.df_emissiondata, 'emissiondata_files', {'scenario':scen_and_alt, 'year':self.scenario_year})
+        # emissiondata
+        files = self.config.get('emissiondata_files', [])
+        if len(files) > 0:        
+            dfs = read_input_excels(input_folder, files, 'emissiondata', self.logs)
+            dfs = [normalize_dataframe(df, 'emissiondata', self.logs)
+                   for df in dfs
+                   ]
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'emissiondata')
+                   for df in dfs
+                   ]
+            self.df_emissiondata = merge_row_by_row(dfs, self.logs, key_columns=['emission'])
+        else:
+            log_status(
+                f"skipping Excel files for 'emissiondata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )                   
+            self.df_emissiondata = pd.DataFrame()    
 
-        # remove duplicates. Keep the last value. This implicitly handles overwriting earlier values with the latest.
-        self.df_unittypedata = keep_last_occurance(self.df_unittypedata, ['generator_id'])
-        self.df_fueldata     = keep_last_occurance(self.df_fueldata, ['fuel'])
-        self.df_emissiondata = keep_last_occurance(self.df_emissiondata, ['emission'])
-
-
-        # Load country specific input files
-        self.df_demanddata   = process_dataset(self.data_folder, self.config.get('demanddata_files', []), 'demanddata')
-        self.df_transferdata = process_dataset(self.data_folder, self.config.get('transferdata_files', []), 'transferdata')
-        self.df_unitdata     = process_dataset(self.data_folder, self.config.get('unitdata_files', []), 'unitdata')
-        self.df_remove_units = process_dataset(self.data_folder, self.config.get('unitdata_files', []), 'remove', isMandatory=False)
-        self.df_storagedata  = process_dataset(self.data_folder, self.config.get('storagedata_files', []), 'storagedata')
-
-        # Exclude grids
+        # --- country-level datasets ---
         exclude_grids = self.config.get('exclude_grids', [])
-        self.df_demanddata =   filter_df_blacklist(self.df_demanddata, 'demand_files', {'grid': exclude_grids})
-        self.df_transferdata = filter_df_blacklist(self.df_transferdata, 'transferdata_files', {'grid': exclude_grids})
-        self.df_storagedata =  filter_df_blacklist(self.df_storagedata, 'storagedata_files', {'grid': exclude_grids})
-
-        # Build node columns
-        self.df_demanddata =   build_node_column(self.df_demanddata)
-        self.df_storagedata =  build_node_column(self.df_storagedata)
-        self.df_transferdata = build_from_to_columns(self.df_transferdata)
-
-        # Exclude nodes
         exclude_nodes = self.config.get('exclude_nodes', [])
-        self.df_demanddata =   filter_df_blacklist(self.df_demanddata, 'demand_files', {'node': exclude_nodes})
-        self.df_storagedata =  filter_df_blacklist(self.df_storagedata, 'storage_files', {'node': exclude_nodes})
-        self.df_transferdata = filter_df_blacklist(self.df_transferdata, 'transferdata_files', {'from_node': exclude_nodes})
-        self.df_transferdata = filter_df_blacklist(self.df_transferdata, 'transferdata_files', {'to_node': exclude_nodes})
 
-        # Build unittype and unit columns
-        self.df_unitdata =     build_unittype_unit_column(self.df_unitdata, self.df_unittypedata, self.logs)
-        self.df_remove_units = build_unittype_unit_column(self.df_remove_units, self.df_unittypedata, self.logs)
+        # demanddata
+        files = self.config.get('demanddata_files', [])
+        if len(files) > 0:           
+            dfs = read_input_excels(input_folder, files, 'demanddata', self.logs)
+            dfs = [normalize_dataframe(df, 'demanddata', self.logs)
+                   for df in dfs
+                   ]
+            dfs = [apply_blacklist(df, 'demanddata', {'grid': exclude_grids})
+                   for df in dfs
+                   ]
+            dfs = [build_node_column(df)
+                   for df in dfs
+                   ]       
+            dfs = [apply_blacklist(df, 'demanddata', {'node': exclude_nodes})
+                   for df in dfs
+                   ]            
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
+                                   self.logs, 'demanddata')
+                   for df in dfs
+                   ]
+            self.df_demanddata = merge_row_by_row(dfs, self.logs, key_columns=['country', 'grid', 'node'])
+            self.df_demanddata = filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])
+        else:
+            log_status(
+                f"skipping Excel files for 'demanddata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )                
+            self.df_demanddata = pd.DataFrame()             
 
-        # Process to get the data for the current scenario, year, and country.
-        self.df_demanddata   = filter_df_whitelist(self.df_demanddata, 'demanddata_files', {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes})
-        self.df_transferdata = filter_df_whitelist(self.df_transferdata, 'transferdata_files', {'scenario':scen_and_alt, 'year':self.scenario_year, 'from': self.country_codes})
-        self.df_transferdata = filter_df_whitelist(self.df_transferdata, 'transferdata_files', {'scenario':scen_and_alt, 'year':self.scenario_year, 'to': self.country_codes})
-        self.df_unitdata     = filter_df_whitelist(self.df_unitdata, 'unitdata_files', {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes})
-        self.df_remove_units = filter_df_whitelist(self.df_remove_units, 'remove_files', {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes})
-        self.df_storagedata  = filter_df_whitelist(self.df_storagedata, 'storagedata_files', {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes})
+        # storagedata
+        files = self.config.get('storagedata_files', [])
+        if len(files) > 0:            
+            dfs = read_input_excels(input_folder, files, 'storagedata', self.logs)
+            dfs = [normalize_dataframe(df, 'storagedata', self.logs)
+                   for df in dfs
+                   ]
+            dfs = [apply_blacklist(df, 'storagedata', {'grid': exclude_grids})
+                   for df in dfs
+                   ]
+            dfs = [build_node_column(df)
+                   for df in dfs
+                   ]       
+            dfs = [apply_blacklist(df, 'storagedata', {'node': exclude_nodes})
+                   for df in dfs
+                   ]            
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
+                                   self.logs, 'storagedata')
+                   for df in dfs
+                   ]
+            self.df_storagedata = merge_row_by_row(dfs, self.logs, key_columns=['country', 'grid', 'node'])
+        else:
+            log_status(
+                f"skipping Excel files for 'storagedata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )                       
+            self.df_storagedata = pd.DataFrame()             
 
-        # remove duplicates. Keep the last value. This implicitly handles overwriting earlier values with the latest.
-        self.df_demanddata   = keep_last_occurance(self.df_demanddata, ['country', 'grid', 'node'])
-        self.df_transferdata = keep_last_occurance(self.df_transferdata, ['from', 'from_suffix', 'to', 'to_suffix', 'grid'])
-        self.df_unitdata     = keep_last_occurance(self.df_unitdata, ['country', 'generator_id', 'unit_name_prefix'])
-        self.df_storagedata  = keep_last_occurance(self.df_storagedata, ['country', 'grid', 'node'])
+        # unitdata
+        files = self.config.get('unitdata_files', [])
+        if len(files) > 0:           
+            dfs = read_input_excels(input_folder, files, 'unitdata', self.logs)
+            dfs = [normalize_dataframe(df, 'unitdata', self.logs)
+                   for df in dfs
+                   ]     
+            dfs = [build_unittype_unit_column(df, self.df_unittypedata, self.logs)
+                   for df in dfs
+                   ]           
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
+                                   self.logs, 'unitdata')
+                   for df in dfs
+                   ]
+            self.df_unitdata = merge_row_by_row(dfs, self.logs, key_columns=['country', 'generator_id', 'unit_name_prefix'])
+        else:
+            log_status(
+                f"skipping Excel files for 'unitdata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )                    
+            self.df_unitdata = pd.DataFrame()             
 
-        # Remove zero rows from demanddata
-        self.df_demanddata = filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])
+        # transferdata
+        files = self.config.get('transferdata_files', [])
+        if len(files) > 0:         
+            dfs = read_input_excels(input_folder, files, 'transferdata', self.logs)
+            dfs = [normalize_dataframe(df, 'transferdata', self.logs)
+                   for df in dfs
+                   ]       
+            dfs = [apply_blacklist(df, 'transferdata', {'grid': exclude_grids})
+                   for df in dfs
+                   ]        
+            dfs = [build_from_to_columns(df)
+                   for df in dfs
+                   ]               
+            dfs = [apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes})
+                   for df in dfs
+                   ]  
+            dfs = [apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes})
+                   for df in dfs
+                   ]  
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from': self.country_codes}, 
+                                   self.logs, 'transferdata')
+                   for df in dfs
+                   ]
+            dfs = [apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'to': self.country_codes}, 
+                                   self.logs, 'transferdata')
+                   for df in dfs
+                   ]     
+            self.df_transferdata = merge_row_by_row(dfs, self.logs, key_columns=['from', 'from_suffix', 'to', 'to_suffix', 'grid'])
+        else:
+            log_status(
+                f"skipping Excel files for 'transferdata_files': {len(files)} file(s)",
+                self.logs, level="info"
+            )                
+            self.df_transferdata = pd.DataFrame()  
