@@ -239,8 +239,7 @@ if __name__ == '__main__':
     output_folder = os.path.join("..\\inputData-test")
     output_file = os.path.join(output_folder, f'test_hydro_inflow.csv')
     country_codes = [
-        'FI00', 'FR00', 'UK00', 'LT00', 'LV00', 'NL00', 'NOS0', 'NOM1',
-        'NON1', 'PL00', 'SE01', 'SE02', 'SE03', 'SE04'
+        'FI00', 'NOM1', 'PL00', 'SE01'
     ]
     start_date = '1982-01-01 00:00:00'
     end_date = '2021-01-01 00:00:00'

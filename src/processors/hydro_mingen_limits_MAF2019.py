@@ -56,6 +56,7 @@ class hydro_mingen_limits_MAF2019:
                                 'AT00': '',
                                 'BA00': '',
                                 'BG00': '',
+                                'CH00': '',
                                 'CZ00': '',
                                 'DE00': '',
                                 'ES00': '',

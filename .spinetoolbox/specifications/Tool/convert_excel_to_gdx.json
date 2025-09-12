@@ -8,7 +8,7 @@
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [
-        "toolbox_workflow/*.gdx"
+        "toolbox_workflow/input/*.gdx"
     ],
     "cmdline_args": [],
     "includes_main_path": "../../.."

@@ -25,7 +25,6 @@ class BBExcelBuildContext:
     df_transferdata: pd.DataFrame
     df_unittypedata: pd.DataFrame
     df_unitdata: pd.DataFrame
-    df_remove_units: pd.DataFrame
     df_storagedata: pd.DataFrame
     df_fueldata: pd.DataFrame
     df_emissiondata: pd.DataFrame
