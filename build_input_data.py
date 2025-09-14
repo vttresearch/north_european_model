@@ -26,8 +26,6 @@ def main(input_folder, config_file):
     # Normalize paths
     input_folder = Path(input_folder)
     cfg_path = Path(config_file)
-    if not cfg_path.is_absolute():
-        cfg_path = input_folder / cfg_path
 
     # Check input folder exists
     if not input_folder.exists() or not input_folder.is_dir():
