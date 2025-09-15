@@ -124,7 +124,8 @@ class CacheManager:
 
         # --- Deciding what sections to rerun ---
         # checking if all timeseries need rerunning
-        self.full_rerun = (self.topology_changed  
+        self.full_rerun = (self.config.get('force_full_rerun')
+                           or self.topology_changed  
                            or self.date_range_expanded 
                            or self.csv_writer_requested
                            or self.source_data_pipeline_code_updated
