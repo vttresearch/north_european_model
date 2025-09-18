@@ -27,7 +27,9 @@ def find_files_with_suffix(folder_path, suffix):
     Search for files in a given folder and its subfolders with a specific suffix and return them as an array.
     """
     folder = Path(folder_path)
-    return [str(file) for file in folder.rglob(f"*{suffix}") if file.is_file()]
+    files_with_suffix = [str(file) for file in folder.rglob(f"*{suffix}") if file.is_file()]
+    print(files_with_suffix)
+    return files_with_suffix
 
 if __name__ == "__main__":
     input_paths = find_files_with_suffix('./toolbox_workflow/input', '.xlsx')

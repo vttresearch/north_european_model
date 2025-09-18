@@ -9,8 +9,8 @@
             "Tool": [
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "../spineToolbox.json"
+                    "relative": false,
+                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/spineToolbox.json"
                 },
                 {
                     "type": "path",
@@ -26,27 +26,32 @@
                     "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/build_input_data.json"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/hassle.json"
                 }
             ],
             "Exporter": [
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "../tools/export_to_bb.json"
+                    "relative": false,
+                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/tools/export_to_bb.json"
                 }
             ],
             "Importer": [
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "../tools/import_from_gdx.json"
+                    "relative": false,
+                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/tools/import_from_gdx.json"
                 }
             ],
             "Data Transformer": [
                 {
                     "type": "path",
-                    "relative": true,
-                    "path": "../tools/transform_to_bb_sets.json"
+                    "relative": false,
+                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/tools/transform_to_bb_sets.json"
                 }
             ]
         },
@@ -87,20 +92,24 @@
                     "Transform_to_BB_sets",
                     "left"
                 ],
+                "options": {
+                    "require_scenario_filter": true
+                },
                 "filter_settings": {
                     "known_filters": {
                         "db_url@Input data": {
                             "scenario_filter": {
-                                "testing": true
+                                "bsh2": true,
+                                "tyndp2024": false
                             },
                             "alternative_filter": {
-                                "asd": true,
-                                "input_National Trends_2025": true,
-                                "input_National Trends_2030": true
+                                "Base": true,
+                                "input_tyndp2024_BSH2_2030": true,
+                                "input_tyndp2024_National Trends_2030": true
                             }
                         }
                     },
-                    "auto_online": true,
+                    "auto_online": false,
                     "enabled_filter_types": {
                         "alternative_filter": false,
                         "scenario_filter": true
@@ -165,44 +174,6 @@
                 }
             },
             {
-                "name": "from Add data to convert_excel_to_gdx",
-                "from": [
-                    "Add data",
-                    "right"
-                ],
-                "to": [
-                    "convert_excel_to_gdx",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
-                "name": "from Copy_timeseries to Backbone",
-                "from": [
-                    "Copy_timeseries",
-                    "right"
-                ],
-                "to": [
-                    "Backbone",
-                    "left"
-                ],
-                "filter_settings": {
-                    "known_filters": {},
-                    "auto_online": true,
-                    "enabled_filter_types": {
-                        "alternative_filter": false,
-                        "scenario_filter": true
-                    }
-                }
-            },
-            {
                 "name": "from build_input_data to convert_excel_to_gdx",
                 "from": [
                     "build_input_data",
@@ -241,28 +212,93 @@
                 }
             },
             {
-                "name": "from Input data to Copy_timeseries",
+                "name": "from Copy_timeseries to hassle",
                 "from": [
-                    "Input data",
+                    "Copy_timeseries",
+                    "right"
+                ],
+                "to": [
+                    "hassle",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Transform_to_BB_sets to Copy_timeseries",
+                "from": [
+                    "Transform_to_BB_sets",
+                    "bottom"
+                ],
+                "to": [
+                    "Copy_timeseries",
+                    "bottom"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from Add data to convert_excel_to_gdx",
+                "from": [
+                    "Add data",
+                    "right"
+                ],
+                "to": [
+                    "convert_excel_to_gdx",
+                    "bottom"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from include invest and schedule to Copy_timeseries",
+                "from": [
+                    "include invest and schedule",
                     "right"
                 ],
                 "to": [
                     "Copy_timeseries",
-                    "left"
+                    "bottom"
                 ],
                 "filter_settings": {
-                    "known_filters": {
-                        "db_url@Input data": {
-                            "scenario_filter": {
-                                "testing": true
-                            },
-                            "alternative_filter": {
-                                "asd": true,
-                                "input_National Trends_2025": true,
-                                "input_National Trends_2030": true
-                            }
-                        }
-                    },
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
+            },
+            {
+                "name": "from ne input to Copy_timeseries",
+                "from": [
+                    "ne input",
+                    "left"
+                ],
+                "to": [
+                    "Copy_timeseries",
+                    "bottom"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
                     "auto_online": true,
                     "enabled_filter_types": {
                         "alternative_filter": false,
@@ -277,8 +313,8 @@
         "Backbone": {
             "type": "Tool",
             "description": "",
-            "x": 266.95356392781554,
-            "y": -62.777443191509576,
+            "x": 281.1045992055769,
+            "y": -191.58041633186423,
             "specification": "Backbone",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -301,8 +337,8 @@
         "Export_to_BB": {
             "type": "Exporter",
             "description": "",
-            "x": -8.965617340680039,
-            "y": -148.38963563806658,
+            "x": -2.4197498402399162,
+            "y": -60.02042438212496,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -316,15 +352,15 @@
         "Transform_to_BB_sets": {
             "type": "Data Transformer",
             "description": "",
-            "x": -127.6321967960705,
-            "y": -148.13857205898415,
+            "x": -126.5412188793305,
+            "y": -60.86033871978253,
             "specification": "Transform_to_BB_sets"
         },
         "Input data": {
             "type": "Data Store",
             "description": "",
-            "x": -274.8030021718633,
-            "y": -57.505731118111356,
+            "x": -264.98420092120307,
+            "y": -62.96062070181146,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -332,7 +368,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": ".spinetoolbox/items/input_data/bb_data_test.sqlite"
+                    "path": ".spinetoolbox/items/input_data/bsh2_250912_main.sqlite"
                 },
                 "schema": ""
             }
@@ -340,8 +376,8 @@
         "convert_excel_to_gdx": {
             "type": "Tool",
             "description": "",
-            "x": -519.2705669064502,
-            "y": -60.494272057745135,
+            "x": -518.1740346791889,
+            "y": -61.5908042850064,
             "specification": "convert_excel_to_gdx",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -356,8 +392,8 @@
         "Import_from_GDX": {
             "type": "Importer",
             "description": "",
-            "x": -399.6691368368752,
-            "y": -60.463554051012196,
+            "x": -398.572604609614,
+            "y": -63.75315073279599,
             "specification": "Import_from_GDX",
             "cancel_on_error": false,
             "on_conflict": "merge",
@@ -371,10 +407,10 @@
         "Copy_timeseries": {
             "type": "Tool",
             "description": "",
-            "x": 123.66216802130013,
-            "y": -62.97830038725431,
+            "x": 120.3892342710801,
+            "y": -59.705366637034246,
             "specification": "copy_timeseries",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": [
                 {
                     "type": "resource",
@@ -382,7 +418,15 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "db_url@Input data"
+                    "arg": "db_url@Transform_to_BB_sets"
+                },
+                {
+                    "type": "resource",
+                    "arg": "C:\\Users\\ehjeric\\git_backbone\\balticseah2\\backbone_250414\\input\\input_invest_and_schedule\\modelsInit.gms"
+                },
+                {
+                    "type": "resource",
+                    "arg": "<project>/README.md"
                 }
             ],
             "kill_completed_processes": false,
@@ -391,8 +435,8 @@
         "build_input_data": {
             "type": "Tool",
             "description": "",
-            "x": -636.4997486313304,
-            "y": -132.8882095473472,
+            "x": -635.4032164040691,
+            "y": -133.98474177460847,
             "specification": "build_input_data",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -402,7 +446,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/src_files/config_NT2025.ini"
+                    "arg": "<project>/src_files/config_bsh2.ini"
                 }
             ],
             "kill_completed_processes": false,
@@ -411,13 +455,23 @@
         "Config": {
             "type": "Data Connection",
             "description": "",
-            "x": -765.9835332785278,
-            "y": -134.44984837128504,
+            "x": -760.2448196479734,
+            "y": -136.51849445332493,
             "file_references": [
                 {
                     "type": "path",
                     "relative": true,
                     "path": "src_files/config_NT2025.ini"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "src_files/config_bsh2.ini"
+                },
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "src_files/config_tyndp2024.ini"
                 }
             ],
             "db_references": []
@@ -425,9 +479,48 @@
         "Add data": {
             "type": "Data Connection",
             "description": "",
-            "x": -677.458185466565,
-            "y": 7.771381354186729,
+            "x": -635.1796275152894,
+            "y": 36.0424539088725,
             "file_references": [],
+            "db_references": []
+        },
+        "hassle": {
+            "type": "Tool",
+            "description": "",
+            "x": 244.4795317845239,
+            "y": -59.78203865097217,
+            "specification": "hassle",
+            "execute_in_work": true,
+            "cmd_line_args": [],
+            "kill_completed_processes": false,
+            "log_process_output": false
+        },
+        "include invest and schedule": {
+            "type": "Data Connection",
+            "description": "",
+            "x": 37.051012316015516,
+            "y": 80.74926058001958,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": false,
+                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/input/input_invest_and_schedule/modelsInit.gms"
+                }
+            ],
+            "db_references": []
+        },
+        "ne input": {
+            "type": "Data Connection",
+            "description": "",
+            "x": 205.06794702195037,
+            "y": 80.75981979330575,
+            "file_references": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "README.md"
+                }
+            ],
             "db_references": []
         }
     }

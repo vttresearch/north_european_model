@@ -3,34 +3,23 @@ import sys
 import shutil
 import pathlib
 import spinedb_api as api
-import gams.transfer as gt
+from spinedb_api.filters.tools import name_from_dict
 
-def main(include_db= False):
-    if include_db:
-        with api.DatabaseMapping(input_db) as source_db:
-            folder_names = [scenario_alternative["alternative_name"] for scenario_alternative in source_db.get_scenario_alternative_items()]
-    else:
-        folder_names = get_input_file_folder(gdx_file)
-    for folder_name in folder_names:
-        input_folder = pathlib.Path(f"./{folder_name}")
-        if input_folder.exists() and input_folder.is_dir():
-            copy_files(input_folder)
-        else:
-            print(f"Warning: {input_folder} does not exist or is not a directory.")
-
-
-def get_input_file_folder(gdx_file):
-    #read timeseries folder
-    m = gt.Container(gdx_file)
-    if "scenario_year" in m:
-        folder_names = m.data['scenario_year'].records["scenario_year"].array
-        m.removeSymbols(symbols = "scenario_year")
-    else:
-        print("Data has no scenario_year selected")   
-        exit(-1)
-    m.write(gdx_file)
+def main():
+    with api.DatabaseMapping(input_db) as source_db:
+        scenario_name = name_from_dict(source_db.get_filter_configs()[0])
+        folder_names = source_db.scenario(name=scenario_name)["alternative_name_list"]
     shutil.copy(gdx_file, output_folder)
-    return folder_names
+    for folder_name in folder_names:
+        if ne_model_path.exists():
+            copy_files(ne_model_path / folder_name)
+        else:
+            print(f"Warning: {input_folder} does not exist.")
+    invest_schedule_path = pathlib.Path("input_invest_and_schedule") # target
+    invest_schedule_path.mkdir(exist_ok=True)
+    for file_path in input_invest_schedule.iterdir():
+        shutil.copy(file_path, invest_schedule_path)
+
 
 def copy_files(input_folder):
     for filename in os.listdir(input_folder):
@@ -45,13 +34,13 @@ def copy_files(input_folder):
 
 if __name__ == "__main__":
     include_db = False
-    if len(sys.argv) < 2:
-        print("Usage: python convert_excel_to_gdx.py <gdx_file>")
+    if len(sys.argv) != 5:
+        print("Usage: python convert_excel_to_gdx.py <gdx_file> <input_db> <path_to_modelsInit>")
         sys.exit(1)
-    elif len(sys.argv) == 3:
-        input_db = sys.argv[2]
-        include_db = True
+    ne_model_path = pathlib.Path(sys.argv[4]).parent
+    input_invest_schedule = pathlib.Path(sys.argv[3]).parent # source
+    input_db = sys.argv[2]
     gdx_file = sys.argv[1]
-    output_folder = "../input"
-    main(include_db = include_db)
+    output_folder = pathlib.Path("input")
+    main()
 
