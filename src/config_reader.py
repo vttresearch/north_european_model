@@ -53,6 +53,7 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             'scenario_alternatives': ast.literal_eval(inputdata.get('scenario_alternatives', '[""]')),
             'output_folder_prefix': inputdata.get('output_folder_prefix', 'output'),
             'write_csv_files': inputdata.getboolean('write_csv_files', False),
+            'force_full_rerun': inputdata.getboolean('force_full_rerun', False),
             'start_date': inputdata.get('start_date'),
             'end_date': inputdata.get('end_date'),
             'country_codes': ast.literal_eval(inputdata.get('country_codes')),
