@@ -2,10 +2,9 @@ import os
 import sys
 import pandas as pd
 from pathlib import Path
-from src.utils import log_status
+from src.utils import log_status, is_val_empty, is_col_empty
 from src.excel_exchange import add_index_sheet, adjust_excel, check_if_bb_excel_open
 from src.pipeline.bb_excel_context import BBExcelBuildContext
-
 
 
 class BuildInputExcel:
@@ -139,10 +138,6 @@ class BuildInputExcel:
 
         # List to collect the new rows 
         rows = []
-
-        def is_empty(val):
-            """Return True if val is 0, empty string, None, or NaN."""
-            return val == 0 or val == "" or val is None or pd.isnull(val)
         
         def get_param_value(param, put, cap_row, tech_row, def_value):
             """
@@ -166,9 +161,9 @@ class BuildInputExcel:
                 (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
             )
             # Return the first non-empty value; if both are empty, fall back to def_value.
-            if not is_empty(primary):
+            if not is_val_empty(primary, self.builder_logs, treat_zero_as_empty=False):
                 return primary
-            elif not is_empty(secondary):
+            elif not is_val_empty(secondary, self.builder_logs, treat_zero_as_empty=False):
                 return secondary
             else:
                 return def_value
@@ -834,10 +829,6 @@ class BuildInputExcel:
         # List to collect new rows.
         rows = []
 
-        def is_empty(val):
-            """Return True if val is 0, empty string, None, or NaN."""
-            return val == 0 or val == "" or val is None or pd.isnull(val)
-
         def get_value(unit_row, tech_row, param, def_value=0):
             """
             Retrieves a value by primarily checking unit_row and then tech_row if the primary
@@ -852,13 +843,13 @@ class BuildInputExcel:
                 primary = unit_row[lower_param]
 
             # If the primary value is empty, check the tech_row (secondary source)
-            if is_empty(primary): 
+            if is_val_empty(primary, self.builder_logs): 
                 if lower_param in tech_row.index:
                     secondary = tech_row[lower_param]
                     
-            if not is_empty(primary): 
+            if not is_val_empty(primary, self.builder_logs): 
                 return primary
-            elif not is_empty(secondary):  
+            elif not is_val_empty(secondary, self.builder_logs):  
                 return secondary
             else:
                 return def_value
@@ -990,8 +981,8 @@ class BuildInputExcel:
 
         # List of supported boundary types to process
         param_gnBoundaryTypes = ['upwardLimit', 'downwardLimit', 
-                                 'reference', 'balancePenalty', 'selfDischargeLoss', 'maxSpill',
-                                 'downwardSlack01']
+                                 'reference', 'balancePenalty', 
+                                 'maxSpill', 'downwardSlack01']
         
         # Properties that will be assigned to each boundary type
         param_gnBoundaryProperties = ['useConstant', 'constant', 'useTimeSeries', 'slackCost']
@@ -1058,16 +1049,15 @@ class BuildInputExcel:
                         #    rows.append(row_dict)      
 
                     # If no time series but we have a non-zero constant value, use it
-                    elif value is not None:
-                        if value != 0 and pd.notna(value):
-                            row_dict = {
-                                'grid':                     grid,
-                                'node':                     node,
-                                'param_gnBoundaryTypes':    p_type,
-                                'useConstant':              1,
-                                'constant':                 value
-                            }
-                            rows.append(row_dict)
+                    elif not is_val_empty(value, self.builder_logs):
+                        row_dict = {
+                            'grid':                     grid,
+                            'node':                     node,
+                            'param_gnBoundaryTypes':    p_type,
+                            'useConstant':              1,
+                            'constant':                 value
+                        }
+                        rows.append(row_dict)
                 
             # Additional check for storage nodes
             if gn_row.get('energyStoredPerUnitOfState', 0) == 1:
@@ -1655,31 +1645,9 @@ class BuildInputExcel:
 
 
     def remove_empty_columns(self, df: pd.DataFrame, cols_to_keep=None, treat_nan_as_empty=True):
-        from pandas.api.types import is_numeric_dtype, is_bool_dtype
-
         cols_to_keep = set(cols_to_keep or [])
 
-        def col_is_empty(s: pd.Series) -> bool:
-            # Booleans: usually don't drop just because all False; only NaNs count as empty
-            if is_bool_dtype(s):
-                return s.isna().all() if treat_nan_as_empty else False
-
-            # Numeric (excluding bool): empty if all zeros (and optionally NaN→0)
-            if is_numeric_dtype(s) and not is_bool_dtype(s):
-                s_cmp = s.fillna(0) if treat_nan_as_empty else s
-                return (s_cmp == 0).all()
-
-            # Non-numeric: empty if all are "" (optionally allow NaN)
-            if treat_nan_as_empty:
-                na_mask = s.isna()
-            else:
-                na_mask = pd.Series(False, index=s.index)
-
-            # Safe elementwise test; no vectorized == on arbitrary objects
-            empty_str_mask = s.map(lambda v: isinstance(v, str) and v.strip() == "")
-            return (na_mask | empty_str_mask).all()
-
-        empty_cols_mask = df.apply(col_is_empty, axis=0)
+        empty_cols_mask = df.apply(is_col_empty, axis=0)
 
         # Keep protected columns even if empty
         keep = list(cols_to_keep & set(df.columns))

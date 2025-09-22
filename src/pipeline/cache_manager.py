@@ -81,6 +81,13 @@ class CacheManager:
         # Save current config
         self.save_structural_config(self.config)
 
+        # --- Check full rerun flag ---
+        full_rerun = self.config.get('force_full_rerun', False)
+        if full_rerun:
+            log_status('User requested full rerun of all data.', 
+                       validation_log, 
+                       level="run", 
+                       add_empty_line_before=True)
 
         # --- Source code validation ---
         # Check changes in source excel data pipeline code files
@@ -91,7 +98,9 @@ class CacheManager:
         cache_name = "source_data_pipeline_hashes.json"
         self.source_data_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.source_data_pipeline_code_updated and not self.topology_changed:
-            log_status('Source excel data pipeline code updated, rerunning all timeseries and generating new input excel for Backbone.', validation_log, level="run")
+            log_status("Source excel data pipeline code updated, "
+                       "rerunning all timeseries and generating new input excel for Backbone.", 
+                       validation_log, level="run")
 
         # Check timeseries pipeline code files
         files = [
@@ -102,7 +111,9 @@ class CacheManager:
         cache_name = "timeseries_pipeline_hashes.json"
         self.timeseries_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.timeseries_pipeline_code_updated and not self.topology_changed:
-            log_status('Timeseries pipeline code updated, rerunning all timeseries and generating new input excel for Backbone.', validation_log, level="run")
+            log_status("Timeseries pipeline code updated, rerunning all timeseries "
+                       "and generating new input excel for Backbone.", 
+                       validation_log, level="run")
 
         # Check BB input excel pipeline code files
         files = [
@@ -113,7 +124,8 @@ class CacheManager:
         cache_name = "bb_excel_pipeline_hashes.json"
         self.bb_excel_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.bb_excel_pipeline_code_updated and not self.topology_changed:
-            log_status('BB input excel pipeline code updated, generating new input excel for Backbone.', validation_log, level="run")
+            log_status("BB input excel pipeline code updated, generating new input excel for Backbone.", 
+                       validation_log, level="run")
         
 
         # --- General flags validation ---
@@ -124,7 +136,8 @@ class CacheManager:
 
         # --- Deciding what sections to rerun ---
         # checking if all timeseries need rerunning
-        self.full_rerun = (self.topology_changed  
+        self.full_rerun = (full_rerun
+                           or self.topology_changed  
                            or self.date_range_expanded 
                            or self.csv_writer_requested
                            or self.source_data_pipeline_code_updated
@@ -179,7 +192,9 @@ class CacheManager:
         # Printing to log
         validation_log = []
         if self.topology_changed:
-            log_status('Config file topology, e.g. included countries, have changed or this is the first run. Starting a full rerun.', validation_log, level="run")
+            log_status("Config file topology, e.g. included countries, have changed or " 
+                       "this is the first run. Starting a full rerun.", 
+                       validation_log, level="run")
 
         return validation_log
     
@@ -203,7 +218,8 @@ class CacheManager:
         # Printing to log
         validation_log = []
         if self.date_range_expanded:
-            log_status('Requested time range has expanded from previous run, rerunning all timeseries.', validation_log, level="run")
+            log_status("Requested time range has expanded from previous run, rerunning all timeseries.", 
+                       validation_log, level="run")
 
         return validation_log
 
@@ -292,7 +308,8 @@ class CacheManager:
             all_hashes_to_save[category] = current_hashes
 
             if changed and not self.topology_changed:
-                log_status(f"Input data files changed in category '{category}', rerunning necessary steps.", validation_log, level="run")
+                log_status(f"Input data files changed in category '{category}', rerunning necessary steps.", 
+                           validation_log, level="run")
 
         # Save all current hashes
         save_json(self.input_data_hash_file, all_hashes_to_save)
