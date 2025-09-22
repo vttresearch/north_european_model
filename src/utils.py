@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 import argparse
 import time
-
+from pandas.api.types import is_numeric_dtype, is_bool_dtype
 
 def elapsed_time(start_time):
     elapsed_seconds = time.time() - start_time
@@ -226,3 +226,135 @@ def copy_gams_files(input_folder: Path, output_folder: Path) -> list[str]:
         log_status(f"WARNING: No GAMS files were found to copy in {gams_src_folder}", logs, level="warn")
 
     return logs
+
+
+def is_val_empty(
+    val,
+    logs: list[str],
+    treat_zero_as_empty: bool = True,
+    ident: str = "is_val_empty",
+) -> bool:
+    """
+    Return True if `val` is considered empty.
+
+    Empties:
+      - None
+      - NaN-like scalars via pd.isna(val) (np.nan, pd.NA, pd.NaT, numpy scalar NaNs, Decimal('NaN'))
+      - Empty or whitespace-only string (robust to zero-width/NBSP)
+      - Empty bytes-like (bytes/bytearray/memoryview with len == 0)
+      - Empty pandas objects (Series/DataFrame/Index) via `.empty`
+      - Array-like with `.size == 0` (e.g., numpy arrays)
+      - *Optionally* numeric zero scalars when `treat_zero_as_empty=True`
+
+    Not empty by design:
+      - Booleans (False is meaningful and never empty)
+      - Numeric non-zero scalars
+
+    Notes:
+      - `treat_zero_as_empty` applies only to **scalar numerics**, not arrays/Series.
+      - Any unexpected error is logged loudly via `log_status(..., level="error")`.
+    """
+    import numbers
+
+    try:
+        # 1) None
+        if val is None:
+            return True
+
+        # 2) Strings (normalize tricky whitespace)
+        if isinstance(val, str):
+            s = val.replace("\u200b", "").replace("\ufeff", "").replace("\u00a0", " ")
+            return s.strip() == ""
+
+        # 3) Booleans always not empty
+        if isinstance(val, bool):
+            return False
+
+        # 4) Numeric scalars (incl. numpy numbers, Decimal, etc.) 
+        if isinstance(val, numbers.Number):
+            if pd.isna(val):
+                return True
+            if treat_zero_as_empty and val == 0:
+                return True
+            return False
+
+        # 5) Pandas containers
+        if isinstance(val, (pd.Series, pd.DataFrame, pd.Index)):
+            return val.empty
+
+        # 6) Array-likes: empty if size == 0 (numpy arrays, etc.)
+        if hasattr(val, "size"):
+            return int(val.size) == 0
+
+        # 7) Generic __len__ fallback
+        if hasattr(val, "__len__"):
+            return len(val) == 0
+
+        # 8) Final NaN-like catch for other scalar types (e.g., pd.Timestamp(pd.NaT))
+        if pd.isna(val):
+            return True
+
+        # Default: not empty
+        return False
+
+    except BaseException as e:
+        # Loud logging on anything unexpected (no swallowing)
+        log_status(
+            f"[{ident}] ERROR while checking value {val!r} (type={type(val).__name__}): {e}",
+            logs,
+            level="error",
+        )
+        # Fail-safe: treat as NOT empty so we don't drop data silently
+        return False
+
+
+
+def is_col_empty(s: pd.Series, treat_nan_as_empty: bool = True) -> bool:
+    """
+    Determine whether a pandas Series should be considered "empty."
+
+    Rules:
+    ------
+    - Boolean columns: considered empty only if all values are NaN.
+      (All-False is NOT empty.)
+    - Numeric columns (excluding bool):
+        * With treat_nan_as_empty=True: NaNs treated as 0, so "all zero or NaN" means empty.
+        * With treat_nan_as_empty=False: only strictly "all zero" counts as empty.
+    - Non-numeric columns:
+        * With treat_nan_as_empty=True: NaN or "" (empty/whitespace-only string) counts as empty.
+        * With treat_nan_as_empty=False: only "" counts as empty.
+
+    Parameters
+    ----------
+    s : pd.Series
+        The column (Series) to test.
+    treat_nan_as_empty : bool, default=True
+        Whether NaN values should be treated as equivalent to empty.
+
+    Returns
+    -------
+    bool
+        True if the column is "empty" according to the above rules, False otherwise.
+    """
+    if len(s) == 0:
+        return True
+
+    # Booleans: usually don't drop just because all False; only NaNs count as empty
+    if is_bool_dtype(s):
+        return s.isna().all() if treat_nan_as_empty else False
+
+    # Numeric (excluding bool): empty if all zeros (and optionally NaN→0)
+    if is_numeric_dtype(s) and not is_bool_dtype(s):
+        s_cmp = s.fillna(0) if treat_nan_as_empty else s
+        return (s_cmp == 0).all()
+
+    # Non-numeric: empty if all are "" (optionally allow NaN)
+    if treat_nan_as_empty:
+        na_mask = s.isna()
+    else:
+        na_mask = pd.Series(False, index=s.index)
+
+    # Safe elementwise test; no vectorized == on arbitrary objects
+    empty_str_mask = s.map(lambda v: isinstance(v, str) and v.strip() == "")
+    # Combine the two masks (NaN OR empty string), and check if all entries satisfy
+    return (na_mask | empty_str_mask).all()

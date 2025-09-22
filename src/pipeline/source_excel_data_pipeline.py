@@ -195,7 +195,7 @@ class SourceExcelDataPipeline:
                 f"skipping Excel files for 'unitdata_files': {len(files)} file(s)",
                 self.logs, level="info"
             )                    
-            self.df_unitdata = pd.DataFrame()             
+            self.df_unitdata = pd.DataFrame()          
 
         # transferdata
         files = self.config.get('transferdata_files', [])
