@@ -38,30 +38,55 @@ class TimeseriesPipeline:
         self.logs.extend(specs_logs)
 
 
-    def _load_all_processor_specs(self) -> list:
-        specs = []
-        specs_logs = []
-        timeseries_specs = self.config.get("timeseries_specs")
-        exclude_grids = self.config.get("exclude_grids")
+    def _load_all_processor_specs(self) -> tuple[list[dict], list[str]]:
+        """
+        Load and validate all timeseries processor specifications from the configuration.
+
+        Each processor spec is checked for required fields:
+          - ``processor_name``
+          - ``bb_parameter``
+          - ``bb_parameter_dimensions``
+
+        If any of these fields are missing, the spec is skipped with a warning.
+        Processors whose ``demand_grid`` is in the configured ``exclude_grids`` list
+        are also skipped.
+
+        For each valid spec, an enriched specification dictionary is created with:
+          - ``name``: the processor's short name (from ``processor_name``)
+          - ``file``: path to the processor's Python file (under ``src/processors``)
+          - ``spec``: the original specification dictionary from config
+          - ``human_name``: the descriptive key name from the config
+
+        Returns
+        -------
+        tuple[list[dict], list[str]]
+            A tuple containing:
+              * list of enriched processor specifications
+              * list of log messages generated during spec validation
+        """
+        specs: list[dict] = []
+        specs_logs: list[str] = []
+        timeseries_specs: dict = self.config.get("timeseries_specs", {})
+        exclude_grids: list[str] = self.config.get("exclude_grids", [])
         processors_base = Path("src/processors")
 
         for human_name, spec in timeseries_specs.items():
-            processor_name = spec.get("processor_name")
-            bb_parameter = spec.get("bb_parameter")
-            bb_parameter_dimensions = spec.get("bb_parameter_dimensions")
+            processor_name: str | None = spec.get("processor_name")
+            bb_parameter: str | None = spec.get("bb_parameter")
+            bb_parameter_dimensions: list | None = spec.get("bb_parameter_dimensions")
 
             if not processor_name or not bb_parameter or not bb_parameter_dimensions:
                 log_status(f"   Warning! {human_name} spec is incomplete. Skipping.", specs_logs, level="warn")
                 continue
 
-            demand_grid = spec.get("demand_grid")
+            demand_grid: str | None = spec.get("demand_grid")
             if demand_grid in exclude_grids:
                 log_status(f"   Skipping {processor_name} due to excluded demand grid: {demand_grid}", specs_logs, level="warn")
                 continue
 
             processor_file = processors_base / f"{processor_name}.py"
 
-            enriched_spec = {
+            enriched_spec: dict = {
                 "name": processor_name,
                 "file": str(processor_file),
                 "spec": spec,
@@ -73,14 +98,33 @@ class TimeseriesPipeline:
 
 
     def _determine_processors_to_rerun(self, ts_full_rerun: bool) -> set[str]:
-        rerun = set()
-        processor_hashes = self.cache_manager.load_processor_hashes()
+        """
+        Determine which timeseries processors need to be rerun.
+
+        Each processor is checked against the cached code hash:
+          - If ``ts_full_rerun`` is True, all processors are marked for rerun.
+          - Otherwise, processors are rerun only if their current code hash
+            (computed from the processor's Python file) differs from the
+            stored hash in the cache.
+
+        Parameters
+        ----------
+        ts_full_rerun : bool
+            If True, force rerun of all processors regardless of code changes.
+
+        Returns
+        -------
+        set[str]
+            Set of processor ``human_name`` identifiers that should be rerun.
+        """
+        rerun: set[str] = set()
+        processor_hashes: dict[str, str] = self.cache_manager.load_processor_hashes()
 
         for processor in self.processors:
-            human_name = processor["human_name"]
-            name = processor["name"]
+            human_name: str = processor["human_name"]
+            name: str = processor["name"]
             path = Path(processor["file"])
-            current_hash = compute_processor_code_hash(path)
+            current_hash: str = compute_processor_code_hash(path)
 
             if ts_full_rerun or processor_hashes.get(name) != current_hash:
                 rerun.add(human_name)
@@ -88,45 +132,156 @@ class TimeseriesPipeline:
         return rerun
 
 
-    def _create_other_demands(self, df_annual_demands, other_demands):
+
+    def _create_other_demands(
+        self, df_annual_demands: pd.DataFrame, other_demands: set[str]
+    ) -> pd.DataFrame:
         """
-        For each (grid, node) combination in df_annual_demands
-        where the grid (case-insensitive) is in the set 'other_demands',
-        create 8760 rows with columns [grid, node, f, t, value].      
-        - 'f' is set to 'f00'.
-        - 't' is a sequential time label from t000001 up to t008760.
-        - 'value' is calculated as TWh/year * 1e6 / 8760.
+        Generate hourly demand timeseries for grids not covered by explicit processors.
+
+        For each (grid, node) combination in ``df_annual_demands`` where the grid
+        (case-insensitive) is in the set ``other_demands``, this function creates
+        8760 hourly rows with the following columns:
+
+          - ``grid``  : grid identifier (copied from input)
+          - ``node``  : node identifier (copied from input)
+          - ``f``     : fixed to 'f00'
+          - ``t``     : hourly time index from 't000001' to 't008760'
+          - ``value`` : hourly demand in MWh (negative), computed as  
+                        (TWh/year * 1e6 / 8760), rounded to two decimals
+
+        Notes
+        -----
+        - Each input annual demand is assumed to be given in TWh/year.
+        - The resulting ``value`` column is negative to represent demand.
+        - If required input columns are missing, a warning is logged and an
+          empty DataFrame with the correct schema is returned.
+
+        Parameters
+        ----------
+        df_annual_demands : pd.DataFrame
+            Input DataFrame containing at least the columns:
+              * ``grid`` (str)
+              * ``node`` (str)
+              * ``twh/year`` (float)
+        other_demands : set[str]
+            Set of grid names (lowercased) for which hourly demand timeseries
+            should be generated.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns [``grid``, ``node``, ``f``, ``t``, ``value``]
+            containing 8760 rows per (grid, node) in ``other_demands``.
+            If no rows match, or required input columns are missing, returns
+            an empty DataFrame with the same columns.
         """
-        # Filter for rows with unprocessed grid values (using lower-case for comparison)
-        df_filtered = df_annual_demands[df_annual_demands["grid"].str.lower().isin(other_demands)]
-        
+        required_cols = {"grid", "twh/year", "node"}
+        missing_cols = required_cols - set(df_annual_demands.columns)
+
+        if missing_cols:
+            log_status(
+                f"[TimeseriesPipeline] Cannot create other demands – missing required columns: {missing_cols}",
+                self.logs,
+                level="warn",
+            )
+            return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
+
+        # Filter for rows with unprocessed grid values (case-insensitive)
+        df_filtered = df_annual_demands[
+            df_annual_demands["grid"].str.lower().isin(other_demands)
+        ]
+
+        if df_filtered.empty:
+            return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
+
         # Create t-index for a full year (8760 hours)
-        t_index = [f"t{str(i).zfill(6)}" for i in range(1, 8760+1)]
+        t_index = [f"t{str(i).zfill(6)}" for i in range(1, 8760 + 1)]
 
-        # Initialize rows, and empty list for result
-        rows = []
-
+        rows: list[pd.DataFrame] = []
         for _, row in df_filtered.iterrows():
-            # Calculate hourly value (assume twh/year is numeric). 
-            # Negative value for demands. Round to two decimals.
-            hourly_value = round(row["twh/year"] * 1e6 / 8760 * -1, 2)
-            row = pd.DataFrame({
-                "grid": row["grid"],
-                "node": row["node"],
-                "f": "f00",
-                "t": t_index,
-                "value": hourly_value
-            })
-            rows.append(row)
+            try:
+                # Calculate hourly value (negative demand in MWh)
+                hourly_value = round(row["twh/year"] * 1e6 / 8760 * -1, 2)
+            except Exception as e:
+                log_status(
+                    f"[TimeseriesPipeline] Failed to calculate hourly demand for row {row.to_dict()}: {e}",
+                    self.logs,
+                    level="warn",
+                )
+                continue
+
+            row_ts = pd.DataFrame(
+                {
+                    "grid": row["grid"],
+                    "node": row["node"],
+                    "f": "f00",
+                    "t": t_index,
+                    "value": hourly_value,
+                }
+            )
+            rows.append(row_ts)
+
         if rows:
-            df_result = pd.concat(rows, ignore_index=True)
-        else:
-            df_result = pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
-        return df_result    
+            return pd.concat(rows, ignore_index=True)
+
+        return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
+ 
 
 
 
-    def run(self) -> dict:
+    def run(self) -> TimeseriesRunResult:
+        """
+        Execute the full timeseries processing pipeline.
+
+        Workflow
+        --------
+        1. **Initialization**
+           - If a full rerun is requested, remove any existing
+             ``import_timeseries.inc`` file.
+           - Log the start of timeseries processing.
+
+        2. **Determine processors to rerun**
+           - Compare processor specifications and cached code hashes.
+           - Collect all processors that need rerun due to:
+             * global full rerun,
+             * changed configuration, or
+             * changed processor code.
+
+        3. **Run selected processors**
+           - For each processor to rerun:
+             * Execute it with :class:`ProcessorRunner`.
+             * Collect secondary results, timeseries domains,
+               domain pairs, and logs.
+             * Normalize outputs to avoid type inconsistencies.
+
+        4. **Process unhandled demands**
+           - Identify demand grids present in ``df_annual_demands`` but not
+             covered by explicit processors.
+           - Generate hourly timeseries for these with
+             :meth:`_create_other_demands`.
+           - Write optional CSV/GDX outputs and update
+             ``import_timeseries.inc``.
+
+        5. **Cache management**
+           - Merge newly discovered domains and domain pairs into cache.
+           - Reload merged results from cache for consistency.
+           - Optionally reload secondary results from cache if
+             rebuilding Backbone Excel.
+
+        Returns
+        -------
+        TimeseriesRunResult
+            Dataclass containing:
+              * ``secondary_results`` : dict  
+                Secondary outputs from processors or cache.
+              * ``ts_domains`` : dict[str, list]  
+                Mapping of domain → sorted list of values.
+              * ``ts_domain_pairs`` : dict[str, list[tuple]]  
+                Mapping of domain-pair → sorted list of tuples.
+              * ``logs`` : list[str]  
+                Aggregated log messages from the entire run.
+        """
 
         # If full rerun, remove import_timeseries.inc
         if self.cache_manager.full_rerun:
@@ -209,49 +364,53 @@ class TimeseriesPipeline:
 
                 self.logs.extend(processor_log)
 
-            # --- Process Other Demands Not Yet Processed -------------------------------
-            log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
+        # --- Remaining timeseries actions ---
+
+        log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
             
-            all_demand_grids = set()
-            if not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
-                # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
-                all_demand_grids = set(self.df_annual_demands["grid"].dropna().astype(str).str.lower().unique())
+        # --- Process Other Demands Not Yet Processed 
+        all_demand_grids = set()
+        if not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
+            # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
+            all_demand_grids = set(self.df_annual_demands["grid"].dropna().astype(str).str.lower().unique())
 
-            processed_demand_grids = {
-                spec.get("demand_grid").lower()
-                for spec in self.config.get("timeseries_specs", {}).values()
-                if spec.get("demand_grid")
-            }
-            unprocessed_grids = all_demand_grids - processed_demand_grids
+        processed_demand_grids = {
+            spec.get("demand_grid").lower()
+            for spec in self.config.get("timeseries_specs", {}).values()
+            if spec.get("demand_grid")
+        }
+        unprocessed_grids = all_demand_grids - processed_demand_grids
 
-            if unprocessed_grids:
-                log_status("Processing other demands", self.logs, level="run")
-                for g in unprocessed_grids:
-                    log_status(f" .. {g}", self.logs, level="None")
+        if unprocessed_grids:
+            log_status("Processing other demands", self.logs, level="run")
+            for g in unprocessed_grids:
+                log_status(f" .. {g}", self.logs, level="None")
 
-                # Create timeseries for other demands
-                df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
+            # Create timeseries for other demands
+            df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
-                # Collect new domain info
-                domains = ['grid', 'node', 'flow', 'group']
-                domain_pairs = [['grid', 'node'], ['flow', 'node']]
+            # Collect new domain info
+            domains = ['grid', 'node', 'flow', 'group']
+            domain_pairs = [['grid', 'node'], ['flow', 'node']]
 
-                other_domains = collect_domains(df_other_demands, domains)
-                other_domain_pairs = collect_domain_pairs(df_other_demands, domain_pairs)
+            other_domains = collect_domains(df_other_demands, domains)
+            other_domain_pairs = collect_domain_pairs(df_other_demands, domain_pairs)
 
-                for dom, vals in other_domains.items():
-                    all_ts_domains.setdefault(dom, set()).update(vals)
+            for dom, vals in other_domains.items():
+                all_ts_domains.setdefault(dom, set()).update(vals)
 
-                for pair_key, tuples in other_domain_pairs.items():
-                    all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
+            for pair_key, tuples in other_domain_pairs.items():
+                all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
 
-                if self.config.get("write_csv_files", False):
-                    df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
+            if self.config.get("write_csv_files", False):
+                df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
 
-                output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
-                to_gdx({"ts_influx": df_other_demands}, path=output_file_other)
+            output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
+            to_gdx({"ts_influx": df_other_demands}, path=output_file_other)
 
-                update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+            update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+
+        # --- Cache manageement  ---
 
         # merge all_ts_domains to the ones in cache, load the merged dictionary
         self.cache_manager.merge_dict_to_cache(all_ts_domains, "all_ts_domains.json")
