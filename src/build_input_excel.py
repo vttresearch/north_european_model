@@ -138,35 +138,6 @@ class BuildInputExcel:
 
         # List to collect the new rows 
         rows = []
-        
-        def get_param_value(param, put, cap_row, tech_row, def_value):
-            """
-            Determine parameter value with fallback logic.
-        
-            Prioritizes:
-            1. Connection-specific value from unit data (e.g., vomCosts_input2)
-            2. Non-specific value from unit data (for output1 only)
-            3. Connection-specific value from technology data
-            4. Non-specific value from technology data (for output1 only)
-            5. def_value as the last resort if both sources are empty.
-            """
-            # First try unit-specific value (with connection suffix or default)
-            primary = (
-                (cap_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in cap_row.index else 0) +
-                (cap_row[param.lower()] if (param.lower() in cap_row.index and put == 'output1') else 0)
-            )
-            # If no unit-specific value, fall back to technology specifications
-            secondary = (
-                (tech_row[f'{param.lower()}_{put}'] if f'{param.lower()}_{put}' in tech_row.index else 0) +
-                (tech_row[param.lower()] if (param.lower() in tech_row.index and put == 'output1') else 0)
-            )
-            # Return the first non-empty value; if both are empty, fall back to def_value.
-            if not is_val_empty(primary, self.builder_logs, treat_zero_as_empty=False):
-                return primary
-            elif not is_val_empty(secondary, self.builder_logs, treat_zero_as_empty=False):
-                return secondary
-            else:
-                return def_value
 
         # Keep a set of generator_ids already warned about
         warned_generator_ids = set()
@@ -223,7 +194,7 @@ class BuildInputExcel:
                     # Add all other parameters using the value resolution function.
                     # Pass in the corresponding default value from param_gnu.
                     additional_params = {
-                        param: get_param_value(param, put, cap_row, tech_row, def_value)
+                        param: self.get_param_value(param, put, cap_row, tech_row, def_value)
                         for param, def_value in param_gnu.items()
                     }
 
@@ -1656,6 +1627,98 @@ class BuildInputExcel:
 
         return df.loc[:, ~empty_cols_mask]
 
+
+    def get_param_value(self, param, put, cap_row, tech_row, def_value):
+        """
+        Determine parameter value with fallback logic (ALL lookups case-insensitive).
+
+        Priority:
+          1) cap_row connection-specific (e.g., "<param>_<put>")
+          2) cap_row base (only when put == 'output1')
+          3) tech_row connection-specific
+          4) tech_row base (only when put == 'output1')
+          5) def_value
+
+        Notes:
+          - All key comparisons are done case-insensitively.
+          - If both candidates in a tier are empty, that tier yields None (not 0),
+            so we only fall back to def_value when both sources are empty.
+        """
+        logs = getattr(self, "builder_logs", [])
+
+        def _iter_items(row_like):
+            if row_like is None:
+                return []
+            # Try dict-like first
+            if hasattr(row_like, "items"):
+                try:
+                    return list(row_like.items())
+                except Exception:
+                    pass
+            # Try pandas Series-like (index + values)
+            if hasattr(row_like, "index"):
+                try:
+                    return list(zip(row_like.index, list(row_like)))
+                except Exception:
+                    pass
+            # Last resort: try to coerce to dict
+            try:
+                return list(dict(row_like).items())
+            except Exception:
+                return []
+
+        def _to_ci_map(row_like):
+            """Map lowercased, stripped keys -> value. First occurrence wins."""
+            ci = {}
+            for k, v in _iter_items(row_like):
+                kl = str(k).strip().lower()
+                if kl not in ci:
+                    ci[kl] = v
+            return ci
+
+        cap_ci = _to_ci_map(cap_row)
+        tech_ci = _to_ci_map(tech_row)
+
+        p = str(param).strip().lower()
+        put_l = str(put).strip().lower()
+        key_conn = f"{p}_{put_l}"
+        key_base = p  # considered only when put == 'output1'
+
+        def _combine(v1, v2, ident_suffix):
+            """
+            Combine two candidates (connection-specific and base) for a tier:
+            - If both empty -> return None (signals 'tier empty')
+            - Else treat empties as 0 and add; if addition fails, prefer first non-empty
+            """
+            a_empty = is_val_empty(v1, logs, treat_zero_as_empty=False, ident=f"get_param_value/{ident_suffix}/a")
+            b_empty = is_val_empty(v2, logs, treat_zero_as_empty=False, ident=f"get_param_value/{ident_suffix}/b")
+            if a_empty and b_empty:
+                return None
+
+            a_val = 0 if a_empty else v1
+            b_val = 0 if b_empty else v2
+            try:
+                return a_val + b_val
+            except Exception:
+                # Fallback: return whichever is non-empty
+                return a_val if not a_empty else b_val
+
+        # --- Tier 1 & 2: cap_row ---
+        cap_conn = cap_ci.get(key_conn, None)
+        cap_base = cap_ci.get(key_base, None) if put_l == "output1" else None
+        primary = _combine(cap_conn, cap_base, "primary")
+        if not is_val_empty(primary, logs, treat_zero_as_empty=False, ident="get_param_value/primary"):
+            return primary
+
+        # --- Tier 3 & 4: tech_row ---
+        tech_conn = tech_ci.get(key_conn, None)
+        tech_base = tech_ci.get(key_base, None) if put_l == "output1" else None
+        secondary = _combine(tech_conn, tech_base, "secondary")
+        if not is_val_empty(secondary, logs, treat_zero_as_empty=False, ident="get_param_value/secondary"):
+            return secondary
+
+        # --- Tier 5: default ---
+        return def_value
 
 
 # ------------------------------------------------------
