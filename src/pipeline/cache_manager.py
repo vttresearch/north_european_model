@@ -41,6 +41,7 @@ class CacheManager:
         self.config = config
 
         # source code related rerun switches
+        self.overall_code_files_updated = False
         self.source_data_pipeline_code_updated = False
         self.timeseries_pipeline_code_updated = False
         self.bb_excel_pipeline_code_updated = False
@@ -90,14 +91,30 @@ class CacheManager:
                        add_empty_line_before=True)
 
         # --- Source code validation ---
+        # Check changes in overall code files
+        files = [
+            Path("./build_input_data.py"),
+            Path("./src/pipeline/cache_manager.py"),
+            Path("./src/utils.py"),
+            Path("./src/hash_utils.py"),
+            Path("./src/json_exchange.py")
+        ]
+        cache_name = "overall_code_files_hashes.json"
+        self.overall_code_files_updated = self._validate_source_code_changes(files, cache_name)
+        if self.overall_code_files_updated and not self.topology_changed:
+            log_status("Certain code files that orchestrate the overall workflow have been updated, "
+                       "rerunning all timeseries and generating new input excel for Backbone.", 
+                       validation_log, level="run")
+
         # Check changes in source excel data pipeline code files
         files = [
             Path("./src/pipeline/source_excel_data_pipeline.py"),
-            Path("./src/data_loader.py")
+            Path("./src/data_loader.py"),
+            Path("./src/excel_exchange.py")
         ]
         cache_name = "source_data_pipeline_hashes.json"
         self.source_data_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
-        if self.source_data_pipeline_code_updated and not self.topology_changed:
+        if self.source_data_pipeline_code_updated and not self.topology_changed and not self.overall_code_files_updated:
             log_status("Source excel data pipeline code updated, "
                        "rerunning all timeseries and generating new input excel for Backbone.", 
                        validation_log, level="run")
@@ -110,7 +127,7 @@ class CacheManager:
         ]
         cache_name = "timeseries_pipeline_hashes.json"
         self.timeseries_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
-        if self.timeseries_pipeline_code_updated and not self.topology_changed:
+        if self.timeseries_pipeline_code_updated and not self.topology_changed and not self.overall_code_files_updated:
             log_status("Timeseries pipeline code updated, rerunning all timeseries "
                        "and generating new input excel for Backbone.", 
                        validation_log, level="run")
@@ -123,7 +140,7 @@ class CacheManager:
         ]
         cache_name = "bb_excel_pipeline_hashes.json"
         self.bb_excel_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
-        if self.bb_excel_pipeline_code_updated and not self.topology_changed:
+        if self.bb_excel_pipeline_code_updated and not self.topology_changed and not self.overall_code_files_updated:
             log_status("BB input excel pipeline code updated, generating new input excel for Backbone.", 
                        validation_log, level="run")
         
@@ -140,6 +157,7 @@ class CacheManager:
                            or self.topology_changed  
                            or self.date_range_expanded 
                            or self.csv_writer_requested
+                           or self.overall_code_files_updated
                            or self.source_data_pipeline_code_updated
                            or self.timeseries_pipeline_code_updated
                            or not workflow_run_successfully
