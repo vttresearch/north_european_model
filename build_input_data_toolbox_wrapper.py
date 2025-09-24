@@ -32,11 +32,11 @@ if __name__ == '__main__':
         print(j)
         print(output_folder)
         #copy the inputdata excel to another folder for workflow use
-        os.makedirs(f'./toolbox_workflow/input/{j}', exist_ok=True)
-        shutil.copy(f'./{output_folder}/inputData.xlsx', f'./toolbox_workflow/input/{j}/inputData.xlsx')
+        os.makedirs(f'./toolbox_workflow/input/{output_folder}', exist_ok=True)
+        shutil.copy(f'./{output_folder}/inputData.xlsx', f'./toolbox_workflow/input/{output_folder}/inputData.xlsx')
         
         #add folder information
-        wb = load_workbook(f'./toolbox_workflow/input/{j}/inputData.xlsx')          
+        wb = load_workbook(f'./toolbox_workflow/input/{output_folder}/inputData.xlsx')          
         table_name = "scenario_folder"
         wb.create_sheet(table_name)
         for i, name in enumerate(wb.sheetnames):
@@ -49,4 +49,4 @@ if __name__ == '__main__':
             if name == table_name:
                 wb.worksheets[i].cell(row=1, column=1).value = table_name
                 wb.worksheets[i].cell(row=2, column=1).value = output_folder
-        wb.save(f'./toolbox_workflow/input/{j}/inputData.xlsx')
+        wb.save(f'./toolbox_workflow/input/{output_folder}/inputData.xlsx')

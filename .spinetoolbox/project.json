@@ -9,11 +9,6 @@
             "Tool": [
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/spineToolbox.json"
-                },
-                {
-                    "type": "path",
                     "relative": true,
                     "path": ".spinetoolbox/specifications/Tool/convert_excel_to_gdx.json"
                 },
@@ -30,28 +25,33 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": ".spinetoolbox/specifications/Tool/hassle.json"
-                }
-            ],
-            "Exporter": [
+                    "path": "../spineToolbox.json"
+                },
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/tools/export_to_bb.json"
+                    "relative": true,
+                    "path": ".spinetoolbox/specifications/Tool/backbone_invest_and_schedule.json"
                 }
             ],
             "Importer": [
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/tools/import_from_gdx.json"
+                    "relative": true,
+                    "path": "../tools/import_from_gdx.json"
+                }
+            ],
+            "Exporter": [
+                {
+                    "type": "path",
+                    "relative": true,
+                    "path": "../tools/export_to_bb.json"
                 }
             ],
             "Data Transformer": [
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/tools/transform_to_bb_sets.json"
+                    "relative": true,
+                    "path": "../tools/transform_to_bb_sets.json"
                 }
             ]
         },
@@ -99,12 +99,10 @@
                     "known_filters": {
                         "db_url@Input data": {
                             "scenario_filter": {
-                                "bsh2": true,
-                                "tyndp2024": false
+                                "tyndp2024_nt2030": true
                             },
                             "alternative_filter": {
                                 "Base": true,
-                                "input_tyndp2024_BSH2_2030": true,
                                 "input_tyndp2024_National Trends_2030": true
                             }
                         }
@@ -212,13 +210,13 @@
                 }
             },
             {
-                "name": "from Copy_timeseries to hassle",
+                "name": "from Copy_timeseries to Backbone_invest_and_schedule",
                 "from": [
                     "Copy_timeseries",
                     "right"
                 ],
                 "to": [
-                    "hassle",
+                    "Backbone_invest_and_schedule",
                     "left"
                 ],
                 "filter_settings": {
@@ -305,6 +303,25 @@
                         "scenario_filter": true
                     }
                 }
+            },
+            {
+                "name": "from Copy_timeseries to Backbone",
+                "from": [
+                    "Copy_timeseries",
+                    "right"
+                ],
+                "to": [
+                    "Backbone",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
             }
         ],
         "jumps": []
@@ -316,7 +333,7 @@
             "x": 281.1045992055769,
             "y": -191.58041633186423,
             "specification": "Backbone",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": [
                 {
                     "type": "literal",
@@ -352,8 +369,8 @@
         "Transform_to_BB_sets": {
             "type": "Data Transformer",
             "description": "",
-            "x": -126.5412188793305,
-            "y": -60.86033871978253,
+            "x": -127.56277035564412,
+            "y": -60.86033871978255,
             "specification": "Transform_to_BB_sets"
         },
         "Input data": {
@@ -368,7 +385,7 @@
                 "database": {
                     "type": "path",
                     "relative": true,
-                    "path": ".spinetoolbox/items/input_data/bsh2_250912_main.sqlite"
+                    "path": "BB_data.sqlite"
                 },
                 "schema": ""
             }
@@ -380,12 +397,7 @@
             "y": -61.5908042850064,
             "specification": "convert_excel_to_gdx",
             "execute_in_work": false,
-            "cmd_line_args": [
-                {
-                    "type": "literal",
-                    "arg": "toolbox_workflow/input/"
-                }
-            ],
+            "cmd_line_args": [],
             "kill_completed_processes": false,
             "log_process_output": false
         },
@@ -422,7 +434,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "C:\\Users\\ehjeric\\git_backbone\\balticseah2\\backbone_250414\\input\\input_invest_and_schedule\\modelsInit.gms"
+                    "arg": "../input/input_invest_and_schedule/modelsInit.gms"
                 },
                 {
                     "type": "resource",
@@ -446,7 +458,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/src_files/config_bsh2.ini"
+                    "arg": "<project>/src_files/config_NT2030.ini"
                 }
             ],
             "kill_completed_processes": false,
@@ -466,12 +478,7 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "src_files/config_bsh2.ini"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "src_files/config_tyndp2024.ini"
+                    "path": "src_files/config_NT2030.ini"
                 }
             ],
             "db_references": []
@@ -484,17 +491,6 @@
             "file_references": [],
             "db_references": []
         },
-        "hassle": {
-            "type": "Tool",
-            "description": "",
-            "x": 244.4795317845239,
-            "y": -59.78203865097217,
-            "specification": "hassle",
-            "execute_in_work": true,
-            "cmd_line_args": [],
-            "kill_completed_processes": false,
-            "log_process_output": false
-        },
         "include invest and schedule": {
             "type": "Data Connection",
             "description": "",
@@ -503,8 +499,8 @@
             "file_references": [
                 {
                     "type": "path",
-                    "relative": false,
-                    "path": "C:/Users/ehjeric/git_backbone/balticseah2/backbone_250414/input/input_invest_and_schedule/modelsInit.gms"
+                    "relative": true,
+                    "path": "../input/input_invest_and_schedule/modelsInit.gms"
                 }
             ],
             "db_references": []
@@ -522,6 +518,17 @@
                 }
             ],
             "db_references": []
+        },
+        "Backbone_invest_and_schedule": {
+            "type": "Tool",
+            "description": "",
+            "x": 244.4795317845239,
+            "y": -59.78203865097217,
+            "specification": "Backbone_invest_and_schedule",
+            "execute_in_work": true,
+            "cmd_line_args": [],
+            "kill_completed_processes": false,
+            "log_process_output": false
         }
     }
 }
