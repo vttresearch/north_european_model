@@ -6,7 +6,9 @@
     ],
     "description": "",
     "inputfiles": [],
-    "inputfiles_opt": [],
+    "inputfiles_opt": [
+        "toolbox_workflow/input/*.xlsx"
+    ],
     "outputfiles": [
         "toolbox_workflow/input/*.gdx"
     ],

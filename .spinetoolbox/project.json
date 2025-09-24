@@ -396,7 +396,7 @@
             "x": -518.1740346791889,
             "y": -61.5908042850064,
             "specification": "convert_excel_to_gdx",
-            "execute_in_work": false,
+            "execute_in_work": true,
             "cmd_line_args": [],
             "kill_completed_processes": false,
             "log_process_output": false

@@ -1,11 +1,10 @@
-import subprocess
 import sys
 import os
 from pathlib import Path
 
 def main():
     for input_path in input_paths:
-        output_path = f'{modify_path_with_new_basename(input_path)[:-5]}.gdx'
+        output_path = f'{input_path[:-5]}.gdx'
         cmd_call = f'gdxxrw Input={input_path} Output={output_path} Index = Index!'
         os.system(cmd_call)
 
@@ -28,10 +27,11 @@ def find_files_with_suffix(folder_path, suffix):
     """
     folder = Path(folder_path)
     files_with_suffix = [str(file) for file in folder.rglob(f"*{suffix}") if file.is_file()]
-    print(files_with_suffix)
     return files_with_suffix
 
 if __name__ == "__main__":
     input_paths = find_files_with_suffix('./toolbox_workflow/input', '.xlsx')
-    print(input_paths)
+    if len(sys.argv) > 1:
+        input_paths = input_paths + sys.argv[1:]
+    print(f'Converting the following files into gdx:{input_paths}')
     main()

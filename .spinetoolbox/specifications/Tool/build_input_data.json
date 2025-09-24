@@ -8,7 +8,7 @@
     "inputfiles": [],
     "inputfiles_opt": [],
     "outputfiles": [
-        "toolbox_workflow/input/*.*"
+        "toolbox_workflow/input/*.xlsx"
     ],
     "cmdline_args": [],
     "includes_main_path": "../../.."
