@@ -66,6 +66,8 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             'transferdata_files': ast.literal_eval(inputdata.get('transferdata_files', '[]')),
             'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
             'storagedata_files': ast.literal_eval(inputdata.get('storagedata_files', '[]')),
+            'disable_all_ts_processors': inputdata.getboolean('disable_all_ts_processors', False),
+            'disable_other_demand_ts': inputdata.getboolean('disable_other_demand_ts', False),
             'timeseries_specs': ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
         }
 

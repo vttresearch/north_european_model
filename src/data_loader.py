@@ -5,7 +5,6 @@ import math
 
 
 
-
 def build_node_column(
         df: pd.DataFrame
         ) -> pd.DataFrame:
@@ -557,10 +556,6 @@ def apply_blacklist(
     return df_filtered
 
 
-import math
-from typing import Iterable, List, Optional, Sequence, Dict, Tuple
-import pandas as pd
-
 def merge_row_by_row(
     dfs: Iterable[pd.DataFrame],
     logs: List[str],
@@ -865,7 +860,6 @@ def merge_row_by_row(
         )
 
     return merged
-
 
 
 def filter_nonzero_numeric_rows(
