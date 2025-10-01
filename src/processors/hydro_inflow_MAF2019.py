@@ -204,6 +204,7 @@ class hydro_inflow_MAF2019:
         Executes the full processing pipeline: reading input files, processing the inflow data,
         combining results, and writing the output CSV.
         """
+        log_status("Reading input files...", self.processor_log)
         # Read the weekly CSV file and filter by year.
         weekly_df = pd.read_csv(self.file_weekly)
         weekly_df = weekly_df[(weekly_df["year"] >= self.startyear) & (weekly_df["year"] <= self.endyear)]
@@ -227,6 +228,8 @@ class hydro_inflow_MAF2019:
 
         # Mandatory secondary results
         secondary_result = None
+
+        log_status("Inflow time series built.", self.processor_log, level="info")
 
         # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
         return summary_df, secondary_result, "\n".join(self.processor_log)

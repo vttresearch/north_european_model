@@ -6,6 +6,7 @@ from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_pipeline import TimeseriesPipeline
 from src.pipeline.bb_excel_context import BBExcelBuildContext
+import src.utils as utils
 from src.utils import parse_sys_args, elapsed_time, check_dependencies, log_status, copy_gams_files
 from itertools import product
 from src.build_input_excel import BuildInputExcel
@@ -18,7 +19,7 @@ def main(input_folder, config_file):
     start_time = time.time()
 
     # Check package versions
-    check_dependencies()
+    utils.check_dependencies()
 
     # Reset workflow_run_successfully
     workflow_run_successfully = False
@@ -41,6 +42,12 @@ def main(input_folder, config_file):
     # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
     config = load_config(config_file)
 
+    # Initialize logging function
+    utils.init_logging(
+        print_all_elapsed_times = config.get('print_all_elapsed_times'),
+        start_time = start_time
+    )
+
 
     # --- 3. The (scenario, year, alternative) loop ---
     # load list of processed countries
@@ -60,15 +67,15 @@ def main(input_folder, config_file):
 
         # Printing the (scenario, year, alternative) combination and storing them to scenario_tags
         if alternative != "":
-            log_status(f"{scenario}, {year}, {alternative}", log_messages, section_start_length=70, add_empty_line_before=True)      
+            utils.log_status(f"{scenario}, {year}, {alternative}", log_messages, section_start_length=70, add_empty_line_before=True)      
             scen_tags = [scenario, str(year), alternative]  
         else:
-            log_status(f"{scenario}, {year}", log_messages, section_start_length=70, add_empty_line_before=True)   
+            utils.log_status(f"{scenario}, {year}", log_messages, section_start_length=70, add_empty_line_before=True)   
             scen_tags = [scenario, str(year), ""]
 
         # Print date and time
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_status(f"Run timestamp: {now_str}", log_messages, level="info")
+        utils.log_status(f"Run timestamp: {now_str}", log_messages, level="info")
 
         # Build output folder name, check existence
         output_folder_prefix = config.get('output_folder_prefix', 'output')
@@ -78,7 +85,7 @@ def main(input_folder, config_file):
             folder_name = f"{output_folder_prefix}_{scenario}_{year}"
         output_folder = Path("") / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
-        log_status(f"Using output folder: {output_folder}", log_messages, level="info")
+        utils.log_status(f"Using output folder: {output_folder}", log_messages, level="info")
 
 
         # --- 3.2. Cache manager ---
@@ -98,7 +105,7 @@ def main(input_folder, config_file):
 
             # If there were any, log once and delete them
             if files:
-                log_status(f"Clearing {len(files)} files from the output folder: {output_folder}, keeping subfolders and their files.",
+                utils.log_status(f"Clearing {len(files)} files from the output folder: {output_folder}, keeping subfolders and their files.",
                            log_messages, level="info")
                 for f in files:
                     f.unlink(missing_ok=True)
@@ -117,12 +124,12 @@ def main(input_folder, config_file):
 
         # Run if needed, otherwise print skip message
         if cache_manager.reimport_source_excels:
-            log_status("Processing source Excel files.", log_messages, level="run", add_empty_line_before=True)
+            utils.log_status("Processing source Excel files.", log_messages, level="run", add_empty_line_before=True)
             source_excel_data_pipeline.run()
             log_messages.extend(source_excel_data_pipeline.logs)
-            log_status("Source excel files processed successfully.", log_messages, level="info")
+            utils.log_status("Source excel files processed successfully.", log_messages, level="info")
         else:
-            log_status("Skipping source excel processing.", log_messages, level="skip")
+            utils.log_status("Skipping source excel processing.", log_messages, level="skip")
 
 
         # --- 3.4. Timeseries processing phase ---
@@ -136,13 +143,13 @@ def main(input_folder, config_file):
             # Merge logs
             log_messages.extend(ts_results.logs)
         else:
-            log_status("Timeseries results are up-to-date. Skipping timeseries processing.", log_messages, level="skip")
+            utils.log_status("Timeseries results are up-to-date. Skipping timeseries processing.", log_messages, level="skip")
 
 
         # --- 3.5. Backbone Input Excel building phase ---
         # Checking if this step is needed or not
         if cache_manager.rebuild_bb_excel:
-            log_status("Building Backbone input Excel", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
+            utils.log_status("Building Backbone input Excel", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
             # Instantiate excel_context and builder
             excel_context = BBExcelBuildContext(
                 # From sys args
@@ -172,24 +179,24 @@ def main(input_folder, config_file):
             builder_logs, bb_excel_succesfully_built = builder.run()
             log_messages.extend(builder_logs)
         else:
-            log_status("Backbone input excel is up-to-date. Skipping build phase.", log_messages, level="skip")
+            utils.log_status("Backbone input excel is up-to-date. Skipping build phase.", log_messages, level="skip")
             # Flagging bb excel succesfully built to pass checks at the end
             bb_excel_succesfully_built = True
 
         # Update the general flag for succesfull BB excel building
         if not bb_excel_succesfully_built:
-            log_status("Backbone input excel building failed. Rerun the python script.", log_messages, level="warn")
+            utils.log_status("Backbone input excel building failed. Rerun the python script.", log_messages, level="warn")
         status_dict = {"bb_excel_succesfully_built": bb_excel_succesfully_built}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # --- 3.6. Finalizing ---
 
-        log_status("Finalizing", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
+        utils.log_status("Finalizing", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
 
         # Copying GAMS files for a new run or changed topology
         if cache_manager.full_rerun:
-            log_status("Copying GAMS files to input folder.", log_messages, level="run")
-            log_messages.extend(copy_gams_files(input_folder, output_folder))
+            utils.log_status("Copying GAMS files to input folder.", log_messages, level="run")
+            utils.copy_gams_files(input_folder, output_folder, log_messages)
 
         # Flagging the run successful and writing the flag status
         workflow_run_successfully = True
@@ -197,17 +204,17 @@ def main(input_folder, config_file):
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # Printing elapsed time
-        minutes, seconds = elapsed_time(start_time)
-        log_status(f"Completed in {minutes} min {seconds} sec.", log_messages, level="done")
+        minutes, seconds = utils.elapsed_time(start_time)
+        utils.log_status(f"Completed in {minutes} min {seconds} sec.", log_messages, level="done")
 
         # Define log path
         log_path = output_folder / "summary.log"
-        log_status(f"Writing the log to {log_path}", log_messages, level="run", add_empty_line_before=True)
+        utils.log_status(f"Writing the log to {log_path}", log_messages, level="run", add_empty_line_before=True)
         
         # If previous log exist, add its contents to a "Previous logs" section
         if log_path.exists():
-            log_status("Previous logs found and added to current log", log_messages, level="info")
-            log_status(f"Previous logs", 
+            utils.log_status("Previous logs found and added to current log", log_messages, level="info")
+            utils.log_status(f"Previous logs", 
                        log_messages, level="none", 
                        add_empty_line_before=True, 
                        section_start_length=90, 
@@ -223,6 +230,6 @@ def main(input_folder, config_file):
 
 if __name__ == "__main__":
     # Parse CLI arguments 
-    input_folder, config_file = parse_sys_args()
+    input_folder, config_file = utils.parse_sys_args()
     print(f"\nLaunching pipelines defined in: {config_file}")
     main(input_folder, config_file)

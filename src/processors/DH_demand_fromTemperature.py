@@ -212,13 +212,13 @@ class DH_demand_fromTemperature:
         processed_countries = [code for code in self.country_codes if code in countries_with_data]
 
         # Get the raw hourly profiles.
-        log_status(f"Constructing heat demand profiles from '{self.input_file}'.. ", self.processor_log)
+        log_status(f"Constructing heat demand profiles from '{self.input_file}'...", self.processor_log)
         temp_profiles = self.get_temperature_profile(processed_countries)
 
-        log_status("Normalizing demand profiles..", self.processor_log)
+        log_status("Normalizing demand profiles...", self.processor_log)
         norm_profiles = self.normalize_profiles(temp_profiles, processed_countries)
 
-        log_status("Building demand time series..", self.processor_log)
+        log_status("Building demand time series...", self.processor_log)
         summary_df = self.build_demands(norm_profiles, self.df_annual_demands, processed_countries)
         
         # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
@@ -237,6 +237,8 @@ class DH_demand_fromTemperature:
 
         # Mandatory secondary results
         secondary_result = None
+
+        log_status("Demand time series built.", self.processor_log, level="info")
 
         # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
         return summary_df, secondary_result, "\n".join(self.processor_log)

@@ -78,8 +78,8 @@ class VRE_PECD:
             log_status(f"No CSV files found in {self.csv_folder}.", self.processor_log, level="warn")
             return None
 
-        log_status(f"Processing input files in {self.csv_folder}...", self.processor_log)
-
+        log_status(f"Processing input data in {self.csv_folder}...", self.processor_log, level="info")
+       
         # Extract and compile data using the split methods
         summary_df = self._read_and_compile_input_CSVs(
             self.csv_folder, self.country_codes, self.start_date, self.end_date
@@ -93,6 +93,8 @@ class VRE_PECD:
 
         # Mandatory secondary results
         secondary_result = None
+
+        log_status("Time series built.", self.processor_log, level="info")
 
         # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
         return summary_df, secondary_result, "\n".join(self.processor_log)

@@ -56,7 +56,6 @@ class elec_demand_TYNDP2024:
         self.processor_log = []
 
 
-
     def get_values_from_excel(self):
         """
         Reads the Excel file for each country, melts the data, and pivots the DataFrame so that each row 
@@ -66,8 +65,6 @@ class elec_demand_TYNDP2024:
         Returns:
             pivot_df (pd.DataFrame): DataFrame with columns ['year', 'month', 'day', 'hour', ...country columns...]
         """
-        import pandas as pd
-
         # Load Excel file and available sheet names.
         try:
             xl = pd.ExcelFile(self.input_file)
@@ -91,17 +88,20 @@ class elec_demand_TYNDP2024:
                                df.columns[2]: 'hour'}, inplace=True)
             # The remaining columns are the values for different years.
             year_cols = df.columns[3:]
+          
             # Melt the DataFrame so that each row corresponds to a specific year and time.
             df_melted = df.melt(id_vars=['month', 'day', 'hour'], 
                                 value_vars=year_cols,
                                 var_name='year', 
                                 value_name='value')
+         
             # Convert the "year" column to integer.
             df_melted['year'] = df_melted['year'].astype(int)
             # Add a column to denote which country this row is from.
             df_melted['country'] = country
 
             melted_list.append(df_melted)
+
 
         if not melted_list:
             return pd.DataFrame()
@@ -259,16 +259,16 @@ class elec_demand_TYNDP2024:
 
 
         # Get the raw hourly profiles.
-        log_status(f"Reading electricity demand profiles from '{self.input_file}'.. ", self.processor_log)
+        log_status(f"Reading electricity demand profiles from '{self.input_file}'...", self.processor_log)
         df_demands = self.get_values_from_excel()
 
-        log_status("Processing datetime index, handling leap days, etc.. ", self.processor_log)
+        log_status("Processing datetime index, handling leap days, etc...", self.processor_log)
         df_demands = self.process_datetime_index(df_demands)
 
-        log_status("Normalizing demand profiles..", self.processor_log)
+        log_status("Normalizing demand profiles...", self.processor_log)
         summary_df = self.normalize_profiles(df_demands)
 
-        log_status("Building demand time series..", self.processor_log)
+        log_status("Building demand time series...", self.processor_log)
         summary_df = self.build_demands(summary_df, self.df_annual_demands)
         
         # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
@@ -287,6 +287,8 @@ class elec_demand_TYNDP2024:
 
         # Mandatory secondary results
         secondary_result = None
+
+        log_status("Demand time series built.", self.processor_log, level="info")
 
         # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
         return summary_df, secondary_result, "\n".join(self.processor_log)
