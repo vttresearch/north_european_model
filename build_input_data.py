@@ -51,6 +51,7 @@ def main(input_folder, config_file):
     scenario_years = config.get('scenario_years')
     scenario_alternatives = config.get('scenario_alternatives', [])
 
+
     for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
 
         # --- 3.1. Preparations ---

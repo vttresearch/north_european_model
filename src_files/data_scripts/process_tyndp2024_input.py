@@ -415,13 +415,18 @@ def combine_reversed_lines(ref_capacities_agg, min_max_exchanges_agg):
 
 def merge_transmission_data(ref_capacities_agg, min_max_exchanges_agg, year):
 
-    merged_cap = ref_capacities_agg.merge(min_max_exchanges_agg, how='left', on=['from-to', 'from', 'to'])
+    # merge the two dataframes
+    merged_cap = ref_capacities_agg.merge(min_max_exchanges_agg, how='outer', on=['from-to', 'from', 'to'])
+    
+    # Fill missing values with 0 for capacities where one dataset lacks the line
+    for col in ['export_capacity', 'import_capacity', 'max_modelled_export', 'max_modelled_import']:
+        merged_cap[col] = merged_cap[col].fillna(0)
+    
     # positive values mean that modelled exports/imports are higher than the capacity
     merged_cap['export_diff'] = merged_cap['max_modelled_export'] - merged_cap['export_capacity']
     merged_cap['import_diff'] = merged_cap['max_modelled_import'] - merged_cap['import_capacity']
-    #merged_cap.query('export_within_limits == False or import_within_limits == False')
 
-    # for the NE model, we choose, as capacity, either the reference capacity or the maximum modelled flow, whichever is higher
+    # For the NE model, choose the higher value between reference capacity and maximum modelled flow
     merged_cap['ne_model_export'] = merged_cap[['export_capacity', 'max_modelled_export']].max(axis=1)
     merged_cap['ne_model_import'] = merged_cap[['import_capacity', 'max_modelled_import']].max(axis=1)
 

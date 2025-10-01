@@ -33,9 +33,6 @@ class TimeseriesPipeline:
         self.logs = []
         self.df_annual_demands = source_excel_data_pipeline.df_demanddata
 
-        # Loading processor specs, storing logged messages        
-        self.processors, specs_logs = self._load_all_processor_specs()
-        self.logs.extend(specs_logs)
 
 
     def _load_all_processor_specs(self) -> tuple[list[dict], list[str]]:
@@ -48,14 +45,9 @@ class TimeseriesPipeline:
           - ``bb_parameter_dimensions``
 
         If any of these fields are missing, the spec is skipped with a warning.
+        
         Processors whose ``demand_grid`` is in the configured ``exclude_grids`` list
         are also skipped.
-
-        For each valid spec, an enriched specification dictionary is created with:
-          - ``name``: the processor's short name (from ``processor_name``)
-          - ``file``: path to the processor's Python file (under ``src/processors``)
-          - ``spec``: the original specification dictionary from config
-          - ``human_name``: the descriptive key name from the config
 
         Returns
         -------
@@ -76,13 +68,19 @@ class TimeseriesPipeline:
             bb_parameter_dimensions: list | None = spec.get("bb_parameter_dimensions")
 
             if not processor_name or not bb_parameter or not bb_parameter_dimensions:
-                log_status(f"   Warning! {human_name} spec is incomplete. Skipping.", specs_logs, level="warn")
+                log_status(f"Warning! {human_name} spec is incomplete. Skipping.", 
+                           specs_logs, level="warn")
                 continue
 
             demand_grid: str | None = spec.get("demand_grid")
-            if demand_grid in exclude_grids:
-                log_status(f"   Skipping {processor_name} due to excluded demand grid: {demand_grid}", specs_logs, level="warn")
+            if demand_grid and demand_grid in exclude_grids:
+                log_status(f"Skipping {processor_name} due to excluded demand grid: {demand_grid}", 
+                           specs_logs, level="warn")
                 continue
+            
+            if spec.get("disabled", False):
+                log_status(f"Skipping '{processor_name}' due 'disable' flag in timeseries_specs in config file", 
+                           specs_logs, level="info")
 
             processor_file = processors_base / f"{processor_name}.py"
 
@@ -90,27 +88,28 @@ class TimeseriesPipeline:
                 "name": processor_name,
                 "file": str(processor_file),
                 "spec": spec,
-                "human_name": human_name
+                "human_name": human_name,
+                "disabled": bool(spec.get("disabled", False)),
+                "reserve_grid_when_disabled": bool(spec.get("reserve_grid_when_disabled", True)),
             }
             specs.append(enriched_spec)
 
         return specs, specs_logs
 
 
+
     def _determine_processors_to_rerun(self, ts_full_rerun: bool) -> set[str]:
         """
         Determine which timeseries processors need to be rerun.
-
-        Each processor is checked against the cached code hash:
-          - If ``ts_full_rerun`` is True, all processors are marked for rerun.
-          - Otherwise, processors are rerun only if their current code hash
-            (computed from the processor's Python file) differs from the
-            stored hash in the cache.
+          - Processors are skipped if ``disabled`` is True.
+          - If ``ts_full_rerun`` is True, all enabled processors are marked for rerun.
+          - Otherwise, enabled processors are rerun only if their current code hash
+            differs from the stored hash in the cache.
 
         Parameters
         ----------
         ts_full_rerun : bool
-            If True, force rerun of all processors regardless of code changes.
+            If True, force rerun of all enabled processors regardless of code changes.
 
         Returns
         -------
@@ -121,6 +120,9 @@ class TimeseriesPipeline:
         processor_hashes: dict[str, str] = self.cache_manager.load_processor_hashes()
 
         for processor in self.processors:
+            if processor.get("disabled", False):
+                continue  # Skip disabled processors
+
             human_name: str = processor["human_name"]
             name: str = processor["name"]
             path = Path(processor["file"])
@@ -242,11 +244,13 @@ class TimeseriesPipeline:
            - Log the start of timeseries processing.
 
         2. **Determine processors to rerun**
+           - Check if user has disabled all timeseries processors. If not,
            - Compare processor specifications and cached code hashes.
            - Collect all processors that need rerun due to:
              * global full rerun,
              * changed configuration, or
              * changed processor code.
+           - Check that single timeseries processor is not disabled
 
         3. **Run selected processors**
            - For each processor to rerun:
@@ -256,6 +260,7 @@ class TimeseriesPipeline:
              * Normalize outputs to avoid type inconsistencies.
 
         4. **Process unhandled demands**
+           - Check that user has not disable other demand timeseries
            - Identify demand grids present in ``df_annual_demands`` but not
              covered by explicit processors.
            - Generate hourly timeseries for these with
@@ -282,28 +287,40 @@ class TimeseriesPipeline:
               * ``logs`` : list[str]  
                 Aggregated log messages from the entire run.
         """
-
+        # --- 1. **Initialization** ---
         # If full rerun, remove import_timeseries.inc
         if self.cache_manager.full_rerun:
             p = Path(self.output_folder) / "import_timeseries.inc"
             p.unlink(missing_ok=True)
 
-
+        # --- 2. **Determine processors to rerun** ---
         log_status("Checking the status of timeseries processors", self.logs, level="run", add_empty_line_before=True)
 
-        # Get processors marked as changed by config
-        spec_changes = self.cache_manager.timeseries_changed
+        # Check is user has disabled all timeseries processors
+        disable_all_ts_processors: bool = self.config.get('disable_all_ts_processors', False)
+        if disable_all_ts_processors:
+            log_status("User has disabled all timeseries processors in the config file", self.logs, level="info", add_empty_line_before=True)
 
-        # Get processors marked for rerun based on code change
-        code_reruns = self._determine_processors_to_rerun(self.cache_manager.full_rerun)
-
-        # Merge rerun set by human_name
         processors_to_rerun = set()
-        for proc in self.processors:
-            human_name = proc["human_name"]
-            if self.cache_manager.full_rerun or spec_changes.get(human_name, False) or human_name in code_reruns:
-                processors_to_rerun.add(human_name)
+        if not disable_all_ts_processors:
+            # Loading processor specs, storing logged messages        
+            self.processors, specs_logs = self._load_all_processor_specs()
+            self.logs.extend(specs_logs)
 
+            # Get processors marked as changed by config
+            spec_changes = self.cache_manager.timeseries_changed
+
+            # Get processors marked for rerun based on code change
+            code_reruns = self._determine_processors_to_rerun(self.cache_manager.full_rerun)
+
+            # Merge rerun set by human_name
+            for proc in self.processors:
+                human_name = proc["human_name"]
+                if self.cache_manager.full_rerun or spec_changes.get(human_name, False) or human_name in code_reruns:
+                    if not proc.get('disabled', False):
+                        processors_to_rerun.add(human_name)
+            
+        # --- 3. **Run selected processors** ---
         # Print processors that will be rerun
         log_status(
             f"{len(processors_to_rerun)} timeseries processors needs to be run: {', '.join(processors_to_rerun)}",
@@ -351,8 +368,6 @@ class TimeseriesPipeline:
                 elif isinstance(processor_log, str):
                     processor_log = [processor_log]
 
-                # secondary_result can be anything or None; no normalization needed
-
                 # --- process outputs ---
                 self.secondary_results[name] = secondary_result
 
@@ -364,58 +379,76 @@ class TimeseriesPipeline:
 
                 self.logs.extend(processor_log)
 
-        # --- Remaining timeseries actions ---
 
+        # --- 4. **Process unhandled demands** ---
         log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
             
         # --- Process Other Demands Not Yet Processed 
         all_demand_grids = set()
-        if not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
-            # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
-            all_demand_grids = set(self.df_annual_demands["grid"].dropna().astype(str).str.lower().unique())
+        disable_other_demand_ts = self.config.get('disable_other_demand_ts', False)
+        if disable_other_demand_ts:
+            log_status("User has disabled all 'other demand' timeseries in the config file.", self.logs, level="info", add_empty_line_before=True)
 
-        processed_demand_grids = {
-            spec.get("demand_grid").lower()
-            for spec in self.config.get("timeseries_specs", {}).values()
-            if spec.get("demand_grid")
-        }
-        unprocessed_grids = all_demand_grids - processed_demand_grids
+        if not disable_other_demand_ts:
+            if self.df_annual_demands is not None and not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
+                # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
+                all_demand_grids = set(self.df_annual_demands["grid"].dropna().astype(str).str.lower().unique())
 
-        if unprocessed_grids:
-            log_status("Processing other demands", self.logs, level="run")
-            for g in unprocessed_grids:
-                log_status(f" .. {g}", self.logs, level="None")
+            specs_cfg: dict = self.config.get("timeseries_specs", {})
 
-            # Create timeseries for other demands
-            df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
+            processed_from_enabled = {
+                (spec.get("demand_grid") or "").lower()
+                for spec in specs_cfg.values()
+                if spec.get("demand_grid") and not spec.get("disabled", False) and not disable_all_ts_processors
+            }
 
-            # Collect new domain info
-            domains = ['grid', 'node', 'flow', 'group']
-            domain_pairs = [['grid', 'node'], ['flow', 'node']]
+            reserved_from_disabled = {
+                (spec.get("demand_grid") or "").lower()
+                for spec in specs_cfg.values()
+                if spec.get("demand_grid")
+                and (spec.get("disabled", False) or disable_all_ts_processors)
+                and spec.get("reserve_grid_when_disabled", True)
+            }
 
-            other_domains = collect_domains(df_other_demands, domains)
-            other_domain_pairs = collect_domain_pairs(df_other_demands, domain_pairs)
+            processed_demand_grids = (processed_from_enabled | reserved_from_disabled) - {""}
+            unprocessed_grids = all_demand_grids - processed_demand_grids
 
-            for dom, vals in other_domains.items():
-                all_ts_domains.setdefault(dom, set()).update(vals)
+            if unprocessed_grids:
+                log_status("Processing other demands", self.logs, level="run")
+                for g in unprocessed_grids:
+                    log_status(f" .. {g}", self.logs, level="None")
 
-            for pair_key, tuples in other_domain_pairs.items():
-                all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
+                # Create timeseries for other demands
+                df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
-            if self.config.get("write_csv_files", False):
-                df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
+                # Collect new domain info
+                domains = ['grid', 'node', 'flow', 'group']
+                domain_pairs = [['grid', 'node'], ['flow', 'node']]
 
-            output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
-            to_gdx({"ts_influx": df_other_demands}, path=output_file_other)
+                other_domains = collect_domains(df_other_demands, domains)
+                other_domain_pairs = collect_domain_pairs(df_other_demands, domain_pairs)
 
-            update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+                for dom, vals in other_domains.items():
+                    all_ts_domains.setdefault(dom, set()).update(vals)
 
-        # --- Cache manageement  ---
+                for pair_key, tuples in other_domain_pairs.items():
+                    all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
+
+                if self.config.get("write_csv_files", False):
+                    df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
+
+                output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
+                to_gdx({"ts_influx": df_other_demands}, path=output_file_other)
+
+                update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+
+
+        # --- 5. **Cache management** ---
 
         # merge all_ts_domains to the ones in cache, load the merged dictionary
         self.cache_manager.merge_dict_to_cache(all_ts_domains, "all_ts_domains.json")
         all_ts_domains = self.cache_manager.load_dict_from_cache("all_ts_domains.json")
-        # all_ts_domain_pairs
+        # merge all_ts_domain_pairs to the ones in cache, load the merged dictionary
         self.cache_manager.merge_dict_to_cache(all_ts_domain_pairs, "all_ts_domain_pairs.json")        
         all_ts_domain_pairs = self.cache_manager.load_dict_from_cache("all_ts_domain_pairs.json")
 
@@ -425,8 +458,6 @@ class TimeseriesPipeline:
             self.secondary_results = self.cache_manager.load_all_secondary_results()
         else:
             self.secondary_results = {}
-
-        # populating all_ts_domains and all_ts_domain_pairs if rebuilding bb excel
 
         # Returning TimeseriesRunResult dataclass
         return TimeseriesRunResult(
