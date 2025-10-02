@@ -748,12 +748,16 @@ class BuildInputExcel:
             return pd.DataFrame()
 
         # Filter rows in df_unittypedata that have a non-null 'flow' value
-        flowtechs = df_unittypedata[df_unittypedata['flow'].notnull()].copy()
-        # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unittype'
-        merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unittype', how='inner')
-        # Create the final DataFrame with only 'flow' and 'unit' columns
-        flowUnit = merged[['flow', 'unit']]
-        return flowUnit
+        if 'flow' in df_unittypedata.columns:
+            flowtechs = df_unittypedata[df_unittypedata['flow'].notnull()].copy()
+            # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unittype'
+            merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unittype', how='inner')
+            # Create the final DataFrame with only 'flow' and 'unit' columns
+            flowUnit = merged[['flow', 'unit']]
+            return flowUnit
+        else:
+            return pd.DataFrame(columns=['flow', 'unit'])
+
     
 
     def create_p_unit(self, df_unittypedata, unitUnittype, df_unitdata):
