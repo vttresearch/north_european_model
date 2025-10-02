@@ -193,7 +193,7 @@ def normalize_dataframe(
     df_identifier: str,
     logs: List[str],
     *,
-    allowed_methods: Sequence[str] = ("replace", "add", "multiply", "remove"),
+    allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
     lowercase_value_cols: Sequence[str] = ("scenario", "generator_id", "method"),
     check_underscores: bool = True,
     drop_invalid_strings: bool = True,
@@ -561,7 +561,7 @@ def merge_row_by_row(
     logs: List[str],
     *,
     key_columns: Optional[Sequence[str]] = None,  # e.g. ['generator_id']
-    allowed_methods: Sequence[str] = ("replace", "add", "multiply", "remove"),
+    allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
     measure_cols: Sequence[str] = (),
     not_measure_cols: Sequence[str] = ("year",),
 ) -> pd.DataFrame:
@@ -570,15 +570,31 @@ def merge_row_by_row(
 
     Methods
     -------
-    - 'replace'  : Overwrite entire row (last row wins), empties/zeros included.
-    - 'add'      : Sum into measures with special missing rules:
-                   * (missing + missing) -> NaN
-                   * (missing + 0.0) -> 0.0
-                   * otherwise treat missing as 0.0 and add
-                   Tries to sum only columns present in the added (second) dataFrame
-    - 'multiply' : Multiply measures with default 1.0 for missing new values and
-                   0.0 for missing old values.
-                   * (missing * missing) -> NaN 
+    - 'replace'          : Overwrite the entire row (last row wins), empties/zeros included.
+
+    - 'replace-partial'  : Overwrite only columns provided in the second DataFrame
+                           where the provided value is not empty and not numerically zero.
+                           (Key columns are always kept.)
+
+    - 'add'              : Sum into measures with special missing rules:
+                           * (missing + missing) → NaN
+                           * (missing + 0.0) or (0.0 + missing) → 0.0
+                           * otherwise treat a single missing as 0.0
+                           Only affects measure columns present in the second DataFrame
+                           (absent → treated as missing → apply the above rules).
+                           On first occurrence, use incoming values directly (initialize).
+
+    - 'add-non-negative' : Same as 'add', but clamp results to ≥ 0. On first occurrence,
+                           initialize measures with max(0, incoming).                       
+
+    - 'multiply'         : Multiply measures with special missing rules:
+                           * (missing x missing) → NaN
+                           * previous missing → 0.0 (zeroes product)
+                           * current (new) missing → 1.0 (no change)
+                           Only affects measure columns present in the second DataFrame
+                           (absent → treated as missing → apply the above rules).
+                           On first occurrence, use incoming values directly (initialize).
+
     - 'remove'   : Delete any previously merged row for the same key.
 
     Column typing & safety
@@ -591,29 +607,38 @@ def merge_row_by_row(
     - Only measure columns are coerced to numeric at the end (nullable Float64).
       Non-measure columns keep their original dtypes (no global casting).
     """
-    # --- Logging helper ---
+
+    # --- Logging helper --------------------------------------------------------
+    # Lightweight wrapper that uses external log_status if available, otherwise
+    # appends to the provided logs list. Keeps this function self-contained.
     def _log(msg: str, level: str = "info"):
         try:
             log_status(msg, logs, level=level)  # type: ignore[name-defined]
         except Exception:
             logs.append(f"[{level.upper()}] {msg}")
 
+    # --- Input filtering & column union ---------------------------------------
+    # Drop None/empty frames early; return empty DF if nothing usable.
     frames = [df for df in dfs if df is not None and not getattr(df, "empty", True)]
     if not frames:
         _log("merge_row_by_row: No data provided. Returning empty DataFrame.", level="warn")
         return pd.DataFrame()
 
-    # Column union (preserve first-seen order)
+    # Build a union of columns preserving first-seen order across frames.
     cols_union: List[str] = []
     for df in frames:
         for c in df.columns:
             if c not in cols_union:
                 cols_union.append(c)
 
+    # Meta columns that are dropped at the end (kept through merge to avoid loss).
     meta_cols = {"_source_file", "_source_sheet"}
 
-    # --- Helper: missing & numeric checks ---
+    # --- Missing / numeric helpers --------------------------------------------
+    # Centralized notions of "missing" and "numeric-like" so the rules are consistent.
+
     def _is_missing(x) -> bool:
+        # True for None, NaN-like, empty/whitespace strings, and common text tokens.
         if x is None:
             return True
         try:
@@ -635,7 +660,7 @@ def merge_row_by_row(
     def _is_numeric_like(x) -> bool:
         """True if value can be safely interpreted as a number (ignoring missing tokens)."""
         if _is_missing(x):
-            return True  # missing does not disqualify
+            return True  # missing does not disqualify numeric-ness for inference
         if isinstance(x, (int, float)) and not (isinstance(x, bool)):
             return True
         if isinstance(x, str):
@@ -648,6 +673,7 @@ def merge_row_by_row(
         return False
 
     def _to_float_or_nan(x):
+        # Convert value to float; missing or bad parses become NaN.
         if _is_missing(x):
             return math.nan
         try:
@@ -657,21 +683,20 @@ def merge_row_by_row(
         except Exception:
             return math.nan
 
-    def _num(x, *, default: float) -> float:
-        # for multiply & other defaulted places
+    def _to_non_neg_float_or_nan(x):
+        # Convert value to non-negative float; missing or bad parses become NaN.
         if _is_missing(x):
-            return default
+            return math.nan
         try:
             if isinstance(x, str):
                 return float(x.strip())
-            f = float(x)
-            if math.isnan(f):
-                return default
-            return f
+            return max(0, float(x))
         except Exception:
-            return default
+            return math.nan
 
-    # --- Infer measure columns (safe) if user didn't provide any ---
+
+    # --- Measure column inference ---------------------------------------------
+    # If user didn't specify measure columns, derive them defensively.
     def _is_effectively_empty(seq: Optional[Sequence[str]]) -> bool:
         if seq is None or len(seq) == 0:
             return True
@@ -680,47 +705,45 @@ def merge_row_by_row(
     def _infer_measure_columns(frames: List[pd.DataFrame]) -> List[str]:
         not_meas = set(not_measure_cols)
         candidates: List[str] = []
-        # Consider all columns seen
         for c in cols_union:
             if c in not_meas:
                 continue
-            # Skip booleans by dtype signal in any frame
+
+            # Skip booleans if any frame treats column as boolean.
             if any(c in df.columns and pd.api.types.is_bool_dtype(df[c]) for df in frames):
                 continue
 
-            # Gather all non-missing values across frames (early stop if bad)
             any_numeric_value = False
             disqualify = False
+
             for df in frames:
                 if c not in df.columns:
                     continue
                 col = df[c]
-                # quick path: numeric dtype and not all missing
+
+                # Numeric dtype with any non-NA value is acceptable.
                 if pd.api.types.is_numeric_dtype(col):
                     if col.notna().any():
                         any_numeric_value = True
-                    # numeric dtype is fine; still check strings-in-object case below
                     continue
 
-                # For object/string/etc., validate every non-missing value is numeric-like
-                # If any non-missing value is non-numeric text -> disqualify
+                # Object/string columns: ensure every non-missing is numeric-like.
                 non_missing_vals = col[col.map(lambda v: not _is_missing(v))]
                 if non_missing_vals.empty:
                     continue
-                # if any value is not numeric-like -> disqualify
-                for v in non_missing_vals.iloc[:10000]:  # guard pathological huge scans
+                for v in non_missing_vals.iloc[:10000]:  # safety bound on inspection
                     if not _is_numeric_like(v):
                         disqualify = True
                         break
                 if disqualify:
                     break
-                # If we saw at least one numeric-like value here, mark it
                 any_numeric_value = True
 
             if (not disqualify) and any_numeric_value:
                 candidates.append(c)
         return candidates
 
+    # Decide actual measure set: user-provided or inferred.
     if _is_effectively_empty(measure_cols):
         present_measures = _infer_measure_columns(frames)
     else:
@@ -732,17 +755,19 @@ def merge_row_by_row(
                 level="warn",
             )
 
-    # Infer key if needed
+    # --- Key derivation & normalization ---------------------------------------
+    # If no explicit keys, derive keys as "everything that is not a measure/meta/method".
     if key_columns is None:
         key_columns = [c for c in cols_union if c not in set(present_measures) | meta_cols | {"method"}]
 
+    # Without any key, we fall back to "last occurrence wins" over full rows.
     if not key_columns:
         _log("merge_row_by_row: No key columns available; using full-row 'last occurrence wins'.", level="warn")
         merged = pd.concat(frames, ignore_index=True, sort=False).drop_duplicates(subset=None, keep="last")
         merged = merged.drop(columns=list(meta_cols), errors="ignore")
         return merged
 
-    # Ensure every frame has all key columns; fill missing with NA
+    # Ensure all frames have all key columns (filled with <NA>) so tuple keys are well-defined.
     if key_columns:
         new_frames = []
         for df in frames:
@@ -754,8 +779,8 @@ def merge_row_by_row(
             new_frames.append(df)
         frames = new_frames
 
-    # Canonicalize keys
     def _norm_key_val(x):
+        # Canonicalize key parts: trim strings, None for missing.
         if _is_missing(x):
             return None
         if isinstance(x, str):
@@ -763,20 +788,24 @@ def merge_row_by_row(
         return x
 
     def _key_tuple(row_dict: Dict[str, object]) -> Tuple:
+        # Deterministic key across all rows/frames.
         return tuple(_norm_key_val(row_dict.get(k)) for k in key_columns)
 
-    # --- Merge ---
+    # --- Core merge loop -------------------------------------------------------
+    # We process frames in order. For each row, apply its 'method' against an accumulator.
     allowed_set = {m.lower().strip() for m in allowed_methods}
     acc: Dict[Tuple, Dict[str, object]] = {}
     unknown_seen: set = set()
 
     for df in frames:
+        # Default method is 'replace' if not provided.
         if "method" not in df.columns:
             df = df.copy()
             df["method"] = "replace"
 
         for row_dict in df.to_dict(orient="records"):
             method = str(row_dict.get("method", "replace")).strip().lower()
+            # Apply 'replace' for unknown methods 
             if method not in allowed_set:
                 unknown_seen.add(method)
                 method = "replace"
@@ -784,75 +813,117 @@ def merge_row_by_row(
             k = _key_tuple(row_dict)
             existing = acc.get(k)
 
+            # --- 'remove': delete any existing record for this key --------------
             if method == "remove":
                 if existing is not None:
                     del acc[k]
                 continue
 
+            # --- First occurrence of key: initialize new record -----------------
             if existing is None:
+                # Start from the incoming row; we'll normalize measures if needed.
                 new_rec = {c: row_dict.get(c, None) for c in cols_union}
-                if present_measures:
-                    if method == "add":
-                        for mc in present_measures:
-                            new_rec[mc] = _to_float_or_nan(new_rec.get(mc))
-                    elif method == "multiply":
-                        for mc in present_measures:
-                            prev_raw = None          # no existing value on first occurrence
-                            cur_raw  = new_rec.get(mc)
-                            prev_missing = _is_missing(prev_raw)  # True
-                            cur_missing  = _is_missing(cur_raw)
 
-                            if prev_missing and cur_missing:
-                                new_rec[mc] = math.nan
-                            else:
-                                prev = 0.0 if prev_missing else _to_float_or_nan(prev_raw)
-                                cur  = 1.0 if cur_missing  else _to_float_or_nan(cur_raw)
-                                new_rec[mc] = (0.0 if math.isnan(prev) else prev) * \
-                                              (1.0 if math.isnan(cur)  else cur)
+                if present_measures and method in {"replace-partial", 
+                                                   "add", 
+                                                   "add-non-negative", 
+                                                   "multiply"}:
+                    # On first occurrence, all but 'remove' as initialization:
+                    # store numeric values as-is, keep missings as NaN.
+                    for mc in present_measures:
+                        if method == "add-non-negative":
+                            new_rec[mc] = _to_non_neg_float_or_nan(new_rec.get(mc))
+                        else:
+                            new_rec[mc] = _to_float_or_nan(new_rec.get(mc))
+                
+                # 'replace' (or no measures) already behaves as initialization via new_rec
                 new_rec["method"] = method
                 acc[k] = new_rec
+                continue
+
+            # --- Subsequent occurrences of key: merge with existing -------------
+            if method == "replace" or not present_measures:
+                # Full overwrite (non-measures included).
+                new_rec = {c: row_dict.get(c, None) for c in cols_union}
+                new_rec["method"] = method
+                acc[k] = new_rec
+
+            elif method == "replace-partial":
+                # Overwrite only with provided and non-empty, non-zero values.
+                for c in cols_union:
+                    if c in key_columns or c in meta_cols or c in {"method"}:
+                        continue
+                    if c not in row_dict:
+                        continue
+                    val = row_dict.get(c, None)
+                    if _is_missing(val) or not _is_numeric_like(val):
+                        continue
+                    existing[c] = val
+                existing["method"] = method
+
+            elif method == "add":
+                # Elementwise addition 
+                for mc in present_measures:
+                    prev = _to_float_or_nan(existing.get(mc))
+                    cur  = _to_float_or_nan(row_dict.get(mc))
+            
+                    if math.isnan(prev) and math.isnan(cur):
+                        existing[mc] = math.nan
+                    else:
+                        # Treat any single missing as 0.0
+                        existing[mc] = (0.0 if math.isnan(prev) else prev) + \
+                                       (0.0 if math.isnan(cur)  else cur)
+                existing["method"] = method
+
+            elif method == "add-non-negative":
+                # Elementwise addition 
+                for mc in present_measures:
+                    prev = _to_float_or_nan(existing.get(mc))
+                    cur  = _to_float_or_nan(row_dict.get(mc))
+            
+                    if math.isnan(prev) and math.isnan(cur):
+                        existing[mc] = math.nan
+                    else:
+                        # Treat any single missing as 0.0
+                        existing[mc] = max(0, (0.0 if math.isnan(prev) else prev) + \
+                                              (0.0 if math.isnan(cur)  else cur) \
+                                            )    
+                existing["method"] = method                
+
+            elif method == "multiply":
+                # Elementwise multiplication
+                for mc in present_measures:
+                    prev = _to_float_or_nan(existing.get(mc))
+                    cur  = _to_float_or_nan(row_dict.get(mc))
+
+                    if math.isnan(prev) and math.isnan(cur):
+                        existing[mc] = math.nan
+                    else:
+                        prev_eff = 0.0 if math.isnan(prev) else prev
+                        cur_eff  = 1.0 if math.isnan(cur)  else cur
+                        existing[mc] = prev_eff * cur_eff
+                existing["method"] = method
+
             else:
-                if method == "replace" or not present_measures:
-                    new_rec = {c: row_dict.get(c, None) for c in cols_union}
-                    new_rec["method"] = method
-                    acc[k] = new_rec
-                elif method == "add":
-                    for mc in present_measures:
-                        prev_raw = existing.get(mc)
-                        cur_raw = row_dict.get(mc)
-                        prev_missing = _is_missing(prev_raw)
-                        cur_missing = _is_missing(cur_raw)
+                # Shouldn't happen (filtered earlier), but keep a safe fallback.
+                new_rec = {c: row_dict.get(c, None) for c in cols_union}
+                new_rec["method"] = "replace"
+                acc[k] = new_rec
 
-                        if prev_missing and cur_missing:
-                            existing[mc] = math.nan
-                        else:
-                            prev_val = 0.0 if prev_missing else _to_float_or_nan(prev_raw)
-                            cur_val  = 0.0 if cur_missing  else _to_float_or_nan(cur_raw)
-                            existing[mc] = (0.0 if math.isnan(prev_val) else prev_val) + \
-                                           (0.0 if math.isnan(cur_val)  else cur_val)
-                    existing["method"] = method
-                elif method == "multiply":
-                    for mc in present_measures:
-                        prev = _num(existing.get(mc), default=0.0)
-                        cur  = _num(row_dict.get(mc), default=1.0)
-                        existing[mc] = prev * cur
-                    existing["method"] = method
-                else:
-                    new_rec = {c: row_dict.get(c, None) for c in cols_union}
-                    new_rec["method"] = "replace"
-                    acc[k] = new_rec
-
+    # --- Assemble output frame -------------------------------------------------
     merged = pd.DataFrame.from_records(list(acc.values()), columns=cols_union)
 
-    # Drop meta & helper columns
+    # Drop meta/helper columns that shouldn't survive the merge result.
     merged = merged.drop(columns=list(meta_cols), errors="ignore")
     merged = merged.drop(columns=["year", "scenario", "method"], errors="ignore")
 
-    # --- Final dtype forcing (only measures) ---
+    # --- Final dtype coercion for measure columns ------------------------------
+    # Only cast measures → avoids surprising dtype changes elsewhere.
     for mc in present_measures:
         if mc in merged.columns:
             merged[mc] = pd.to_numeric(merged[mc], errors="coerce").astype("Float64")
 
+    # --- Epilogue: warnings about unknown methods ------------------------------
     if unknown_seen:
         _log(
             f"[merge_row_by_row] Unknown method(s) {sorted(unknown_seen)} encountered; defaulting to 'replace'.",
