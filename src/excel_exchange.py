@@ -57,8 +57,8 @@ def read_input_excels(
     input_folder = str(input_folder)
 
     log_status(
-        f"Reading Excel files for '{sheet_name_prefix}': {len(files)} file(s)",
-        logs, level="run"
+        f"Reading Excel files for '{sheet_name_prefix}': {len(files)} file(s) ...",
+        logs, level=None
     )
 
     for file_name in files:

@@ -258,6 +258,8 @@ class hydro_storage_limits_MAF2019:
         )
         summary_df = pd.DataFrame(index=idx)
 
+
+        log_status("Building country level timeseries...", self.processor_log, level="info")
         # Process each country.
         for country in self.country_codes:
             if country in self.norway_codes:
@@ -315,6 +317,7 @@ class hydro_storage_limits_MAF2019:
             columns=['node', 'param_gnBoundaryTypes', 'average_value']
         )
 
+        log_status("Hydro storage limit time series built.", self.processor_log, level="info")
 
         return summary_df, ts_hydro_storage_limits, "\n".join(self.processor_log)
 

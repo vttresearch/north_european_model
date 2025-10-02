@@ -208,6 +208,7 @@ class hydro_mingen_limits_MAF2019:
           - Processes each country (using the Norway method when appropriate).
           - Merges all individual DataFrames into a summary and writes it to a CSV file.
         """
+        log_status("Reading input data...", self.processor_log)
         # Read the global CSV input file.
         inputfile = os.path.join(self.input_folder, self.input_csv)
         try:
@@ -223,7 +224,7 @@ class hydro_mingen_limits_MAF2019:
 
         # Prepare the summary DataFrame 
         summary_df = pd.DataFrame()
-        log_status(f"Processing the input file...", self.processor_log, level="info")
+        log_status(f"Processing country level limits...", self.processor_log, level="info")
 
         # Process each country.
         for country in self.country_codes:
@@ -250,6 +251,8 @@ class hydro_mingen_limits_MAF2019:
 
         # Pick nodes with active mingen limits
         hydro_mingen_nodes = summary_df.columns.tolist()
+
+        log_status("Hydro mingen time series built.", self.processor_log, level="info")
 
         # Return results
         return summary_df, hydro_mingen_nodes, "\n".join(self.processor_log)

@@ -11,8 +11,10 @@ from src.utils import trim_df, collect_domains, collect_domain_pairs
 from src.GDX_exchange import (
     prepare_BB_df,
     write_BB_gdx,
+    write_BB_gdx_gt,
     calculate_average_year_df,
     write_BB_gdx_annual,
+    write_BB_gdx_annual_gt,      
     update_import_timeseries_inc
 )
 from src.pipeline.cache_manager import CacheManager
@@ -199,11 +201,15 @@ class ProcessorRunner:
             trimmed_result.to_csv(csv_path)
             log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
 
-        # Write annual GDX
-        writer_logs = write_BB_gdx_annual(main_result_bb, self.output_folder, **bb_conversion_kwargs)
-        if writer_logs is not None: log_messages.extend(writer_logs)
-        log_status(f"Annual GDX files for Backbone written to '{self.output_folder}'", log_messages, level="info")
+        # Write annual GDX files
+        log_status(f"Writing annual GDX files...", log_messages)
+        try:
+            write_BB_gdx_annual_gt(main_result_bb, self.output_folder, log_messages, **bb_conversion_kwargs)
+        except:
+            log_status("GDX writing with GAMS Transfer failed, falling back to gdxpds.", log_messages, level="warn")
+            write_BB_gdx_annual(main_result_bb, self.output_folder, log_messages, **bb_conversion_kwargs)   
 
+        log_status(f"Annual GDX files for Backbone written to '{self.output_folder}'", log_messages, level="info")
         # Update import_timeseries.inc
         update_import_timeseries_inc(self.output_folder, **bb_conversion_kwargs)
 
@@ -219,8 +225,16 @@ class ProcessorRunner:
                 avg_df.to_csv(avg_csv_path)
                 log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
 
+            # Write average year GDX file
+            log_status(f"Writing average year GDX file...", log_messages)
             forecast_gdx_path = os.path.join(self.output_folder, f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx")
-            write_BB_gdx(avg_df, forecast_gdx_path, **bb_conversion_kwargs)
+            try:
+                write_BB_gdx_gt(avg_df, forecast_gdx_path, log_messages, **bb_conversion_kwargs)
+            except:
+                log_status("GDX writing with GAMS Transfer failed, falling back to gdxpds.", log_messages, level="warn")
+                write_BB_gdx(avg_df, forecast_gdx_path, **bb_conversion_kwargs)
+
+            # Update import_timeseries.inc
             update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs)
             log_status(f"Average year GDX for Backbone written to '{self.output_folder}'", log_messages, level="info")
 

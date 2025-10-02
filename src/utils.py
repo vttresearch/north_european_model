@@ -1,5 +1,4 @@
 import sys
-from gdxpds import to_gdx
 import pandas as pd
 import numpy as np
 import shutil
@@ -7,12 +6,86 @@ from pathlib import Path
 import argparse
 import time
 from pandas.api.types import is_numeric_dtype, is_bool_dtype
+from typing import Optional
+
+
+# --- module-level globals (defaults) ---
+_PRINT_ALL_ELAPSED_TIMES: bool = False
+_START_TIME: float = time.time()
+
+def init_logging(*, print_all_elapsed_times: Optional[bool] = None,
+                 start_time: Optional[float] = None) -> None:
+    """
+    Initialize module-wide logging switches without touching every call site.
+    Call once at startup (after config is loaded).
+    """
+    global _PRINT_ALL_ELAPSED_TIMES, _START_TIME
+    if print_all_elapsed_times is not None:
+        _PRINT_ALL_ELAPSED_TIMES = bool(print_all_elapsed_times)
+    if start_time is not None:
+        _START_TIME = float(start_time)
+
+
 
 def elapsed_time(start_time):
     elapsed_seconds = time.time() - start_time
     minutes = int(elapsed_seconds // 60)
-    seconds = int(elapsed_seconds % 60)
+    seconds = float(elapsed_seconds % 60)
+    seconds = round(seconds,2)
     return minutes, seconds
+
+
+def log_status(message: str, 
+               log: list[str], 
+               level: str = "none", 
+               section_start_length: int = 0, 
+               add_empty_line_before: bool = False, 
+               print_to_screen: bool = True):
+    """
+    Logs a formatted status message with emoji prefix and optional console print.
+
+    If PRINT_ALL_ELAPSED_TIMES is True, prints elapsed time since _START_TIME.
+
+    Parameters:
+        message (str): The message to log.
+        log (list[str]): List to accumulate messages.
+        level (str): Status level (info, warn, run, done, skip).
+        section_start_length (int): If larger than zero, format message as a section header with the min length of section_start_length
+        print_now (bool): Whether to print the message immediately.
+        add_empty_line_before (bool): If empty line is printed before the line
+    """
+    prefix = {
+        "info": "✓",
+        "warn": "⚠️",
+        "error": "❌",
+        "run": "⚡",
+        "done": "🎯",
+        "skip": "⏩",
+        "none": " "
+    }.get(level, " ")
+
+    # build elapsed prefix if enabled
+    elapsed_prefix = ""
+    if _PRINT_ALL_ELAPSED_TIMES:
+        m, s = elapsed_time(_START_TIME)
+        elapsed_prefix = f"{m} min {s} sec: "
+
+    if add_empty_line_before:
+        start = "\n"
+    else:
+        start = ""
+
+    if section_start_length > 0:
+        base = f"{start}---  {prefix} {elapsed_prefix} {message} "
+        padding_length = max(section_start_length, len(base))
+        formatted = base + "-" * (padding_length - len(base))
+    else:
+        formatted = f"{start}{prefix} {elapsed_prefix}{message}"
+
+    log.append(formatted)
+
+    if print_to_screen:
+        print(formatted)
 
 
 def parse_sys_args():
@@ -50,50 +123,6 @@ def parse_sys_args():
         return (input_folder, config_file)
     
 
-def log_status(message: str, 
-               log: list[str], 
-               level: str = "none", 
-               section_start_length: int = 0, 
-               add_empty_line_before: bool = False, 
-               print_to_screen: bool = True):
-    """
-    Logs a formatted status message with emoji prefix and optional console print.
-
-    Parameters:
-        message (str): The message to log.
-        log (list[str]): List to accumulate messages.
-        level (str): Status level (info, warn, run, done, skip).
-        section_start_length (int): If larger than zero, format message as a section header with the min length of section_start_length
-        print_now (bool): Whether to print the message immediately.
-        add_empty_line_before (bool): If empty line is printed before the line
-    """
-    prefix = {
-        "info": "✓",
-        "warn": "⚠️",
-        "run": "⚡",
-        "done": "🎯",
-        "skip": "⏩",
-        "none": ""
-    }.get(level, "•")
-
-    if add_empty_line_before:
-        start = "\n"
-    else:
-        start = ""
-
-    if section_start_length > 0:
-        base = f"{start}--- {prefix} {message} "
-        padding_length = max(section_start_length, len(base))
-        formatted = base + "-" * (padding_length - len(base))
-    else:
-        formatted = f"{start}{prefix} {message}"
-
-    log.append(formatted)
-
-    if print_to_screen:
-        print(formatted)
-
-    
 
 def check_dependencies():
     """
@@ -199,17 +228,16 @@ def collect_domain_pairs(df, domain_pairs: list[list[str]]) -> dict[str, list[tu
     return result
 
 
-def copy_gams_files(input_folder: Path, output_folder: Path) -> list[str]:
+def copy_gams_files(input_folder: Path, output_folder: Path, logs: list[str]) -> list[str]:
     """
     Copy GAMS template files from src_files/GAMS_files/ to the given output_folder.
 
     Args:
         input_folder (Path): Base input folder (should contain src_files/GAMS_files).
         output_folder (Path): Output folder where GAMS files should be copied.
+        logs (list[str]): a list of log string mutated if needed
     """
     gams_src_folder = input_folder / "GAMS_files"
-
-    logs = []
 
     if not gams_src_folder.exists():
         log_status(f"⚠️ WARNING: GAMS source folder not found: {gams_src_folder}", logs, level="warn")
@@ -224,8 +252,6 @@ def copy_gams_files(input_folder: Path, output_folder: Path) -> list[str]:
 
     if not copied_any:
         log_status(f"WARNING: No GAMS files were found to copy in {gams_src_folder}", logs, level="warn")
-
-    return logs
 
 
 def is_val_empty(
