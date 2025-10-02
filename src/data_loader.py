@@ -573,8 +573,8 @@ def merge_row_by_row(
     - 'replace'          : Overwrite the entire row (last row wins), empties/zeros included.
 
     - 'replace-partial'  : Overwrite only columns provided in the second DataFrame
-                           where the provided value is not empty and not numerically zero.
-                           (Key columns are always kept.)
+                           where the provided value is not empty.
+                           Zero replaces numeric values.
 
     - 'add'              : Sum into measures with special missing rules:
                            * (missing + missing) → NaN
