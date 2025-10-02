@@ -469,6 +469,25 @@
                         "scenario_filter": true
                     }
                 }
+            },
+            {
+                "name": "from Transform_to_BB_sets (1) to Copy_timeseries (1)",
+                "from": [
+                    "Transform_to_BB_sets (1)",
+                    "bottom"
+                ],
+                "to": [
+                    "Copy_timeseries (1)",
+                    "bottom"
+                ],
+                "filter_settings": {
+                    "known_filters": {},
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
             }
         ],
         "jumps": []
@@ -720,7 +739,7 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "db_url@Transform_to_BB_sets"
+                    "arg": "db_url@Transform_to_BB_sets (1)"
                 },
                 {
                     "type": "resource",
@@ -744,7 +763,7 @@
             "output_labels": [
                 {
                     "in_label": "db_url@Transform_to_BB_sets (1)",
-                    "out_label": "Transform_to_BB_sets (1)_exported@Export_to_BB (1)"
+                    "out_label": "inputData.gdx"
                 }
             ],
             "specification": "Export_to_BB"

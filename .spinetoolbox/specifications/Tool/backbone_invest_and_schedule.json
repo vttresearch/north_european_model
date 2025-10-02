@@ -49,6 +49,7 @@
     "outputfiles": [
         "Backbone.log",
         "Backbone.lst",
+        "input/results-invest.gdx",
         "output/debug-invest.gdx",
         "output/log-invest.log",
         "output/lst-invest.lst",
