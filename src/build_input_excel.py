@@ -1,7 +1,5 @@
 import os
-import sys
 import pandas as pd
-from pathlib import Path
 from src.utils import log_status, is_val_empty, is_col_empty
 from src.excel_exchange import add_index_sheet, adjust_excel, check_if_bb_excel_open
 from src.pipeline.bb_excel_context import BBExcelBuildContext
@@ -145,10 +143,14 @@ class BuildInputExcel:
 
             # Fetch generator_id and unit name
             generator_id = cap_row['generator_id']
-            unit_name = cap_row['unit']
+            unit = cap_row['unit']
 
             # Find the technical specifications for this generator type
             tech_matches = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id]
+            if tech_matches.empty:
+                log_status(f"Missing tech data for generator_id: '{generator_id}', unit: '{unit}', not writing the p_gnu_io data. "
+                            "Check spelling and files.'", self.builder_logs, level="warn")
+                continue
             tech_row = tech_matches.iloc[0]
 
             # Identify all defined input/output connections for this generator type (grid_input1, grid_output1, ...)
@@ -164,17 +166,17 @@ class BuildInputExcel:
 
                 # skip if the columns do not exist in unitdata
                 if grid_col not in cap_row:
-                    log_status(f"Missing grid {grid_col} from unit {unit_name}, not writing the data. "
+                    log_status(f"Missing grid {grid_col} from unit {unit}, not writing the data. "
                                "Check spelling and files.'", self.builder_logs, level="warn")
                     continue
                 if node_col not in cap_row:
-                    log_status(f"Missing node {node_col} from unit {unit_name}, not writing the data. "
+                    log_status(f"Missing node {node_col} from unit {unit}, not writing the data. "
                                "Check spelling and files.'", self.builder_logs, level="warn")
                     continue
 
                 # get values from unitdata
                 grid = cap_row.get(grid_col)
-                node_name = cap_row.get(node_col)
+                node = cap_row.get(node_col)
 
                 # skip undefined / blank grids
                 if pd.isna(grid) or grid in ("", "-"):
@@ -183,8 +185,8 @@ class BuildInputExcel:
                 # Construct base components needed for every row 
                 base_row = {
                     "grid": grid,
-                    "node": node_name,
-                    "unit": unit_name,
+                    "node": node,
+                    "unit": unit,
                     "input_output": "input" if put.startswith("input") else "output",
                 }
 
@@ -781,23 +783,28 @@ class BuildInputExcel:
 
         # Process each row in unitUnittype.
         for _, u_row in unitUnittype.iterrows():
+            unit = u_row['unit']
+            unittype = u_row['unittype']
+
             # Case-insensitive matching for unittype.
-            tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == u_row['unittype'].lower()]
+            tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == unittype.lower()]
             if tech_matches.empty:
-                raise ValueError(f"No matching tech row found for unittype: {u_row['unittype']}")
+                log_status(f"No matching tech row found for unittype: '{unittype}', not writing the p_unit data. "
+                            "Check spelling and files.'", self.builder_logs, level="warn")
+                continue            
             tech_row = tech_matches.iloc[0]
 
             # Case-insensitive matching for unit.
-            unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == u_row['unit'].lower()]
+            unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == unit.lower()]
             if unit_matches.empty:
-                raise ValueError(f"No matching unit row found for unit: {u_row['unit']}")
+                raise ValueError(f"No matching unit row found for unit: {unit}")
             unit_row = unit_matches.iloc[0]
 
             # Pre-fetch minShutdownHours using its default value from the dictionary.
             min_shutdown = get_value(unit_row, tech_row, 'minShutdownHours', param_unit_defaults['minShutdownHours'])
 
             # Start building the row data with the unit column.
-            row_data = {'unit': u_row['unit']}
+            row_data = {'unit': unit}
 
             # Loop through the parameters defined in param_defaults.
             for param, default in param_unit_defaults.items():
@@ -843,6 +850,10 @@ class BuildInputExcel:
 
             # Retrieve the matching row from df_unittypedata where 'unittype' equals the unittype value
             tech_matches = df_unittypedata[df_unittypedata['unittype'] == unittype]
+            if tech_matches.empty:
+                log_status(f"No matching tech row found for unittype: '{unittype}', not writing the effLevelGroupUnit data. "
+                            "Check spelling and files.'", self.builder_logs, level="warn")
+                continue            
             tech_row = tech_matches.iloc[0]
 
             # LP/MIP value
