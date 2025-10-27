@@ -174,7 +174,7 @@ loop(gn_tmp(grid, node),
     // if data only also in other forecasts than 'f00'
     else
         gn_tmp_(grid, node)
-            ${ [smax((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) = smin((ff, tt), ts_node(grid, node, ff, tt)) ]
+            ${ [smax((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) = smin((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) ]
               } = yes;
     ); // END if(more than one f in ts_node)
 ); // END loop(gn_tmp)
@@ -209,7 +209,7 @@ loop(gn_tmp(grid, node),
     // if data only also in other forecasts than 'f00'
     else
         gn_tmp_(grid, node)
-            ${ [smax((ff, tt), ts_node(grid, node, 'downwardLimit', ff, tt)) = smin((ff, tt), ts_node(grid, node, ff, tt)) ]
+            ${ [smax((ff, tt), ts_node(grid, node, 'downwardLimit', ff, tt)) = smin((ff, tt), ts_node(grid, node, 'downwardLimit', ff, tt)) ]
               } = yes;
     ); // END if(more than one f in ts_node)
 ); // END loop(gn_tmp)
