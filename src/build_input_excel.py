@@ -462,8 +462,6 @@ class BuildInputExcel:
         return p_gnn
 
 
-
-
     def create_p_gn(self, p_gnu_io_flat, df_fueldata, 
                     df_demanddata, df_storagedata, 
                     ts_storage_limits, ts_domain_pairs):
@@ -709,125 +707,156 @@ class BuildInputExcel:
         else:
             return pd.DataFrame(columns=['flow', 'unit'])
 
-    
 
-    def create_p_unit(self, df_unittypedata, unitUnittype, df_unitdata):
+    def create_p_unit(
+        self,
+        df_unittypedata: pd.DataFrame,
+        unitUnittype: pd.DataFrame,
+        df_unitdata: pd.DataFrame
+    ) -> pd.DataFrame:
         """
-        Creates a new DataFrame p_unit with specified dimension and parameter columns.
-        Retrieves parameter values from df_unitdata first, then from df_unittypedata if not present
-        or if the primary value is deemed "empty" (0, "", NaN, or None).
-        Matching for unittype and unit is done in a case-insensitive manner.
-        Raises an error if no matching tech_row is found.
+        Create the `p_unit` DataFrame for Backbone model input.
+
+        This method constructs a parameter table for each unit defined in
+        `unitUnittype`, combining information from both `df_unitdata`
+        (unit-specific parameters) and `df_unittypedata` (unittype-level defaults).
+        Parameter values are read in the following priority order:
+            1. From df_unitdata (specific to the unit)
+            2. From df_unittypedata (shared for all units of the same unittype)
+            3. From the defaults dictionary (if missing or empty)
+
+        The method handles case-insensitive matching for both `unit` and `unittype`
+        names, fills missing numeric values with zeros, and enforces consistency
+        between certain operational parameters.
+
+        Specifically, the following constraint is applied:
+            minShutdownHours <= startWarmAfterXhours <= startColdAfterXhours
+
+        Parameters
+        ----------
+        df_unittypedata : pd.DataFrame
+            DataFrame containing technology-level (unittype) default parameters.
+            Must include column 'unittype'.
+        unitUnittype : pd.DataFrame
+            DataFrame linking individual units to their unittype.
+            Must include columns ['unit', 'unittype'].
+        df_unitdata : pd.DataFrame
+            DataFrame containing unit-level parameter values.
+            Must include column 'unit'.
+
+        Returns
+        -------
+        pd.DataFrame
+            Finalized `p_unit` DataFrame with:
+            - One row per unit in `unitUnittype`
+            - Columns:
+                ['unit'] + parameter list
+            - NaN values replaced with zeros
+            - Sorted case-insensitively by 'unit'
+            - MultiIndex applied via `create_fake_MultiIndex`
+
+        Notes
+        -----
+        - If a `unit` or `unittype` is missing from the input DataFrames,
+          a warning is logged, and that row is skipped.
         """
         # Dimension column names.
         dimensions = ['unit']
 
-        # parameter_unit names and their default values.
-        param_unit_defaults = {
-            'isActive': 1,  
-            'isSource': 0,
-            'isSink': 0,
-            'fixedFlow': 0,
+        # parameter_unit names
+        param_unit = [
+            'isActive',  
+            'isSource',
+            'isSink',
+            'fixedFlow',
+            'availability',
+            'unitCount',
+            'useInitialOnlineStatus',
+            'initialOnlineStatus',
+            'startColdAfterXhours',
+            'startWarmAfterXhours',
+            'rampSpeedToMinLoad',
+            'rampSpeedFromMinLoad',
+            'minOperationHours',
+            'minShutdownHours',
+            'eff00',
+            'eff01',
+            'opFirstCross',
+            'op00',
+            'op01',
+            'useTimeseries',
+            'useTimeseriesAvailability',
+            'investMIP',
+            'maxUnitCount',
+            'minUnitCount',
+            'becomeAvailable',
+            'becomeUnavailable'
+        ]
+        # Default values. Otherwise assuming zero.
+        defaults = {
+            'isActive': 1,
             'availability': 1,
-            'unitCount': 0,
-            'useInitialOnlineStatus': 0,
-            'initialOnlineStatus': 0,
-            'startColdAfterXhours': 0,
-            'startWarmAfterXhours': 0,
-            'rampSpeedToMinLoad': 0,
-            'rampSpeedFromMinLoad': 0,
-            'minOperationHours': 0,
-            'minShutdownHours': 0,
             'eff00': 1,
-            'eff01': 1,
-            'opFirstCross': 0,
-            'op00': 0,
-            'op01': 1,
-            'useTimeseries': 0,
-            'useTimeseriesAvailability': 0,
-            'investMIP': 0,
-            'maxUnitCount': 0,
-            'minUnitCount': 0,
-            'becomeAvailable': 0,
-            'becomeUnavailable': 0
+            'op00': 1
         }
 
         # List to collect new rows.
         rows = []
 
-        def get_value(unit_row, tech_row, param, def_value=0):
-            """
-            Retrieves a value by primarily checking unit_row and then tech_row if the primary
-            value is considered "empty" (0, "", NaN, or None). Uses a case-insensitive lookup
-            by checking for param.lower() in the Series index.
-            """
-            lower_param = param.lower()
-            primary = 0
-            secondary = 0
-            # Try retrieving from unit_row (primary source)
-            if lower_param in unit_row.index:
-                primary = unit_row[lower_param]
-
-            # If the primary value is empty, check the tech_row (secondary source)
-            if is_val_empty(primary, self.builder_logs): 
-                if lower_param in tech_row.index:
-                    secondary = tech_row[lower_param]
-                    
-            if not is_val_empty(primary, self.builder_logs): 
-                return primary
-            elif not is_val_empty(secondary, self.builder_logs):  
-                return secondary
-            else:
-                return def_value
-
-
         # Process each row in unitUnittype.
         for _, u_row in unitUnittype.iterrows():
-            unit = u_row['unit']
-            unittype = u_row['unittype']
+            unit = str(u_row['unit'])
+            unittype = str(u_row['unittype'])
 
             # Case-insensitive matching for unittype.
             tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == unittype.lower()]
             if tech_matches.empty:
-                log_status(f"No matching tech row found for unittype: '{unittype}', not writing the p_unit data. "
-                            "Check spelling and files.'", self.builder_logs, level="warn")
+                log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}'. "
+                            "Not writing the p_unit data, check spelling and files.'", 
+                            self.builder_logs, level="warn")
                 continue            
             tech_row = tech_matches.iloc[0]
 
             # Case-insensitive matching for unit.
             unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == unit.lower()]
             if unit_matches.empty:
-                raise ValueError(f"No matching unit row found for unit: {unit}")
+                log_status(f"No unit data found unit: '{unit}'. "
+                            "Not writing the p_unit data, check spelling and files.'", 
+                            self.builder_logs, level="warn")
+                continue  
             unit_row = unit_matches.iloc[0]
 
             # Pre-fetch minShutdownHours using its default value from the dictionary.
-            min_shutdown = get_value(unit_row, tech_row, 'minShutdownHours', param_unit_defaults['minShutdownHours'])
+            # using get_param_value for 'output1' to prioritize following order: unit data, unittype data, defaul 
+            min_shutdown = self.get_param_value('minShutdownHours', 'output1', 
+                                                unit_row, tech_row, 
+                                                defaults.get('minShutdownHours', 0)
+                                                )
 
             # Start building the row data with the unit column.
-            row_data = {'unit': unit}
+            row = {'unit': unit}
 
-            # Loop through the parameters defined in param_defaults.
-            for param, default in param_unit_defaults.items():
-                if param == 'minShutdownHours':
-                    row_data[param] = min_shutdown
-                elif param == 'startColdAfterXhours':
-                    # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
-                    # In Backbone, Units should have p_unit(unit, minShutdownHours) <= p_unit(unit, startWarmAfterXhours) <= p_unit(unit, startColdAfterXhours)
-                    fetched_value = get_value(unit_row, tech_row, param, default)
-                    row_data[param] = max(min_shutdown, fetched_value)
-                else:
-                    row_data[param] = get_value(unit_row, tech_row, param, default)
+            # Loop through the parameters defined in param_unit.
+            for param in param_unit:
+                # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
+                # In Backbone, Units must have minShutdownHours <= startWarmAfterXhours <= startColdAfterXhours
+                if param == 'startColdAfterXhours':
+                    startColdAfterXhours = self.get_param_value(param, 'output1', 
+                                                                unit_row, tech_row, 
+                                                                defaults.get(param, 0))
+                    row[param] = max(min_shutdown, startColdAfterXhours)
+                    continue
 
-            rows.append(row_data)
+                # using get_param_value for 'output1' to prioritize following order: unit data, unittype data, defaul 
+                row[param] = self.get_param_value(param, 'output1', 
+                                                  unit_row, tech_row, 
+                                                  defaults.get(param, 0))
 
-        # Define final column order.
-        final_cols = dimensions.copy()
-        final_cols.extend(list(param_unit_defaults.keys()))
+            rows.append(row)
 
-        # Construct DataFrame, fill NaN, apply a fake MultiIndex, and sort.
-        p_unit = pd.DataFrame(rows, columns=final_cols)
-        p_unit = p_unit.fillna(0)
-        p_unit = self.create_fake_MultiIndex(p_unit, dimensions)
+        # Assemble final DataFrame
+        final_cols = dimensions + param_unit
+        p_unit = pd.DataFrame(rows, columns=final_cols).fillna(0)
 
         # Sort p_unit by the 'unit' column in a case-insensitive manner.
         p_unit.sort_values(
@@ -835,6 +864,9 @@ class BuildInputExcel:
             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
             inplace=True
         )
+
+        # Apply fake MultiIndex on dimensions
+        p_unit = self.create_fake_MultiIndex(p_unit, dimensions)
 
         return p_unit
     
@@ -851,7 +883,7 @@ class BuildInputExcel:
             # Retrieve the matching row from df_unittypedata where 'unittype' equals the unittype value
             tech_matches = df_unittypedata[df_unittypedata['unittype'] == unittype]
             if tech_matches.empty:
-                log_status(f"No matching tech row found for unittype: '{unittype}', not writing the effLevelGroupUnit data. "
+                log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}', not writing the effLevelGroupUnit data. "
                             "Check spelling and files.'", self.builder_logs, level="warn")
                 continue            
             tech_row = tech_matches.iloc[0]
