@@ -1,7 +1,9 @@
 import pandas as pd
-from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence
+import numpy as np
+from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence, Any
 from src.utils import log_status
 import math
+
 
 
 
@@ -53,6 +55,119 @@ def build_node_column(
         df['node'] = df.apply(lambda row: f"{row['country']}_{row['grid']}", axis=1)
 
     return df
+
+
+def build_unit_grid_and_node_columns(
+    df_unitdata: pd.DataFrame,
+    df_unittypedata: pd.DataFrame,
+    log_messages: list[str] = None,
+    *,
+    country_col: str = "country",
+    generator_id_col: str = "generator_id",
+    blank_markers: Iterable[str] = ("", "-"),
+    empty_value: Any = np.nan,
+) -> pd.DataFrame:
+    """
+    Add node_<put> columns (e.g., node_output1, node_input1) without merging full tech tables.
+
+    Rules:
+      - grid_<put> is fetched by generator_id from df_unittypedata (first row per id).
+      - node = f"{country}_{grid}" and ONLY if 'node_suffix_<put>' exists & is non-blank, append "_<suffix>".
+      - No generic suffix fallback.
+      - Does not drop or modify existing columns.
+
+    Parameters
+    ----------
+    df_unitdata : pd.DataFrame
+        Must include [country_col, generator_id_col].
+        May include per-connection 'node_suffix_<put>'.
+    df_unittypedata : pd.DataFrame
+        Must include [generator_id_col] and any subset of 'grid_<put>' columns.
+        If multiple rows per generator_id exist, the first is used.
+    log_messages: list[str]
+        A list of strings where new log events are added.
+    country_col : str
+        Column name in df_unitdata used for country.
+    generator_id_col : str
+        Column name in df_unitdata used for join key.
+    blank_markers : iterable of str
+        Suffix values treated as blank (ignored).
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of df_unitdata with added node_<put> columns.
+    """
+    out = df_unitdata.copy()
+
+    # Determine which grid_input1...6, grid_output1...6 are used in the unittype data
+    candidate_puts = [f"input{i}" for i in range(1, 6)] + [f"output{i}" for i in range(1, 6)]
+    puts = [p for p in candidate_puts if f"grid_{p}" in df_unittypedata.columns]
+    if not puts:
+        log_status(
+            (f"unittypedata table does not have a any column named grid_input1...6 or grid_output1...6 "
+             "Check the files and names in the config file."),
+            log_messages,
+            level="warn",
+        )
+        return out
+
+    # Build a compact lookup: first tech row per generator_id
+    key = generator_id_col
+    techs = (
+        df_unittypedata
+        .sort_values(by=[key])
+        .drop_duplicates(subset=[key], keep="first")
+        .set_index(key)
+    )
+
+    # Note: Not warning about missing generator_id values, because build_unittype_unit_column already does that
+
+    # Pre-build Series mappers for each <put>
+    grid_maps = {}
+    for p in puts:
+        grid_col = f"grid_{p}"
+        grid_maps[p] = techs[grid_col] if grid_col in techs.columns else pd.Series(dtype="object")
+
+    # Construct node_<put> per connection using map
+    genID_series = out[generator_id_col]
+    country_series = out[country_col].astype(object)
+
+    for p in puts:
+        grid_col = f"grid_{p}"
+        # map -> may yield NaN if this put is not defined for the generator_id
+        grids = genID_series.map(techs[grid_col]) if grid_col in techs.columns else pd.Series(np.nan, index=out.index)
+
+        # mask: valid grid (not NaN, not in blank markers)
+        valid = grids.notna()
+        for bm in blank_markers:
+            valid &= (grids != bm)
+
+        # Start with empty_value for all stored grid names
+        grid = pd.Series(empty_value, index=out.index, dtype=object)
+        grid.loc[valid] = grids[valid].astype(str)
+        out[f"grid_{p}"] = grid
+
+        # Start with empty_value for stored node names
+        node = pd.Series(empty_value, index=out.index, dtype=object)
+
+        # Build base where valid
+        base = country_series[valid].astype(str) + "_" + grids[valid].astype(str)
+
+        # Append per-connection suffix only if present & non-blank
+        suffix_col = f"node_suffix_{p}"
+        if suffix_col in out.columns:
+            suffix = out.loc[valid, suffix_col].astype(object)
+            use_suffix = suffix.notna() & (suffix.astype(str).str.len() > 0) & ~suffix.isin(blank_markers)
+            node.loc[valid & ~use_suffix] = base
+            node.loc[valid & use_suffix] = base[use_suffix] + "_" + suffix[use_suffix].astype(str)
+        else:
+            node.loc[valid] = base
+
+        out[f"node_{p}"] = node
+
+    return out
+
 
 
 def build_from_to_columns(
@@ -156,11 +271,12 @@ def build_unittype_unit_column(
     df['unittype'] = df['generator_id'].str.lower().map(unit_mapping)
 
     # Identify generator_ids without match
+    # Note: build_unit_grid_and_node_columns assumes that this is warned here
     missing_mask = df['unittype'].isna()
     if missing_mask.any() and log_status is not None:
         for generator_id in df.loc[missing_mask, 'generator_id'].unique():
             log_status(
-                f"unitdata generator_id '{generator_id}' does not have a matching generator_id "
+                f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
                 "in any of the unittypedata files, check spelling.",
                 source_data_logs,
                 level="warn"
@@ -502,7 +618,10 @@ def apply_whitelist(
 def apply_blacklist(
     df_input: pd.DataFrame,
     df_name: str,
-    filters: Dict[str, Union[str, int, List[Union[str, int]]  ]  ]
+    filters: Dict[str, Union[str, int, List[Union[str, int]]  ]  ],
+    source_data_logs: list[str] = None,
+    *,
+    log_warning: bool = True
     ) -> pd.DataFrame:
     """
     Filter DataFrame by excluding rows containing blacklisted values.
@@ -515,6 +634,8 @@ def apply_blacklist(
         Name of the DataFrame (used for error reporting)
     filters : dict
         Dictionary of {column_name: blacklisted_values} pairs
+    source_data_logs: list[str]
+        A list of strings where new log events are added.
     
     Returns:
     --------
@@ -529,16 +650,16 @@ def apply_blacklist(
     if df_input.empty:
         return df_input
 
-    # Check if all filter columns exist in the DataFrame
-    missing_cols = [col for col in filters if col not in df_input.columns]
-    if missing_cols:
-        raise Exception(f"Missing columns in {df_name}: {missing_cols}")
-
     # Create a copy to avoid modifying the original DataFrame
     df_filtered = df_input.copy()
-    
-    # Apply each filter condition (excluding blacklisted values)
+
+    # Apply each blacklist filter condition 
     for col, val in filters.items():
+        if col not in df_filtered.columns:
+            if log_warning:
+                log_status(f"Missing column in {df_name}: {col!r}", source_data_logs, level="warn")
+            continue  
+
         # Ensure val is a list for consistent processing
         if not isinstance(val, list):
             val = [val]
@@ -554,6 +675,28 @@ def apply_blacklist(
             df_filtered = df_filtered[~df_filtered[col].isin(val)]
 
     return df_filtered
+
+
+def apply_unit_grids_blacklist(
+    df: pd.DataFrame,
+    exclude_grids: List[str],
+    df_name: str = "unitdata",
+    logs: list[str] = None
+) -> pd.DataFrame:
+    filters = {**{f"grid_input{i}":  exclude_grids for i in range(1, 6)},
+               **{f"grid_output{i}": exclude_grids for i in range(1, 6)}}
+    return apply_blacklist(df, df_name, filters, source_data_logs=logs, log_warning=False)
+
+
+def apply_unit_nodes_blacklist(
+    df: pd.DataFrame,
+    exclude_nodes: List[str],
+    df_name: str = "unitdata",
+    logs: list[str] = None
+) -> pd.DataFrame:
+    filters = {**{f"node_input{i}":  exclude_nodes for i in range(1, 6)},
+               **{f"node_output{i}": exclude_nodes for i in range(1, 6)}}
+    return apply_blacklist(df, df_name, filters, source_data_logs=logs, log_warning=False)
 
 
 def merge_row_by_row(
@@ -578,8 +721,8 @@ def merge_row_by_row(
 
     - 'add'              : Sum into measures with special missing rules:
                            * (missing + missing) → NaN
-                           * (missing + 0.0) or (0.0 + missing) → 0.0
-                           * otherwise treat a single missing as 0.0
+                           * single missing value is treated as 0.0 
+                             e.g. (missing + 0.0) or (0.0 + missing) → 0.0
                            Only affects measure columns present in the second DataFrame
                            (absent → treated as missing → apply the above rules).
                            On first occurrence, use incoming values directly (initialize).
