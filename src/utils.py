@@ -126,28 +126,55 @@ def parse_sys_args():
 
 def check_dependencies():
     """
-    Checks that Python ≥ 3.12 and pandas ≥ 2.2 are available.
-    Prints warnings if either requirement is not met.
+    Verifies required dependencies.
+        - Python ≥ 3.12
+        - pandas ≥ 2.2
+        - gdxpds with accessible to_gdx
+        - gams.transfer importable
+        - gams executable accessible in PATH        
+
+    Raises RuntimeError if any requirement is not met.
     """
+    import importlib
+
+    errors = []
+
     # 1) Check Python version
     py_major, py_minor = sys.version_info[:2]
     if (py_major, py_minor) < (3, 12):
-        print(f"Warning: Detected Python {py_major}.{py_minor}. "
-              "This code is tested on Python 3.12+. "
-              "You may experience issues on older versions.")
+        errors.append(f"Python {py_major}.{py_minor} detected (requires ≥3.12)")
 
     # 2) Check pandas version
     try:
-        # split off any pre-release tags, take major/minor
-        ver_parts = pd.__version__.split('.')
-        pd_major, pd_minor = map(int, ver_parts[:2])
+        import pandas as pd
+        pd_major, pd_minor = map(int, pd.__version__.split('.')[:2])
         if (pd_major, pd_minor) < (2, 2):
-            print(f"Warning: Detected pandas {pd_major}.{pd_minor}. "
-                  "This code is tested on pandas 2.2+. "
-                  "You may experience issues on older versions.")
+            errors.append(f"pandas {pd_major}.{pd_minor} detected (requires ≥2.2)")
     except ImportError:
-        print("Warning: pandas is not installed. "
-              "Please install pandas ≥ 2.2 to ensure full functionality.")    
+        errors.append("pandas not installed")  
+
+    # 3) Check gdxpds availability
+    try:
+        gdxpds = importlib.import_module("gdxpds")
+    except ImportError:
+        errors.append("gdxpds not installed")
+
+    # 4) Check gams.transfer importability
+    try:
+        importlib.import_module("gams.transfer")
+    except ImportError:
+        errors.append("gams.transfer not importable (GAMS Python API missing)")
+
+    # 5) Check gams executable availability in PATH
+    gams_exec = shutil.which("gams") or shutil.which("gams.exe")
+    if gams_exec is None:
+        errors.append("GAMS not found in PATH")
+
+    # Final decision
+    if errors:
+        msg = "Dependency check failed:\n  - " + "\n  - ".join(errors)
+        raise RuntimeError(msg)
+
 
 
 def trim_df(df, round_precision=0):
