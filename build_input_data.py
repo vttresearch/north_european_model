@@ -1,13 +1,12 @@
 import time
 from pathlib import Path
 from gdxpds import to_gdx   # needed here to ensure gdxpds is imported before pandas
-from src.config_reader import load_config
+import src.config_reader as config_reader
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_pipeline import TimeseriesPipeline
 from src.pipeline.bb_excel_context import BBExcelBuildContext
 import src.utils as utils
-from src.utils import parse_sys_args, elapsed_time, check_dependencies, log_status, copy_gams_files
 from itertools import product
 from src.build_input_excel import BuildInputExcel
 from datetime import datetime
@@ -20,9 +19,6 @@ def main(input_folder, config_file):
 
     # Check package versions
     utils.check_dependencies()
-
-    # Reset workflow_run_successfully
-    workflow_run_successfully = False
 
     # Normalize paths
     input_folder = Path(input_folder)
@@ -40,7 +36,7 @@ def main(input_folder, config_file):
 
 
     # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
-    config = load_config(config_file)
+    config = config_reader.load_config(config_file)
 
     # Initialize logging function
     utils.init_logging(
@@ -50,14 +46,11 @@ def main(input_folder, config_file):
 
 
     # --- 3. The (scenario, year, alternative) loop ---
-    # load list of processed countries
-    country_codes = config.get('country_codes') # config parser checks that this mandatory field is given
 
     # Lists of scenarios, scenario_years, and alternatives
     scenarios = config.get('scenarios')
     scenario_years = config.get('scenario_years')
-    scenario_alternatives = config.get('scenario_alternatives', [])
-
+    scenario_alternatives = config.get('scenario_alternatives')
 
     for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
 
@@ -77,7 +70,7 @@ def main(input_folder, config_file):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         utils.log_status(f"Run timestamp: {now_str}", log_messages, level="info")
 
-        # Build output folder name, check existence
+        # Build output folder_name, check existence
         output_folder_prefix = config.get('output_folder_prefix', 'output')
         if alternative:
             folder_name = f"{output_folder_prefix}_{scenario}_{year}_{alternative}"
@@ -93,7 +86,7 @@ def main(input_folder, config_file):
         cache_manager = CacheManager(input_folder, output_folder, config)
 
         # Run cache manager to check which parts of code need rerunning, pick logs to log messages
-        log_messages.extend(cache_manager.run())
+        cache_manager.run(log_messages)
 
         # if full rerun, clear all files from output folder, keep subfolders and their files
         if cache_manager.full_rerun:
@@ -119,7 +112,7 @@ def main(input_folder, config_file):
             scenario=scenario,
             scenario_year=year,
             scenario_alternative=alternative,
-            country_codes=country_codes
+            country_codes=config.get('country_codes') 
         )
 
         # Run if needed, otherwise print skip message
@@ -199,8 +192,7 @@ def main(input_folder, config_file):
             utils.copy_gams_files(input_folder, output_folder, log_messages)
 
         # Flagging the run successful and writing the flag status
-        workflow_run_successfully = True
-        status_dict = {"workflow_run_successfully": workflow_run_successfully}
+        status_dict = {"workflow_run_successfully": True}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # Printing elapsed time
