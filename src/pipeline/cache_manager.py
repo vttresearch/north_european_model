@@ -193,7 +193,7 @@ class CacheManager:
         for category in [
             "unittypedata_files", "fueldata_files", "emissiondata_files",
             "demanddata_files", "transferdata_files", 
-            "unitdata_files", "storagedata_files"
+            "unitdata_files", "storagedata_files", "userconstraint_files"
         ]:
             current_files = config.get(category, [])
             current_hashes = {f: hash_utils.compute_file_hash(input_folder / f) for f in current_files}

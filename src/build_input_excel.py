@@ -21,13 +21,17 @@ class BuildInputExcel:
         self.country_codes = self.config.get("country_codes", [])
 
         # From InputDataPipeline
-        self.df_transferdata = context.df_transferdata
+        # Global
         self.df_unittypedata = context.df_unittypedata
-        self.df_unitdata = context.df_unitdata
-        self.df_storagedata = context.df_storagedata
         self.df_fueldata = context.df_fueldata
         self.df_emissiondata = context.df_emissiondata
+        # Country specific
+        self.df_transferdata = context.df_transferdata
+        self.df_unitdata = context.df_unitdata
+        self.df_storagedata = context.df_storagedata
         self.df_demanddata = context.df_demanddata
+        # Custom
+        self.df_userconstraintdata = context.df_userconstraintdata
 
         # From TimeseriesPipeline
         self.secondary_results = context.secondary_results
@@ -1219,41 +1223,108 @@ class BuildInputExcel:
         return ts_priceChange
 
 
-    def create_p_userConstraint(self, p_gnu_io_flat, mingen_nodes):
+    def create_p_userConstraint(
+        self,
+        uc_data: pd.DataFrame,
+        p_gnu_io_flat: pd.DataFrame,
+        mingen_nodes: list[str],
+        logs: list[str]
+    ) -> pd.DataFrame:
+        """
+        Creates the parameter DataFrame `p_userConstraint` defining user constraints.
 
-        # creating empty p_userconstraint df
-        p_userConstraint = pd.DataFrame(columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter', 'value'])
+        The function combines:
+          1. Predefined user-constraint data from `uc_data` (added directly as-is,
+             with case-insensitive column handling).
+          2. Dynamically generated user-constraint rules based on `mingen_nodes`,
+             linking nodes to units in `p_gnu_io_flat`.
 
+        Parameters
+        ----------
+        uc_data : pd.DataFrame
+            User-defined constraints, possibly with column names in arbitrary case.
+            Expected logical columns (case-insensitive):
+            ['group', '1st dimension', '2nd dimension', '3rd dimension',
+             '4th dimension', 'parameter', 'value'].
+        p_gnu_io_flat : pd.DataFrame
+            Flattened DataFrame mapping grids, nodes, and units with columns
+            ['grid', 'node', 'unit', 'input_output'].
+        mingen_nodes : list[str]
+            List of node names for which minimum-generation user constraints
+            should be created.
+        logs:
+            An accumulating log event list
+
+        Returns
+        -------
+        pd.DataFrame
+            Combined DataFrame of all user constraints (`p_userConstraint`).
+        """
+        expected_cols = [
+            'group', '1st dimension', '2nd dimension',
+            '3rd dimension', '4th dimension', 'parameter', 'value'
+        ]
+
+        frames: list[pd.DataFrame] = []
+
+        # ---- Phase 1: add uc_data, case-insensitive column alignment ----
+        if uc_data is not None and not uc_data.empty:
+            # map lowercased column name -> canonical expected column
+            col_map = {c.lower(): c for c in expected_cols}
+            rename_dict = {orig: col_map[orig.lower()] for orig in uc_data.columns if orig.lower() in col_map}
+            uc_data_renamed = uc_data.rename(columns=rename_dict)
+
+            missing = [c for c in expected_cols if c not in uc_data_renamed.columns]
+            if missing:
+                log_status(f"uc_data missing required columns (after case-insensitive matching): {missing}", 
+                           logs, level="info")
+
+            uc_data_aligned = uc_data_renamed[expected_cols]
+
+            # keep only rows that aren't entirely NA to avoid dtype inference warnings later
+            uc_data_aligned = uc_data_aligned.dropna(how="all")
+
+            if not uc_data_aligned.empty:
+                frames.append(uc_data_aligned)
+
+        # ---- Phase 2: generate rows for mingen_nodes ----
+        generated_rows = []
         for node in mingen_nodes:
-            # Filter rows in p_gnu where 'node' equals current node and 'input_output' is 'input'
-            row_gnu = p_gnu_io_flat[(p_gnu_io_flat['node'] == node) & (p_gnu_io_flat['input_output'] == 'input')]
-            group_UC = 'UC_' + node
+            row_gnu = p_gnu_io_flat[
+                (p_gnu_io_flat['node'] == node) &
+                (p_gnu_io_flat['input_output'] == 'input')
+            ]
+            group_UC = f"UC_{node}"
 
-            # For each matching row, add a row to p_userConstraint
-            for _, row in row_gnu.iterrows():
-                p_userConstraint.loc[len(p_userConstraint)] = [
-                    group_UC,          # group_UC
-                    row['grid'],       # 1st dimension
-                    node,              # 2nd dimension
-                    row['unit'],       # 3rd dimension
-                    "-",               # 4th dimension
-                    "v_gen",           # parameter
-                    -1                  # value
-                ]
-            # Add row for parameter "GT"
-            p_userConstraint.loc[len(p_userConstraint)] = [
-                group_UC, "-", "-", "-", "-", "GT", -1
+            for _, r in row_gnu.iterrows():
+                generated_rows.append({
+                    'group': group_UC,
+                    '1st dimension': r['grid'],
+                    '2nd dimension': node,
+                    '3rd dimension': r['unit'],
+                    '4th dimension': "-",
+                    'parameter': "v_gen",
+                    'value': -1,
+                })
+
+            # group-level rows
+            generated_rows += [
+                {'group': group_UC, '1st dimension': "-", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "GT",             'value': -1},
+                {'group': group_UC, '1st dimension': "userconstraintRHS", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "ts_groupPolicy", 'value': 1},
+                {'group': group_UC, '1st dimension': "-", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "penalty",        'value': 2000},
             ]
-            # Add row for parameter "ts_groupPolicy"
-            p_userConstraint.loc[len(p_userConstraint)] = [
-                group_UC, "userconstraintRHS", "-", "-", "-", "ts_groupPolicy", 1
-            ]
-            # Add custom penalty value for userconstraint equations
-            p_userConstraint.loc[len(p_userConstraint)] = [
-                group_UC, "-", "-", "-", "-", "penalty", 2000
-            ]
+
+        if generated_rows:
+            frames.append(pd.DataFrame.from_records(generated_rows, columns=expected_cols))
+
+        # ---- Finalize without ever concatenating with an empty frame ----
+        if frames:
+            p_userConstraint = pd.concat(frames, ignore_index=True)
+        else:
+            p_userConstraint = pd.DataFrame(columns=expected_cols)
 
         return p_userConstraint
+
 
 
 # ------------------------------------------------------
@@ -1725,10 +1796,10 @@ class BuildInputExcel:
                                                                                       self.df_storagedata, 
                                                                                       self.ts_storage_limits)
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fueldata)
-        if not p_gnu_io.empty:
-            p_userconstraint = self.create_p_userConstraint(p_gnu_io_flat, self.mingen_nodes)
-        else:
-            p_userconstraint = pd.DataFrame()
+        p_userconstraint = self.create_p_userConstraint(self.df_userconstraintdata,
+                                                        p_gnu_io_flat, 
+                                                        self.mingen_nodes,
+                                                        self.builder_logs)
 
         # add storage start levels to p_gn and p_gnBoundaryPropertiesForStates
         (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, 

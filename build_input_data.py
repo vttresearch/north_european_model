@@ -88,7 +88,7 @@ def main(input_folder: Path, config_file: Path):
         if cache_manager.full_rerun:
             output_path = Path(output_folder)
 
-            # Find all files under output_folder
+            # Find all files under output_folder, exclude subdirectories
             files = list(output_path.glob("*"))
             files = [f for f in files if f.is_file()]
 
@@ -151,13 +151,14 @@ def main(input_folder: Path, config_file: Path):
                 # Cacge manager
                 cache_manager=cache_manager,
                 # From InputDataPipeline
-                df_demanddata=source_excel_data_pipeline.df_demanddata,
-                df_transferdata=source_excel_data_pipeline.df_transferdata,
                 df_unittypedata=source_excel_data_pipeline.df_unittypedata,
-                df_unitdata=source_excel_data_pipeline.df_unitdata,
-                df_storagedata=source_excel_data_pipeline.df_storagedata,
                 df_fueldata=source_excel_data_pipeline.df_fueldata,
                 df_emissiondata=source_excel_data_pipeline.df_emissiondata,
+                df_demanddata=source_excel_data_pipeline.df_demanddata,
+                df_transferdata=source_excel_data_pipeline.df_transferdata,
+                df_unitdata=source_excel_data_pipeline.df_unitdata,
+                df_storagedata=source_excel_data_pipeline.df_storagedata,
+                df_userconstraintdata=source_excel_data_pipeline.df_userconstraintdata,
                 # From TimeseriesPipeline
                 secondary_results=ts_results.secondary_results,
                 ts_domains=ts_results.ts_domains,

@@ -21,14 +21,18 @@ class BBExcelBuildContext:
     cache_manager: CacheManager
 
     # DataFrames from InputDataPipeline
-    df_demanddata: pd.DataFrame
-    df_transferdata: pd.DataFrame
+    # Global
     df_unittypedata: pd.DataFrame
-    df_unitdata: pd.DataFrame
-    df_storagedata: pd.DataFrame
     df_fueldata: pd.DataFrame
     df_emissiondata: pd.DataFrame
-
+    # Country specific
+    df_demanddata: pd.DataFrame
+    df_transferdata: pd.DataFrame
+    df_unitdata: pd.DataFrame
+    df_storagedata: pd.DataFrame
+    # Custom
+    df_userconstraintdata: pd.DataFrame
+    
     # From TimeseriesPipeline
     secondary_results: dict
     ts_domains: dict
