@@ -12,30 +12,26 @@ from src.build_input_excel import BuildInputExcel
 from datetime import datetime
 
  
-def main(input_folder, config_file):
-    # --- 1. setup ---
+def main(input_folder: Path, config_file: Path):
+    # --- 1. Prep ---
     # Timer to follow the progress
     start_time = time.time()
 
-    # Check package versions
+    # Check versions and other dependencies
     utils.check_dependencies()
 
-    # Normalize paths
-    input_folder = Path(input_folder)
-    cfg_path = Path(config_file)
-
-    # Check input folder exists
+    # Guarantee that input_folder is Path, check it exists
+    input_folder = Path(input_folder)    
     if not input_folder.exists() or not input_folder.is_dir():
         print(f"Could not find directory {input_folder.resolve()}, please check spelling")
         return 1  # or: sys.exit(1)
 
-    # Check config file exists
-    if not cfg_path.exists() or not cfg_path.is_file():
-        print(f"Could not find file {cfg_path.resolve()}, please check spelling")
-        return 1  # or: sys.exit(1)
+    # Guarantee that config_file is Path, check it exists
+    config_file = Path(config_file)
+    if not config_file.exists() or not config_file.is_file():
+        raise ValueError(f"Could not find file {config_file.resolve()}, please check spelling")
 
-
-    # --- 2. Loading config file, fetching parameters needed to launch pipelines ---
+    # Load config file
     config = config_reader.load_config(config_file)
 
     # Initialize logging function
@@ -45,7 +41,7 @@ def main(input_folder, config_file):
     )
 
 
-    # --- 3. The (scenario, year, alternative) loop ---
+    # --- 2. The (scenario, year, alternative) loop ---
 
     # Lists of scenarios, scenario_years, and alternatives
     scenarios = config.get('scenarios')
@@ -54,7 +50,7 @@ def main(input_folder, config_file):
 
     for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
 
-        # --- 3.1. Preparations ---
+        # --- 2.1. Preparations ---
         # accumulated log messages to be written to summary.log
         log_messages = []
 
@@ -81,7 +77,7 @@ def main(input_folder, config_file):
         utils.log_status(f"Using output folder: {output_folder}", log_messages, level="info")
 
 
-        # --- 3.2. Cache manager ---
+        # --- 2.2. Cache manager ---
         # Initialize cache manager
         cache_manager = CacheManager(input_folder, output_folder, config)
 
@@ -104,7 +100,7 @@ def main(input_folder, config_file):
                     f.unlink(missing_ok=True)
 
 
-        # --- 3.3. Input data phase ---
+        # --- 2.3. Input data phase ---
         # Initialize source excel pipeline
         source_excel_data_pipeline = SourceExcelDataPipeline(
             config=config,
@@ -125,7 +121,7 @@ def main(input_folder, config_file):
             utils.log_status("Skipping source excel processing.", log_messages, level="skip")
 
 
-        # --- 3.4. Timeseries processing phase ---
+        # --- 2.4. Timeseries processing phase ---
         # Running timeseries if any processor needs rerunning or bb input excel needs to be created
         # Note: BB input excel needs correct ts_results from previous runs
         if cache_manager.full_rerun or cache_manager.timeseries_changed or cache_manager.rebuild_bb_excel:
@@ -139,7 +135,7 @@ def main(input_folder, config_file):
             utils.log_status("Timeseries results are up-to-date. Skipping timeseries processing.", log_messages, level="skip")
 
 
-        # --- 3.5. Backbone Input Excel building phase ---
+        # --- 2.5. Backbone Input Excel building phase ---
         # Checking if this step is needed or not
         if cache_manager.rebuild_bb_excel:
             utils.log_status("Building Backbone input Excel", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
@@ -182,7 +178,7 @@ def main(input_folder, config_file):
         status_dict = {"bb_excel_succesfully_built": bb_excel_succesfully_built}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
-        # --- 3.6. Finalizing ---
+        # --- 2.6. Finalizing ---
 
         utils.log_status("Finalizing", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
 

@@ -29,14 +29,11 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             - the [inputdata] section is missing,
             - any of the mandatory fields is missing.
     """
-
     # Parse the config file
     parser = configparser.ConfigParser()
-    try:
-        parser.read(config_file)
-    except BaseException as e:
-        print(e)
-        raise ValueError(f"The config file parser cannot read the {config_file}.")
+    read_files = parser.read(config_file) # Not wrapping this into try:, because configparser is very chatty already
+    if not read_files:
+        raise ValueError(f"Failed to read configuration file: {config_file}")
 
     # Import input data
     if 'inputdata' not in parser:
@@ -82,6 +79,7 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'transferdata_files': ast.literal_eval(inputdata.get('transferdata_files', '[]')),
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
         'storagedata_files': ast.literal_eval(inputdata.get('storagedata_files', '[]')),
+        'userconstraint_files': ast.literal_eval(inputdata.get('userconstraint_files', '[]')),
 
         # Timeseries specs
         'timeseries_specs': ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
