@@ -3,7 +3,8 @@
         "version": 13,
         "description": "",
         "settings": {
-            "enable_execute_all": true
+            "enable_execute_all": true,
+            "store_external_paths_as_relative": true
         },
         "specifications": {
             "Tool": [
@@ -547,7 +548,7 @@
             "url": {
                 "dialect": "sqlite",
                 "host": "",
-                "port": "",
+                "port": null,
                 "database": {
                     "type": "path",
                     "relative": true,
@@ -600,11 +601,11 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/input_invest_and_schedule/modelsInit.gms"
+                    "arg": "<project>/input_invest_and_schedule"
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/README.md"
+                    "arg": "<project>/."
                 }
             ],
             "kill_completed_processes": false,
@@ -639,11 +640,6 @@
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "src_files/config_NT2025.ini"
-                },
-                {
-                    "type": "path",
-                    "relative": true,
                     "path": "src_files/config_NT2030.ini"
                 },
                 {
@@ -652,6 +648,8 @@
                     "path": "src_files/config_bsh2_2030.ini"
                 }
             ],
+            "file_patterns": [],
+            "directory_references": [],
             "db_references": []
         },
         "Add data": {
@@ -666,6 +664,8 @@
                     "path": "toolbox_workflow/input/add/x_BSH2_group_data.xlsx"
                 }
             ],
+            "file_patterns": [],
+            "directory_references": [],
             "db_references": []
         },
         "ne input": {
@@ -673,11 +673,13 @@
             "description": "",
             "x": 205.06794702195037,
             "y": 80.75981979330575,
-            "file_references": [
+            "file_references": [],
+            "file_patterns": [],
+            "directory_references": [
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "README.md"
+                    "path": "."
                 }
             ],
             "db_references": []
@@ -698,11 +700,13 @@
             "description": "",
             "x": 37.051012316015516,
             "y": 80.74926058001958,
-            "file_references": [
+            "file_references": [],
+            "file_patterns": [],
+            "directory_references": [
                 {
                     "type": "path",
                     "relative": true,
-                    "path": "input_invest_and_schedule/modelsInit.gms"
+                    "path": "input_invest_and_schedule"
                 }
             ],
             "db_references": []
@@ -728,8 +732,8 @@
         "Copy_timeseries (1)": {
             "type": "Tool",
             "description": "",
-            "x": 144.7753055190487,
-            "y": 206.48681882178573,
+            "x": 144.77530551904866,
+            "y": 207.50837029809935,
             "specification": "copy_timeseries",
             "execute_in_work": true,
             "cmd_line_args": [
@@ -743,11 +747,11 @@
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/input_invest_and_schedule/modelsInit.gms"
+                    "arg": "<project>/input_invest_and_schedule"
                 },
                 {
                     "type": "resource",
-                    "arg": "<project>/README.md"
+                    "arg": "<project>/."
                 }
             ],
             "kill_completed_processes": false,

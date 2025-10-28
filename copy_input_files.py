@@ -38,8 +38,8 @@ if __name__ == "__main__":
     if len(sys.argv) != 5:
         print("Usage: python convert_excel_to_gdx.py <gdx_file> <input_db> <path_to_modelsInit>")
         sys.exit(1)
-    ne_model_path = pathlib.Path(sys.argv[4]).parent
-    input_invest_schedule = pathlib.Path(sys.argv[3]).parent # source
+    ne_model_path = pathlib.Path(sys.argv[4])
+    input_invest_schedule = pathlib.Path(sys.argv[3]) # source
     input_db = sys.argv[2]
     gdx_file = sys.argv[1]
     output_folder = pathlib.Path("input")
