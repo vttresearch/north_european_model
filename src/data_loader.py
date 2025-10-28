@@ -169,7 +169,6 @@ def build_unit_grid_and_node_columns(
     return out
 
 
-
 def build_from_to_columns(
         df: pd.DataFrame
         ) -> pd.DataFrame:
@@ -837,6 +836,47 @@ def merge_row_by_row(
         except Exception:
             return math.nan
 
+    # --- case-insensitive column names ---------------------------------
+    def _resolve_columns_case_insensitive(requested: Sequence[str] | None,
+                                          available: Sequence[str],
+                                          what: str = "key") -> tuple[list[str], list[str]]:
+        """
+        Map requested column names to actual columns in `available` using case-insensitive matching.
+        Returns (resolved, missing). Warns/raises on ambiguities.
+        """
+        if not requested:
+            return [], []
+
+        # Build casefold map and detect ambiguities (same casefold, different actuals)
+        cf_map: dict[str, str] = {}
+        ambigs: dict[str, set[str]] = {}
+        for col in available:
+            cf = col.casefold()
+            if cf in cf_map and cf_map[cf] != col:
+                ambigs.setdefault(cf, {cf_map[cf]}).add(col)
+            else:
+                cf_map[cf] = col
+
+        if ambigs:
+            # You can choose to raise or just warn. Raising is safer.
+            amb_list = ["/".join(sorted(v)) for v in ambigs.values()]
+            raise ValueError(
+                f"merge_row_by_row: ambiguous {what} columns that differ only by case: {', '.join(amb_list)}"
+            )
+
+        resolved: list[str] = []
+        missing: list[str] = []
+        for name in requested:
+            if name in available:
+                resolved.append(name)  # exact match wins
+                continue
+            tgt = cf_map.get(str(name).casefold())
+            if tgt is None:
+                missing.append(name)
+                resolved.append(name)  # will be created as NA later; we’ll warn
+            else:
+                resolved.append(tgt)
+        return resolved, missing
 
     # --- Measure column inference ---------------------------------------------
     # If user didn't specify measure columns, derive them defensively.
@@ -890,11 +930,15 @@ def merge_row_by_row(
     if _is_effectively_empty(measure_cols):
         present_measures = _infer_measure_columns(frames)
     else:
-        present_measures = [c for c in (measure_cols or []) if c in set(cols_union)]
-        missing = [c for c in (measure_cols or []) if c not in set(cols_union)]
-        if missing:
+        measure_cols_resolved, missing_measures = _resolve_columns_case_insensitive(
+            measure_cols, cols_union, what="measure"
+        )
+        # Keep only those that truly exist (after resolution)
+        present_measures = [c for c in measure_cols_resolved if c in set(cols_union)]
+        if missing_measures:
             _log(
-                f"[merge_row_by_row] Some measure_cols not present in inputs and will be ignored: {missing}",
+                "[merge_row_by_row] Some measure_cols not found (even case-insensitive) "
+                f"and will be ignored: {missing_measures}",
                 level="warn",
             )
 
@@ -902,7 +946,13 @@ def merge_row_by_row(
     # If no explicit keys, derive keys as "everything that is not a measure/meta/method".
     if key_columns is None:
         key_columns = [c for c in cols_union if c not in set(present_measures) | meta_cols | {"method"}]
-
+    else:
+        # Make key_columns case-insensitive against available columns
+        key_columns, missing_keys = _resolve_columns_case_insensitive(key_columns, cols_union, what="key")
+        if missing_keys:
+            _log(f"[merge_row_by_row] Some key_columns not found (even case-insensitive) and "
+                 f"will be created as <NA>: {missing_keys}", level="warn")
+            
     # Without any key, we fall back to "last occurrence wins" over full rows.
     if not key_columns:
         _log("merge_row_by_row: No key columns available; using full-row 'last occurrence wins'.", level="warn")
