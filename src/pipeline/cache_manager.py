@@ -62,6 +62,9 @@ class CacheManager:
         self.rerun_all_ts = False
         self.rebuild_bb_excel = False
 
+        # Initialize logs
+        self.logs = []
+
 
     def _validate_topology(self, config: dict, log: list[str]):
         prev = self._load_structural_config()
@@ -422,24 +425,24 @@ class CacheManager:
         return secondary_results
     
 
-    def run(self, log_messages: list[str]) -> list[str]:
+    def run(self) -> list[str]:
 
         # --- Config file validation ---
         # Checking overall topology in config file
-        self._validate_topology(self.config, log_messages)
-        self._validate_start_and_end(self.config, log_messages)
-        self._validate_csv_writer(self.config, log_messages)
-        self._validate_if_disable_all_ts_processors_changed(self.config, log_messages)
-        self._validate_if_disable_other_demand_ts_changed(self.config, log_messages)
+        self._validate_topology(self.config, self.logs)
+        self._validate_start_and_end(self.config, self.logs)
+        self._validate_csv_writer(self.config, self.logs)
+        self._validate_if_disable_all_ts_processors_changed(self.config, self.logs)
+        self._validate_if_disable_other_demand_ts_changed(self.config, self.logs)
         
         # Checking input files in config file
-        self._validate_input_files(self.config, self.input_file_folder, log_messages)
+        self._validate_input_files(self.config, self.input_file_folder, self.logs)
 
         # --- Check full rerun flag ---
         full_rerun = self.config.get('force_full_rerun', False)
         if full_rerun:
             utils.log_status('User requested a full rerun of all data.', 
-                       log_messages, 
+                       self.logs, 
                        level="run", 
                        add_empty_line_before=True)
 
@@ -457,7 +460,7 @@ class CacheManager:
         if self.overall_code_files_updated and not self.topology_changed:
             utils.log_status("Certain code files that orchestrate the overall workflow have been updated, "
                        "rerunning all timeseries and generating new input excel for Backbone.", 
-                       log_messages, level="run")
+                       self.logs, level="run")
 
         # Check changes in source excel data pipeline code files
         files = [
@@ -470,7 +473,7 @@ class CacheManager:
         if self.source_data_pipeline_code_updated and not self.topology_changed and not self.overall_code_files_updated:
             utils.log_status("Source excel data pipeline code updated, "
                        "rerunning all timeseries and generating new input excel for Backbone.", 
-                       log_messages, level="run")
+                       self.logs, level="run")
 
         # Check timeseries pipeline code files
         files = [
@@ -483,7 +486,7 @@ class CacheManager:
         if self.timeseries_pipeline_code_updated and not self.topology_changed and not self.overall_code_files_updated:
             utils.log_status("Timeseries pipeline code updated, rerunning all timeseries "
                        "and generating new input excel for Backbone.", 
-                       log_messages, level="run")
+                       self.logs, level="run")
 
         # Check BB input excel pipeline code files
         files = [
@@ -494,7 +497,7 @@ class CacheManager:
         self.bb_excel_pipeline_code_updated = self._validate_source_code_changes(files, cache_name)
         if self.bb_excel_pipeline_code_updated and not self.topology_changed and not self.overall_code_files_updated:
             utils.log_status("BB input excel pipeline code updated, generating new input excel for Backbone.", 
-                       log_messages, level="run")
+                       self.logs, level="run")
         
 
         # --- General flags validation ---
@@ -517,7 +520,7 @@ class CacheManager:
                            or not workflow_run_successfully
                            )
         # checking if specific timeseries need rerunning
-        self._validate_timeseries(self.config, log_messages, self.full_rerun, self.demand_files_changed)
+        self._validate_timeseries(self.config, self.logs, self.full_rerun, self.demand_files_changed)
 
         # Checking if source excels should be re-imported
         self.reimport_source_excels = (self.full_rerun

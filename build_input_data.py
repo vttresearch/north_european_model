@@ -82,7 +82,8 @@ def main(input_folder: Path, config_file: Path):
         cache_manager = CacheManager(input_folder, output_folder, config)
 
         # Run cache manager to check which parts of code need rerunning, pick logs to log messages
-        cache_manager.run(log_messages)
+        cache_manager.run()
+        log_messages.extend(cache_manager.logs)
 
         # if full rerun, clear all files from output folder, keep subfolders and their files
         if cache_manager.full_rerun:
