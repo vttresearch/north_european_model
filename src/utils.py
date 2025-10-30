@@ -197,6 +197,95 @@ def trim_df(df, round_precision=0):
     return df
 
 
+def standardize_df_dtypes(
+    df: pd.DataFrame,
+    *,
+    convert_numeric: bool = False,
+    fill_numeric_na: bool = False,
+    treat_nan_string_as_na: bool = True,
+) -> pd.DataFrame:
+    """
+    Standardize DataFrame column dtypes to a consistent set:
+    - Empty columns (all NA) → object
+    - Numeric columns → Float64
+    - Everything else → object
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame to standardize
+    convert_numeric : bool, default False
+        If True, attempt to convert object columns to numeric using pd.to_numeric()
+        before standardizing. This is useful when object columns contain numeric strings.
+    fill_numeric_na : bool, default False
+        If True, fill NA values in Float64 columns with 0 after conversion.
+    treat_nan_string_as_na : bool, default True
+        If True, replace string 'NaN' (case-insensitive) with pd.NA before processing.
+        This allows numeric conversion to work properly on columns containing 'NaN' strings.
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with standardized dtypes
+        
+    Examples
+    --------
+    >>> # Basic standardization
+    >>> df = pd.DataFrame({'a': [1, 2], 'b': ['x', 'y'], 'c': [None, None]})
+    >>> df = standardize_df_dtypes(df)
+    >>> df.dtypes
+    a    Float64
+    b     object
+    c     object
+    dtype object
+    
+    # Handle 'NaN' strings when treat_nan_string_as_na = True, 
+       - ['NaN', '2'] becomes Float64 with [NA, 2.0]
+       - ['x', 'NaN'] becomes object with ['x', NA]
+    """
+    df = df.copy()
+    
+    # First pass: replace 'NaN' strings with pd.NA and identify empty columns
+    for col in df.columns:
+        # Replace 'NaN' strings with pd.NA if requested
+        if treat_nan_string_as_na and df[col].dtype == 'object':
+            df[col] = df[col].apply(
+                lambda x: pd.NA if isinstance(x, str) and x.strip().lower() == 'nan' else x
+            )
+        
+        # Check if column is empty using the existing is_col_empty function
+        if is_col_empty(df[col], treat_nan_as_empty=True):
+            df[col] = df[col].astype("object")
+    
+    # Second pass: try to convert object columns to numeric if requested
+    if convert_numeric:
+        for col in df.columns:
+            if df[col].dtype == 'object' and not df[col].isna().all():
+                converted = pd.to_numeric(df[col], errors="coerce")
+                # Only convert if no new NAs were introduced
+                if converted.isna().sum() == df[col].isna().sum():
+                    df[col] = converted
+    
+    # Third pass: standardize dtypes
+    for col in df.columns:
+        # Empty columns → object
+        if df[col].isna().all():
+            df[col] = df[col].astype("object")
+        # Numeric columns → Float64
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].astype("Float64")
+        # Everything else → object
+        else:
+            df[col] = df[col].astype("object")
+    
+    # Fourth pass: fill NAs in Float64 columns if requested
+    if fill_numeric_na:
+        Float64_cols = df.select_dtypes(include=['Float64']).columns
+        df[Float64_cols] = df[Float64_cols].fillna(0)
+    
+    return df
+
+
 
 def collect_domains(df, possible_domains: list[str]) -> dict[str, list]:
     """
