@@ -421,12 +421,9 @@ class TimeseriesPipeline:
                 # Create timeseries for other demands
                 df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
-                # Collect new domain info
-                domains = ['grid', 'node', 'flow', 'group']
-                domain_pairs = [['grid', 'node'], ['flow', 'node']]
-
-                other_domains = collect_domains(df_other_demands, domains)
-                other_domain_pairs = collect_domain_pairs(df_other_demands, domain_pairs)
+                # Collect domain info
+                other_domains = collect_domains(df_other_demands, ['grid', 'node'])
+                other_domain_pairs = collect_domain_pairs(df_other_demands, [['grid', 'node']])
 
                 for dom, vals in other_domains.items():
                     all_ts_domains.setdefault(dom, set()).update(vals)
@@ -437,9 +434,9 @@ class TimeseriesPipeline:
                 if self.config.get("write_csv_files", False):
                     df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
 
+                # Write gdx file, update GAMS import instructions
                 output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
                 to_gdx({"ts_influx": df_other_demands}, path=output_file_other)
-
                 update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
 

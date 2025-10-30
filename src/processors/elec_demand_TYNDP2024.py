@@ -218,13 +218,9 @@ class elec_demand_TYNDP2024:
 
             # Process each demand row for the country.
             for _, row in country_demand.iterrows():
-                # Determine the node suffix in a case-insensitive way.
-                suffix = ''
-                if 'node_suffix' in row and pd.notna(row['node_suffix']):
-                    suffix = str(row['node_suffix'])
 
-                # Build the new column name: if no suffix, use the country code; otherwise, use country+suffix.
-                col_name = country if suffix == '' else country + suffix
+                # Pick node name to column name
+                col_name = str(row['node'])
 
                 # Retrieve annual demand from 'mwh/year'.
                 annual_demand = row['twh/year']*10**6
@@ -257,7 +253,6 @@ class elec_demand_TYNDP2024:
 
     def run_processor(self):
 
-
         # Get the raw hourly profiles.
         log_status(f"Reading electricity demand profiles from '{self.input_file}'...", self.processor_log)
         df_demands = self.get_values_from_excel()
@@ -270,20 +265,6 @@ class elec_demand_TYNDP2024:
 
         log_status("Building demand time series...", self.processor_log)
         summary_df = self.build_demands(summary_df, self.df_annual_demands)
-        
-        # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
-        # e.g. DE00 -> DE00_elec and FI00_HKI -> FI00_HKI_elec
-        grid = self.df_annual_demands['grid'].iloc[0]
-        new_columns = {}
-        for col in summary_df.columns:
-            for country in self.country_codes:
-                if col.startswith(country):
-                    # Capture any suffix after the country code.
-                    suffix = col[len(country):]  # e.g., '' or '_HKI'
-                    # Build the new column name
-                    new_columns[col] = f"{country}_{grid}" + suffix
-                    break  # Found matching country code, move to next column.
-        summary_df = summary_df.rename(columns=new_columns)
 
         # Mandatory secondary results
         secondary_result = None

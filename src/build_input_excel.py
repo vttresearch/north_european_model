@@ -504,15 +504,18 @@ class BuildInputExcel:
         # List to collect the new rows 
         rows = []
 
-
-
         # --- Collect grid-node pairs ---
-
         # Get grid_node from ts_domain_pairs and convert to DataFrame
         if 'grid_node' in ts_domain_pairs:
             ts_grid_node = pd.DataFrame(ts_domain_pairs['grid_node'], columns=['grid', 'node'])
         else:
             ts_grid_node = pd.DataFrame(columns=['grid', 'node'])
+
+        # Extract gn pairs from df_demanddata
+        if not df_demanddata.empty:
+            pairs_df_demanddata = df_demanddata[['grid', 'node']]
+        else:
+            pairs_df_demanddata = pd.DataFrame(columns=['grid', 'node'])
 
         # Extract gn pairs from df_storagedata
         if not df_storagedata.empty:
@@ -527,7 +530,7 @@ class BuildInputExcel:
             pairs_gnu = pd.DataFrame(columns=['grid', 'node'])
 
         # Concatenate and drop duplicates
-        parts = [ts_grid_node, pairs_df_storagedata, pairs_gnu]
+        parts = [ts_grid_node, pairs_df_demanddata, pairs_df_storagedata, pairs_gnu]
         parts = [p for p in parts if not p.empty]
         unique_gn_pairs = (
             pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
@@ -1808,7 +1811,6 @@ class BuildInputExcel:
         (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, 
                                                                           p_gnu_io_flat, self.ts_storage_limits)
         p_gn_flat = self.drop_fake_MultiIndex(p_gn)
-
 
         # emission based input tables
         p_nEmission = self.create_p_nEmission(p_gn_flat, self.df_fueldata)
