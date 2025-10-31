@@ -123,18 +123,31 @@ def main(input_folder: Path, config_file: Path):
 
 
         # --- 2.4. Timeseries processing phase ---
-        # Running timeseries if any processor needs rerunning or bb input excel needs to be created
-        # Note: BB input excel needs correct ts_results from previous runs
-        if cache_manager.full_rerun or cache_manager.timeseries_changed or cache_manager.rebuild_bb_excel:
-            # Instantiate pipeline and run
-            ts_pipeline = TimeseriesPipeline(config, input_folder, output_folder, cache_manager, source_excel_data_pipeline)
+        # Run timeseries if cache manager determined it's needed
+        if cache_manager.needs_timeseries_run:
+            utils.log_status(
+                "Starting timeseries processing phase",
+                log_messages,
+                level="run"
+            )
+            
+            ts_pipeline = TimeseriesPipeline(
+                config, 
+                input_folder, 
+                output_folder, 
+                cache_manager, 
+                source_excel_data_pipeline
+            )
             ts_results = ts_pipeline.run()
-        
+            
             # Merge logs
             log_messages.extend(ts_results.logs)
         else:
-            utils.log_status("Timeseries results are up-to-date. Skipping timeseries processing.", log_messages, level="skip")
-
+            utils.log_status(
+                "Timeseries results are up-to-date. Skipping timeseries processing.",
+                log_messages,
+                level="skip"
+            )
 
         # --- 2.5. Backbone Input Excel building phase ---
         # Checking if this step is needed or not

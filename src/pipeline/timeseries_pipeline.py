@@ -1,3 +1,5 @@
+# src/timeseries_pipeline.py
+
 from pathlib import Path
 from dataclasses import dataclass
 import pandas as pd
@@ -12,10 +14,11 @@ from src.GDX_exchange import update_import_timeseries_inc
 
 @dataclass
 class TimeseriesRunResult:
+    """Results from the complete timeseries pipeline execution."""
     secondary_results: dict
     ts_domains: dict[str, list]
-    ts_domain_pairs: set[tuple]
-    logs: str
+    ts_domain_pairs: dict[str, list[tuple]]
+    logs: list[str]
 
 class TimeseriesPipeline:
     """
@@ -95,44 +98,6 @@ class TimeseriesPipeline:
             specs.append(enriched_spec)
 
         return specs, specs_logs
-
-
-
-    def _determine_processors_to_rerun(self, ts_full_rerun: bool) -> set[str]:
-        """
-        Determine which timeseries processors need to be rerun.
-          - Processors are skipped if ``disabled`` is True.
-          - If ``ts_full_rerun`` is True, all enabled processors are marked for rerun.
-          - Otherwise, enabled processors are rerun only if their current code hash
-            differs from the stored hash in the cache.
-
-        Parameters
-        ----------
-        ts_full_rerun : bool
-            If True, force rerun of all enabled processors regardless of code changes.
-
-        Returns
-        -------
-        set[str]
-            Set of processor ``human_name`` identifiers that should be rerun.
-        """
-        rerun: set[str] = set()
-        processor_hashes: dict[str, str] = self.cache_manager.load_processor_hashes()
-
-        for processor in self.processors:
-            if processor.get("disabled", False):
-                continue  # Skip disabled processors
-
-            human_name: str = processor["human_name"]
-            name: str = processor["name"]
-            path = Path(processor["file"])
-            current_hash: str = compute_processor_code_hash(path)
-
-            if ts_full_rerun or processor_hashes.get(name) != current_hash:
-                rerun.add(human_name)
-
-        return rerun
-
 
 
     def _create_other_demands(
@@ -229,7 +194,47 @@ class TimeseriesPipeline:
 
         return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
  
-
+    def _get_unprocessed_demand_grids(self) -> set[str]:
+        """
+        Identify demand grids that aren't covered by explicit processors.
+        
+        Returns:
+            Set of lowercased grid names that need default timeseries generation
+        """
+        # Get all demand grids from annual demands
+        if (self.df_annual_demands is None 
+            or self.df_annual_demands.empty 
+            or "grid" not in self.df_annual_demands):
+            return set()
+        
+        all_demand_grids = set(
+            self.df_annual_demands["grid"]
+            .dropna()
+            .astype(str)
+            .str.lower()
+            .unique()
+        )
+        
+        # Get grids processed by enabled processors
+        timeseries_specs = self.config.get("timeseries_specs", {})
+        disable_all = self.config.get('disable_all_ts_processors', False)
+        
+        processed_grids = set()
+        for spec in timeseries_specs.values():
+            demand_grid = spec.get("demand_grid", "").lower()
+            if not demand_grid:
+                continue
+            
+            is_disabled = spec.get("disabled", False) or disable_all
+            should_reserve = spec.get("reserve_grid_when_disabled", True)
+            
+            # Grid is "processed" if either:
+            # 1. Processor is enabled, OR
+            # 2. Processor is disabled but reserves the grid
+            if not is_disabled or (is_disabled and should_reserve):
+                processed_grids.add(demand_grid)
+        
+        return all_demand_grids - processed_grids
 
 
     def run(self) -> TimeseriesRunResult:
@@ -238,28 +243,23 @@ class TimeseriesPipeline:
 
         Workflow
         --------
-        1. **Initialization**
+        1. Initialization
            - If a full rerun is requested, remove any existing
              ``import_timeseries.inc`` file.
            - Log the start of timeseries processing.
 
-        2. **Determine processors to rerun**
+        2. Determine processors to rerun
            - Check if user has disabled all timeseries processors. If not,
-           - Compare processor specifications and cached code hashes.
-           - Collect all processors that need rerun due to:
-             * global full rerun,
-             * changed configuration, or
-             * changed processor code.
-           - Check that single timeseries processor is not disabled
+           - Build a set of processors to run
 
-        3. **Run selected processors**
+        3. Run selected processors
            - For each processor to rerun:
              * Execute it with :class:`ProcessorRunner`.
              * Collect secondary results, timeseries domains,
                domain pairs, and logs.
              * Normalize outputs to avoid type inconsistencies.
 
-        4. **Process unhandled demands**
+        4. Process other demands
            - Check that user has not disable other demand timeseries
            - Identify demand grids present in ``df_annual_demands`` but not
              covered by explicit processors.
@@ -268,7 +268,7 @@ class TimeseriesPipeline:
            - Write optional CSV/GDX outputs and update
              ``import_timeseries.inc``.
 
-        5. **Cache management**
+        5. Cache management
            - Merge newly discovered domains and domain pairs into cache.
            - Reload merged results from cache for consistency.
            - Optionally reload secondary results from cache if
@@ -287,48 +287,59 @@ class TimeseriesPipeline:
               * ``logs`` : list[str]  
                 Aggregated log messages from the entire run.
         """
-        # --- 1. **Initialization** ---
+        # --- 1. Initialization ---
         # If full rerun, remove import_timeseries.inc
         if self.cache_manager.full_rerun:
             p = Path(self.output_folder) / "import_timeseries.inc"
             p.unlink(missing_ok=True)
 
-        # --- 2. **Determine processors to rerun** ---
-        log_status("Checking the status of timeseries processors", self.logs, level="run", add_empty_line_before=True)
+        # --- 2. Determine processors to run ---
+        log_status(
+            "Checking the status of timeseries processors",
+            self.logs,
+            level="run",
+            add_empty_line_before=True
+        )
 
-        # Check is user has disabled all timeseries processors
-        disable_all_ts_processors: bool = self.config.get('disable_all_ts_processors', False)
+        # Check if user has disabled all timeseries processors
+        disable_all_ts_processors = self.config.get('disable_all_ts_processors', False)
         if disable_all_ts_processors:
-            log_status("User has disabled all timeseries processors in the config file", self.logs, level="info", add_empty_line_before=True)
+            log_status(
+                "User has disabled all timeseries processors in the config file",
+                self.logs,
+                level="info",
+                add_empty_line_before=True
+            )
 
+        # Build set of processors to run
         processors_to_rerun = set()
         if not disable_all_ts_processors:
-            # Loading processor specs, storing logged messages        
+            # Load processor specs
             self.processors, specs_logs = self._load_all_processor_specs()
             self.logs.extend(specs_logs)
 
-            # Get processors marked as changed by config
-            spec_changes = self.cache_manager.timeseries_changed
-
-            # Get processors marked for rerun based on code change
-            code_reruns = self._determine_processors_to_rerun(self.cache_manager.full_rerun)
-
-            # Merge rerun set by human_name
+            # Get processors marked for rerun by cache manager
+            # (includes config changes, code changes, and full rerun flag)
             for proc in self.processors:
                 human_name = proc["human_name"]
-                if self.cache_manager.full_rerun or spec_changes.get(human_name, False) or human_name in code_reruns:
-                    if not proc.get('disabled', False):
-                        processors_to_rerun.add(human_name)
-            
-        # --- 3. **Run selected processors** ---
-        # Print processors that will be rerun
+                is_disabled = proc.get('disabled', False)
+                needs_rerun = (
+                    self.cache_manager.full_rerun 
+                    or self.cache_manager.timeseries_changed.get(human_name, False)
+                )
+
+                if needs_rerun and not is_disabled:
+                    processors_to_rerun.add(human_name)
+
+        # Log what will run
         log_status(
-            f"{len(processors_to_rerun)} timeseries processors needs to be run: {', '.join(processors_to_rerun)}",
+            f"{len(processors_to_rerun)} timeseries processor(s) need to be run: "
+            f"{', '.join(sorted(processors_to_rerun)) if processors_to_rerun else 'none'}",
             self.logs,
             level="info"
         )
-
-        # Initialize dictionaries for domains and domain pairs from timeseries processing
+            
+        # --- 3. Run selected processors ---
         all_ts_domains = {}
         all_ts_domain_pairs = {}
 
@@ -346,77 +357,36 @@ class TimeseriesPipeline:
                     cache_manager=self.cache_manager
                 )
                 log_status(f"Running: {processor['name']}", self.logs, level="run", add_empty_line_before=True)
-                name, secondary_result, ts_domains, ts_domain_pairs, processor_log = runner.run()
 
-                # --- Normalize outputs from runner so merges don't explode ---
-                # ts_domains: expect dict[str, Iterable]
-                if not ts_domains:
-                    ts_domains = {}
-                elif not isinstance(ts_domains, dict):
-                    ts_domains = {}
-
-                # ts_domain_pairs: expect dict[str, Iterable[tuple]]
-                if not ts_domain_pairs:
-                    ts_domain_pairs = {}
-                elif not isinstance(ts_domain_pairs, dict):
-                    # Legacy or accidental set/other types → discard for safety
-                    ts_domain_pairs = {}
-
-                # processor_log: expect list[str]
-                if not processor_log:
-                    processor_log = []
-                elif isinstance(processor_log, str):
-                    processor_log = [processor_log]
-
-                # --- process outputs ---
-                self.secondary_results[name] = secondary_result
-
-                for dom, vals in ts_domains.items():
+                # Get structured result
+                result = runner.run()
+    
+                # Process outputs - much cleaner!
+                self.secondary_results[result.processor_name] = result.secondary_result
+    
+                for dom, vals in result.ts_domains.items():
                     all_ts_domains.setdefault(dom, set()).update(vals)
-
-                for pair_key, tuples in ts_domain_pairs.items():
+    
+                for pair_key, tuples in result.ts_domain_pairs.items():
                     all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
+    
+                self.logs.extend(result.log_messages)
 
-                self.logs.extend(processor_log)
 
-
-        # --- 4. **Process unhandled demands** ---
+        # --- 4. Process Other Demands ---
         log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
             
-        # --- Process Other Demands Not Yet Processed 
-        all_demand_grids = set()
         disable_other_demand_ts = self.config.get('disable_other_demand_ts', False)
         if disable_other_demand_ts:
             log_status("User has disabled all 'other demand' timeseries in the config file.", self.logs, level="info", add_empty_line_before=True)
 
         if not disable_other_demand_ts:
-            if self.df_annual_demands is not None and not self.df_annual_demands.empty and "grid" in self.df_annual_demands:
-                # pick unique demand grids while dropping NaN, converting to string, and converting to lower case.
-                all_demand_grids = set(self.df_annual_demands["grid"].dropna().astype(str).str.lower().unique())
-
-            specs_cfg: dict = self.config.get("timeseries_specs", {})
-
-            processed_from_enabled = {
-                (spec.get("demand_grid") or "").lower()
-                for spec in specs_cfg.values()
-                if spec.get("demand_grid") and not spec.get("disabled", False) and not disable_all_ts_processors
-            }
-
-            reserved_from_disabled = {
-                (spec.get("demand_grid") or "").lower()
-                for spec in specs_cfg.values()
-                if spec.get("demand_grid")
-                and (spec.get("disabled", False) or disable_all_ts_processors)
-                and spec.get("reserve_grid_when_disabled", True)
-            }
-
-            processed_demand_grids = (processed_from_enabled | reserved_from_disabled) - {""}
-            unprocessed_grids = all_demand_grids - processed_demand_grids
+            unprocessed_grids = self._get_unprocessed_demand_grids()
 
             if unprocessed_grids:
                 log_status("Processing other demands", self.logs, level="run")
-                for g in unprocessed_grids:
-                    log_status(f" .. {g}", self.logs, level="None")
+                for grid in sorted(unprocessed_grids):
+                    log_status(f" .. {grid}", self.logs, level="None")
 
                 # Create timeseries for other demands
                 df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
@@ -440,21 +410,23 @@ class TimeseriesPipeline:
                 update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
 
-        # --- 5. **Cache management** ---
+        # --- 5. Cache management ---
 
-        # merge all_ts_domains to the ones in cache, load the merged dictionary
+        # Merge domain data into cache
         self.cache_manager.merge_dict_to_cache(all_ts_domains, "all_ts_domains.json")
         all_ts_domains = self.cache_manager.load_dict_from_cache("all_ts_domains.json")
-        # merge all_ts_domain_pairs to the ones in cache, load the merged dictionary
+
         self.cache_manager.merge_dict_to_cache(all_ts_domain_pairs, "all_ts_domain_pairs.json")        
         all_ts_domain_pairs = self.cache_manager.load_dict_from_cache("all_ts_domain_pairs.json")
 
-        # Populating self.secondary_results if rebuilding bb excel
+        # Load all secondary results (from both current run and cache)
+        # If we're rebuilding BB Excel, we need ALL secondary results, not just from this run
         if self.cache_manager.rebuild_bb_excel:
-            log_status("Loading secondary results from cache.", self.logs, level="run")
-            self.secondary_results = self.cache_manager.load_all_secondary_results()
-        else:
-            self.secondary_results = {}
+            log_status("Loading all secondary results from cache.", self.logs, level="run")
+            all_secondary_results = self.cache_manager.load_all_secondary_results()
+            # Merge with results from current run (current run takes precedence)
+            all_secondary_results.update(self.secondary_results)
+            self.secondary_results = all_secondary_results
 
         # Returning TimeseriesRunResult dataclass
         return TimeseriesRunResult(

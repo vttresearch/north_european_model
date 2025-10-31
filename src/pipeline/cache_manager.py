@@ -1,3 +1,5 @@
+# src/cache_manager.py
+
 import json
 from pathlib import Path
 import src.hash_utils as hash_utils
@@ -21,6 +23,27 @@ class CacheManager:
         processor_hash_file (Path): Path to store hashes of processor modules.
         secondary_results_folder (Path): Directory where secondary results are stored per processor.
     """
+
+    @property
+    def any_timeseries_changed(self) -> bool:
+        """Check if any timeseries processor needs to be rerun."""
+        return any(self.timeseries_changed.values())
+
+    @property
+    def needs_timeseries_run(self) -> bool:
+        """
+        Determine if timeseries pipeline needs to run.
+
+        Returns True if:
+        - Full rerun is requested
+        - Any specific processor has changed
+        - BB Excel needs to be rebuilt (requires ts_domains data)
+        """
+        return (
+            self.full_rerun 
+            or self.any_timeseries_changed
+            or self.rebuild_bb_excel
+        )
 
     def __init__(self, input_folder: Path, output_folder: Path, config: dict):
         """
@@ -177,6 +200,69 @@ class CacheManager:
         json_exchange.save_json(hash_store_path, current_hashes)
 
         return changed
+
+
+    def _validate_processor_code_changes(self, config: dict, log: list[str]):
+        """
+        Check if any timeseries processor code has changed since the last run.
+        Updates self.timeseries_changed for processors with code changes.
+
+        This ensures that processor code changes trigger reruns even when
+        config and input files haven't changed.
+
+        Args:
+            config (dict): Configuration dictionary containing timeseries_specs
+            log (list[str]): Log messages list to append status updates
+        """
+        timeseries_specs = config.get("timeseries_specs", {})
+        if not timeseries_specs:
+            return
+
+        # Load previously stored processor hashes
+        processor_hashes = self.load_processor_hashes()
+
+        processors_base = Path("src/processors")
+        changed_processors = []
+
+        for human_name, spec in timeseries_specs.items():
+            processor_name = spec.get("processor_name")
+            if not processor_name:
+                continue
+            
+            # Skip if already marked for rerun (e.g., by config changes)
+            if self.timeseries_changed.get(human_name, False):
+                continue
+            
+            # Compute current hash
+            processor_file = processors_base / f"{processor_name}.py"
+            if not processor_file.exists():
+                utils.log_status(
+                    f"Warning: Processor file not found: {processor_file}",
+                    log,
+                    level="warn"
+                )
+                continue
+            
+            current_hash = hash_utils.compute_file_hash(processor_file)
+            previous_hash = processor_hashes.get(processor_name)
+
+            # Check if code changed
+            if previous_hash != current_hash:
+                self.timeseries_changed[human_name] = True
+                changed_processors.append(human_name)
+                utils.log_status(
+                    f"Processor '{human_name}' code has changed, marking for rerun.",
+                    log,
+                    level="info"
+                )
+
+        # Summary log if any processors changed
+        if changed_processors and not self.topology_changed and not self.full_rerun:
+            utils.log_status(
+                f"Processor code changes detected: {', '.join(changed_processors)}",
+                log,
+                level="run"
+            )
 
 
     def _validate_input_files(self, config: dict, input_folder: Path, log: list[str]):
@@ -521,6 +607,9 @@ class CacheManager:
                            )
         # checking if specific timeseries need rerunning
         self._validate_timeseries(self.config, self.logs, self.full_rerun, self.demand_files_changed)
+
+        # Check processor code changes (adds to self.timeseries_changed)
+        self._validate_processor_code_changes(self.config, self.logs)
 
         # Checking if source excels should be re-imported
         self.reimport_source_excels = (self.full_rerun

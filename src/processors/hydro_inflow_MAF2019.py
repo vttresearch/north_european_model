@@ -1,10 +1,13 @@
+# src/processors/hydro_inflow_MAF2019.py
+
 import os
 import calendar
 import pandas as pd
 import numpy as np
-from src.utils import log_status
+from src.processors.base_processor import BaseProcessor
 
-class hydro_inflow_MAF2019:
+
+class hydro_inflow_MAF2019(BaseProcessor):
     """
     Class to process hydro inflows (reservoir, pump open cycle, and run-of-river) data.
 
@@ -16,6 +19,9 @@ class hydro_inflow_MAF2019:
     """
 
     def __init__(self, **kwargs_processor):
+        # Initialize base class
+        super().__init__(**kwargs_processor)
+        
         # List of required parameters
         required_params = [
             'input_folder', 
@@ -50,9 +56,6 @@ class hydro_inflow_MAF2019:
         self.inflow1_suffix = '_reservoir'
         self.inflow2_suffix = '_psOpen'
         self.inflow3_suffix = '_ror'
-
-        # Initialize log message list
-        self.processor_log = []
 
     def _process_reservoir_inflows(self, weekly_df):
         """
@@ -135,7 +138,6 @@ class hydro_inflow_MAF2019:
         result_df = result_df.loc[:, result_df.sum() != 0]
         return result_df
 
-
     def _process_ror_inflows(self, daily_df):
         """
         Processes daily run‐of‐river data for each country.
@@ -198,13 +200,18 @@ class hydro_inflow_MAF2019:
         result_df = result_df.loc[:, result_df.sum() != 0]
         return result_df
 
-
-    def run_processor(self):
+    def process(self) -> pd.DataFrame:
         """
         Executes the full processing pipeline: reading input files, processing the inflow data,
-        combining results, and writing the output CSV.
+        and combining results.
+        
+        Returns
+        -------
+        pd.DataFrame
+            Combined DataFrame with reservoir and run-of-river inflow timeseries.
         """
-        log_status("Reading input files...", self.processor_log)
+        self.log("Reading input files...")
+        
         # Read the weekly CSV file and filter by year.
         weekly_df = pd.read_csv(self.file_weekly)
         weekly_df = weekly_df[(weekly_df["year"] >= self.startyear) & (weekly_df["year"] <= self.endyear)]
@@ -217,50 +224,18 @@ class hydro_inflow_MAF2019:
         daily_df["year"] = pd.to_numeric(daily_df["year"])
         daily_df["Day"] = pd.to_numeric(daily_df["Day"])
 
-        log_status("Processing reservoir inflows for all countries...", self.processor_log)
+        self.log("Processing reservoir inflows for all countries...")
         reservoir_all = self._process_reservoir_inflows(weekly_df)
 
-        log_status("Processing run-of-river inflows for all countries...", self.processor_log)
+        self.log("Processing run-of-river inflows for all countries...")
         ror_all = self._process_ror_inflows(daily_df)
 
         # Combine the two DataFrames (they share the same hourly index).
         summary_df = pd.concat([reservoir_all, ror_all], axis=1)
 
-        # Mandatory secondary results
-        secondary_result = None
+        # Set secondary result if needed (None in this case)
+        self.secondary_result = None
 
-        log_status("Inflow time series built.", self.processor_log, level="info")
+        self.log("Inflow time series built.", level="info")
 
-        # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
-        return summary_df, secondary_result, "\n".join(self.processor_log)
-    
-
-# __main__ allows testing by calling this .py file directly. It contains some minimum data tables for testing.
-if __name__ == '__main__':
-    # Define the input parameters.
-    input_folder = os.path.join("..\\inputFiles\\timeseries")
-    output_folder = os.path.join("..\\inputData-test")
-    output_file = os.path.join(output_folder, f'test_hydro_inflow.csv')
-    country_codes = [
-        'FI00', 'NOM1', 'PL00', 'SE01'
-    ]
-    start_date = '1982-01-01 00:00:00'
-    end_date = '2021-01-01 00:00:00'
-
-    kwargs_processor = {'input_folder': input_folder,
-                        'country_codes': country_codes,
-                        'start_date': start_date,
-                        'end_date': end_date
-    }
-
-    # Create an instance of process_inflows and run the processing.
-    processor = hydro_inflow_MAF2019(**kwargs_processor)
-    summary_df = processor.run_processor()
-
-    # Ensure the output directory exists.
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    # Write to a csv.
-    print(f"writing {output_file}")
-    summary_df.to_csv(output_file)
+        return summary_df

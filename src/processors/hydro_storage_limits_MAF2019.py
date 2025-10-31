@@ -1,9 +1,11 @@
+# src/processors/hydro_storage_limits_MAF2019.py
+
 import os
 import pandas as pd
-from src.utils import log_status
+from src.processors.base_processor import BaseProcessor
 
 
-class hydro_storage_limits_MAF2019:
+class hydro_storage_limits_MAF2019(BaseProcessor):
     """
     Class to process reservoir state limits data (reservoir, pump open cycle, pumped closed cycle).
 
@@ -13,14 +15,15 @@ class hydro_storage_limits_MAF2019:
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
         end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
 
-        Returns:
-            tuple or DataFrame: If valid combinations are found, returns a tuple containing:
-                - summary_df: A MultiIndex DataFrame with time series data for each node
-                - ts_hydro_storage_limits_df: A DataFrame listing valid (node, boundary type, average_value) combinations
-              If no valid combinations are found, returns only the summary_df
+    Returns:
+        main_result (pd.DataFrame): A MultiIndex DataFrame with time series data for each node
+        secondary_result (pd.DataFrame): A DataFrame listing valid (node, boundary type, average_value) combinations
     """
 
-    def __init__(self, **kwargs_processor):
+    def __init__(self, **kwargs):
+        # Initialize base class
+        super().__init__(**kwargs)
+        
         # List of required parameters
         required_params = [
             'input_folder', 
@@ -30,15 +33,15 @@ class hydro_storage_limits_MAF2019:
         ]
 
         # Check if all required parameters are present
-        missing_params = [param for param in required_params if param not in kwargs_processor]
+        missing_params = [param for param in required_params if param not in kwargs]
         if missing_params:
             raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
 
         # Unpack parameters
-        self.input_folder = kwargs_processor['input_folder']
-        self.country_codes = kwargs_processor['country_codes']
-        self.start_date = kwargs_processor['start_date']
-        self.end_date = kwargs_processor['end_date']
+        self.input_folder = kwargs['input_folder']
+        self.country_codes = kwargs['country_codes']
+        self.start_date = kwargs['start_date']
+        self.end_date = kwargs['end_date']
 
         # Date range parameters
         self.startyear = pd.to_datetime(self.start_date).year
@@ -63,10 +66,6 @@ class hydro_storage_limits_MAF2019:
         # Input file paths.
         self.levels_file = os.path.join(self.input_folder, 'PECD-hydro-weekly-reservoir-levels.csv')
         self.capacities_file = os.path.join(self.input_folder, 'PECD-hydro-capacities.csv')
-
-        # Initialize log message list
-        self.processor_log = []
-
 
     def fill_weekly_data(self, lowerBound, upperBound, weekly_df, year, end_date,
                          country, suffix, cap_key, lower_col, upper_col, df_capacities):
@@ -99,7 +98,7 @@ class hydro_storage_limits_MAF2019:
         try:
             upperBound[country + suffix] = 1000 * df_capacities.at[cap_key, 'value']
         except Exception as e:
-            log_status(f"{country} has no capacity data for {suffix}", self.processor_log, level="warn")
+            self.log(f"{country} has no capacity data for {suffix}", level="warn")
 
     def merge_bounds(self, lowerBound, upperBound, minvariable, maxvariable):
         """
@@ -192,8 +191,8 @@ class hydro_storage_limits_MAF2019:
                 skiprows=12
             )
         except Exception as e:
-            log_status(f"Error reading Norway input Excel: {e}", self.processor_log, level="warn")
-            return    
+            self.log(f"Error reading Norway input Excel: {e}", level="warn")
+            return None
         
         # Process each year.
         cap_key_psOpen = (country, 'Pump Storage - Open Loop', 'Cumulated (upper or head) reservoir capacity (GWh)')
@@ -211,9 +210,9 @@ class hydro_storage_limits_MAF2019:
         result_df = self.merge_bounds(df_lowerBound, df_upperBound, minvariable, maxvariable)
         return result_df
 
-    def run_processor(self):
+    def process(self) -> pd.DataFrame:
         """
-        Executes the hydro storage data processing pipeline.
+        Main processing logic that executes the hydro storage data processing pipeline.
 
         This function performs the following steps:
         1. Reads and validates reservoir levels data from CSV files
@@ -223,19 +222,16 @@ class hydro_storage_limits_MAF2019:
         5. Creates ts_hydro_storage_limits_df of valid (node, boundary type) combinations
 
         Returns:
-            tuple or DataFrame: If valid combinations are found, returns a tuple containing:
-                - summary_df: A MultiIndex DataFrame with time series data for each node
-                - ts_hydro_storage_limits_df: A DataFrame listing valid (node, boundary type, average_value) combinations
-              If no valid combinations are found, returns only the summary_df
+            pd.DataFrame: A MultiIndex DataFrame with time series data for each node
         """
         # Read the levels CSV file.
         try:
             df_levels = pd.read_csv(self.levels_file)
         except Exception as e:
-            log_status(f"Error reading input CSV file: {e}", self.processor_log, level="warn")
-            return
+            self.log(f"Error reading input CSV file: {e}", level="warn")
+            return pd.DataFrame()
 
-        log_status(f"Processing input files...", self.processor_log, level="info")
+        self.log("Processing input files...")
 
         # Filter data by year range
         df_levels = df_levels[(df_levels["year"] >= self.startyear) & (df_levels["year"] <= self.endyear)]
@@ -246,8 +242,8 @@ class hydro_storage_limits_MAF2019:
         try:
             df_capacities = pd.read_csv(self.capacities_file)
         except Exception as e:
-            log_status(f"Error reading capacity CSV file: {e}", self.processor_log, level="warn")
-            return
+            self.log(f"Error reading capacity CSV file: {e}", level="warn")
+            return pd.DataFrame()
         df_capacities = df_capacities.set_index(["zone", "type", "variable"])
 
         # Create a summary DataFrame with a MultiIndex (time, param_gnBoundaryTypes).
@@ -258,8 +254,8 @@ class hydro_storage_limits_MAF2019:
         )
         summary_df = pd.DataFrame(index=idx)
 
-
-        log_status("Building country level timeseries...", self.processor_log, level="info")
+        self.log("Building country level timeseries...")
+        
         # Process each country.
         for country in self.country_codes:
             if country in self.norway_codes:
@@ -317,49 +313,10 @@ class hydro_storage_limits_MAF2019:
             columns=['node', 'param_gnBoundaryTypes', 'average_value']
         )
 
-        log_status("Hydro storage limit time series built.", self.processor_log, level="info")
+        # Store secondary result
+        self.secondary_result = ts_hydro_storage_limits
 
-        return summary_df, ts_hydro_storage_limits, "\n".join(self.processor_log)
+        self.log("Hydro storage limit time series built.")
 
-
-
-
-# Example usage:
-if __name__ == '__main__':
-    input_folder = os.path.join("..\\inputFiles\\timeseries")
-    output_folder = os.path.join("..\\inputData-test")
-    output_file = os.path.join(output_folder, f'test_hydro_reservoir_limits.csv')
-    country_codes = [
-        'AT00', 'BE00', 'CH00', 'DE00', 'DKW1', 'DKE1', 'EE00', 'ES00',
-        'FI00', 'FR00', 'UK00', 'LT00', 'LV00', 'NL00', 'NOS0', 'NOM1',
-        'NON1', 'PL00', 'SE01', 'SE02', 'SE03', 'SE04'
-    ]
-    start_date = '2015-01-01 00:00:00'
-    end_date = '2015-12-31 23:00:00'
-
-    kwargs_processor = {'input_folder': input_folder,
-                        'country_codes': country_codes,
-                        'start_date': start_date,
-                        'end_date': end_date,
-                        'scenario_year': scenario_year, 
-                        'df_annual_demands': df_annual_demands
-    }
-
-    processor = hydro_storage_limits_MAF2019(**kwargs_processor)
-    result = processor.run_processor()
-
-    # Handle an optional second DataFrame and possible no result
-    if isinstance(result, tuple) and len(result) == 2:
-        summary_df, df_optional = result
-    elif result is None:
-        print(f"processor did not return any DataFrame.")
-    else:
-        summary_df = result 
-
-    # Ensure the output directory exists.
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    # Write to a csv.
-    print(f"writing {output_file}")
-    summary_df.to_csv(output_file)
+        # Return the main result DataFrame
+        return summary_df
