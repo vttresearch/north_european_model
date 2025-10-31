@@ -274,9 +274,19 @@ class CacheManager:
             config (dict): Parsed configuration dictionary.
             input_folder (Path): Folder containing all input excel files.
         """
-        prev_input_hashes = json_exchange.load_json(self.input_data_hash_file)
-        category_status = {}
+        # Load previous hashes with error handling
+        try:
+            prev_input_hashes = json_exchange.load_json(self.input_data_hash_file)
+        except FileNotFoundError:
+            utils.log_status("No previous hash file found, treating all files as new.", 
+                            log, level="info")
+            prev_input_hashes = {}
+        except Exception as e:
+            utils.log_status(f"Error loading hash file: {e}. Treating all files as changed.", 
+                            log, level="warning")
+            prev_input_hashes = {}
 
+        category_status = {}
         all_hashes_to_save = {}
 
         for category in [
@@ -285,7 +295,32 @@ class CacheManager:
             "unitdata_files", "storagedata_files", "userconstraint_files"
         ]:
             current_files = config.get(category, [])
-            current_hashes = {f: hash_utils.compute_file_hash(input_folder / f) for f in current_files}
+            current_hashes = {}
+
+            # Compute hashes with error handling for each file
+            for f in current_files:
+                if f == '':
+                    utils.log_status(f"File name cannot be '', check config file", 
+                                   log, level="error")
+                    continue
+                file_path = input_folder / f
+
+                if not file_path.exists():
+                    utils.log_status(f"File does not exist: {file_path}", 
+                                   log, level="error")
+                    continue
+
+                try:
+                    current_hashes[f] = hash_utils.compute_file_hash(file_path)
+                except PermissionError:
+                    utils.log_status(f"Permission denied reading file: {file_path}", 
+                                   log, level="error")
+                    continue
+                except Exception as e:
+                    utils.log_status(f"Error computing hash for {file_path}: {e}", 
+                                   log, level="error")
+                    continue
+
             prev_hashes = prev_input_hashes.get(category, {})
 
             changed = (
@@ -300,11 +335,15 @@ class CacheManager:
                 utils.log_status(f"Input data files changed in category '{category}', rerunning necessary steps.", 
                            log, level="run")
 
-        # Save all current hashes
-        json_exchange.save_json(self.input_data_hash_file, all_hashes_to_save)
+        # Save all current hashes with error handling
+        try:
+            json_exchange.save_json(self.input_data_hash_file, all_hashes_to_save)
+        except Exception as e:
+            utils.log_status(f"Warning: Could not save hash file: {e}", 
+                            log, level="warning")
 
         # Check flags used in the main logic
-        self.demand_files_changed = category_status['demanddata_files']
+        self.demand_files_changed = category_status.get('demanddata_files', False)
         self.other_input_files_changed = any(
             changed for key, changed in category_status.items() if key != 'demanddata_files'
         )
