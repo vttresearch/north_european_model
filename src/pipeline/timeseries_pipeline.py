@@ -7,7 +7,6 @@ from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_processor import ProcessorRunner
 from src.utils import log_status
-from src.hash_utils import compute_processor_code_hash
 from src.utils import collect_domains, collect_domain_pairs
 from gdxpds import to_gdx
 from src.GDX_exchange import update_import_timeseries_inc

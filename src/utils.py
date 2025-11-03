@@ -40,6 +40,7 @@ def log_status(message: str,
                level: str = "none", 
                section_start_length: int = 0, 
                add_empty_line_before: bool = False, 
+               add_empty_line_after: bool = False, 
                print_to_screen: bool = True):
     """
     Logs a formatted status message with emoji prefix and optional console print.
@@ -53,6 +54,7 @@ def log_status(message: str,
         section_start_length (int): If larger than zero, format message as a section header with the min length of section_start_length
         print_now (bool): Whether to print the message immediately.
         add_empty_line_before (bool): If empty line is printed before the line
+        add_empty_line_efter (bool): If empty line is printed after the line
     """
     prefix = {
         "info": "✓",
@@ -75,12 +77,17 @@ def log_status(message: str,
     else:
         start = ""
 
+    if add_empty_line_after:
+        end = "\n"
+    else:
+        end = ""
+
     if section_start_length > 0:
-        base = f"{start}---  {prefix} {elapsed_prefix} {message} "
+        base = f"{start}---  {prefix} {elapsed_prefix} {message}{end} "
         padding_length = max(section_start_length, len(base))
         formatted = base + "-" * (padding_length - len(base))
     else:
-        formatted = f"{start}{prefix} {elapsed_prefix}{message}"
+        formatted = f"{start}{prefix} {elapsed_prefix}{message}{end}"
 
     log.append(formatted)
 

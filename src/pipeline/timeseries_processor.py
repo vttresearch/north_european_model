@@ -6,7 +6,7 @@ from pathlib import Path
 import importlib.util
 import pandas as pd
 from src.utils import log_status
-from src.hash_utils import compute_processor_code_hash
+from src.hash_utils import compute_file_hash
 from src.utils import trim_df, collect_domains, collect_domain_pairs
 from src.GDX_exchange import (
     prepare_BB_df,
@@ -88,7 +88,7 @@ class ProcessorRunner:
         here to ensure we only mark processors as "up-to-date" after they've 
         actually executed successfully.
         """
-        hash_value = compute_processor_code_hash(processor_file)
+        hash_value = compute_file_hash(processor_file)
         self.cache_manager.save_processor_hash(processor_name, hash_value)
 
     def _write_csv_output(

@@ -95,11 +95,10 @@ def main(input_folder: Path, config_file: Path):
 
             # If there were any, log once and delete them
             if files:
-                utils.log_status(f"Clearing {len(files)} files from the output folder: {output_folder}, keeping subfolders and their files.",
-                           log_messages, level="info")
                 for f in files:
                     f.unlink(missing_ok=True)
-
+                utils.log_status(f"Cleared {len(files)} files from the output folder: {output_folder}, kept subfolders and their files.",
+                           log_messages, level="done", add_empty_line_before=True)
 
         # --- 2.3. Input data phase ---
         # Initialize source excel pipeline
