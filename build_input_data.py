@@ -55,6 +55,7 @@ def main(input_folder: Path, config_file: Path):
         log_messages = []
 
         # Printing the (scenario, year, alternative) combination and storing them to scenario_tags
+        
         if alternative != "":
             utils.log_status(f"{scenario}, {year}, {alternative}", log_messages, section_start_length=70, add_empty_line_before=True)      
             scen_tags = [scenario, str(year), alternative]  
@@ -168,12 +169,14 @@ def main(input_folder: Path, config_file: Path):
                 config=config,
                 cache_manager=cache_manager,
                 source_data=source_excel_data_pipeline,
-                ts_results=ts_results  # ← Single object
+                ts_results=ts_results
             )  
 
             builder = BuildInputExcel(excel_context)
-            builder_logs, bb_excel_succesfully_built = builder.run()
-            log_messages.extend(builder_logs)
+            builder.run()
+            log_messages.extend(builder.builder_logs)
+            bb_excel_succesfully_built = builder.bb_excel_succesfully_built
+
         else:
             utils.log_status("Backbone input excel is up-to-date. Skipping build phase.", log_messages, level="skip")
             # Flagging bb excel succesfully built to pass checks at the end

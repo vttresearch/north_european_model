@@ -13,11 +13,7 @@ class BuildInputExcel:
         self.scen_tags = context.scen_tags
         self.config = context.config
         self.country_codes = self.config.get("country_codes", [])
-        
-        # Pipeline components
 
-
-        
         # From InputDataPipeline
         self.source_data = context.source_data
         # Global
@@ -45,7 +41,6 @@ class BuildInputExcel:
             for key, value in self.ts_results.secondary_results.items() 
             if key.startswith("ts_storage_limits")
         }
-        
         mingen_vars = {
             key: value 
             for key, value in self.ts_results.secondary_results.items() 
@@ -1903,5 +1898,3 @@ class BuildInputExcel:
 
         utils.log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
         self.bb_excel_succesfully_built = True
-
-        return self.builder_logs, self.bb_excel_succesfully_built
