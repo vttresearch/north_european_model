@@ -112,7 +112,6 @@ def read_input_excels(
 
             if row_is_empty.any():
                 first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
-                dropped_rows = len(df) - first_empty_pos
                 df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
 
             # Optionally add provenance columns

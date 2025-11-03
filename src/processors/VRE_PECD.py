@@ -1,13 +1,15 @@
+# src/processors/VRE_PECD.py
+
 from datetime import datetime
 import re
 import os
 import glob
 import pandas as pd
 import numpy as np
-from src.utils import log_status
+from src.processors.base_processor import BaseProcessor
 
 
-class VRE_PECD:
+class VRE_PECD(BaseProcessor):
     """
     Class to process capacity factor data from CSV files, adjust date indexing,
     and compile a time series DataFrame for a specified date range.
@@ -21,13 +23,14 @@ class VRE_PECD:
         attached_grid (str): Suffix to append to country codes in output columns.
 
     Returns:
-    --------
-    pandas.DataFrame or None
-        DataFrame with processed time series data indexed by datetime,
-        or None if the input folder or CSV files are not found.
+        main_result (pd.DataFrame): DataFrame with processed time series data indexed by datetime
+        secondary_result: None (not used for this processor)
     """
 
-    def __init__(self, **kwargs_processor):
+    def __init__(self, **kwargs):
+        # Initialize base class
+        super().__init__(**kwargs)
+        
         # List of required parameters
         required_params = [
             'input_folder',
@@ -39,46 +42,41 @@ class VRE_PECD:
         ]
 
         # Check if all required parameters are present
-        missing_params = [param for param in required_params if param not in kwargs_processor]
+        missing_params = [param for param in required_params if param not in kwargs]
         if missing_params:
             raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
 
         # Unpack required parameters
         for param in required_params:
-            setattr(self, param, kwargs_processor.get(param))
-            
-        # Initialize log message list
-        self.processor_log = []
+            setattr(self, param, kwargs.get(param))
 
-
-    def run_processor(self):
+    def process(self) -> pd.DataFrame:
         """
-        Process input CSV files by reading, filtering, and compiling them into a single DataFrame.
+        Main processing logic that reads, filters, and compiles CSV files into a single DataFrame.
 
         This method checks that the CSV folder exists and contains CSV files; if not,
-        it prints a warning and returns None. Otherwise, it calls the internal method
+        it logs a warning and returns an empty DataFrame. Otherwise, it calls the internal method
         to read and compile the CSV files and renames the country columns with the attached grid suffix.
 
         Returns:
-            pandas.DataFrame
-                DataFrame indexed by the full date range (from start_date to end_date, hourly)
-                containing columns only for the specified countries with capacity factor values.
+            pd.DataFrame: DataFrame indexed by the full date range (from start_date to end_date, hourly)
+                         containing columns only for the specified countries with capacity factor values.
         """
         # Create the full path to the CSV folder
         self.csv_folder = os.path.join(self.input_folder, self.input_file)
 
         # Check if the folder exists
         if not os.path.isdir(self.csv_folder):
-            log_status(f"The folder {self.csv_folder} does not exist.", self.processor_log, level="warn")
-            return None
+            self.log(f"The folder {self.csv_folder} does not exist.", level="warn")
+            return pd.DataFrame()
 
         # Check that the folder contains at least one CSV file
         csv_files = glob.glob(os.path.join(self.csv_folder, "*.csv"))
         if not csv_files:
-            log_status(f"No CSV files found in {self.csv_folder}.", self.processor_log, level="warn")
-            return None
+            self.log(f"No CSV files found in {self.csv_folder}.", level="warn")
+            return pd.DataFrame()
 
-        log_status(f"Processing input data in {self.csv_folder}...", self.processor_log, level="info")
+        self.log(f"Processing input data in {self.csv_folder}...")
        
         # Extract and compile data using the split methods
         summary_df = self._read_and_compile_input_CSVs(
@@ -91,15 +89,13 @@ class VRE_PECD:
                 new_col = f"{country}_{self.attached_grid}"
                 summary_df.rename(columns={country: new_col}, inplace=True)
 
-        # Mandatory secondary results
-        secondary_result = None
+        # Secondary result is None for this processor
+        self.secondary_result = None
 
-        log_status("Time series built.", self.processor_log, level="info")
+        self.log("Time series built.")
 
-        # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
-        return summary_df, secondary_result, "\n".join(self.processor_log)
+        return summary_df
     
-
     def _filter_csv_files(self, csv_folder, start_date, end_date):
         """
         Scan the folder for CSV files and filter them based on the date
@@ -190,10 +186,10 @@ class VRE_PECD:
         Parameters:
             file (str): Path to the CSV file.
             country_code_mapping (dict): Mapping from country code to CSV column name.
-            master_index (pandas.Index): The complete date range index.
+            master_index (pd.Index): The complete date range index.
 
         Returns:
-            pandas.DataFrame or None: Processed DataFrame for the CSV file, or None if errors occur.
+            pd.DataFrame or None: Processed DataFrame for the CSV file, or None if errors occur.
         """
         header_row = 0
         with open(file, 'r') as f:
@@ -205,11 +201,11 @@ class VRE_PECD:
         try:
             df_csv = pd.read_csv(file, skiprows=header_row)
         except Exception as e:
-            log_status(f"Error reading file {file}: {e}", self.processor_log, level="warn")
+            self.log(f"Error reading file {file}: {e}", level="warn")
             return None
 
         if 'Date' not in df_csv.columns:
-            log_status(f"File {file} does not have a 'Date' column. Skipping the file.", self.processor_log, level="warn")
+            self.log(f"File {file} does not have a 'Date' column. Skipping the file.", level="warn")
             return None
 
         df_csv['Date'] = pd.to_datetime(df_csv['Date'])
@@ -242,7 +238,7 @@ class VRE_PECD:
             end_date (str or datetime): End date for the complete date range.
 
         Returns:
-            pandas.DataFrame: DataFrame indexed by the master date range containing the compiled data.
+            pd.DataFrame: DataFrame indexed by the master date range containing the compiled data.
         """
         # Create the complete date range as master index
         date_range = pd.date_range(start=start_date, end=end_date, freq='60min')
@@ -257,10 +253,10 @@ class VRE_PECD:
         # Filter CSV files based on date from their filenames
         filtered_files = self._filter_csv_files(csv_folder, start_date, end_date)
         csv_files = glob.glob(os.path.join(csv_folder, "*.csv"))
-        log_status(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...", self.processor_log)
+        self.log(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...")
 
         if not filtered_files:
-            log_status("No valid CSV files found after filtering.", self.processor_log, level="warn")
+            self.log("No valid CSV files found after filtering.", level="warn")
             return df_csv_summary
 
         # Process country code mapping using the first valid CSV file
@@ -274,24 +270,24 @@ class VRE_PECD:
         try:
             df_first = pd.read_csv(first_file, skiprows=header_row)
         except Exception as e:
-            log_status(f"Error reading the first file {first_file} for mapping: {e}", self.processor_log, level="warn")
+            self.log(f"Error reading the first file {first_file} for mapping: {e}", level="warn")
             return df_csv_summary
 
         if 'Date' not in df_first.columns:
-            log_status(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", self.processor_log, level="warn")
+            self.log(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", level="warn")
             return df_csv_summary
 
         country_code_mapping = self._process_country_code_mapping(df_first.columns, country_codes)
 
         if not country_code_mapping:
-            log_status("No country code mappings found.", self.processor_log, level="warn")
+            self.log("No country code mappings found.", level="warn")
 
         # Extract only those mappings where the country code differs from the column name
         alternative_mappings = {code: col for code, col in country_code_mapping.items() if code != col}      
         if alternative_mappings:
-            log_status("Alternative country code mappings used:", self.processor_log, level="info")
+            self.log("Alternative country code mappings used:")
             for country_code, col in alternative_mappings.items():
-                log_status(f"   {country_code}: {col}", self.processor_log)
+                self.log(f"   {country_code}: {col}")
 
         # Process each filtered CSV file and update the master DataFrame
         for file in filtered_files:
@@ -304,26 +300,3 @@ class VRE_PECD:
                 df_csv_summary.loc[df_temp.index, col] = df_temp[col]
 
         return df_csv_summary
-
-
-# __main__ allows testing by calling this .py file directly.
-if __name__ == "__main__":
-    # Define parameters needed by the class
-    params = {
-        'input_folder': '../src_files/timeseries',
-        # Change the input_file value based on the folder for PECD data.
-        #'input_file': 'PECD-PV',
-        #'input_file': 'PECD-onshore',
-        'input_file': 'PECD-offshore',
-        'country_codes': ['FI00', 'EE00', 'SE04'],  # example country codes
-        'start_date': '2000-01-01 00:00:00',
-        'end_date': '2009-12-31 23:00:00',
-        'attached_grid': 'elec'
-    }
-
-    # Create an instance and run the processing method
-    processor = VRE_PECD(**params)
-    result_df = processor.run_processor()
-
-    if result_df is not None:
-        print(result_df.head())

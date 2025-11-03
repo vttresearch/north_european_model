@@ -40,6 +40,7 @@ def log_status(message: str,
                level: str = "none", 
                section_start_length: int = 0, 
                add_empty_line_before: bool = False, 
+               add_empty_line_after: bool = False, 
                print_to_screen: bool = True):
     """
     Logs a formatted status message with emoji prefix and optional console print.
@@ -53,6 +54,7 @@ def log_status(message: str,
         section_start_length (int): If larger than zero, format message as a section header with the min length of section_start_length
         print_now (bool): Whether to print the message immediately.
         add_empty_line_before (bool): If empty line is printed before the line
+        add_empty_line_efter (bool): If empty line is printed after the line
     """
     prefix = {
         "info": "✓",
@@ -75,12 +77,17 @@ def log_status(message: str,
     else:
         start = ""
 
+    if add_empty_line_after:
+        end = "\n"
+    else:
+        end = ""
+
     if section_start_length > 0:
-        base = f"{start}---  {prefix} {elapsed_prefix} {message} "
+        base = f"{start}---  {prefix} {elapsed_prefix} {message}{end} "
         padding_length = max(section_start_length, len(base))
         formatted = base + "-" * (padding_length - len(base))
     else:
-        formatted = f"{start}{prefix} {elapsed_prefix}{message}"
+        formatted = f"{start}{prefix} {elapsed_prefix}{message}{end}"
 
     log.append(formatted)
 
@@ -126,28 +133,55 @@ def parse_sys_args():
 
 def check_dependencies():
     """
-    Checks that Python ≥ 3.12 and pandas ≥ 2.2 are available.
-    Prints warnings if either requirement is not met.
+    Verifies required dependencies.
+        - Python ≥ 3.12
+        - pandas ≥ 2.2
+        - gdxpds with accessible to_gdx
+        - gams.transfer importable
+        - gams executable accessible in PATH        
+
+    Raises RuntimeError if any requirement is not met.
     """
+    import importlib
+
+    errors = []
+
     # 1) Check Python version
     py_major, py_minor = sys.version_info[:2]
     if (py_major, py_minor) < (3, 12):
-        print(f"Warning: Detected Python {py_major}.{py_minor}. "
-              "This code is tested on Python 3.12+. "
-              "You may experience issues on older versions.")
+        errors.append(f"Python {py_major}.{py_minor} detected (requires ≥3.12)")
 
     # 2) Check pandas version
     try:
-        # split off any pre-release tags, take major/minor
-        ver_parts = pd.__version__.split('.')
-        pd_major, pd_minor = map(int, ver_parts[:2])
+        import pandas as pd
+        pd_major, pd_minor = map(int, pd.__version__.split('.')[:2])
         if (pd_major, pd_minor) < (2, 2):
-            print(f"Warning: Detected pandas {pd_major}.{pd_minor}. "
-                  "This code is tested on pandas 2.2+. "
-                  "You may experience issues on older versions.")
+            errors.append(f"pandas {pd_major}.{pd_minor} detected (requires ≥2.2)")
     except ImportError:
-        print("Warning: pandas is not installed. "
-              "Please install pandas ≥ 2.2 to ensure full functionality.")    
+        errors.append("pandas not installed")  
+
+    # 3) Check gdxpds availability
+    try:
+        gdxpds = importlib.import_module("gdxpds")
+    except ImportError:
+        errors.append("gdxpds not installed")
+
+    # 4) Check gams.transfer importability
+    try:
+        importlib.import_module("gams.transfer")
+    except ImportError:
+        errors.append("gams.transfer not importable (GAMS Python API missing)")
+
+    # 5) Check gams executable availability in PATH
+    gams_exec = shutil.which("gams") or shutil.which("gams.exe")
+    if gams_exec is None:
+        errors.append("GAMS not found in PATH")
+
+    # Final decision
+    if errors:
+        msg = "Dependency check failed:\n  - " + "\n  - ".join(errors)
+        raise RuntimeError(msg)
+
 
 
 def trim_df(df, round_precision=0):
@@ -167,6 +201,95 @@ def trim_df(df, round_precision=0):
     # Convert dtypes (so that e.g. rounding to 0 decimals gives integers)
     df = df.convert_dtypes()
 
+    return df
+
+
+def standardize_df_dtypes(
+    df: pd.DataFrame,
+    *,
+    convert_numeric: bool = False,
+    fill_numeric_na: bool = False,
+    treat_nan_string_as_na: bool = True,
+) -> pd.DataFrame:
+    """
+    Standardize DataFrame column dtypes to a consistent set:
+    - Empty columns (all NA) → object
+    - Numeric columns → Float64
+    - Everything else → object
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame to standardize
+    convert_numeric : bool, default False
+        If True, attempt to convert object columns to numeric using pd.to_numeric()
+        before standardizing. This is useful when object columns contain numeric strings.
+    fill_numeric_na : bool, default False
+        If True, fill NA values in Float64 columns with 0 after conversion.
+    treat_nan_string_as_na : bool, default True
+        If True, replace string 'NaN' (case-insensitive) with pd.NA before processing.
+        This allows numeric conversion to work properly on columns containing 'NaN' strings.
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with standardized dtypes
+        
+    Examples
+    --------
+    >>> # Basic standardization
+    >>> df = pd.DataFrame({'a': [1, 2], 'b': ['x', 'y'], 'c': [None, None]})
+    >>> df = standardize_df_dtypes(df)
+    >>> df.dtypes
+    a    Float64
+    b     object
+    c     object
+    dtype object
+    
+    # Handle 'NaN' strings when treat_nan_string_as_na = True, 
+       - ['NaN', '2'] becomes Float64 with [NA, 2.0]
+       - ['x', 'NaN'] becomes object with ['x', NA]
+    """
+    df = df.copy()
+    
+    # First pass: replace 'NaN' strings with pd.NA and identify empty columns
+    for col in df.columns:
+        # Replace 'NaN' strings with pd.NA if requested
+        if treat_nan_string_as_na and df[col].dtype == 'object':
+            df[col] = df[col].apply(
+                lambda x: pd.NA if isinstance(x, str) and x.strip().lower() == 'nan' else x
+            )
+        
+        # Check if column is empty using the existing is_col_empty function
+        if is_col_empty(df[col], treat_nan_as_empty=True):
+            df[col] = df[col].astype("object")
+    
+    # Second pass: try to convert object columns to numeric if requested
+    if convert_numeric:
+        for col in df.columns:
+            if df[col].dtype == 'object' and not df[col].isna().all():
+                converted = pd.to_numeric(df[col], errors="coerce")
+                # Only convert if no new NAs were introduced
+                if converted.isna().sum() == df[col].isna().sum():
+                    df[col] = converted
+    
+    # Third pass: standardize dtypes
+    for col in df.columns:
+        # Empty columns → object
+        if df[col].isna().all():
+            df[col] = df[col].astype("object")
+        # Numeric columns → Float64
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].astype("Float64")
+        # Everything else → object
+        else:
+            df[col] = df[col].astype("object")
+    
+    # Fourth pass: fill NAs in Float64 columns if requested
+    if fill_numeric_na:
+        Float64_cols = df.select_dtypes(include=['Float64']).columns
+        df[Float64_cols] = df[Float64_cols].fillna(0)
+    
     return df
 
 

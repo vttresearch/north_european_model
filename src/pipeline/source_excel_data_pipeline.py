@@ -42,6 +42,7 @@ class SourceExcelDataPipeline:
         self.df_storagedata = pd.DataFrame()
         self.df_fueldata = pd.DataFrame()
         self.df_emissiondata = pd.DataFrame()
+        self.df_userconstraintdata = pd.DataFrame()        
 
         self.logs = []
 
@@ -144,7 +145,7 @@ class SourceExcelDataPipeline:
             utils.log_status(
                 f"No Excel files for 'storagedata_files' defined in the config file",
                 self.logs, level="info"
-            )                                 
+            )        
 
         # unitdata
         files = self.config.get('unitdata_files', [])
@@ -189,3 +190,22 @@ class SourceExcelDataPipeline:
                 f"No Excel files for 'transferdata_files' defined in the config file",
                 self.logs, level="info"
             )
+
+        # --- custom datasets ---
+        # userconstraintdata
+        files = self.config.get('userconstraint_files', [])
+        if len(files) > 0:         
+            dfs = excel_exchange.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
+            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs, check_underscore_values = False) 
+                    for df in dfs]       
+            self.df_userconstraintdata = data_loader.merge_row_by_row(
+                                            dfs, self.logs, 
+                                            key_columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter']
+                                         )
+        else:
+            utils.log_status(
+                f"No Excel files for 'userconstraint_files' defined in the config file",
+                self.logs, level="info"
+            )      
+
+

@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from src.utils import log_status, is_val_empty, is_col_empty
+import src.utils as utils
 from src.excel_exchange import add_index_sheet, adjust_excel, check_if_bb_excel_open
 from src.pipeline.bb_excel_context import BBExcelBuildContext
 
@@ -21,13 +21,17 @@ class BuildInputExcel:
         self.country_codes = self.config.get("country_codes", [])
 
         # From InputDataPipeline
-        self.df_transferdata = context.df_transferdata
+        # Global
         self.df_unittypedata = context.df_unittypedata
-        self.df_unitdata = context.df_unitdata
-        self.df_storagedata = context.df_storagedata
         self.df_fueldata = context.df_fueldata
         self.df_emissiondata = context.df_emissiondata
+        # Country specific
+        self.df_transferdata = context.df_transferdata
+        self.df_unitdata = context.df_unitdata
+        self.df_storagedata = context.df_storagedata
         self.df_demanddata = context.df_demanddata
+        # Custom
+        self.df_userconstraintdata = context.df_userconstraintdata
 
         # From TimeseriesPipeline
         self.secondary_results = context.secondary_results
@@ -148,7 +152,7 @@ class BuildInputExcel:
             # Find the technical specifications for this generator type
             tech_matches = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id]
             if tech_matches.empty:
-                log_status(f"Missing tech data for generator_id: '{generator_id}', unit: '{unit}', not writing the p_gnu_io data. "
+                utils.log_status(f"Missing tech data for generator_id: '{generator_id}', unit: '{unit}', not writing the p_gnu_io data. "
                             "Check spelling and files.'", self.builder_logs, level="warn")
                 continue
             tech_row = tech_matches.iloc[0]
@@ -166,11 +170,11 @@ class BuildInputExcel:
 
                 # skip if the columns do not exist in unitdata
                 if grid_col not in cap_row:
-                    log_status(f"Missing grid {grid_col} from unit {unit}, not writing the data. "
+                    utils.log_status(f"Missing grid {grid_col} from unit {unit}, not writing the data. "
                                "Check spelling and files.'", self.builder_logs, level="warn")
                     continue
                 if node_col not in cap_row:
-                    log_status(f"Missing node {node_col} from unit {unit}, not writing the data. "
+                    utils.log_status(f"Missing node {node_col} from unit {unit}, not writing the data. "
                                "Check spelling and files.'", self.builder_logs, level="warn")
                     continue
 
@@ -200,25 +204,22 @@ class BuildInputExcel:
                 # Append base and additional parameters
                 rows.append({**base_row, **additional_params})
 
-        # Define the final columns titles and orders.
+        # Construct p_gnu_io
         final_cols = dimensions + param_gnu
-
-        # Create p_gnu_io,  fill NaN, 
-        p_gnu_io = pd.DataFrame(rows, columns=final_cols).fillna(value=0)
+        p_gnu_io = pd.DataFrame(rows, columns=final_cols)
+        p_gnu_io = utils.standardize_df_dtypes(p_gnu_io, fill_numeric_na=True)
 
         #  Remove empty columns except mandatory 'capacity' column
         p_gnu_io = self.remove_empty_columns(p_gnu_io, cols_to_keep=['capacity'])
 
-        # if dataframe has content
-        if not p_gnu_io.empty:
-            # create fake MultiIndex
-            p_gnu_io = self.create_fake_MultiIndex(p_gnu_io, dimensions)
+        # Sort by unit, input_output, node in a case-insensitive manner.
+        p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
+                            key=lambda col: col.str.lower() if col.dtype == 'object' else col,
+                            inplace=True)
 
-            # Sort by unit, input_output, node in a case-insensitive manner.
-            p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
-                                key=lambda col: col.str.lower() if col.dtype == 'object' else col,
-                                inplace=True)
-        
+        # create fake MultiIndex
+        p_gnu_io = self.create_fake_MultiIndex(p_gnu_io, dimensions)
+
         return p_gnu_io
 
 
@@ -233,7 +234,7 @@ class BuildInputExcel:
         """
         # Skip processing if either of the source dataframes are empty
         if p_gnu_io.empty or p_unit.empty:
-            return
+            return pd.DataFrame()
 
         # Get a flat version of the source dataframes without the fake multi-index
         p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
@@ -300,6 +301,7 @@ class BuildInputExcel:
                     (p_gnu_io_flat['input_output'] == 'output') &
                     (p_gnu_io_flat['capacity'] > 0)
                 ]
+                candidate_outputs = utils.standardize_df_dtypes(candidate_outputs, fill_numeric_na=True)
 
                 # Check if there are exactly 2 outputs and neither has 'cv' parameter
                 if len(candidate_outputs) == 2:
@@ -307,7 +309,7 @@ class BuildInputExcel:
                     has_cv_column = 'cv' in p_gnu_io_flat.columns
                     if has_cv_column:
                         # Skip if either output has a non-zero/non-null cv value
-                        cv_values = candidate_outputs['cv'].fillna(0)
+                        cv_values = candidate_outputs['cv']
                         if any(cv_values > 0):
                             continue
                         
@@ -355,8 +357,8 @@ class BuildInputExcel:
                             new_capacity = input_capacity * efficiency
                             p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
 
-        # Fill any remaining NaN values in the DataFrame
-        p_gnu_io_flat = p_gnu_io_flat.fillna(value=0)
+        # Standardize dtypes and Fill any remaining NaN 
+        p_gnu_io_flat = utils.standardize_df_dtypes(p_gnu_io_flat, fill_numeric_na=True)
 
         # Recreate the fake multi-index using the specified columns.
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
@@ -447,7 +449,8 @@ class BuildInputExcel:
 
         # construct p_gnn
         final_cols = dimensions + param_gnn
-        p_gnn = pd.DataFrame(rows, columns=final_cols).fillna(0)
+        p_gnn = pd.DataFrame(rows, columns=final_cols)
+        p_gnn = utils.standardize_df_dtypes(p_gnn, fill_numeric_na=True)
 
         # sort by grid, from_node, to_node
         p_gnn.sort_values(
@@ -501,15 +504,18 @@ class BuildInputExcel:
         # List to collect the new rows 
         rows = []
 
-
-
         # --- Collect grid-node pairs ---
-
         # Get grid_node from ts_domain_pairs and convert to DataFrame
         if 'grid_node' in ts_domain_pairs:
             ts_grid_node = pd.DataFrame(ts_domain_pairs['grid_node'], columns=['grid', 'node'])
         else:
             ts_grid_node = pd.DataFrame(columns=['grid', 'node'])
+
+        # Extract gn pairs from df_demanddata
+        if not df_demanddata.empty:
+            pairs_df_demanddata = df_demanddata[['grid', 'node']]
+        else:
+            pairs_df_demanddata = pd.DataFrame(columns=['grid', 'node'])
 
         # Extract gn pairs from df_storagedata
         if not df_storagedata.empty:
@@ -524,7 +530,7 @@ class BuildInputExcel:
             pairs_gnu = pd.DataFrame(columns=['grid', 'node'])
 
         # Concatenate and drop duplicates
-        parts = [ts_grid_node, pairs_df_storagedata, pairs_gnu]
+        parts = [ts_grid_node, pairs_df_demanddata, pairs_df_storagedata, pairs_gnu]
         parts = [p for p in parts if not p.empty]
         unique_gn_pairs = (
             pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
@@ -556,7 +562,6 @@ class BuildInputExcel:
                 # Add all nodes to the set
                 ts_storage_nodes.update(df['node'].unique())
 
-
         # --- Process each (grid, node) pair ---
         for _, row in unique_gn_pairs.iterrows():
             grid = row['grid']
@@ -565,6 +570,7 @@ class BuildInputExcel:
             # Subset of storagedata for this (grid,node)
             if not df_storagedata.empty:
                 node_storage_data = df_storagedata[(df_storagedata['grid'] == grid) & (df_storagedata['node'] == node)]
+                node_storage_data = utils.standardize_df_dtypes(node_storage_data, fill_numeric_na=True)
             else:
                 node_storage_data = pd.DataFrame()
 
@@ -575,10 +581,10 @@ class BuildInputExcel:
             energyStoredPerUnitOfState = node_storage_data['energyStoredPerUnitOfState'].iloc[0] if 'energyStoredPerUnitOfState' in node_storage_data.columns else None
 
             if usePrice == 1 and nodeBalance == 1:
-                log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'nodeBalance'=1, check the data.", self.builder_logs, level="warn")    
+                utils.log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'nodeBalance'=1, check the data.", self.builder_logs, level="warn")    
 
             if usePrice == 1 and energyStoredPerUnitOfState == 1:
-                log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'energyStoredPerUnitOfState'=1, check the data.", self.builder_logs, level="warn")    
+                utils.log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'energyStoredPerUnitOfState'=1, check the data.", self.builder_logs, level="warn")    
 
             # --- Check if price node ---
 
@@ -605,7 +611,7 @@ class BuildInputExcel:
             if not usePrice and existing_lower and not node_storage_data.empty:
                 for low in existing_lower:
                     real_col = storage_colmap[low]
-                    if (node_storage_data[real_col].fillna(0) > 0).any():
+                    if (node_storage_data[real_col] > 0).any():
                         energyStoredPerUnitOfState = 1
                         break
 
@@ -655,19 +661,17 @@ class BuildInputExcel:
         # Build p_gn
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
-       
-        # Fill possible NA in numeric columns
-        num_cols = p_gn.select_dtypes(include="number").columns
-        p_gn[num_cols] = p_gn[num_cols].fillna(0)
-
+        p_gn = utils.standardize_df_dtypes(p_gn, fill_numeric_na=True)
         p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'])
-        p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
-
 
         # Sort by grid, node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
+
+        # Create the fake multi-index
+        p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
+
         return p_gn
 
 
@@ -811,7 +815,7 @@ class BuildInputExcel:
             # Case-insensitive matching for unittype.
             tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == unittype.lower()]
             if tech_matches.empty:
-                log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}'. "
+                utils.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}'. "
                             "Not writing the p_unit data, check spelling and files.'", 
                             self.builder_logs, level="warn")
                 continue            
@@ -820,7 +824,7 @@ class BuildInputExcel:
             # Case-insensitive matching for unit.
             unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == unit.lower()]
             if unit_matches.empty:
-                log_status(f"No unit data found unit: '{unit}'. "
+                utils.log_status(f"No unit data found unit: '{unit}'. "
                             "Not writing the p_unit data, check spelling and files.'", 
                             self.builder_logs, level="warn")
                 continue  
@@ -854,9 +858,10 @@ class BuildInputExcel:
 
             rows.append(row)
 
-        # Assemble final DataFrame
+        # Build p_unit
         final_cols = dimensions + param_unit
-        p_unit = pd.DataFrame(rows, columns=final_cols).fillna(0)
+        p_unit = pd.DataFrame(rows, columns=final_cols)
+        p_unit = utils.standardize_df_dtypes(p_unit, fill_numeric_na=True)
 
         # Sort p_unit by the 'unit' column in a case-insensitive manner.
         p_unit.sort_values(
@@ -883,7 +888,7 @@ class BuildInputExcel:
             # Retrieve the matching row from df_unittypedata where 'unittype' equals the unittype value
             tech_matches = df_unittypedata[df_unittypedata['unittype'] == unittype]
             if tech_matches.empty:
-                log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}', not writing the effLevelGroupUnit data. "
+                utils.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}', not writing the effLevelGroupUnit data. "
                             "Check spelling and files.'", self.builder_logs, level="warn")
                 continue            
             tech_row = tech_matches.iloc[0]
@@ -1016,7 +1021,7 @@ class BuildInputExcel:
                         #    rows.append(row_dict)      
 
                     # If no time series but we have a non-zero constant value, use it
-                    elif not is_val_empty(value, self.builder_logs):
+                    elif not utils.is_val_empty(value, self.builder_logs):
                         row_dict = {
                             'grid':                     grid,
                             'node':                     node,
@@ -1044,19 +1049,18 @@ class BuildInputExcel:
                     rows.append(row_dict)
 
 
-        # Define the final columns titles and orders.
-        final_cols = dimensions.copy()
-        final_cols.extend(param_gnBoundaryProperties)
-
-        # Create p_gnBoundaryPropertiesForStates, fill NaN, and add fake MultiIndex
+        # Build p_gnBoundaryPropertiesForStates
+        final_cols = dimensions + param_gnBoundaryProperties
         p_gnBoundaryPropertiesForStates = pd.DataFrame(rows, columns=final_cols)
-        p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.fillna(value=0)
-        p_gnBoundaryPropertiesForStates = self.create_fake_MultiIndex(p_gnBoundaryPropertiesForStates, dimensions)
+        p_gnBoundaryPropertiesForStates = utils.standardize_df_dtypes(p_gnBoundaryPropertiesForStates, fill_numeric_na=True)
 
         # Sort by grid, from_node, to_node in a case-insensitive manner.
         p_gnBoundaryPropertiesForStates.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
+
+        # Create fake multi-index
+        p_gnBoundaryPropertiesForStates = self.create_fake_MultiIndex(p_gnBoundaryPropertiesForStates, dimensions)
 
         return p_gnBoundaryPropertiesForStates
 
@@ -1081,7 +1085,7 @@ class BuildInputExcel:
         ts_node_boundaryTypes = {}
 
         # Process all time series data frames to populate the lookup dictionary
-        for key, df in ts_storage_limits.items():
+        for _, df in ts_storage_limits.items():
             # Verify the DataFrame has all required columns before processing
             if all(col in df.columns for col in ['node', 'param_gnBoundaryTypes', 'average_value']):
                 # Extract (node, param_gnBoundaryTypes, average_value) tuples and add to dictionary
@@ -1167,10 +1171,9 @@ class BuildInputExcel:
                         ignore_index=True
                     )
 
-        # fill NaN
-        p_gn_flat = p_gn_flat.fillna(value=0)
-        p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.fillna(value=0)
-
+        # Standardize dtypes, fill NA
+        p_gn_flat = utils.standardize_df_dtypes(p_gn_flat, fill_numeric_na=True)
+        p_gnBoundaryPropertiesForStates = utils.standardize_df_dtypes(p_gnBoundaryPropertiesForStates, fill_numeric_na=True)
         
         # Sort p_gnBoundaryPropertiesForStates alphabetically by [grid, node] in a case-insensitive manner
         p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.sort_values(
@@ -1216,44 +1219,116 @@ class BuildInputExcel:
 
         # Create the ts_priceChange DataFrame from the list of row dictionaries
         ts_priceChange = pd.DataFrame(rows)
+        ts_priceChange = utils.standardize_df_dtypes(ts_priceChange, fill_numeric_na=True)
+        
         return ts_priceChange
 
 
-    def create_p_userConstraint(self, p_gnu_io_flat, mingen_nodes):
+    def create_p_userConstraint(
+        self,
+        uc_data: pd.DataFrame,
+        p_gnu_io_flat: pd.DataFrame,
+        mingen_nodes: list[str],
+        logs: list[str]
+    ) -> pd.DataFrame:
+        """
+        Creates the parameter DataFrame `p_userConstraint` defining user constraints.
 
-        # creating empty p_userconstraint df
-        p_userConstraint = pd.DataFrame(columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter', 'value'])
+        The function combines:
+          1. Predefined user-constraint data from `uc_data` (added directly as-is,
+             with case-insensitive column handling).
+          2. Dynamically generated user-constraint rules based on `mingen_nodes`,
+             linking nodes to units in `p_gnu_io_flat`.
 
+        Parameters
+        ----------
+        uc_data : pd.DataFrame
+            User-defined constraints, possibly with column names in arbitrary case.
+            Expected logical columns (case-insensitive):
+            ['group', '1st dimension', '2nd dimension', '3rd dimension',
+             '4th dimension', 'parameter', 'value'].
+        p_gnu_io_flat : pd.DataFrame
+            Flattened DataFrame mapping grids, nodes, and units with columns
+            ['grid', 'node', 'unit', 'input_output'].
+        mingen_nodes : list[str]
+            List of node names for which minimum-generation user constraints
+            should be created.
+        logs:
+            An accumulating log event list
+
+        Returns
+        -------
+        pd.DataFrame
+            Combined DataFrame of all user constraints (`p_userConstraint`).
+        """
+        expected_cols = [
+            'group', '1st dimension', '2nd dimension',
+            '3rd dimension', '4th dimension', 'parameter', 'value'
+        ]
+
+        frames: list[pd.DataFrame] = []
+
+        # ---- Phase 1: add uc_data, case-insensitive column alignment ----
+        if uc_data is not None and not uc_data.empty:
+            # map lowercased column name -> canonical expected column
+            col_map = {c.lower(): c for c in expected_cols}
+            rename_dict = {orig: col_map[orig.lower()] for orig in uc_data.columns if orig.lower() in col_map}
+            uc_data_renamed = uc_data.rename(columns=rename_dict)
+
+            missing = [c for c in expected_cols if c not in uc_data_renamed.columns]
+            if missing:
+                utils.log_status(f"uc_data missing required columns (after case-insensitive matching): {missing}", 
+                           logs, level="info")
+
+            uc_data_aligned = uc_data_renamed[expected_cols]
+
+            # keep only rows that aren't entirely NA to avoid dtype inference warnings later
+            uc_data_aligned = uc_data_aligned.dropna(how="all")
+
+            if not uc_data_aligned.empty:
+                frames.append(uc_data_aligned)
+
+        # ---- Phase 2: generate rows for mingen_nodes ----
+        generated_rows = []
         for node in mingen_nodes:
-            # Filter rows in p_gnu where 'node' equals current node and 'input_output' is 'input'
-            row_gnu = p_gnu_io_flat[(p_gnu_io_flat['node'] == node) & (p_gnu_io_flat['input_output'] == 'input')]
-            group_UC = 'UC_' + node
+            row_gnu = p_gnu_io_flat[
+                (p_gnu_io_flat['node'] == node) &
+                (p_gnu_io_flat['input_output'] == 'input')
+            ]
+            group_UC = f"UC_{node}"
 
-            # For each matching row, add a row to p_userConstraint
-            for _, row in row_gnu.iterrows():
-                p_userConstraint.loc[len(p_userConstraint)] = [
-                    group_UC,          # group_UC
-                    row['grid'],       # 1st dimension
-                    node,              # 2nd dimension
-                    row['unit'],       # 3rd dimension
-                    "-",               # 4th dimension
-                    "v_gen",           # parameter
-                    -1                  # value
-                ]
-            # Add row for parameter "GT"
-            p_userConstraint.loc[len(p_userConstraint)] = [
-                group_UC, "-", "-", "-", "-", "GT", -1
+            for _, r in row_gnu.iterrows():
+                generated_rows.append({
+                    'group': group_UC,
+                    '1st dimension': r['grid'],
+                    '2nd dimension': node,
+                    '3rd dimension': r['unit'],
+                    '4th dimension': "-",
+                    'parameter': "v_gen",
+                    'value': -1,
+                })
+
+            # group-level rows
+            generated_rows += [
+                {'group': group_UC, '1st dimension': "-", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "GT",             'value': -1},
+                {'group': group_UC, '1st dimension': "userconstraintRHS", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "ts_groupPolicy", 'value': 1},
+                {'group': group_UC, '1st dimension': "-", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "penalty",        'value': 2000},
             ]
-            # Add row for parameter "ts_groupPolicy"
-            p_userConstraint.loc[len(p_userConstraint)] = [
-                group_UC, "userconstraintRHS", "-", "-", "-", "ts_groupPolicy", 1
-            ]
-            # Add custom penalty value for userconstraint equations
-            p_userConstraint.loc[len(p_userConstraint)] = [
-                group_UC, "-", "-", "-", "-", "penalty", 2000
-            ]
+
+        if generated_rows:
+            frames.append(pd.DataFrame.from_records(generated_rows, columns=expected_cols))
+
+        # ---- Finalize without ever concatenating with an empty frame ----
+        if frames:
+            p_userConstraint = pd.concat(frames, ignore_index=True)
+        else:
+            p_userConstraint = pd.DataFrame(columns=expected_cols)
+
+        # Standardize dtypes, fill NA
+        p_userConstraint = utils.standardize_df_dtypes(p_userConstraint, fill_numeric_na=True)
 
         return p_userConstraint
+
 
 
 # ------------------------------------------------------
@@ -1315,6 +1390,8 @@ class BuildInputExcel:
                         })
 
         p_nEmission = pd.DataFrame(p_nEmission_data)
+        p_nEmission = utils.standardize_df_dtypes(p_nEmission, fill_numeric_na=True)
+
 
         return p_nEmission
 
@@ -1358,6 +1435,8 @@ class BuildInputExcel:
             })
 
         ts_emissionPriceChange = pd.DataFrame(ts_emissionPriceChange_data)
+        ts_emissionPriceChange = utils.standardize_df_dtypes(ts_emissionPriceChange, fill_numeric_na=True)
+
 
         return ts_emissionPriceChange
 
@@ -1538,6 +1617,8 @@ class BuildInputExcel:
 
         # Concatenate the first row with the original data
         df_output = pd.concat([df_output, df_reset], axis=0)
+        df_output = utils.standardize_df_dtypes(df_output)
+
 
         return df_output
     
@@ -1549,17 +1630,13 @@ class BuildInputExcel:
         # Drop the first row by using its index position 0
         df_flat = df_flat.drop(df_flat.index[0]).reset_index(drop=True)
 
-        # convert data types to restore numeric dtypes. 
-        # Fake multi-index sometimes converts dtype to object.
-        df_flat = df_flat.convert_dtypes()
-
         return df_flat
 
 
     def remove_empty_columns(self, df: pd.DataFrame, cols_to_keep=None, treat_nan_as_empty=True):
         cols_to_keep = set(cols_to_keep or [])
 
-        empty_cols_mask = df.apply(is_col_empty, axis=0)
+        empty_cols_mask = df.apply(utils.is_col_empty, axis=0)
 
         # Keep protected columns even if empty
         keep = list(cols_to_keep & set(df.columns))
@@ -1631,8 +1708,8 @@ class BuildInputExcel:
             - If both empty -> return None (signals 'tier empty')
             - Else treat empties as 0 and add; if addition fails, prefer first non-empty
             """
-            a_empty = is_val_empty(v1, logs, treat_zero_as_empty=False, ident=f"get_param_value/{ident_suffix}/a")
-            b_empty = is_val_empty(v2, logs, treat_zero_as_empty=False, ident=f"get_param_value/{ident_suffix}/b")
+            a_empty = utils.is_val_empty(v1, logs, treat_zero_as_empty=False, ident=f"get_param_value/{ident_suffix}/a")
+            b_empty = utils.is_val_empty(v2, logs, treat_zero_as_empty=False, ident=f"get_param_value/{ident_suffix}/b")
             if a_empty and b_empty:
                 return None
 
@@ -1648,14 +1725,14 @@ class BuildInputExcel:
         cap_conn = cap_ci.get(key_conn, None)
         cap_base = cap_ci.get(key_base, None) if put_l == "output1" else None
         primary = _combine(cap_conn, cap_base, "primary")
-        if not is_val_empty(primary, logs, treat_zero_as_empty=False, ident="get_param_value/primary"):
+        if not utils.is_val_empty(primary, logs, treat_zero_as_empty=False, ident="get_param_value/primary"):
             return primary
 
         # --- Tier 3 & 4: tech_row ---
         tech_conn = tech_ci.get(key_conn, None)
         tech_base = tech_ci.get(key_base, None) if put_l == "output1" else None
         secondary = _combine(tech_conn, tech_base, "secondary")
-        if not is_val_empty(secondary, logs, treat_zero_as_empty=False, ident="get_param_value/secondary"):
+        if not utils.is_val_empty(secondary, logs, treat_zero_as_empty=False, ident="get_param_value/secondary"):
             return secondary
 
         # --- Tier 5: default ---
@@ -1672,14 +1749,14 @@ class BuildInputExcel:
         try: 
             check_if_bb_excel_open(self.output_file)
         except Exception as e:
-            log_status(f"{e}", self.builder_logs, level="warn")
+            utils.log_status(f"{e}", self.builder_logs, level="warn")
             return self.builder_logs, self.bb_excel_succesfully_built
 
         # Create p_gnu_io
         if not self.df_unittypedata.empty and not self.df_unitdata.empty:
             p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
         else:
-            log_status(f"Missing unit data or unittype data, skipping p_gnu_io and derivatives.'", 
+            utils.log_status(f"Missing unit data or unittype data, skipping p_gnu_io and derivatives.'", 
                        self.builder_logs, level="info")
             p_gnu_io = pd.DataFrame() 
         if not p_gnu_io.empty:
@@ -1703,7 +1780,7 @@ class BuildInputExcel:
         if not self.df_transferdata.empty:
             p_gnn = self.create_p_gnn(self.df_transferdata)
         else:
-            log_status(f"Missing transfer data, skipping p_gnn and derivatives.'", self.builder_logs, level="info")
+            utils.log_status(f"Missing transfer data, skipping p_gnn and derivatives.'", self.builder_logs, level="info")
             p_gnn = pd.DataFrame()
         if not p_gnn.empty:
             # Create flat version for easier use in other functions
@@ -1725,16 +1802,15 @@ class BuildInputExcel:
                                                                                       self.df_storagedata, 
                                                                                       self.ts_storage_limits)
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fueldata)
-        if not p_gnu_io.empty:
-            p_userconstraint = self.create_p_userConstraint(p_gnu_io_flat, self.mingen_nodes)
-        else:
-            p_userconstraint = pd.DataFrame()
+        p_userconstraint = self.create_p_userConstraint(self.df_userconstraintdata,
+                                                        p_gnu_io_flat, 
+                                                        self.mingen_nodes,
+                                                        self.builder_logs)
 
         # add storage start levels to p_gn and p_gnBoundaryPropertiesForStates
         (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, 
                                                                           p_gnu_io_flat, self.ts_storage_limits)
         p_gn_flat = self.drop_fake_MultiIndex(p_gn)
-
 
         # emission based input tables
         p_nEmission = self.create_p_nEmission(p_gn_flat, self.df_fueldata)
@@ -1817,7 +1893,7 @@ class BuildInputExcel:
         add_index_sheet(self.input_folder, self.output_file)
         adjust_excel(self.output_file)
 
-        log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
+        utils.log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
         self.bb_excel_succesfully_built = True
 
         return self.builder_logs, self.bb_excel_succesfully_built

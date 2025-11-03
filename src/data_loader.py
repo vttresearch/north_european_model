@@ -1,9 +1,7 @@
 import pandas as pd
 import numpy as np
-from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence, Any
-from src.utils import log_status
-import math
-
+from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence, Any, Set
+import src.utils as utils
 
 
 
@@ -104,7 +102,7 @@ def build_unit_grid_and_node_columns(
     candidate_puts = [f"input{i}" for i in range(1, 6)] + [f"output{i}" for i in range(1, 6)]
     puts = [p for p in candidate_puts if f"grid_{p}" in df_unittypedata.columns]
     if not puts:
-        log_status(
+        utils.log_status(
             (f"unittypedata table does not have a any column named grid_input1...6 or grid_output1...6 "
              "Check the files and names in the config file."),
             log_messages,
@@ -167,7 +165,6 @@ def build_unit_grid_and_node_columns(
         out[f"node_{p}"] = node
 
     return out
-
 
 
 def build_from_to_columns(
@@ -252,8 +249,6 @@ def build_unittype_unit_column(
       when unit_name_prefix is present and not empty
     - If 'generator_id' does not have any matching 'unittype', the code uses 'generator_id' instead of 'unittype'
     """
-    from src.utils import log_status
-
     # Return input data if empty unittypedata
     if df.empty or df_unittypedata.empty:
         return df
@@ -273,9 +268,9 @@ def build_unittype_unit_column(
     # Identify generator_ids without match
     # Note: build_unit_grid_and_node_columns assumes that this is warned here
     missing_mask = df['unittype'].isna()
-    if missing_mask.any() and log_status is not None:
+    if missing_mask.any() and utils.log_status is not None:
         for generator_id in df.loc[missing_mask, 'generator_id'].unique():
-            log_status(
+            utils.log_status(
                 f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
                 "in any of the unittypedata files, check spelling.",
                 source_data_logs,
@@ -310,11 +305,12 @@ def normalize_dataframe(
     logs: List[str],
     *,
     allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
-    lowercase_value_cols: Sequence[str] = ("scenario", "generator_id", "method"),
-    check_underscores: bool = True,
-    drop_invalid_strings: bool = True,
-    standardize_column_case: bool = True,
+    lowercase_col_values: Sequence[str] = ("scenario", "generator_id", "method"),
+    lowercase_column_names: bool = True,
+    apply_numeric_dtype: bool = True,
     treat_empty_as_na: bool = True,
+    check_underscore_values: bool = True,
+    drop_invalid_strings: bool = True,
 ) -> pd.DataFrame:
     """
     Normalize a DataFrame with consistent column naming, 'method' handling,
@@ -322,16 +318,20 @@ def normalize_dataframe(
 
     What it does
     ------------
-    1) Column names: optionally lower-cases all column names.
+    1) Column names (lowercase_column_names): optionally lower-cases all column names.
     2) 'method' column: ensures existence; trims/lower-cases values; unknown methods
        are warned and coerced to 'replace' against `allowed_methods`.
-    3) Value case: lower-cases selected identifier-like columns (e.g. 'scenario').
-    4) Missing/empties: optionally treat empty/whitespace as NA, then globally fill NA with 0.
-    5) Dtypes:
-       - Columns that are fully numeric after coercion -> numeric dtype (downcast to int when possible).
+    3) Lower-case column values (lowercase_col_values): lower-cases selected identifier-like columns (e.g. 'scenario').
+    4) Missing/empties (treat_empty_as_na): optionally treat empty/whitespace as NA 
+    5) DType conversions :
+       - Convert empty/NaN columns to Object dtype
+       - Convert float64 to Float64
+       - For columns that are fully numeric after coercion 
+          -> numeric dtype
+          -> then fill NA with 0.
     6) Column rename: for **numeric** columns named `*_output1`, drop the suffix to become the base
        name; skip and warn if renaming would collide with an existing column.
-    7) Underscore check (quality gate): for **all** string-typed columns whose **column name
+    7) Underscore check (check_underscores): for **all** string-typed columns whose **column name
        does not start with "_"**, detect underscores in values; warn with examples and either
        drop those rows (default) or keep them based on `drop_invalid_strings`.
 
@@ -344,20 +344,22 @@ def normalize_dataframe(
         `['_source_file','_source_sheet','file','sheet','source_file','source_sheet']`,
         a per-DataFrame identifier is derived from their uniform values.
     logs : list[str]
-        Log sink passed to `log_status(...)`. Messages (warn/info) are appended there.
+        Log sink passed to `utils.log_status(...)`. Messages (warn/info) are appended there.
     allowed_methods : list[str]
         Allowed values for the 'method' column (case-insensitive). Unknown values default to 'replace'.
-    lowercase_value_cols : Sequence[str], default ("scenario","generator_id","method")
+    lowercase_col_values : Sequence[str], default ("scenario","generator_id","method")
         Columns whose **values** should be lower-cased. (The 'method' column is canonicalized separately.)
-    check_underscores : bool, default True
+    lowercase_column_names : bool, default True
+        If True, convert column **names** to lower-case.
+    apply_numeric_dtype : bool, default True
+        If True, applies numeric datatype to fully numeric columns
+    treat_empty_as_na : bool, default True
+        If True, empty/whitespace-only strings are treated as NA before the global fillna(0).
+    check_underscore_values : bool, default True
         If True, scan string columns (excluding columns whose name starts with "_") for underscores in values.
     drop_invalid_strings : bool, default True
         Backward-compatible flag name. If True, **drop** rows that contained underscores in any checked column.
         If False, keep rows and only log.
-    standardize_column_case : bool, default True
-        If True, convert column **names** to lower-case.
-    treat_empty_as_na : bool, default True
-        If True, empty/whitespace-only strings are treated as NA before the global fillna(0).
 
     Returns
     -------
@@ -383,7 +385,7 @@ def normalize_dataframe(
         s2 = s2.fillna("replace")
         unknown_vals = sorted(set(s2.unique()) - allowed_set - {"replace"})
         if unknown_vals:
-            log_status(
+            utils.log_status(
                 f"[{ident}] Unknown method(s) {unknown_vals} encountered; defaulting to 'replace'.",
                 logs, level="warn"
             )
@@ -397,7 +399,7 @@ def normalize_dataframe(
     df_out = df.copy()
 
     # 1) Standardize column name case
-    if standardize_column_case:
+    if lowercase_column_names:
         df_out.columns = df_out.columns.str.lower()
 
     ident = _infer_identifier_from_df(df_out, df_identifier)
@@ -407,8 +409,9 @@ def normalize_dataframe(
         df_out["method"] = "replace"
     df_out["method"] = _canonicalize_method_series(df_out["method"], ident=ident)
 
-    # 3) Lower-case selected value columns (excluding 'method' which is already canonicalized)
-    for col in lowercase_value_cols:
+    # 3) Lower-case selected columns' values
+    # Note: cannot be applied to 'method' which is already handled above
+    for col in lowercase_col_values:
         if col in df_out.columns and col != "method":
             df_out[col] = df_out[col].astype("string").str.lower()
 
@@ -416,31 +419,41 @@ def normalize_dataframe(
     if treat_empty_as_na:
         df_out = df_out.replace(r"^\s*$", pd.NA, regex=True)
 
-    # 5) Auto-type columns: numeric vs string
+    # 5) dtype conversions
+    # Convert empty columns (all NA/NaN/null values) to object dtype
+    for col in df_out.columns:
+        if df_out[col].isna().all():  # pd.isna() catches both NaN and pd.NA
+            df_out[col] = df_out[col].astype('object')
+
+    # Convert float64 columns to Float64
+    for col in df_out.columns:
+        if pd.api.types.is_float_dtype(df_out[col]) and df_out[col].dtype == 'float64':
+            df_out[col] = df_out[col].astype('Float64')            
+
+    # Classify numeric and object columns
     numeric_cols: List[str] = []
-    string_cols: List[str] = []
+    object_cols: List[str] = []
     for c in df_out.columns:
         converted = pd.to_numeric(df_out[c], errors="coerce")
+        # Count sum of coerced NA
         if converted.isna().sum() == 0:
             numeric_cols.append(c)
         else:
-            string_cols.append(c)
+            object_cols.append(c)
 
-    # 5a) Apply numeric dtype (downcast ints where possible)
-    for c in numeric_cols:
-        df_out[c] = pd.to_numeric(df_out[c], errors="coerce")
-        if pd.api.types.is_float_dtype(df_out[c]):
-            as_int = pd.to_numeric(df_out[c], downcast="integer")
-            if pd.api.types.is_integer_dtype(as_int):
-                df_out[c] = as_int
-        if df_out[c].isna().any():
-            df_out[c] = df_out[c].fillna(0)
+    # Apply Float64 dtype when possible
+    if apply_numeric_dtype:
+        for c in numeric_cols:
+            df_out[c] = pd.to_numeric(df_out[c], errors="coerce").astype("Float64")
+            # Current code cannot reach this safeguard, but this is kept here if 
+            # if converted.isna().sum() == 0: is later relax e.g. to if converted.isna().mean() < 0.1:
+            if df_out[c].isna().any():
+                df_out[c] = df_out[c].fillna(0)
 
     # 6) Drop '_output1' suffix from **numeric** column names (avoid collisions)
-    num_cols_now = set(df_out.select_dtypes(include="number").columns)  # work on the typed df_out
     to_rename: Dict[str, str] = {}
     collisions: Dict[str, str] = {}
-    for c in num_cols_now:
+    for c in numeric_cols:
         if isinstance(c, str) and c.endswith("_output1"):
             new = c[:-8]
             if new in df_out.columns:  # would collide -> skip + warn
@@ -450,7 +463,7 @@ def normalize_dataframe(
 
     if collisions:
         pairs = ", ".join(f"{old} -> {new}" for old, new in collisions.items())
-        log_status(
+        utils.log_status(
             f"[{ident}] Skipped renaming due to existing column name(s): {pairs}.",
             logs, level="warn"
         )
@@ -458,12 +471,9 @@ def normalize_dataframe(
     if to_rename:
         df_out = df_out.rename(columns=to_rename)
 
-    # 7) Underscore check in string columns (exclude columns starting with "_")
-    if check_underscores:
-        cols_to_check = [
-            c for c in df_out.columns
-            if not str(c).startswith("_") and pd.api.types.is_string_dtype(df_out[c])
-        ]
+    # 7) Underscore check in object_cols (exclude columns starting with "_")
+    if check_underscore_values:
+        cols_to_check = [c for c in object_cols if not str(c).startswith("_")]
 
         bad_mask = pd.Series(False, index=df_out.index)
         examples_per_col: Dict[str, List[str]] = {}
@@ -477,19 +487,19 @@ def normalize_dataframe(
         if bad_mask.any():
             total_bad = int(bad_mask.sum())
             example_str = "; ".join(f"{col}: {vals}" for col, vals in list(examples_per_col.items())[:4])
-            log_status(
+            utils.log_status(
                 f"[{ident}] Underscores detected in {total_bad} row(s) across columns "
                 f"[{', '.join(examples_per_col.keys())}]. Examples -> {example_str}",
                 logs, level="warn"
             )
             if drop_invalid_strings:
                 df_out = df_out.loc[~bad_mask].copy()
-                log_status(
+                utils.log_status(
                     f"[{ident}] Dropped {total_bad} row(s) containing underscores per configuration.",
                     logs, level="info"
                 )
             else:
-                log_status(
+                utils.log_status(
                     f"[{ident}] Kept rows with underscores per configuration.",
                     logs, level="info"
                 )
@@ -555,7 +565,7 @@ def apply_whitelist(
     # Apply each filter with AND semantics
     for col, val in filters.items():
         if col not in df_out.columns:
-            log_status(f"[{df_identifier}] Whitelist skipped: missing column '{col}'.", logs, level="warn")
+            utils.log_status(f"[{df_identifier}] Whitelist skipped: missing column '{col}'.", logs, level="warn")
             continue
 
         vals = val if isinstance(val, list) else [val]
@@ -657,7 +667,7 @@ def apply_blacklist(
     for col, val in filters.items():
         if col not in df_filtered.columns:
             if log_warning:
-                log_status(f"Missing column in {df_name}: {col!r}", source_data_logs, level="warn")
+                utils.log_status(f"Missing column in {df_name}: {col!r}", source_data_logs, level="warn")
             continue  
 
         # Ensure val is a list for consistent processing
@@ -699,17 +709,26 @@ def apply_unit_nodes_blacklist(
     return apply_blacklist(df, df_name, filters, source_data_logs=logs, log_warning=False)
 
 
+
 def merge_row_by_row(
     dfs: Iterable[pd.DataFrame],
     logs: List[str],
     *,
-    key_columns: Optional[Sequence[str]] = None,  # e.g. ['generator_id']
-    allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
+    key_columns: Sequence[str],
     measure_cols: Sequence[str] = (),
     not_measure_cols: Sequence[str] = ("year",),
+    meta_cols: Set[str] = {"_source_file", "_source_sheet", "method"},
 ) -> pd.DataFrame:
     """
     Merge DataFrames row-by-row in order, applying a per-row 'method'.
+
+    **PRECONDITION**: All input DataFrames must be normalized via normalize_dataframe() first.
+    This function assumes:
+    - Column names are lowercase
+    - 'method' column exists with valid, lowercase values
+    - Empty strings converted to NA
+    - Numeric columns properly typed
+    - No data quality issues remain
 
     Methods
     -------
@@ -744,27 +763,15 @@ def merge_row_by_row(
     ----------------------
     - If `measure_cols` is blank, we **infer measures conservatively**:
         * Exclude booleans and `not_measure_cols`
-        * A column qualifies only if **all non-missing values across all frames are numeric or numeric-like**
-          AND there is at least one non-missing numeric value overall.
-        * Any evidence of non-numeric text ⇒ not a measure.
-    - Only measure columns are coerced to numeric at the end (nullable Float64).
-      Non-measure columns keep their original dtypes (no global casting).
+        * A column qualifies if it's numeric-typed with at least one non-NA value
+    - Only measure columns are coerced to nullable Float64 at the end.
+    - Other columns specifically keep their dtype
     """
 
-    # --- Logging helper --------------------------------------------------------
-    # Lightweight wrapper that uses external log_status if available, otherwise
-    # appends to the provided logs list. Keeps this function self-contained.
-    def _log(msg: str, level: str = "info"):
-        try:
-            log_status(msg, logs, level=level)  # type: ignore[name-defined]
-        except Exception:
-            logs.append(f"[{level.upper()}] {msg}")
-
     # --- Input filtering & column union ---------------------------------------
-    # Drop None/empty frames early; return empty DF if nothing usable.
     frames = [df for df in dfs if df is not None and not getattr(df, "empty", True)]
     if not frames:
-        _log("merge_row_by_row: No data provided. Returning empty DataFrame.", level="warn")
+        utils.log_status("merge_row_by_row: No data provided. Returning empty DataFrame.", logs, level="warn")
         return pd.DataFrame()
 
     # Build a union of columns preserving first-seen order across frames.
@@ -774,186 +781,163 @@ def merge_row_by_row(
             if c not in cols_union:
                 cols_union.append(c)
 
-    # Meta columns that are dropped at the end (kept through merge to avoid loss).
-    meta_cols = {"_source_file", "_source_sheet"}
-
-    # --- Missing / numeric helpers --------------------------------------------
-    # Centralized notions of "missing" and "numeric-like" so the rules are consistent.
-
-    def _is_missing(x) -> bool:
-        # True for None, NaN-like, empty/whitespace strings, and common text tokens.
-        if x is None:
-            return True
-        try:
-            if pd.isna(x):
-                return True
-        except Exception:
-            pass
-        if isinstance(x, str):
-            xs = x.strip()
-            if xs == "" or xs.lower() in {"nan", "none", "null", "n/a"}:
-                return True
-        try:
-            if isinstance(x, float) and math.isnan(x):
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _is_numeric_like(x) -> bool:
-        """True if value can be safely interpreted as a number (ignoring missing tokens)."""
-        if _is_missing(x):
-            return True  # missing does not disqualify numeric-ness for inference
-        if isinstance(x, (int, float)) and not (isinstance(x, bool)):
-            return True
-        if isinstance(x, str):
-            s = x.strip()
-            try:
-                float(s)
-                return True
-            except Exception:
-                return False
-        return False
-
-    def _to_float_or_nan(x):
-        # Convert value to float; missing or bad parses become NaN.
-        if _is_missing(x):
-            return math.nan
-        try:
-            if isinstance(x, str):
-                return float(x.strip())
-            return float(x)
-        except Exception:
-            return math.nan
-
-    def _to_non_neg_float_or_nan(x):
-        # Convert value to non-negative float; missing or bad parses become NaN.
-        if _is_missing(x):
-            return math.nan
-        try:
-            if isinstance(x, str):
-                return float(x.strip())
-            return max(0, float(x))
-        except Exception:
-            return math.nan
-
-
-    # --- Measure column inference ---------------------------------------------
-    # If user didn't specify measure columns, derive them defensively.
-    def _is_effectively_empty(seq: Optional[Sequence[str]]) -> bool:
-        if seq is None or len(seq) == 0:
-            return True
-        return all((s is None) or (str(s).strip() == "") for s in seq)
-
+    # --- Measure column inference -----------------------------------------
     def _infer_measure_columns(frames: List[pd.DataFrame]) -> List[str]:
+        """
+        Infer measure columns from normalized frames.
+        Since frames are already normalized:
+        - Column names are lowercase
+        - Numeric columns are already typed correctly
+        - Empty values are already NA
+        """
         not_meas = set(not_measure_cols)
-        candidates: List[str] = []
+        candidates = []
+        
         for c in cols_union:
             if c in not_meas:
                 continue
-
-            # Skip booleans if any frame treats column as boolean.
+            
+            # Skip booleans
             if any(c in df.columns and pd.api.types.is_bool_dtype(df[c]) for df in frames):
                 continue
-
-            any_numeric_value = False
-            disqualify = False
-
+            
+            # Check if any frame has it as numeric with non-NA values
             for df in frames:
-                if c not in df.columns:
-                    continue
-                col = df[c]
-
-                # Numeric dtype with any non-NA value is acceptable.
-                if pd.api.types.is_numeric_dtype(col):
-                    if col.notna().any():
-                        any_numeric_value = True
-                    continue
-
-                # Object/string columns: ensure every non-missing is numeric-like.
-                non_missing_vals = col[col.map(lambda v: not _is_missing(v))]
-                if non_missing_vals.empty:
-                    continue
-                for v in non_missing_vals.iloc[:10000]:  # safety bound on inspection
-                    if not _is_numeric_like(v):
-                        disqualify = True
+                if c in df.columns:
+                    if pd.api.types.is_numeric_dtype(df[c]) and df[c].notna().any():
+                        candidates.append(c)
                         break
-                if disqualify:
-                    break
-                any_numeric_value = True
-
-            if (not disqualify) and any_numeric_value:
-                candidates.append(c)
+        
         return candidates
 
-    # Decide actual measure set: user-provided or inferred.
-    if _is_effectively_empty(measure_cols):
+    # Decide actual measure set: user-provided or inferred
+    if not measure_cols:
         present_measures = _infer_measure_columns(frames)
     else:
-        present_measures = [c for c in (measure_cols or []) if c in set(cols_union)]
-        missing = [c for c in (measure_cols or []) if c not in set(cols_union)]
+        # Keep only measures that exist in the data
+        present_measures = [c for c in measure_cols if c in cols_union]
+        missing = [c for c in measure_cols if c not in cols_union]
         if missing:
-            _log(
-                f"[merge_row_by_row] Some measure_cols not present in inputs and will be ignored: {missing}",
-                level="warn",
-            )
+            utils.log_status(f"[merge_row_by_row] Some measure_cols not found: {missing}", logs, level="warn")
 
-    # --- Key derivation & normalization ---------------------------------------
-    # If no explicit keys, derive keys as "everything that is not a measure/meta/method".
-    if key_columns is None:
-        key_columns = [c for c in cols_union if c not in set(present_measures) | meta_cols | {"method"}]
+    # --- Key validation -------------------------------------------------------
+    key_columns = list(key_columns)
+    missing = [k for k in key_columns if k not in cols_union]
+    if missing:
+        utils.log_status(f"[merge_row_by_row] Some key_columns not found and will be created as <NA>: {missing}", 
+                   logs, level="warn")
 
-    # Without any key, we fall back to "last occurrence wins" over full rows.
-    if not key_columns:
-        _log("merge_row_by_row: No key columns available; using full-row 'last occurrence wins'.", level="warn")
-        merged = pd.concat(frames, ignore_index=True, sort=False).drop_duplicates(subset=None, keep="last")
-        merged = merged.drop(columns=list(meta_cols), errors="ignore")
-        return merged
+    # Ensure all frames have all key columns (filled with <NA>)
+    new_frames = []
+    for df in frames:
+        missing_keys = [k for k in key_columns if k not in df.columns]
+        if missing_keys:
+            df = df.copy()
+            for k in missing_keys:
+                df[k] = pd.NA
+        new_frames.append(df)
+    frames = new_frames
 
-    # Ensure all frames have all key columns (filled with <NA>) so tuple keys are well-defined.
-    if key_columns:
-        new_frames = []
-        for df in frames:
-            if any(k not in df.columns for k in key_columns):
-                df = df.copy()
-                for k in key_columns:
-                    if k not in df.columns:
-                        df[k] = pd.NA
-            new_frames.append(df)
-        frames = new_frames
+    # --- Method handlers ------------------------------------------------------
+    def _handle_replace(existing: Dict[str, object], row_dict: Dict[str, object], method: str, partial: bool = False) -> Dict[str, object]:
+        """Full or partial row replacement."""
+        if existing is None:
+            # Initialize new record
+            new_rec = {c: row_dict.get(c) for c in cols_union}
+            new_rec["method"] = method
+            return new_rec
+        
+        if partial:
+            # Overwrite only provided non-missing values
+            for c in cols_union:
+                if c in key_columns or c in meta_cols:
+                    continue
+                if c not in row_dict:
+                    continue
+                val = row_dict.get(c)
+                if val is not None and not pd.isna(val):
+                    existing[c] = val
+            existing["method"] = method
+            return existing
+        else:
+            # Full replacement
+            new_rec = {c: row_dict.get(c) for c in cols_union}
+            new_rec["method"] = method
+            return new_rec
 
-    def _norm_key_val(x):
-        # Canonicalize key parts: trim strings, None for missing.
-        if _is_missing(x):
-            return None
-        if isinstance(x, str):
-            return x.strip()
-        return x
+    def _handle_add(existing: Dict[str, object], row_dict: Dict[str, object], method: str, clamp_non_negative: bool = False) -> Dict[str, object]:
+        """Elementwise addition with special missing rules."""
+        if existing is None:
+            # Initialize new record
+            new_rec = {c: row_dict.get(c) for c in cols_union}
+            # Clamp negative values if needed
+            if clamp_non_negative and present_measures:
+                for mc in present_measures:
+                    val = new_rec.get(mc)
+                    if val is not None and not pd.isna(val) and val < 0:
+                        new_rec[mc] = 0.0
+            new_rec["method"] = method
+            return new_rec
+        
+        # Subsequent occurrence: add to existing
+        for mc in present_measures:
+            prev_val = existing.get(mc)
+            cur_val = row_dict.get(mc)
+            
+            prev_missing = prev_val is None or pd.isna(prev_val)
+            cur_missing = cur_val is None or pd.isna(cur_val)
+    
+            if prev_missing and cur_missing:
+                existing[mc] = pd.NA
+            else:
+                # Treat single missing as 0.0
+                result = (0.0 if prev_missing else prev_val) + (0.0 if cur_missing else cur_val)
+                existing[mc] = max(0.0, result) if clamp_non_negative else result
+        existing["method"] = method
+        return existing
 
-    def _key_tuple(row_dict: Dict[str, object]) -> Tuple:
-        # Deterministic key across all rows/frames.
-        return tuple(_norm_key_val(row_dict.get(k)) for k in key_columns)
+    def _handle_multiply(existing: Dict[str, object], row_dict: Dict[str, object], method: str) -> Dict[str, object]:
+        """Elementwise multiplication with special missing rules."""
+        if existing is None:
+            # Initialize new record - no normalization needed
+            new_rec = {c: row_dict.get(c) for c in cols_union}
+            new_rec["method"] = method
+            return new_rec
+        
+        # Subsequent occurrence: multiply with existing
+        for mc in present_measures:
+            prev_val = existing.get(mc)
+            cur_val = row_dict.get(mc)
+            
+            prev_missing = prev_val is None or pd.isna(prev_val)
+            cur_missing = cur_val is None or pd.isna(cur_val)
+
+            if prev_missing and cur_missing:
+                existing[mc] = pd.NA
+            else:
+                # Previous missing → 0.0, current missing → 1.0
+                prev_eff = 0.0 if prev_missing else prev_val
+                cur_eff = 1.0 if cur_missing else cur_val
+                existing[mc] = prev_eff * cur_eff
+        existing["method"] = method
+        return existing
 
     # --- Core merge loop -------------------------------------------------------
-    # We process frames in order. For each row, apply its 'method' against an accumulator.
-    allowed_set = {m.lower().strip() for m in allowed_methods}
+    # Process frames in order. For each row, apply its 'method' against an accumulator.
     acc: Dict[Tuple, Dict[str, object]] = {}
-    unknown_seen: set = set()
 
     for df in frames:
-        # Default method is 'replace' if not provided.
+        # Default method is 'replace' if not provided (should not happen after normalization)
         if "method" not in df.columns:
             df = df.copy()
             df["method"] = "replace"
 
         for row_dict in df.to_dict(orient="records"):
-            method = str(row_dict.get("method", "replace")).strip().lower()
-            # Apply 'replace' for unknown methods 
-            if method not in allowed_set:
-                unknown_seen.add(method)
-                method = "replace"
-
-            k = _key_tuple(row_dict)
+            # Method is already validated and lowercased by normalize_dataframe
+            method = str(row_dict.get("method", "replace"))
+            # Build key tuple inline
+            k = tuple(None if val is None or pd.isna(val) else val 
+                     for val in (row_dict.get(kc) for kc in key_columns))
             existing = acc.get(k)
 
             # --- 'remove': delete any existing record for this key --------------
@@ -962,118 +946,29 @@ def merge_row_by_row(
                     del acc[k]
                 continue
 
-            # --- First occurrence of key: initialize new record -----------------
-            if existing is None:
-                # Start from the incoming row; we'll normalize measures if needed.
-                new_rec = {c: row_dict.get(c, None) for c in cols_union}
-
-                if present_measures and method in {"replace-partial", 
-                                                   "add", 
-                                                   "add-non-negative", 
-                                                   "multiply"}:
-                    # On first occurrence, all but 'remove' as initialization:
-                    # store numeric values as-is, keep missings as NaN.
-                    for mc in present_measures:
-                        if method == "add-non-negative":
-                            new_rec[mc] = _to_non_neg_float_or_nan(new_rec.get(mc))
-                        else:
-                            new_rec[mc] = _to_float_or_nan(new_rec.get(mc))
-                
-                # 'replace' (or no measures) already behaves as initialization via new_rec
-                new_rec["method"] = method
-                acc[k] = new_rec
-                continue
-
-            # --- Subsequent occurrences of key: merge with existing -------------
+            # --- Apply appropriate handler based on method ----------------------
             if method == "replace" or not present_measures:
-                # Full overwrite (non-measures included).
-                new_rec = {c: row_dict.get(c, None) for c in cols_union}
-                new_rec["method"] = method
-                acc[k] = new_rec
-
+                acc[k] = _handle_replace(existing, row_dict, method, partial=False)
             elif method == "replace-partial":
-                # Overwrite only with provided and non-empty, non-zero values.
-                for c in cols_union:
-                    if c in key_columns or c in meta_cols or c in {"method"}:
-                        continue
-                    if c not in row_dict:
-                        continue
-                    val = row_dict.get(c, None)
-                    if _is_missing(val) or not _is_numeric_like(val):
-                        continue
-                    existing[c] = val
-                existing["method"] = method
-
+                acc[k] = _handle_replace(existing, row_dict, method, partial=True)
             elif method == "add":
-                # Elementwise addition 
-                for mc in present_measures:
-                    prev = _to_float_or_nan(existing.get(mc))
-                    cur  = _to_float_or_nan(row_dict.get(mc))
-            
-                    if math.isnan(prev) and math.isnan(cur):
-                        existing[mc] = math.nan
-                    else:
-                        # Treat any single missing as 0.0
-                        existing[mc] = (0.0 if math.isnan(prev) else prev) + \
-                                       (0.0 if math.isnan(cur)  else cur)
-                existing["method"] = method
-
+                acc[k] = _handle_add(existing, row_dict, method, clamp_non_negative=False)
             elif method == "add-non-negative":
-                # Elementwise addition 
-                for mc in present_measures:
-                    prev = _to_float_or_nan(existing.get(mc))
-                    cur  = _to_float_or_nan(row_dict.get(mc))
-            
-                    if math.isnan(prev) and math.isnan(cur):
-                        existing[mc] = math.nan
-                    else:
-                        # Treat any single missing as 0.0
-                        existing[mc] = max(0, (0.0 if math.isnan(prev) else prev) + \
-                                              (0.0 if math.isnan(cur)  else cur) \
-                                            )    
-                existing["method"] = method                
-
+                acc[k] = _handle_add(existing, row_dict, method, clamp_non_negative=True)
             elif method == "multiply":
-                # Elementwise multiplication
-                for mc in present_measures:
-                    prev = _to_float_or_nan(existing.get(mc))
-                    cur  = _to_float_or_nan(row_dict.get(mc))
-
-                    if math.isnan(prev) and math.isnan(cur):
-                        existing[mc] = math.nan
-                    else:
-                        prev_eff = 0.0 if math.isnan(prev) else prev
-                        cur_eff  = 1.0 if math.isnan(cur)  else cur
-                        existing[mc] = prev_eff * cur_eff
-                existing["method"] = method
-
-            else:
-                # Shouldn't happen (filtered earlier), but keep a safe fallback.
-                new_rec = {c: row_dict.get(c, None) for c in cols_union}
-                new_rec["method"] = "replace"
-                acc[k] = new_rec
+                acc[k] = _handle_multiply(existing, row_dict, method)
 
     # --- Assemble output frame -------------------------------------------------
     merged = pd.DataFrame.from_records(list(acc.values()), columns=cols_union)
 
-    # Drop meta/helper columns that shouldn't survive the merge result.
+    # Drop meta/helper columns that shouldn't survive
     merged = merged.drop(columns=list(meta_cols), errors="ignore")
-    merged = merged.drop(columns=["year", "scenario", "method"], errors="ignore")
 
-    # --- Final dtype coercion for measure columns ------------------------------
-    # Only cast measures → avoids surprising dtype changes elsewhere.
-    for mc in present_measures:
-        if mc in merged.columns:
-            merged[mc] = pd.to_numeric(merged[mc], errors="coerce").astype("Float64")
-
-    # --- Epilogue: warnings about unknown methods ------------------------------
-    if unknown_seen:
-        _log(
-            f"[merge_row_by_row] Unknown method(s) {sorted(unknown_seen)} encountered; defaulting to 'replace'.",
-            level="warn",
-        )
+    # --- Standardize dtypes: Float64 for numerics, object for rest ------------
+    merged = utils.standardize_df_dtypes(merged)
 
     return merged
+
 
 
 def filter_nonzero_numeric_rows(
