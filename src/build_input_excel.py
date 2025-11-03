@@ -8,47 +8,55 @@ from src.pipeline.bb_excel_context import BBExcelBuildContext
 class BuildInputExcel:
     def __init__(self, context: BBExcelBuildContext) -> None:
         self.context = context
-        
-        # From sys args
         self.input_folder = context.input_folder
-
-        # Currently looped run parameters
         self.output_folder = context.output_folder
         self.scen_tags = context.scen_tags
-
-        # Parameters from config file
         self.config = context.config
         self.country_codes = self.config.get("country_codes", [])
+        
+        # Pipeline components
 
+
+        
         # From InputDataPipeline
+        self.source_data = context.source_data
         # Global
-        self.df_unittypedata = context.df_unittypedata
-        self.df_fueldata = context.df_fueldata
-        self.df_emissiondata = context.df_emissiondata
+        self.df_unittypedata = self.source_data.df_unittypedata
+        self.df_fueldata =     self.source_data.df_fueldata
+        self.df_emissiondata = self.source_data.df_emissiondata
         # Country specific
-        self.df_transferdata = context.df_transferdata
-        self.df_unitdata = context.df_unitdata
-        self.df_storagedata = context.df_storagedata
-        self.df_demanddata = context.df_demanddata
+        self.df_transferdata = self.source_data.df_transferdata
+        self.df_unitdata =     self.source_data.df_unitdata
+        self.df_storagedata =  self.source_data.df_storagedata
+        self.df_demanddata =   self.source_data.df_demanddata
         # Custom
-        self.df_userconstraintdata = context.df_userconstraintdata
+        self.df_userconstraintdata = self.source_data.df_userconstraintdata
 
         # From TimeseriesPipeline
-        self.secondary_results = context.secondary_results
-        self.ts_domains = context.ts_domains
-        self.ts_domain_pairs = context.ts_domain_pairs
+        self.ts_results = context.ts_results
 
-        # Filter secondary_results {varname: var} where varname starts with 'ts_storage_limits'
-        self.ts_storage_limits = {key: value for key, value in context.secondary_results.items() if key.startswith("ts_storage_limits")}
-        # Filter secondary_results {varname: var} where varname starts with 'mingen'
-        mingen_vars = {key: value for key, value in context.secondary_results.items() if key.startswith("mingen_nodes")}
-        # flatten (and guard against None)
+        # unpack ts_domains and ts_domain_pairs
+        self.ts_domains = self.ts_results.ts_domains
+        self.ts_domain_pairs = self.ts_results.ts_domain_pairs
+
+        # Extract timeseries data with single dot access
+        self.ts_storage_limits = {
+            key: value 
+            for key, value in self.ts_results.secondary_results.items() 
+            if key.startswith("ts_storage_limits")
+        }
+        
+        mingen_vars = {
+            key: value 
+            for key, value in self.ts_results.secondary_results.items() 
+            if key.startswith("mingen_nodes")
+        }
         self.mingen_nodes = [
             item
             for sublist in mingen_vars.values() or [] 
             if isinstance(sublist, list)
             for item in sublist
-        ]     
+        ]
 
         # initiate empty log 
         self.builder_logs = []
