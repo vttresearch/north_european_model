@@ -195,7 +195,7 @@ class SourceExcelDataPipeline:
 
         # --- custom datasets ---
         # userconstraintdata
-        files = self.config.get('userconstraint_files', [])
+        files = self.config.get('userconstraintdata_files', [])
         if len(files) > 0:         
             dfs = excel_exchange.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
             dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs, check_underscore_values = False) 
@@ -206,7 +206,7 @@ class SourceExcelDataPipeline:
                                          )
         else:
             utils.log_status(
-                f"No Excel files for 'userconstraint_files' defined in the config file",
+                f"No Excel files for 'userconstraintdata_files' defined in the config file",
                 self.logs, level="info"
             )      
 

@@ -79,7 +79,7 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'transferdata_files': ast.literal_eval(inputdata.get('transferdata_files', '[]')),
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
         'storagedata_files': ast.literal_eval(inputdata.get('storagedata_files', '[]')),
-        'userconstraint_files': ast.literal_eval(inputdata.get('userconstraint_files', '[]')),
+        'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
         # Timeseries specs
         'timeseries_specs': ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
