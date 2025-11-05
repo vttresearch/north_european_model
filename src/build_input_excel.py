@@ -39,12 +39,12 @@ class BuildInputExcel:
         self.ts_storage_limits = {
             key: value 
             for key, value in self.ts_results.secondary_results.items() 
-            if key.startswith("ts_storage_limits")
+            if key is not None and key.startswith("ts_storage_limits")
         }
         mingen_vars = {
             key: value 
             for key, value in self.ts_results.secondary_results.items() 
-            if key.startswith("mingen_nodes")
+            if key is not None and key.startswith("mingen_nodes")
         }
         self.mingen_nodes = [
             item
@@ -52,7 +52,7 @@ class BuildInputExcel:
             if isinstance(sublist, list)
             for item in sublist
         ]
-
+        
         # initiate empty log 
         self.builder_logs = []
 
