@@ -199,7 +199,12 @@ class SourceExcelDataPipeline:
         if len(files) > 0:         
             dfs = excel_exchange.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
             dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs, check_underscore_values = False) 
-                    for df in dfs]       
+                    for df in dfs]    
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
+                                   self.logs, 'userconstraintdata')
+                   for df in dfs
+                   ]   
+            dfs = [df.drop(columns=['scenario', 'year', 'country']) for df in dfs]
             self.df_userconstraintdata = data_loader.merge_row_by_row(
                                             dfs, self.logs, 
                                             key_columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter']

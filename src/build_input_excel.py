@@ -1227,7 +1227,7 @@ class BuildInputExcel:
         return ts_priceChange
 
 
-    def create_p_userConstraint(
+    def create_p_userconstraint(
         self,
         uc_data: pd.DataFrame,
         p_gnu_io_flat: pd.DataFrame,
@@ -1805,7 +1805,7 @@ class BuildInputExcel:
                                                                                       self.df_storagedata, 
                                                                                       self.ts_storage_limits)
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fueldata)
-        p_userconstraint = self.create_p_userConstraint(self.df_userconstraintdata,
+        p_userconstraint = self.create_p_userconstraint(self.df_userconstraintdata,
                                                         p_gnu_io_flat, 
                                                         self.mingen_nodes,
                                                         self.builder_logs)
