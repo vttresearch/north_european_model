@@ -4,7 +4,7 @@ from gdxpds import to_gdx   # needed here to ensure gdxpds is imported before pa
 import src.config_reader as config_reader
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
-from src.pipeline.timeseries_pipeline import TimeseriesPipeline
+from src.pipeline.timeseries_pipeline import TimeseriesPipeline, TimeseriesRunResult
 from src.pipeline.bb_excel_context import BBExcelBuildContext
 import src.utils as utils
 from itertools import product
@@ -55,6 +55,7 @@ def main(input_folder: Path, config_file: Path):
         log_messages = []
 
         # Printing the (scenario, year, alternative) combination and storing them to scenario_tags
+        
         if alternative != "":
             utils.log_status(f"{scenario}, {year}, {alternative}", log_messages, section_start_length=70, add_empty_line_before=True)      
             scen_tags = [scenario, str(year), alternative]  
@@ -111,25 +112,28 @@ def main(input_folder: Path, config_file: Path):
             country_codes=config.get('country_codes') 
         )
 
-        # Run if needed, otherwise print skip message
+        # Run if needed
         if cache_manager.reimport_source_excels:
-            utils.log_status("Processing source Excel files.", log_messages, level="run", add_empty_line_before=True)
+            utils.log_status("Processing source Excel files.", 
+                             log_messages, level="run", 
+                             add_empty_line_before=True, section_start_length=55)
             source_excel_data_pipeline.run()
             log_messages.extend(source_excel_data_pipeline.logs)
-            utils.log_status("Source excel files processed successfully.", log_messages, level="info")
+            utils.log_status("Source excel files processed successfully.", log_messages, level="done")
         else:
             utils.log_status("Skipping source excel processing.", log_messages, level="skip")
 
 
         # --- 2.4. Timeseries processing phase ---
-        # Run timeseries if cache manager determined it's needed
+        # Run timeseries or load cached results
         if cache_manager.needs_timeseries_run:
             utils.log_status(
                 "Starting timeseries processing phase",
                 log_messages,
-                level="run"
+                level="run",
+                add_empty_line_before=True, section_start_length=55
             )
-            
+
             ts_pipeline = TimeseriesPipeline(
                 config, 
                 input_folder, 
@@ -138,49 +142,41 @@ def main(input_folder: Path, config_file: Path):
                 source_excel_data_pipeline
             )
             ts_results = ts_pipeline.run()
-            
-            # Merge logs
             log_messages.extend(ts_results.logs)
         else:
             utils.log_status(
-                "Timeseries results are up-to-date. Skipping timeseries processing.",
+                "Timeseries results are up-to-date. Loading from cache.",
                 log_messages,
                 level="skip"
+            )
+            # Load cached results
+            ts_results = TimeseriesRunResult(
+                secondary_results=cache_manager.load_all_secondary_results(),
+                ts_domains=cache_manager.load_dict_from_cache("all_ts_domains.json"),
+                ts_domain_pairs=cache_manager.load_dict_from_cache("all_ts_domain_pairs.json"),
+                logs=[]
             )
 
         # --- 2.5. Backbone Input Excel building phase ---
         # Checking if this step is needed or not
         if cache_manager.rebuild_bb_excel:
             utils.log_status("Building Backbone input Excel", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
-            # Instantiate excel_context and builder
+
             excel_context = BBExcelBuildContext(
-                # From sys args
                 input_folder=input_folder,
-                # From currently looped run
                 output_folder=output_folder,
                 scen_tags=scen_tags,
-                # From config file       
                 config=config,
-                # Cacge manager
                 cache_manager=cache_manager,
-                # From InputDataPipeline
-                df_unittypedata=source_excel_data_pipeline.df_unittypedata,
-                df_fueldata=source_excel_data_pipeline.df_fueldata,
-                df_emissiondata=source_excel_data_pipeline.df_emissiondata,
-                df_demanddata=source_excel_data_pipeline.df_demanddata,
-                df_transferdata=source_excel_data_pipeline.df_transferdata,
-                df_unitdata=source_excel_data_pipeline.df_unitdata,
-                df_storagedata=source_excel_data_pipeline.df_storagedata,
-                df_userconstraintdata=source_excel_data_pipeline.df_userconstraintdata,
-                # From TimeseriesPipeline
-                secondary_results=ts_results.secondary_results,
-                ts_domains=ts_results.ts_domains,
-                ts_domain_pairs=ts_results.ts_domain_pairs
+                source_data=source_excel_data_pipeline,
+                ts_results=ts_results
             )  
+
             builder = BuildInputExcel(excel_context)
-            # run builder, pick builder logs to log messages
-            builder_logs, bb_excel_succesfully_built = builder.run()
-            log_messages.extend(builder_logs)
+            builder.run()
+            log_messages.extend(builder.builder_logs)
+            bb_excel_succesfully_built = builder.bb_excel_succesfully_built
+
         else:
             utils.log_status("Backbone input excel is up-to-date. Skipping build phase.", log_messages, level="skip")
             # Flagging bb excel succesfully built to pass checks at the end
@@ -194,7 +190,7 @@ def main(input_folder: Path, config_file: Path):
 
         # --- 2.6. Finalizing ---
 
-        utils.log_status("Finalizing", log_messages, level="run", section_start_length=45, add_empty_line_before=True)
+        utils.log_status("Finalizing", log_messages, level="run", section_start_length=55, add_empty_line_before=True)
 
         # Copying GAMS files for a new run or changed topology
         if cache_manager.full_rerun:

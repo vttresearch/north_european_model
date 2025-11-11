@@ -229,25 +229,6 @@ ts_node(gn_tmp_, 'downwardLimit', ff, tt) = 0;
 * temporary manual fixes
 * --------------------------------------------------------------------------------
 
-// setting hydro power hourly minimum generation to min(timeseries data, 30% from capacity)
-option group_tmp < ts_groupPolicy;
-loop(group_tmp,
-
-    option clear = gnu_tmp;
-
-    gnu_tmp(grid, node, unit)
-    $ {p_userconstraint(group_tmp, grid, node, unit, '-', 'v_gen')}
-    = yes;
-
-    tmp = sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'));
-    ts_groupPolicy(group_tmp, 'userConstraintRHS', t)
-        $ ts_groupPolicy(group_tmp, 'userConstraintRHS', t)
-        = min( ts_groupPolicy(group_tmp, 'userConstraintRHS', t),
-               sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'))*0.3 
-               );
-);
-
-
 
 // setting cautious forecasts for hydro power nodes with timeseries downward limit
 option gn_tmp < ts_node;
@@ -262,10 +243,9 @@ ts_node(gn_tmp, 'downwardLimit', 'f02', tt) $ ts_node(gn_tmp, 'downwardLimit', '
 ts_node(gn_tmp, 'downwardLimit', 'f03', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 0.9;
 
 
-
-
-// Increasing storage start levels for psOpen and reservoir hydro
+// Set storage start levels for psOpen and reservoir hydro
 option clear = gn_tmp;
+option tt < ts_node;
 gn_tmp(grid, node) 
     $ {[sameAs(grid, 'psOpen') or sameAs(grid, 'reservoir')]
        and p_gn(grid, node, 'boundStart') = 1
@@ -273,11 +253,13 @@ gn_tmp(grid, node)
        }
     = yes;
 p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant')
-    = max(0.9 * p_gnBoundaryPropertiesForStates(gn_tmp, 'upwardLimit', 'constant'),
-          0.9 * ts_node(gn_tmp, 'upwardLimit', 'f00', 't000001')
+    = max(0.7 * p_gnBoundaryPropertiesForStates(gn_tmp, 'upwardLimit', 'constant'),
+          0.7 * smax(tt, ts_node(gn_tmp, 'upwardLimit', 'f00', tt))
           );
-
-
+p_gnBoundaryPropertiesForStates('reservoir', 'ES00_reservoir', 'reference', 'constant')
+    = max(0.5 * p_gnBoundaryPropertiesForStates('reservoir', 'ES00_reservoir', 'upwardLimit', 'constant'),
+          0.5 * smax(tt, ts_node('reservoir', 'ES00_reservoir', 'upwardLimit', 'f00', tt))
+          );
 
 
 * --------------------------------------------------------------------------------

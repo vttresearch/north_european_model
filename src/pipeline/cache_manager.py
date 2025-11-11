@@ -267,7 +267,7 @@ class CacheManager:
             "transferdata_files": "transfer",
             "unitdata_files": "unit",
             "storagedata_files": "storage",
-            "userconstraint_files": "userconstraint"
+            "userconstraintdata_files": "userconstraint"
         }
 
         category_status = {}

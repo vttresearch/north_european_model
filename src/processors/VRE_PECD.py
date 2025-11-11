@@ -25,6 +25,7 @@ class VRE_PECD(BaseProcessor):
     Returns:
         main_result (pd.DataFrame): DataFrame with processed time series data indexed by datetime
         secondary_result: None (not used for this processor)
+        # TBD: secondary_result (pd.DataFrame): Summary table with annual average capacity factors for each country
     """
 
     def __init__(self, **kwargs):
@@ -49,6 +50,12 @@ class VRE_PECD(BaseProcessor):
         # Unpack required parameters
         for param in required_params:
             setattr(self, param, kwargs.get(param))
+        
+        # Ensure start_date and end_date are datetime objects
+        if not isinstance(self.start_date, datetime):
+            self.start_date = pd.to_datetime(self.start_date)
+        if not isinstance(self.end_date, datetime):
+            self.end_date = pd.to_datetime(self.end_date)
 
     def process(self) -> pd.DataFrame:
         """
@@ -57,6 +64,8 @@ class VRE_PECD(BaseProcessor):
         This method checks that the CSV folder exists and contains CSV files; if not,
         it logs a warning and returns an empty DataFrame. Otherwise, it calls the internal method
         to read and compile the CSV files and renames the country columns with the attached grid suffix.
+        
+        After processing, it creates a summary table with annual average capacity factors.
 
         Returns:
             pd.DataFrame: DataFrame indexed by the full date range (from start_date to end_date, hourly)
@@ -96,6 +105,40 @@ class VRE_PECD(BaseProcessor):
 
         return summary_df
     
+    def _calculate_annual_summary(self, df):
+        """
+        Calculate annual average capacity factors from the entire timeseries.
+        
+        For each column in the DataFrame, this method:
+        1. Groups data by year
+        2. Calculates the mean for each year
+        3. Takes the overall mean across all years
+        
+        Parameters:
+            df (pd.DataFrame): The timeseries DataFrame with datetime index
+            
+        Returns:
+            pd.DataFrame: Summary table with annual average capacity factors
+        """
+        annual_summary = {}
+        
+        for col in df.columns:
+            # Calculate yearly means, then take the average across all years
+            # This gives us the typical annual capacity factor
+            yearly_means = df[col].groupby(df.index.year).mean()
+            # Overall average across all years
+            overall_mean = yearly_means.mean()
+            annual_summary[col] = overall_mean
+        
+        # Create a DataFrame from the summary
+        summary_table = pd.DataFrame.from_dict(
+            annual_summary, 
+            orient='index', 
+            columns=['Annual Average']
+        ).sort_index()
+        
+        return summary_table
+    
     def _filter_csv_files(self, csv_folder, start_date, end_date):
         """
         Scan the folder for CSV files and filter them based on the date
@@ -103,20 +146,14 @@ class VRE_PECD(BaseProcessor):
 
         Parameters:
             csv_folder (str): Folder containing CSV files.
-            start_date (datetime or str): Start date for filtering.
-            end_date (datetime or str): End date for filtering.
+            start_date (datetime): Start date for filtering.
+            end_date (datetime): End date for filtering.
 
         Returns:
             list: Filtered list of CSV file paths.
         """
         csv_files = glob.glob(os.path.join(csv_folder, "*.csv"))
         filtered_files = []
-
-        # Ensure start_date and end_date are datetime objects
-        if not isinstance(start_date, datetime):
-            start_date = pd.to_datetime(start_date)
-        if not isinstance(end_date, datetime):
-            end_date = pd.to_datetime(end_date)
 
         for file in csv_files:
             filename = os.path.basename(file)
@@ -138,40 +175,83 @@ class VRE_PECD(BaseProcessor):
 
         return filtered_files
 
-    def _process_country_code_mapping(self, df_columns, country_codes):
+    def _process_country_code_mapping(self, df, country_codes):
         """
         Process the country code mapping from the DataFrame columns.
     
-        It assumes that each CSV has the same mapping. For each country code provided,
-        the function performs:
+        When multiple columns match a country code (e.g., FI00_OFF1, FI00_OFF2, FI00_OFF3),
+        this method selects the column with the highest sum of values to prioritize
+        regions with better capacity factors and avoid empty timeseries.
+        
+        For each country code provided, the function performs:
           1. Exact match: Uses the code directly if it exists in the columns.
-          2. 4-letter prefix match: Looks for a column that starts with the first four letters.
-          3. 2-letter prefix match: If the above fails, it looks for a column that starts with the first two letters.
+          2. 4-letter prefix match: Looks for columns that start with the first four letters.
+             If multiple matches exist, selects the one with the highest sum.
+          3. 2-letter prefix match: If the above fails, looks for columns that start with the first two letters.
+             If multiple matches exist, selects the one with the highest sum.
     
         Parameters:
-            df_columns (iterable): Column headers of the CSV file.
+            df (pd.DataFrame): The DataFrame containing the data to evaluate.
             country_codes (list): List of country codes to match.
     
         Returns:
             dict: Mapping where keys are provided country codes and values are the actual column names found.
         """
         mapping = {}
+        
         for country_code in country_codes:
             # Try exact match first
-            if country_code in df_columns:
+            if country_code in df.columns:
                 mapping[country_code] = country_code
             else:
                 # Try 4-letter prefix matching (if possible)
                 prefix4 = country_code[:4]
-                matching_columns = [col for col in df_columns if col.startswith(prefix4)]
-                if matching_columns:
+                matching_columns = [col for col in df.columns if col.startswith(prefix4)]
+                
+                if len(matching_columns) > 1:
+                    # Multiple matches found - select the one with highest sum
+                    best_col = None
+                    best_sum = -np.inf
+                    sums = {}
+                    
+                    for col in matching_columns:
+                        col_sum = df[col].sum()
+                        sums[col] = col_sum
+                        if col_sum > best_sum:
+                            best_sum = col_sum
+                            best_col = col
+                    
+                    if best_col is not None:
+                        mapping[country_code] = best_col
+                        self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+                        
+                elif len(matching_columns) == 1:
                     mapping[country_code] = matching_columns[0]
                 else:
                     # Try 2-letter prefix matching
                     prefix2 = country_code[:2]
-                    matching_columns = [col for col in df_columns if col.startswith(prefix2)]
-                    if matching_columns:
+                    matching_columns = [col for col in df.columns if col.startswith(prefix2)]
+                    
+                    if len(matching_columns) > 1:
+                        # Multiple matches found - select the one with highest sum
+                        best_col = None
+                        best_sum = -np.inf
+                        sums = {}
+                        
+                        for col in matching_columns:
+                            col_sum = df[col].sum()
+                            sums[col] = col_sum
+                            if col_sum > best_sum:
+                                best_sum = col_sum
+                                best_col = col
+                        
+                        if best_col is not None:
+                            mapping[country_code] = best_col
+                            self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+                            
+                    elif len(matching_columns) == 1:
                         mapping[country_code] = matching_columns[0]
+                        
         return mapping
 
     def _read_and_process_csv(self, file, country_code_mapping, master_index):
@@ -227,15 +307,15 @@ class VRE_PECD(BaseProcessor):
 
         1. Generates a complete date range to serve as the master index.
         2. Uses _filter_csv_files to get the valid CSV files.
-        3. Derives the country code mapping from the first valid CSV file.
+        3. Derives the country code mapping from the first valid CSV file (now with sum-based selection).
         4. Iterates over the filtered CSV files, processing each with _read_and_process_csv and updating
            the master DataFrame.
 
         Parameters:
             csv_folder (str): Folder where CSV files are stored.
             country_codes (list): List of country codes to use.
-            start_date (str or datetime): Start date for the complete date range.
-            end_date (str or datetime): End date for the complete date range.
+            start_date (datetime): Start date for the complete date range.
+            end_date (datetime): End date for the complete date range.
 
         Returns:
             pd.DataFrame: DataFrame indexed by the master date range containing the compiled data.
@@ -243,12 +323,6 @@ class VRE_PECD(BaseProcessor):
         # Create the complete date range as master index
         date_range = pd.date_range(start=start_date, end=end_date, freq='60min')
         df_csv_summary = pd.DataFrame(index=date_range)
-
-        # Ensure start_date and end_date are datetime objects
-        if not isinstance(start_date, datetime):
-            start_date = pd.to_datetime(start_date)
-        if not isinstance(end_date, datetime):
-            end_date = pd.to_datetime(end_date)
 
         # Filter CSV files based on date from their filenames
         filtered_files = self._filter_csv_files(csv_folder, start_date, end_date)
@@ -260,6 +334,7 @@ class VRE_PECD(BaseProcessor):
             return df_csv_summary
 
         # Process country code mapping using the first valid CSV file
+        # Now we pass the entire DataFrame instead of just columns to enable sum-based selection
         header_row = 0
         first_file = filtered_files[0]
         with open(first_file, 'r') as f:
@@ -277,17 +352,11 @@ class VRE_PECD(BaseProcessor):
             self.log(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", level="warn")
             return df_csv_summary
 
-        country_code_mapping = self._process_country_code_mapping(df_first.columns, country_codes)
+        # Pass the DataFrame instead of just columns for sum-based selection
+        country_code_mapping = self._process_country_code_mapping(df_first, country_codes)
 
         if not country_code_mapping:
             self.log("No country code mappings found.", level="warn")
-
-        # Extract only those mappings where the country code differs from the column name
-        alternative_mappings = {code: col for code, col in country_code_mapping.items() if code != col}      
-        if alternative_mappings:
-            self.log("Alternative country code mappings used:")
-            for country_code, col in alternative_mappings.items():
-                self.log(f"   {country_code}: {col}")
 
         # Process each filtered CSV file and update the master DataFrame
         for file in filtered_files:
