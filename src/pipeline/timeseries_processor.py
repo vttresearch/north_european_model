@@ -8,15 +8,7 @@ import pandas as pd
 from src.utils import log_status
 from src.hash_utils import compute_file_hash
 from src.utils import trim_df, collect_domains, collect_domain_pairs
-from src.GDX_exchange import (
-    prepare_BB_df,
-    write_BB_gdx,
-    write_BB_gdx_gt,
-    calculate_average_year_df,
-    write_BB_gdx_annual,
-    write_BB_gdx_annual_gt,      
-    update_import_timeseries_inc
-)
+import src.GDX_exchange as GDX_exchange 
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from datetime import datetime
@@ -111,30 +103,21 @@ class ProcessorRunner:
         df.to_csv(csv_path)
         log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
 
-    def _write_annual_gdx(
-        self,
-        df: pd.DataFrame,
-        bb_kwargs: dict,
-        log_messages: list[str]
-    ):
+    def _write_annual_gdx(self, df, bb_kwargs, log_messages):
         """Write annual GDX files with fallback to gdxpds."""
         log_status("Writing annual GDX files...", log_messages)
         try:
-            write_BB_gdx_annual_gt(df, self.output_folder, log_messages, **bb_kwargs)
-        except Exception as e:
-            log_status(
-                f"GDX writing with GAMS Transfer failed ({e}), falling back to gdxpds.",
-                log_messages,
-                level="warn"
+            GDX_exchange.write_BB_gdx_annual(
+                df, self.output_folder, log_messages, 
+                use_gams_transfer=True, **bb_kwargs
             )
-            write_BB_gdx_annual(df, self.output_folder, log_messages, **bb_kwargs)
-        
-        log_status(
-            f"Annual GDX files for Backbone written to '{self.output_folder}'",
-            log_messages,
-            level="info"
-        )
-        update_import_timeseries_inc(self.output_folder, **bb_kwargs)
+        except Exception as e:
+            log_status(f"Falling back to gdxpds: {e}", log_messages, level="warn")
+            GDX_exchange.write_BB_gdx_annual(
+                df, self.output_folder, log_messages, 
+                use_gams_transfer=False, **bb_kwargs
+            )
+        GDX_exchange.update_import_timeseries_inc(self.output_folder, **bb_kwargs)
 
     def _write_average_year_output(
         self,
@@ -150,16 +133,16 @@ class ProcessorRunner:
         log_messages: list[str]
     ):
         """Write average year CSV and GDX outputs."""
-        avg_df = calculate_average_year_df(
+        avg_df = GDX_exchange.calculate_average_year_df(
             df, round_precision=rounding_precision, **bb_kwargs
         )
-        
+
         if write_csv:
             if single_year:
                 avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year.csv"
             else:
                 avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year_from_{start_date.year}-{end_date.year}.csv"
-            
+
             avg_csv_path = os.path.join(self.output_folder, avg_csv)
             avg_df.to_csv(avg_csv_path)
             log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
@@ -170,18 +153,32 @@ class ProcessorRunner:
             self.output_folder,
             f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
         )
-        
+
         try:
-            write_BB_gdx_gt(avg_df, forecast_gdx_path, log_messages, **bb_kwargs)
+            # writing with gams.transfer
+            GDX_exchange.write_BB_gdx(
+                avg_df, 
+                forecast_gdx_path, 
+                log_messages, 
+                use_gams_transfer=True,
+                **bb_kwargs
+            )
         except Exception as e:
             log_status(
                 f"GDX writing with GAMS Transfer failed ({e}), falling back to gdxpds.",
                 log_messages,
                 level="warn"
             )
-            write_BB_gdx(avg_df, forecast_gdx_path, **bb_kwargs)
+            # Fallback to gdxpds
+            GDX_exchange.write_BB_gdx(
+                avg_df, 
+                forecast_gdx_path, 
+                log_messages,  # ← FIXED: This was missing in the original!
+                use_gams_transfer=False,
+                **bb_kwargs
+            )
 
-        update_import_timeseries_inc(
+        GDX_exchange.update_import_timeseries_inc(
             self.output_folder, file_suffix="forecasts", **bb_kwargs
         )
         log_status(
@@ -285,7 +282,7 @@ class ProcessorRunner:
 
         # Trim + convert to BB
         trimmed_result = trim_df(main_result, rounding_precision)
-        main_result_bb = prepare_BB_df(
+        main_result_bb = GDX_exchange.prepare_BB_df(
             trimmed_result, start_date, country_codes, **bb_conversion_kwargs
         )
 
