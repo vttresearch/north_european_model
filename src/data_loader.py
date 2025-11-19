@@ -527,15 +527,6 @@ def apply_whitelist(
         * scenario: include 'all' (case-insensitive) in addition to provided values
         * year    : include 1 in addition to provided values
 
-    Specificity collapse (priority)
-    --------------------------------
-    After filtering, if 'scenario' and/or 'year' were among the filters and present
-    in the DataFrame, the result is collapsed to the most specific rows:
-      - Rows with scenario != 'all' are more specific than scenario == 'all'.
-      - Rows with year != 1 are more specific than year == 1.
-      - Scenario specificity outranks year specificity.
-    Only rows with the highest specificity are retained (ties kept).
-
     Parameters
     ----------
     df : pd.DataFrame
@@ -546,7 +537,7 @@ def apply_whitelist(
     Returns
     -------
     pd.DataFrame
-        Filtered copy. If `filters` is falsy or df is empty, returns original copy.
+        Filtered copy. If `filters` is falsy or df is empty, returns a copy of the original.
 
     Logging
     -------
@@ -560,10 +551,6 @@ def apply_whitelist(
 
     df_out = df.copy()
 
-    # Track which special filters are actually applied and available
-    scenario_filter_applied = False
-    year_filter_applied = False
-
     # Apply each filter with AND semantics
     for col, val in filters.items():
         if col not in df_out.columns:
@@ -573,14 +560,12 @@ def apply_whitelist(
         vals = val if isinstance(val, list) else [val]
 
         if col == "scenario":
-            scenario_filter_applied = True
             # Include 'all' (universal)
             allowed = {str(v).lower() for v in (vals + ["all"])}
             s = df_out[col].astype(str).str.lower()
             df_out = df_out[s.isin(allowed)]
 
         elif col == "year":
-            year_filter_applied = True
             # Include 1 (universal)
             allowed_set = set(vals + [1])
             df_out = df_out[df_out[col].isin(allowed_set)]
@@ -596,33 +581,6 @@ def apply_whitelist(
 
         if df_out.empty:
             return df_out  # Short-circuit: nothing left
-
-    # If nothing left or no special priority applicable, return
-    if df_out.empty:
-        return df_out
-
-    # Scenario specificity: True if not 'all'
-    if scenario_filter_applied and ("scenario" in df_out.columns):
-        scen_is_specific = df_out["scenario"].astype(str).str.lower() != "all"
-    else:
-        scen_is_specific = pd.Series(False, index=df_out.index)
-
-    # Year specificity: True if not 1 (handles string/int robustly)
-    if year_filter_applied and ("year" in df_out.columns):
-        col_y = df_out["year"]
-        if pd.api.types.is_numeric_dtype(col_y):
-            year_is_specific = col_y != 1
-        else:
-            year_is_specific = col_y.astype(str).str.strip() != "1"
-    else:
-        year_is_specific = pd.Series(False, index=df_out.index)
-
-    # Weight: scenario more important than year
-    score = (scen_is_specific.astype(int) * 2) + (year_is_specific.astype(int) * 1)
-
-    if score.max() > 0 or (scenario_filter_applied or year_filter_applied):
-        max_score = int(score.max())
-        df_out = df_out[score == max_score]
 
     return df_out
 
