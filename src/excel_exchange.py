@@ -18,7 +18,6 @@ def read_input_excels(
     sheet_name_prefix: str,
     logs: List[str],
     *,
-    is_mandatory: bool = True,
     drop_note_columns: bool = True,
     add_source_cols: bool = True,
 ) -> List[pd.DataFrame]:
@@ -43,8 +42,6 @@ def read_input_excels(
         Case-insensitive prefix used to select sheets within each workbook.
     logs : List[str]
         Log accumulator passed to `log_status`.
-    is_mandatory : bool, default True
-        If True, missing sheets/files emit warnings; otherwise informational logs.
     drop_note_columns : bool, default True
         If True, drop any column named 'note' (any casing).
     add_source_cols : bool, default True
@@ -74,10 +71,9 @@ def read_input_excels(
         # Match sheets by prefix (case-insensitive)
         matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
         if not matched:
-            level = "warn" if is_mandatory else "info"
             log_status(
                 f"No sheets starting with '{sheet_name_prefix}' in '{file_name}'.",
-                logs, level=level
+                logs, level="warn"
             )
             continue
 
@@ -125,10 +121,9 @@ def read_input_excels(
             dataframes.append(df)
 
     if not dataframes:
-        level = "warn" if is_mandatory else "info"
         log_status(
             f"No dataframes loaded for prefix '{sheet_name_prefix}'. Returning empty list.",
-            logs, level=level
+            logs, level="warn"
         )
         return []
 
