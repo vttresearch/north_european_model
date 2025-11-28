@@ -115,7 +115,7 @@ Some updates might require updating the conda environment. This is relatively ea
 	
   ```
 	conda env update -n=northEuropeanModel --file=environment.yml
-	```
+  ```
 	
 Follow the instructions in the dialogue and install the required updates, if there are any. No further actions are needed.
 
