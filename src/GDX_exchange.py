@@ -7,6 +7,7 @@ import numpy as np
 import os
 import glob
 import gams.transfer as gt
+from tqdm import tqdm
 
 
 def prepare_BB_df(
@@ -337,7 +338,7 @@ def write_BB_gdx_annual(
     single_year = (len(years) == 1)
 
     # Write each year
-    for yr in years:
+    for yr in tqdm(years, desc="  Writing"):
         df_y = annual[yr]
         
         # Determine filename

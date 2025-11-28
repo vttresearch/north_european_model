@@ -105,7 +105,7 @@ class ProcessorRunner:
 
     def _write_annual_gdx(self, df, bb_kwargs, log_messages):
         """Write annual GDX files with fallback to gdxpds."""
-        log_status("Writing annual GDX files...", log_messages)
+        log_status("Preparing annual GDX files...", log_messages)
         try:
             GDX_exchange.write_BB_gdx_annual(
                 df, self.output_folder, log_messages, 
