@@ -1,7 +1,7 @@
 # src/GDX_exchange.py
 
 from typing import Any, Dict, Optional, Sequence, List
-from src.utils import log_status
+from src.utils import log_status, standardize_df_dtypes
 import pandas as pd
 import numpy as np
 import os
@@ -129,113 +129,6 @@ def prepare_BB_df(
     return melted_df
 
 
-# ==============================================================================
-# INTERNAL BACKEND IMPLEMENTATIONS
-# ==============================================================================
-
-def _write_with_gams_transfer(
-    df: pd.DataFrame,
-    output_file: str,
-    logs: List[str],
-    **kwargs: Any
-) -> None:
-    """
-    Internal function: Write a DataFrame to GDX using gams.transfer.
-    
-    Expected kwargs:
-      - bb_parameter: str -> GDX parameter name
-      - bb_parameter_dimensions: Sequence[str] -> domain order, e.g. ['grid','node','f','t']
-    
-    Notes:
-      - Only the columns listed in bb_parameter_dimensions plus 'value' are written.
-      - Each dimension becomes a Set with the same name and records from the DataFrame.
-      - Non-finite values in 'value' are dropped (NaN/inf).
-    """
-    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
-    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
-
-    if not bb_parameter:
-        log_status(f"Missing required kwarg 'bb_parameter' from '{output_file}'", logs, level="warn")
-        return        
-
-    if not dims or len(dims) == 0:
-        # If not provided, infer all columns except 'value' as dimensions, preserving order.
-        dims = [c for c in df.columns if c != "value"]
-
-    # Validate columns
-    missing = [c for c in list(dims) + ["value"] if c not in df.columns]
-    if missing:
-        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
-        return
-
-    # Select & order columns
-    final_cols = list(dims) + ["value"]
-    work = df[final_cols].copy()
-
-    # Enforce types: all dims -> string labels; value -> float
-    for d in dims:
-        work[d] = work[d].astype(str)
-
-    # Drop non-finite values (NaN/inf) because GDX parameters require numeric values
-    before = len(work)
-    work = work[np.isfinite(work["value"].astype(float))]
-    after = len(work)
-    if after < before:
-        log_status(f"Dropped {before - after} rows with non-finite 'value' for '{output_file}'", logs, level="info")
-    work["value"] = work["value"].astype(float) 
-
-    # Build container and sets
-    m = gt.Container()
-
-    # Create a Set for each dimension with records = unique labels (order of first appearance)
-    dim_sets = {}
-    for d in dims:
-        # Preserve order of first appearance
-        labels = pd.unique(work[d])
-        dim_sets[d] = gt.Set(m, d, records=[str(x) for x in labels], description=f"{d} domain")
-
-    # Create the parameter with the domain sets in the given order
-    domain = [dim_sets[d] for d in dims]
-    p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter} written via gams.transfer"))
-    param = gt.Parameter(m, bb_parameter, domain, description=p_desc)
-
-    # GT expects a DataFrame with columns = dims + ['value']
-    param.setRecords(work[final_cols])
-
-    # Finally, write the GDX
-    m.write(output_file)
-
-
-def _write_with_gdxpds(
-    df: pd.DataFrame,
-    output_file: str,
-    logs: List[str],
-    **kwargs: Any
-) -> None:
-    """
-    Internal function: Write a DataFrame to GDX using gdxpds.
-    
-    Variables: 
-        df (DataFrame) with 'value' column. Other columns are treated as dimensions.
-        bb_parameter (string) used to create gdx parameter name
-        bb_parameter_dimensions (list of strings) used to filter written columns.
-    """
-    from gdxpds import to_gdx
-
-    bb_parameter = kwargs.get('bb_parameter')        
-    bb_parameter_dimensions = kwargs.get('bb_parameter_dimensions')
-
-    # add 'value' to final_cols
-    final_cols = bb_parameter_dimensions.copy()
-    final_cols.append('value')
-
-    # Select only required columns
-    df_out = df[final_cols]
-
-    # write gdx
-    dataframes = {bb_parameter: df_out}
-    to_gdx(dataframes, path=output_file)
-
 
 # ==============================================================================
 # WRITE FUNCTIONS
@@ -245,20 +138,20 @@ def write_BB_gdx(
     df: Optional[pd.DataFrame],
     output_file: str,
     logs: List[str],
-    use_gams_transfer: bool = True,
     **kwargs: Any
 ) -> None:
     """
-    Write a DataFrame to a GDX file using either gams.transfer or gdxpds.
+    Write a DataFrame to a GDX file.
+    
+    Tries gams.transfer first, automatically falls back to gdxpds on failure.
 
     Parameters:
         df: DataFrame with columns matching bb_parameter_dimensions + 'value'
         output_file: Path to output GDX file
         logs: List for logging messages
-        use_gams_transfer: If True, use gams.transfer; otherwise use gdxpds (default: True)
         **kwargs: Must include:
             - bb_parameter: str -> GDX parameter name
-            - bb_parameter_dimensions: Sequence[str] -> dimension columns
+            - bb_parameter_dimensions: Sequence[str] -> dimension columns (optional, inferred if missing)
 
     Returns: 
         None: Writes content to output_file
@@ -267,22 +160,65 @@ def write_BB_gdx(
         log_status(f"Skipping writing GDX '{output_file}': No data to write", logs, level="warn")
         return
 
-    try:
-        if use_gams_transfer:
-            _write_with_gams_transfer(df, output_file, logs, **kwargs)
-        else:
-            _write_with_gdxpds(df, output_file, logs, **kwargs)
-    except Exception as e:
-        backend = "gams.transfer" if use_gams_transfer else "gdxpds"
-        log_status(f"Failed to write '{output_file}' using {backend}: {e}", logs, level="error")
-        raise
+    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
+    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
 
+    if not bb_parameter:
+        log_status(f"Missing required kwarg 'bb_parameter' from '{output_file}'", logs, level="warn")
+        return
+
+    # Infer dimensions if not provided
+    if not dims or len(dims) == 0:
+        dims = [c for c in df.columns if c != "value"]
+
+    # Validate columns
+    final_cols = list(dims) + ["value"]
+    missing = [c for c in final_cols if c not in df.columns]
+    if missing:
+        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
+        return
+
+    # Select only required columns
+    work = df[final_cols]
+
+    try:
+        # --- Try GAMS Transfer first ---
+        m = gt.Container()
+
+        # Create Sets for each dimension
+        dim_sets = {}
+        for d in dims:
+            unique_vals = work[d].unique()
+            dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+
+        # Create Parameter
+        domain = [dim_sets[d] for d in dims]
+        p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter} written via gams.transfer"))
+        param = gt.Parameter(m, bb_parameter, domain, description=p_desc)
+        param.setRecords(work)
+
+        # Write
+        m.write(output_file)
+
+    except Exception as e:
+        # --- Fallback to gdxpds ---
+        log_status(
+            f"GAMS Transfer failed for '{output_file}': {e}. Falling back to gdxpds.",
+            logs,
+            level="warn"
+        )
+        try:
+            from gdxpds import to_gdx
+            dataframes = {bb_parameter: work}
+            to_gdx(dataframes, path=output_file)
+        except Exception as e2:
+            log_status(f"Both GAMS Transfer and gdxpds failed for '{output_file}': {e2}", logs, level="error")
+            raise
 
 def write_BB_gdx_annual(
     df: Optional[pd.DataFrame],
     output_folder: str,
     logs: List[str],
-    use_gams_transfer: bool = True,
     **kwargs: Any
 ) -> None:
     """
@@ -298,7 +234,6 @@ def write_BB_gdx_annual(
         df: Multi-year DataFrame with columns matching bb_parameter_dimensions + helper columns
         output_folder: Directory where GDX files will be written
         logs: List for logging messages
-        use_gams_transfer: If True, use gams.transfer; otherwise use gdxpds (default: True)
         **kwargs: Must include:
             - bb_parameter: str -> GDX parameter name
             - bb_parameter_dimensions: Sequence[str] -> dimension columns
@@ -309,54 +244,110 @@ def write_BB_gdx_annual(
         - Single year: {bb_parameter}_{gdx_name_suffix}.gdx
         - Multiple years: {bb_parameter}_{gdx_name_suffix}_{year}.gdx
     """
+    # --- initialization and checks ---
     if df is None or len(df) == 0:
         log_status(f"Skipping annual GDX writing: No data to write", logs, level="warn")
         return
 
-    bb_parameter = kwargs.get("bb_parameter")
-    dims = kwargs.get("bb_parameter_dimensions")
-    gdx_name_suffix = kwargs.get("gdx_name_suffix", "")
+    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
+    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
+    gdx_name_suffix: Optional[str] = kwargs.get("gdx_name_suffix", "")
 
     if not bb_parameter:
         log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing", logs, level="warn")
         return
+    
+    # If dims not provided, infer all columns except 'value' as dimensions, preserving order.
+    if not dims or len(dims) == 0:       
+        dims = [c for c in df.columns if c != "value"]
 
-    if not dims:
-        log_status(f"Missing required kwarg 'bb_parameter_dimensions' for annual GDX writing", logs, level="warn")
-        return
+    # Validate columns
+    missing = [c for c in list(dims) + ["value"] if c not in df.columns]
+    if missing:
+        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
+        return 
 
+    # Final columns of the written dataframe
+    final_cols = list(dims) + ["value"]
+
+    # --- Split to annual dfs ---
     # Split into annual frames
-    annual = split_timeseries_to_annual_gdx_frames(
+    annual_dfs = split_timeseries_to_annual_gdx_frames(
         df, logs, bb_parameter_dimensions=dims
     )
     
-    if not annual:
+    if not annual_dfs:
         log_status("No annual data available to write", logs, level="warn")
-        return
-
-    years = sorted(annual.keys())
+        return    
+    
+    # pick key characteristics
+    years = sorted(annual_dfs.keys())
     single_year = (len(years) == 1)
 
-    # Write each year
-    for yr in tqdm(years, desc="  Writing"):
-        df_y = annual[yr]
-        
-        # Determine filename
-        if single_year:
-            fname = f"{bb_parameter}_{gdx_name_suffix}.gdx" if gdx_name_suffix else f"{bb_parameter}.gdx"
-        else:
-            suffix = f"_{gdx_name_suffix}" if gdx_name_suffix else ""
-            fname = f"{bb_parameter}{suffix}_{yr}.gdx"
-        
-        output_file = os.path.join(output_folder, fname)
-        
-        # Write
+    # --- prepare and write annual gdx files ---
+    fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
+
+    # Try writing each year with GAMS Transfer
+    try:
+        # Build container and sets
+        m = gt.Container()
+
+        # Create a Set for each dimension with records = unique labels
+        dim_sets = {}
+        for d in dims:
+            if d == 't':
+                # For 't', use only one year's worth (always t000001..t008760)
+                # Pick from first annual df since all years have identical 't' structure
+                unique_vals = annual_dfs[years[0]][d].unique()
+            else:
+                # For other dimensions, collect unique values across ALL years
+                unique_vals = pd.concat([annual_dfs[yr][d] for yr in years]).unique()
+            
+            dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+
+        # Prepare parameter
+        domains = [dim_sets[d] for d in dims]
+        p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter}"))
+        param = gt.Parameter(m, bb_parameter, domains, description=p_desc)
+
+        for yr in tqdm(years, desc="  Writing"):
+            # pick annual df
+            df_y = annual_dfs[yr]
+
+            # Filter to final_cols
+            df_y = df_y[final_cols]
+
+            # populate parameter
+            param.setRecords(df_y)
+
+            # Add year to filename if multiple years
+            fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
+            output_file = os.path.join(output_folder, fname)
+
+            # Write
+            m.write(output_file)
+    # Fallback to gdxpds
+    except:
+        log_status("  .. Gams Transfer failed, falling back to gdxpds.", logs, level="warn") 
         try:
-            write_BB_gdx(df_y, output_file, logs, use_gams_transfer, **kwargs)
-        except Exception as e:
-            log_status(f"Failed to write annual GDX for year {yr}: {e}", logs, level="error")
+            from gdxpds import to_gdx
+            for yr in tqdm(years, desc="  Writing"):
+
+                # prepare annual content
+                df_y = annual_dfs[yr]
+                df_y = df_y[final_cols]
+                dataframes = {bb_parameter: df_y}
+
+                # Add year to filename if multiple years
+                fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
+                output_file = os.path.join(output_folder, fname)
+
+                # write
+                to_gdx(dataframes, path=output_file)
+
+        except Exception as e2:
+            log_status(f"Both GAMS Transfer and gdxpds failed for '{output_file}': {e2}", logs, level="error")
             raise
-        
 
 
 # ==============================================================================
@@ -468,7 +459,6 @@ def calculate_average_year_df(
     return df_final
 
 
-
 def split_timeseries_to_annual_gdx_frames(
     df: Optional[pd.DataFrame],
     logs: List[str],
@@ -507,61 +497,78 @@ def split_timeseries_to_annual_gdx_frames(
     # Work copy without 't' (rebuild it below)
     work = df.drop(columns="t", errors="ignore").copy()
 
-    # Convert types before grouping/sorting
-    for d in dims_no_t:
-        work[d] = work[d].astype(str)
-    work["value"] = work["value"].astype(float)
+    if work["value"].dtype != np.float64:
+        work["value"] = work["value"].astype(np.float64)
+
 
     # Handle NaN/inf before splitting
-    if nan_to_zero:
-        n_nans = work["value"].isna().sum()
-        if n_nans:
-            log_status(f"Converted {n_nans} NaN values to 0.0 during annual split.", logs, level="info")
-            work["value"] = work["value"].fillna(0.0)
-    if inf_to_zero:
-        mask_infs = ~np.isfinite(work["value"]) & work["value"].notna()
-        n_infs = mask_infs.sum()
-        if n_infs:
-            log_status(f"Converted {n_infs} -inf/+inf values to 0.0 during annual split.", logs, level="info")
-            work.loc[mask_infs, "value"] = 0.0
+    if nan_to_zero or inf_to_zero:
+        mask = pd.isna(work["value"])
+        if inf_to_zero:
+            mask |= ~np.isfinite(work["value"])
+        
+        n_bad = mask.sum()
+        if n_bad:
+            log_status(f"Converted {n_bad} NaN/inf values to 0.0 during annual split.", logs, level="info")
+            work.loc[mask, "value"] = 0.0
 
     # Grouping excludes f and t
     group_dims = [c for c in dims if c not in {"f", "t"}]
     
-    # Sort once by year + group_dims + time
-    sort_cols = [year_col] + group_dims + [time_col]
-    work = work.sort_values(sort_cols, kind="mergesort")
+    # Pre-compute 't' labels once (reusable array)
+    t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
     
-    # Create row numbers within each group
-    work['_row_num'] = work.groupby([year_col] + group_dims, observed=True, group_keys=False).cumcount()
-    
-    # Filter to max_hours
-    work = work[work['_row_num'] < max_hours]
-    
-    # Create 't' labels vectorized
-    work['t'] = 't' + (work['_row_num'] + 1).astype(str).str.zfill(6)
-    
-    # Drop temporary column and unnecessary columns
-    work = work.drop(columns=['_row_num', time_col])
+    final_cols = dims + ["value"]
+    out: Dict[int, pd.DataFrame] = {}
+
+    # Pre-compute 't' labels once
+    t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
 
     final_cols = dims + ["value"]
     out: Dict[int, pd.DataFrame] = {}
 
-    # Split by year
-    for yr, df_y in work.groupby(year_col, observed=True, group_keys=False):
-        # Select columns and reset index
-        frame = df_y[final_cols].reset_index(drop=True)
-        out[int(yr)] = frame
+    # Process by year first (smaller chunks)
+    for yr, df_yr in work.groupby(year_col, observed=True, sort=False):
+        df_yr = df_yr.copy()
 
+        if group_dims:
+            # Sort only within this year
+            sort_cols = group_dims + [time_col]
+            df_yr = df_yr.sort_values(sort_cols, kind="mergesort")
+
+            # OPTIMIZATION: Replace cumcount() with numpy operations
+            # Create group IDs and compute differences
+            group_ids = df_yr.groupby(group_dims, observed=True, sort=False).ngroup()
+
+            # Fast row numbering: count within groups using diff
+            group_changes = np.diff(group_ids.values, prepend=-1) != 0
+            row_nums = np.arange(len(df_yr))
+            row_nums -= np.repeat(row_nums[group_changes], np.diff(np.append(np.where(group_changes)[0], len(df_yr))))
+
+            df_yr['_row_num'] = row_nums
+        else:
+            # No grouping needed
+            df_yr['_row_num'] = np.arange(len(df_yr))
+
+        # Filter to max_hours
+        df_yr = df_yr[df_yr['_row_num'] < max_hours]
+
+        # OPTIMIZATION: Direct array assignment (already fast, but ensure no copy)
+        row_nums_filtered = df_yr['_row_num'].values
+        df_yr['t'] = t_labels[row_nums_filtered]
+
+        # Drop temporary columns
+        frame = df_yr[final_cols].reset_index(drop=True)
+        out[int(yr)] = frame
+    
     if not out:
         log_status("No annual frames were produced after remap/filter.", logs, level="warn")
 
     return out
 
 
-
 # ==============================================================================
-# GAMS IMPORT FILE GENERATION
+# TS IMPORT FILE GENERATION
 # ==============================================================================
 
 def update_import_timeseries_inc(

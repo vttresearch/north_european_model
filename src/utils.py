@@ -180,13 +180,13 @@ def check_dependencies():
     try:
         gdxpds = importlib.import_module("gdxpds")
     except ImportError:
-        errors.append("gdxpds not installed")
+        errors.append("gdxpds not installed, see readme.md how to install/update the environment.")
 
     # Check gams.transfer importability
     try:
         importlib.import_module("gams.transfer")
     except ImportError:
-        errors.append("gams.transfer not importable (GAMS Python API missing)")
+        errors.append("gams.transfer not importable (GAMS Python API missing), see readme.md how to install/update the environment.")
 
     # Check gams executable availability in PATH
     gams_exec = shutil.which("gams") or shutil.which("gams.exe")
