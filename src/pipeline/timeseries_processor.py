@@ -5,13 +5,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import importlib.util
 import pandas as pd
-from src.utils import log_status
-from src.hash_utils import compute_file_hash
-from src.utils import trim_df, collect_domains, collect_domain_pairs
+import src.hash_utils as hash_utils
+import src.utils as utils
 import src.GDX_exchange as GDX_exchange 
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
-from datetime import datetime
 from typing import Optional, Any
 
 
@@ -80,29 +78,8 @@ class ProcessorRunner:
         here to ensure we only mark processors as "up-to-date" after they've 
         actually executed successfully.
         """
-        hash_value = compute_file_hash(processor_file)
+        hash_value = hash_utils.compute_file_hash(processor_file)
         self.cache_manager.save_processor_hash(processor_name, hash_value)
-
-    def _write_csv_output(
-        self,
-        df: pd.DataFrame,
-        bb_parameter: str,
-        gdx_name_suffix: str,
-        start_date: pd.Timestamp,
-        end_date: pd.Timestamp,
-        single_year: bool,
-        log_messages: list[str]
-    ):
-        """Write CSV output file."""
-        if single_year:
-            csv_file = f"{bb_parameter}_{gdx_name_suffix}.csv"
-        else:
-            csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
-        
-        csv_path = os.path.join(self.output_folder, csv_file)
-        df.to_csv(csv_path)
-        log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
-
 
 
     def run(self) -> ProcessorRunnerResult:
@@ -116,7 +93,7 @@ class ProcessorRunner:
         processor_file = Path(self.processor_spec["file"])
         
         log_messages = []
-        log_status(f"{human_name}", log_messages, section_start_length=45)
+        utils.log_status(f"{human_name}", log_messages, section_start_length=45)
 
         # Extract config values
         start_date = pd.to_datetime(self.config.get("start_date"))
@@ -163,7 +140,7 @@ class ProcessorRunner:
             ]
 
             if df_filtered.empty:
-                log_status(
+                utils.log_status(
                     f"No demand data found for grid '{demand_grid}'. Skipping processor '{human_name}'.",
                     log_messages,
                     level="warn",
@@ -204,7 +181,7 @@ class ProcessorRunner:
 
         # --- Convert results to BB format and write them ---
         # Trim + convert to BB
-        trimmed_result = trim_df(main_result, rounding_precision)
+        trimmed_result = utils.trim_df(main_result, rounding_precision)
         main_result_bb = GDX_exchange.prepare_BB_df(
             trimmed_result, start_date, country_codes, **bb_conversion_kwargs
         )
@@ -218,19 +195,22 @@ class ProcessorRunner:
 
             csv_path = os.path.join(self.output_folder, csv_file)
             trimmed_result.to_csv(csv_path)
-            log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
+            utils.log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
 
         # Write results (BB format) to annual GDX files
-        log_status("Preparing annual GDX files...", log_messages)
+        utils.log_status("Preparing annual GDX files...", log_messages)
         GDX_exchange.write_BB_gdx_annual(main_result_bb, self.output_folder, log_messages, **bb_conversion_kwargs)
         GDX_exchange.update_import_timeseries_inc(self.output_folder, **bb_conversion_kwargs)        
 
 
         # --- Average year processing ---
         if spec.get("calculate_average_year", False):
+            utils.log_status("Calculating average year GDX file...", log_messages)
             # Calculate average year
             avg_df = GDX_exchange.calculate_average_year_df(
-                main_result_bb, round_precision=rounding_precision, **bb_conversion_kwargs
+                main_result_bb, 
+                round_precision=rounding_precision, 
+                **bb_conversion_kwargs
             )
 
             # Write CSV if requested
@@ -242,10 +222,10 @@ class ProcessorRunner:
 
                 avg_csv_path = os.path.join(self.output_folder, avg_csv)
                 avg_df.to_csv(avg_csv_path)
-                log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
+                utils.log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
 
             # Write average year GDX file
-            log_status("Writing average year GDX file...", log_messages)
+            utils.log_status("Writing average year GDX file...", log_messages)
             forecast_gdx_path = os.path.join(
                 self.output_folder,
                 f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
@@ -257,7 +237,7 @@ class ProcessorRunner:
                 self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs
             )
 
-            log_status(f"Average year GDX written to '{self.output_folder}'", log_messages, level="info")
+            utils.log_status(f"Average year GDX written to '{self.output_folder}'", log_messages, level="info")
 
         # --- Post-processing activities ---
         # Save secondary result to cache
@@ -270,8 +250,8 @@ class ProcessorRunner:
         # Collect domains and domain pairs
         domains = ['grid', 'node', 'flow', 'group']
         domain_pairs = [['grid', 'node'], ['flow', 'node']]
-        local_ts_domains = collect_domains(main_result_bb, domains)
-        local_ts_domain_pairs = collect_domain_pairs(main_result_bb, domain_pairs)
+        local_ts_domains = utils.collect_domains(main_result_bb, domains)
+        local_ts_domain_pairs = utils.collect_domain_pairs(main_result_bb, domain_pairs)
 
         # Save processor hash
         self._update_processor_hash(processor_file, processor_name)
