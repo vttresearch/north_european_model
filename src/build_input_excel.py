@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import src.utils as utils
-from src.excel_exchange import add_index_sheet, adjust_excel, check_if_bb_excel_open
+import src.excel_exchange as excel_exchange
 from src.pipeline.bb_excel_context import BBExcelBuildContext
 
 
@@ -1745,12 +1745,11 @@ class BuildInputExcel:
 # ------------------------------------------------------
 # Main entry point for the script
 # ------------------------------------------------------
-
     def run(self):
 
         # Check if the Excel file is already open before proceeding
         try: 
-            check_if_bb_excel_open(self.output_file)
+            excel_exchange.check_if_bb_excel_open(self.output_file)
         except Exception as e:
             utils.log_status(f"{e}", self.builder_logs, level="warn")
             return self.builder_logs, self.bb_excel_succesfully_built
@@ -1758,11 +1757,14 @@ class BuildInputExcel:
         # Create p_gnu_io
         if not self.df_unittypedata.empty and not self.df_unitdata.empty:
             p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
+
         else:
             utils.log_status(f"Missing unit data or unittype data, skipping p_gnu_io and derivatives.'", 
                        self.builder_logs, level="info")
             p_gnu_io = pd.DataFrame() 
         if not p_gnu_io.empty:
+            # remove zeroes
+            p_gnu_io = p_gnu_io.mask(p_gnu_io == 0)
             # Create flat version for easier use in other functions
             p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
         else:
@@ -1771,6 +1773,8 @@ class BuildInputExcel:
         # unittype based input tables
         unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
         p_unit = self.create_p_unit(self.df_unittypedata, unitUnittype, self.df_unitdata)
+        # remove zeroes
+        p_unit = p_unit.mask(p_unit == 0)
         flowUnit = self.create_flowUnit(self.df_unittypedata, unitUnittype)
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unittypedata, unitUnittype)
 
@@ -1795,6 +1799,8 @@ class BuildInputExcel:
         p_gn = self.create_p_gn(p_gnu_io_flat, self.df_fueldata, self.df_demanddata, 
                                 self.df_storagedata, self.ts_storage_limits, self.ts_domain_pairs)
         if not p_gn.empty:
+            # remove zeroes
+            p_gn = p_gn.mask(p_gn == 0)            
             # Create flat version for easier use in other functions
             p_gn_flat = self.drop_fake_MultiIndex(p_gn)
         else:
@@ -1804,6 +1810,8 @@ class BuildInputExcel:
         p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, 
                                                                                       self.df_storagedata, 
                                                                                       self.ts_storage_limits)
+        # remove zeroes
+        p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.mask(p_gnBoundaryPropertiesForStates == 0)        
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fueldata)
         p_userconstraint = self.create_p_userconstraint(self.df_userconstraintdata,
                                                         p_gnu_io_flat, 
@@ -1893,8 +1901,8 @@ class BuildInputExcel:
             restype.to_excel(writer, sheet_name='restype', index=False)    
 
         # Apply the adjustments on the Excel file
-        add_index_sheet(self.input_folder, self.output_file)
-        adjust_excel(self.output_file)
+        excel_exchange.add_index_sheet(self.input_folder, self.output_file)      
+        excel_exchange.adjust_excel(self.output_file)
 
         utils.log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
         self.bb_excel_succesfully_built = True
