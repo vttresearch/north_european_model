@@ -230,141 +230,78 @@ class BuildInputExcel:
         """
         Fills missing capacity values of units with a set of rules. 
         Currently calculates missing input capacity, if 
-            * unit has 1 input without capacity and 1 output with capacity
-            * unit has 1 input without capacity, 2 outputs with capacity, and no 'cv' parameter
-            * unit has 1 input with capacity and 1 output without capacity
-
+            * 1 input and 1 output, other one without capacity
+            * unit has 1 input without capacity, 2 or more outputs with capacity, and no 'cv' parameter
         """
+
         # Skip processing if either of the source dataframes are empty
         if p_gnu_io.empty or p_unit.empty:
             return pd.DataFrame()
 
         # Get a flat version of the source dataframes without the fake multi-index
-        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io).copy()
         p_unit_flat = self.drop_fake_MultiIndex(p_unit)
 
-        # Create a dictionary mapping each unit to its maximum efficiency.
-        # Efficiency is taken as the maximum among columns that start with 'eff' (e.g., eff00, eff01, ...)
-        p_unit_eff = {}
-        # Identify efficiency columns (assumes they all start with 'eff')
+        # Create efficiency lookup dictionary
         eff_columns = [col for col in p_unit_flat.columns if col.startswith('eff')]
+        unit_efficiency = {}
         for _, unit_row in p_unit_flat.iterrows():
-            # For each unit, compute its max efficiency (assuming one row per unit)
-            p_unit_eff[unit_row['unit']] = unit_row[eff_columns].max()
+            unit_efficiency[unit_row['unit']] = unit_row[eff_columns].max()
 
-        # --- 1 input without capacity and 1 output with capacity ---
-        # For each row in p_gnu_io_flat with type 'input' and capacity 0, if unit
-        # has exactly one input row, try to find a matching output row for the same unit
-        # that has exactly one output row and capacity > 0.
-        for idx, row in p_gnu_io_flat.iterrows():
-            if row['input_output'] == 'input' and row['capacity'] == 0:
-                # Check that for this unit, there is only one input row.
-                group_input = p_gnu_io_flat[
-                    (p_gnu_io_flat['unit'] == row['unit']) &
-                    (p_gnu_io_flat['input_output'] == 'input')
-                ]
-                if len(group_input) != 1:
-                    continue
+        # Helper function to get unit's io rows
+        def get_unit_rows(unit, io_type):
+            return p_gnu_io_flat[
+                (p_gnu_io_flat['unit'] == unit) & 
+                (p_gnu_io_flat['input_output'] == io_type)
+            ]
 
-                # Look for a corresponding output row for the same unit with positive capacity
-                candidate_outputs = p_gnu_io_flat[
-                    (p_gnu_io_flat['unit'] == row['unit']) &
-                    (p_gnu_io_flat['input_output'] == 'output') &
-                    (p_gnu_io_flat['capacity'] > 0)
-                ]
-                # Require that there is exactly one output row.
-                if not candidate_outputs.empty:
-                    if len(candidate_outputs) == 1:
-                        matched_row = candidate_outputs.iloc[0]
-                        output_capacity = matched_row['capacity']
-                        # Get efficiency for the unit, defaulting to 0 if not found
-                        efficiency = p_unit_eff.get(row['unit'], 0)
-                        if efficiency > 0:
-                            # Update the missing input capacity; divide output capacity by efficiency.
-                            new_capacity = output_capacity / efficiency if efficiency != 0 else 0
-                            p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+        # Process each unit only once
+        for unit in p_gnu_io_flat['unit'].unique():
+            efficiency = unit_efficiency.get(unit, 0)
+            if efficiency <= 0:
+                continue
 
-        # --- 1 input without capacity and 2 outputs with capacity (no 'cv' parameter) ---
-        # For each row with type 'input' and capacity 0, if unit has exactly one input row, 
-        # check if there are exactly 2 output rows with capacity > 0
-        # and neither has a 'cv' parameter.
-        for idx, row in p_gnu_io_flat.iterrows():
-            if row['input_output'] == 'input' and row['capacity'] == 0:
-                # Check that for this unit, there is only one input row.
-                group_input = p_gnu_io_flat[
-                    (p_gnu_io_flat['unit'] == row['unit']) &
-                    (p_gnu_io_flat['input_output'] == 'input')
-                ]
-                if len(group_input) != 1:
-                    continue
+            inputs = get_unit_rows(unit, 'input')
+            outputs = get_unit_rows(unit, 'output')
 
-                # Look for output rows for the same unit with positive capacity
-                candidate_outputs = p_gnu_io_flat[
-                    (p_gnu_io_flat['unit'] == row['unit']) &
-                    (p_gnu_io_flat['input_output'] == 'output') &
-                    (p_gnu_io_flat['capacity'] > 0)
-                ]
-                candidate_outputs = utils.standardize_df_dtypes(candidate_outputs, fill_numeric_na=True)
+            # Rule 1: 1 input and 1 output, other one without capacity
+            if len(inputs) == 1 and len(outputs) == 1:
+                input_idx = inputs.index[0]
+                output_idx = outputs.index[0]
+                input_cap = inputs.iloc[0]['capacity']
+                output_cap = outputs.iloc[0]['capacity']
 
-                # Check if there are exactly 2 outputs and neither has 'cv' parameter
-                if len(candidate_outputs) == 2:
-                    # Check if 'cv' column exists and if so, ensure neither output has it
-                    has_cv_column = 'cv' in p_gnu_io_flat.columns
-                    if has_cv_column:
-                        # Skip if either output has a non-zero/non-null cv value
-                        cv_values = candidate_outputs['cv']
-                        if any(cv_values > 0):
-                            continue
-                        
-                    # Calculate total output capacity
-                    total_output_capacity = candidate_outputs['capacity'].sum()
+                # If input cap zero and value in output, calculate input from output
+                if utils.is_val_empty(input_cap, self.builder_logs) and not utils.is_val_empty(output_cap, self.builder_logs):
+                    p_gnu_io_flat.at[input_idx, 'capacity'] = output_cap / efficiency
 
-                    # Get efficiency for the unit, defaulting to 0 if not found
-                    efficiency = p_unit_eff.get(row['unit'], 0)
-                    if efficiency > 0:
-                        # Calculate required input capacity
-                        new_capacity = total_output_capacity / efficiency
-                        # Update the missing input capacity
-                        p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+                # If output cap zero and value in input, calculate output from input
+                elif not utils.is_val_empty(input_cap, self.builder_logs) and utils.is_val_empty(output_cap, self.builder_logs):
+                    p_gnu_io_flat.at[output_idx, 'capacity'] = input_cap * efficiency
 
+            # Rule 2: 1 input without capacity, 2 or more outputs with capacity (no 'cv')
+            elif len(inputs) == 1 and len(outputs) > 1:
+                input_idx = inputs.index[0]
+                input_cap = inputs.iloc[0]['capacity']
 
-        # --- 1 output without capacity and 1 input with capacity ---
-        # Now, for each row with type 'output' and zero capacity,
-        # check that its (grid, node, unit) group has exactly one output row.
-        # Then, try to find a matching input row from a different (grid, node) with capacity > 0 and exactly one input row.
-        for idx, row in p_gnu_io_flat.iterrows():
-            if row['input_output'] == 'output' and row['capacity'] == 0:
-                # Check that within the (grid, node, unit) group there is only one output row.
-                group_output = p_gnu_io_flat[
-                    (p_gnu_io_flat['unit'] == row['unit']) &
-                    (p_gnu_io_flat['input_output'] == 'output')
-                ]
-                if len(group_output) != 1:
-                    continue
+                if utils.is_val_empty(input_cap, self.builder_logs):
+                    # Check both outputs have capacity
+                    output_caps = outputs['capacity']
+                    if all(~utils.is_val_empty(cap, self.builder_logs) for cap in output_caps):
+                        # Check for 'cv' parameter if column exists
+                        skip = False
+                        if 'cv' in outputs.columns:
+                            cv_values = outputs['cv']
+                            if (cv_values > 0).any():
+                                skip = True
 
-                # Find a candidate input row for the same unit with positive capacity.
-                candidate_inputs = p_gnu_io_flat[
-                    (p_gnu_io_flat['unit'] == row['unit']) &
-                    (p_gnu_io_flat['input_output'] == 'input') &
-                    (p_gnu_io_flat['capacity'] > 0)
-                ]
-                # Ensure the candidate input row's (grid, node, unit) group contains only one row.
-                if not candidate_inputs.empty:
-                    if len(candidate_inputs) == 1:
-                        matched_row = candidate_inputs.iloc[0]
-                        input_capacity = matched_row['capacity']
-                        # Get efficiency for the unit, defaulting to 0 if not found
-                        efficiency = p_unit_eff.get(row['unit'], 0)
-                        if efficiency > 0:
-                            # Update the missing output capacity; multiply input capacity by efficiency.
-                            new_capacity = input_capacity * efficiency
-                            p_gnu_io_flat.at[idx, 'capacity'] = new_capacity
+                        if not skip:
+                            total_output = output_caps.sum()
+                            p_gnu_io_flat.at[input_idx, 'capacity'] = total_output / efficiency
 
-        # Standardize dtypes and Fill any remaining NaN 
-        p_gnu_io_flat = utils.standardize_df_dtypes(p_gnu_io_flat, fill_numeric_na=True)
-
-        # Recreate the fake multi-index using the specified columns.
+        # Recreate the fake multi-index
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
+
         return p_gnu_io
 
 
