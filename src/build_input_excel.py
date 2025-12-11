@@ -301,7 +301,6 @@ class BuildInputExcel:
 
         # Recreate the fake multi-index
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
-
         return p_gnu_io
 
 
