@@ -1301,11 +1301,12 @@ class BuildInputExcel:
             grid_row = df_fueldata[df_fueldata['grid'] == grid].iloc[0]
             for col, emission in zip(emission_cols, emissions):
                 if col in grid_row:
-                    if grid_row[col] > 0:
+                    value = grid_row[col]
+                    if pd.notna(value) and value > 0:
                         grid_emission_data.append({
                             'grid': grid,
                             'emission': emission,
-                            'value': grid_row[col]
+                            'value': value
                         })
 
         grid_emission = pd.DataFrame(grid_emission_data)
@@ -1321,16 +1322,16 @@ class BuildInputExcel:
                 grid_emission_row = grid_emission[(grid_emission['grid'] == row['grid']) & 
                                                  (grid_emission['emission'] == emission)]
                 if not grid_emission_row.empty:
-                    if grid_emission_row.iloc[0]['value'] > 0:
+                    value = grid_emission_row.iloc[0]['value']
+                    if pd.notna(value) and value > 0:
                         p_nEmission_data.append({
                             'node': row['node'],
                             'emission': emission,
-                            'value': grid_emission_row.iloc[0]['value']
+                            'value': value
                         })
 
         p_nEmission = pd.DataFrame(p_nEmission_data)
         p_nEmission = utils.standardize_df_dtypes(p_nEmission, fill_numeric_na=True)
-
 
         return p_nEmission
 
