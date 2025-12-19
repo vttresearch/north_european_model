@@ -113,6 +113,7 @@ class BuildInputExcel:
             'initialGeneration',
             'maxRampUp',
             'maxRampDown',
+            'rampPenalty',
             'rampUpCost',
             'rampDownCost',
             'upperLimitCapacityRatio',
