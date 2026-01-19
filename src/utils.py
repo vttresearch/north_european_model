@@ -1,3 +1,5 @@
+# src/utils.py
+
 import sys
 import pandas as pd
 import numpy as np
@@ -136,6 +138,8 @@ def check_dependencies():
     Verifies required dependencies.
         - Python ≥ 3.12
         - pandas ≥ 2.2
+        - pyarrow
+        - tqdm
         - gdxpds with accessible to_gdx
         - gams.transfer importable
         - gams executable accessible in PATH        
@@ -146,33 +150,45 @@ def check_dependencies():
 
     errors = []
 
-    # 1) Check Python version
+    # Check Python version
     py_major, py_minor = sys.version_info[:2]
     if (py_major, py_minor) < (3, 12):
-        errors.append(f"Python {py_major}.{py_minor} detected (requires ≥3.12)")
+        errors.append(f"Python {py_major}.{py_minor} detected (requires ≥3.12), see readme.md how to install/update the environment.")
 
-    # 2) Check pandas version
+    # Check pandas version
     try:
         import pandas as pd
         pd_major, pd_minor = map(int, pd.__version__.split('.')[:2])
         if (pd_major, pd_minor) < (2, 2):
             errors.append(f"pandas {pd_major}.{pd_minor} detected (requires ≥2.2)")
     except ImportError:
-        errors.append("pandas not installed")  
+        errors.append("pandas not installed, see readme.md how to install/update the environment.")  
 
-    # 3) Check gdxpds availability
+    # Check pyarrow availability
+    try:
+        pyarrow = importlib.import_module("gdxpds")
+    except ImportError:
+        errors.append("pyarrow not installed, see readme.md how to install/update the environment.")
+
+    # Check tqdm availability
+    try:
+        tqdm = importlib.import_module("gdxpds")
+    except ImportError:
+        errors.append("tqdm not installed, see readme.md how to install/update the environment.")
+
+    # Check gdxpds availability
     try:
         gdxpds = importlib.import_module("gdxpds")
     except ImportError:
-        errors.append("gdxpds not installed")
+        errors.append("gdxpds not installed, see readme.md how to install/update the environment.")
 
-    # 4) Check gams.transfer importability
+    # Check gams.transfer importability
     try:
         importlib.import_module("gams.transfer")
     except ImportError:
-        errors.append("gams.transfer not importable (GAMS Python API missing)")
+        errors.append("gams.transfer not importable (GAMS Python API missing), see readme.md how to install/update the environment.")
 
-    # 5) Check gams executable availability in PATH
+    # Check gams executable availability in PATH
     gams_exec = shutil.which("gams") or shutil.which("gams.exe")
     if gams_exec is None:
         errors.append("GAMS not found in PATH")

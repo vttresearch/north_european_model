@@ -1,3 +1,5 @@
+# src/excel_exchange.py
+
 import os
 import pandas as pd
 from openpyxl import load_workbook
@@ -16,7 +18,6 @@ def read_input_excels(
     sheet_name_prefix: str,
     logs: List[str],
     *,
-    is_mandatory: bool = True,
     drop_note_columns: bool = True,
     add_source_cols: bool = True,
 ) -> List[pd.DataFrame]:
@@ -41,8 +42,6 @@ def read_input_excels(
         Case-insensitive prefix used to select sheets within each workbook.
     logs : List[str]
         Log accumulator passed to `log_status`.
-    is_mandatory : bool, default True
-        If True, missing sheets/files emit warnings; otherwise informational logs.
     drop_note_columns : bool, default True
         If True, drop any column named 'note' (any casing).
     add_source_cols : bool, default True
@@ -72,10 +71,9 @@ def read_input_excels(
         # Match sheets by prefix (case-insensitive)
         matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
         if not matched:
-            level = "warn" if is_mandatory else "info"
             log_status(
                 f"No sheets starting with '{sheet_name_prefix}' in '{file_name}'.",
-                logs, level=level
+                logs, level="warn"
             )
             continue
 
@@ -123,10 +121,9 @@ def read_input_excels(
             dataframes.append(df)
 
     if not dataframes:
-        level = "warn" if is_mandatory else "info"
         log_status(
             f"No dataframes loaded for prefix '{sheet_name_prefix}'. Returning empty list.",
-            logs, level=level
+            logs, level="warn"
         )
         return []
 
@@ -186,9 +183,9 @@ def adjust_excel(output_file):
         * Adjust each column's width.
         * Skip remaining processing if sheet has only 1 row.
         * If A2 is empty, iterate non-empty cells in row 2:
-                - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
-                - Centre align columns
-                - set the column width to 6 
+            - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+            - Centre align columns
+            - set the column width to 6 
         * Freeze top row
         * Create and apply table formatting
         * Add explanatory texts after (right from) the generated table in case of "fake MultiIndex"
@@ -198,53 +195,60 @@ def adjust_excel(output_file):
     wb = load_workbook(output_file)
 
     for ws in wb.worksheets:
-        # Adjust each column's width
-        for col_cells in ws.columns:
+        max_row = ws.max_row
+        max_col = ws.max_column
+
+        # Adjust each column's width (based on longest value in column)
+        for col_idx in range(1, max_col + 1):
+            col_letter = get_column_letter(col_idx)
             max_length = 0
-            col_letter = get_column_letter(col_cells[0].column)
-            for cell in col_cells:
-                if cell.value is not None:
-                    max_length = max(max_length, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = max_length + 6  # add extra padding
+
+            for row_idx in range(1, max_row + 1):
+                value = ws.cell(row=row_idx, column=col_idx).value
+                if value is not None:
+                    length = len(str(value))
+                    if length > max_length:
+                        max_length = length
+
+            ws.column_dimensions[col_letter].width = max_length + 6  # padding
+
 
         # Skip remaining processing if sheet has only 1 row
         if ws.max_row == 1:
             continue
 
-        # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
-        if ws["A2"].value is None:
+        # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and GDXXRW
+        has_fake_multiindex = ws["A2"].value is None
+        if has_fake_multiindex:
+            # Pre-create alignments to avoid recreating them in loops
+            center_align = Alignment(horizontal="center")
+            rotated_header_align = Alignment(horizontal="center", textRotation=90)
+
             # Iterate cells in row 2 if cells are not empty
             for cell in ws[2]:
-                if cell.value is not None:
-                    # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
-                    ws.cell(row=1, column=cell.col_idx).alignment = Alignment(textRotation=90)
+                if cell.value is None:
+                    continue
 
-                    # Centre align entire columns that have text in row 2 
-                    col_index = cell.column
-                    # Iterate over all cells in this column
-                    for row_cells in ws.iter_rows(min_col=col_index, max_col=col_index):
-                        for c in row_cells:
-                            # Preserve any existing text rotation
-                            current_rotation = c.alignment.textRotation if c.alignment else 0
-                            c.alignment = Alignment(horizontal='center', textRotation=current_rotation)
-                    col_letter = get_column_letter(cell.column)
+                col_idx = cell.col_idx
+                col_letter = get_column_letter(col_idx)
 
-                    # set the column width to 6 
-                    ws.column_dimensions[col_letter].width = 6       
+                # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                header_cell = ws.cell(row=1, column=col_idx)
+                header_text = str(header_cell.value) if header_cell.value is not None else ""
+                if len(header_text) > 6:
+                    header_cell.alignment = rotated_header_align
 
-        # Special handling for 'p_gnu_io' sheet - replace zeros with empty strings in 'capacity' column
-        if ws.title in ['p_gnu_io', 'p_unit', 'p_gn', 'p_gnBoundaryPropertiesForStates']:
-            # Replace all zeros with empty strings in all columns of all sheets
-            # Skip header row (row 1)
-            for row in range(2, ws.max_row + 1):
-                for col in range(1, ws.max_column + 1):
-                    cell = ws.cell(row=row, column=col)
-                    if cell.value == 0 or cell.value == '0':
-                        cell.value = ''
+                # Centre align column values from row 2 downwards
+                for row_idx in range(2, max_row + 1):
+                    ws.cell(row=row_idx, column=col_idx).alignment = center_align
+
+                # Set the column width to 6 for these rotated / “special” columns
+                ws.column_dimensions[col_letter].width = 6 
 
         # Freeze the top row
         ws.freeze_panes = "A2"
 
+        # Create and apply table formatting
         # Derive table name from sheet name: remove any non-word characters and append _table.
         table_name = re.sub(r'\W+', '_', ws.title) + "_table"
         # Apply Excel table formatting
@@ -260,14 +264,11 @@ def adjust_excel(output_file):
         table.headerRowCount = 1
         ws.add_table(table)
 
-
-        # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
+        # If fake MultiIndex, add explanatory texts to the right of the table
         if ws["A2"].value is None:
-            # Add explanatory texts after (right from) the generated table
             n = ws.max_column + 2
             ws.cell(row=1, column=n, value='The first row labels are for excel Table headers.')
             ws.cell(row=2, column=n, value='The Second row labels are for GDXXRW converting excel to GDX.')
-
 
     # save the adjusted file
     wb.save(output_file)

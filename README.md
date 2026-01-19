@@ -6,6 +6,7 @@ This readme has the following main sections
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
 - [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
 - [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
+- [Updating the conda environment](#Updating-the-conda-environment)
 - [Downloading required time series files](#downloading-required-time-series-files)
 - [Building input files for Backbone and running the model](#Building-input-files-for-Backbone-and-running-the-model)
 - [Running Backbone](#running-backbone)
@@ -18,6 +19,7 @@ This readme has the following main sections
 * Miika Rämä - District heating data
 * Pauli Hiltunen - District heating data, testing
 * Eric Harrison - Data sets, testing
+* Justinas Jasiunas - H2 heavy scenario, testing
 
 
 ## License
@@ -102,6 +104,21 @@ After these steps, you should have the required software and environment ready.
 NOTE: GamsAPI is possible to install also for much older GAMS versions, see https://github.com/NREL/gdx-pandas
 
  
+## Updating the conda environment
+
+[Back to top](#North-European-energy-system-model)
+
+Some updates might require updating the conda environment. This is relatively easy process when following these steps:
+  * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to windows search bar), 
+  * In Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
+  * In Miniconda, update the environment by running following:
+	
+  ```
+	conda env update -n=northEuropeanModel --file=environment.yml
+  ```
+	
+Follow the instructions in the dialogue and install the required updates, if there are any. No further actions are needed.
+
 
 
 ## Downloading required time series files
