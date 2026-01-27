@@ -602,7 +602,11 @@ class BuildInputExcel:
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
         p_gn = utils.standardize_df_dtypes(p_gn, fill_numeric_na=True)
-        p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'])
+        p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['grid', 
+                                                             'node', 
+                                                             'usePrice', 
+                                                             'nodeBalance', 
+                                                             'energyStoredPerUnitOfState'])
 
         # Sort by grid, node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
