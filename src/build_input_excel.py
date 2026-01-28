@@ -114,6 +114,8 @@ class BuildInputExcel:
             'maxRampUp',
             'maxRampDown',
             'rampPenalty',
+            'rampUpPenalty',
+            'rampDownPenalty',
             'rampUpCost',
             'rampDownCost',
             'upperLimitCapacityRatio',
@@ -597,7 +599,7 @@ class BuildInputExcel:
                             row_dict[key] = val
             rows.append(row_dict)
 
-      
+        
         # Build p_gn
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
@@ -607,7 +609,7 @@ class BuildInputExcel:
                                                              'usePrice', 
                                                              'nodeBalance', 
                                                              'energyStoredPerUnitOfState'])
-
+        
         # Sort by grid, node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
