@@ -1,11 +1,239 @@
-from typing import List, Dict, Any, Optional
-from gdxpds import to_gdx
-from src.utils import log_status
+# src/GDX_exchange.py
+
+from typing import Any, Dict, Optional, Sequence, List
+from src.utils import log_status, standardize_df_dtypes
 import pandas as pd
 import numpy as np
 import os
 import glob
+import gams.transfer as gt
+from tqdm import tqdm
 
+
+
+# ==============================================================================
+# WRITE FUNCTIONS
+# ==============================================================================
+
+def write_BB_gdx(
+    df: Optional[pd.DataFrame],
+    output_file: str,
+    logs: List[str],
+    **kwargs: Any
+) -> None:
+    """
+    Write a DataFrame to a GDX file.
+    
+    Tries gams.transfer first, automatically falls back to gdxpds on failure.
+
+    Parameters:
+        df: DataFrame with columns matching bb_parameter_dimensions + 'value'
+        output_file: Path to output GDX file
+        logs: List for logging messages
+        **kwargs: Must include:
+            - bb_parameter: str -> GDX parameter name
+            - bb_parameter_dimensions: Sequence[str] -> dimension columns (optional, inferred if missing)
+
+    Returns: 
+        None: Writes content to output_file
+    """
+    if df is None or len(df) == 0:
+        log_status(f"Skipping writing GDX '{output_file}': No data to write", logs, level="warn")
+        return
+
+    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
+    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
+
+    if not bb_parameter:
+        log_status(f"Missing required kwarg 'bb_parameter' from '{output_file}'", logs, level="warn")
+        return
+
+    # Infer dimensions if not provided
+    if not dims or len(dims) == 0:
+        dims = [c for c in df.columns if c != "value"]
+
+    # Validate columns
+    final_cols = list(dims) + ["value"]
+    missing = [c for c in final_cols if c not in df.columns]
+    if missing:
+        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
+        return
+
+    # Select only required columns
+    work = df[final_cols]
+
+    try:
+        # --- Try GAMS Transfer first ---
+        m = gt.Container()
+
+        # Create Sets for each dimension
+        dim_sets = {}
+        for d in dims:
+            unique_vals = work[d].unique()
+            dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+
+        # Create Parameter
+        domain = [dim_sets[d] for d in dims]
+        p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter} written via gams.transfer"))
+        param = gt.Parameter(m, bb_parameter, domain, description=p_desc)
+        param.setRecords(work)
+
+        # Write
+        m.write(output_file)
+
+    except Exception as e:
+        # --- Fallback to gdxpds ---
+        log_status(
+            f"GAMS Transfer failed for '{output_file}': {e}. Falling back to gdxpds.",
+            logs,
+            level="warn"
+        )
+        try:
+            from gdxpds import to_gdx
+            dataframes = {bb_parameter: work}
+            to_gdx(dataframes, path=output_file)
+        except Exception as e2:
+            log_status(f"Both GAMS Transfer and gdxpds failed for '{output_file}': {e2}", logs, level="error")
+            raise
+
+def write_BB_gdx_annual(
+    df: Optional[pd.DataFrame],
+    output_folder: str,
+    logs: List[str],
+    **kwargs: Any
+) -> None:
+    """
+    Split a multi-year timeseries DataFrame by year and write each year to a separate GDX file.
+    
+    This function:
+      1. Splits the DataFrame by year using split_timeseries_to_annual_gdx_frames()
+      2. Remaps 't' indices to t000001..t008760 for each year
+      3. Writes each year to a separate GDX file (or single file if only one year)
+      4. Uses either gams.transfer or gdxpds backend
+    
+    Parameters:
+        df: Multi-year DataFrame with columns matching bb_parameter_dimensions + helper columns
+        output_folder: Directory where GDX files will be written
+        logs: List for logging messages
+        **kwargs: Must include:
+            - bb_parameter: str -> GDX parameter name
+            - bb_parameter_dimensions: Sequence[str] -> dimension columns
+            - gdx_name_suffix: str (optional) -> suffix for output filename
+    
+    Returns: 
+        None: Writes content to
+        - Single year: {bb_parameter}_{gdx_name_suffix}.gdx
+        - Multiple years: {bb_parameter}_{gdx_name_suffix}_{year}.gdx
+    """
+    # --- initialization and checks ---
+    if df is None or len(df) == 0:
+        log_status(f"Skipping annual GDX writing: No data to write", logs, level="warn")
+        return
+
+    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
+    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
+    gdx_name_suffix: Optional[str] = kwargs.get("gdx_name_suffix", "")
+
+    if not bb_parameter:
+        log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing", logs, level="warn")
+        return
+    
+    # If dims not provided, infer all columns except 'value' as dimensions, preserving order.
+    if not dims or len(dims) == 0:       
+        dims = [c for c in df.columns if c != "value"]
+
+    # Validate columns
+    missing = [c for c in list(dims) + ["value"] if c not in df.columns]
+    if missing:
+        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
+        return 
+
+    # Final columns of the written dataframe
+    final_cols = list(dims) + ["value"]
+
+    # --- Split to annual dfs ---
+    # Split into annual frames
+    annual_dfs = split_timeseries_to_annual_gdx_frames(
+        df, logs, bb_parameter_dimensions=dims
+    )
+    
+    if not annual_dfs:
+        log_status("No annual data available to write", logs, level="warn")
+        return    
+    
+    # pick key characteristics
+    years = sorted(annual_dfs.keys())
+    single_year = (len(years) == 1)
+
+    # --- prepare and write annual gdx files ---
+    fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
+
+    # Try writing each year with GAMS Transfer
+    try:
+        # Build container and sets
+        m = gt.Container()
+
+        # Create a Set for each dimension with records = unique labels
+        dim_sets = {}
+        for d in dims:
+            if d == 't':
+                # For 't', use only one year's worth (always t000001..t008760)
+                # Pick from first annual df since all years have identical 't' structure
+                unique_vals = annual_dfs[years[0]][d].unique()
+            else:
+                # For other dimensions, collect unique values across ALL years
+                unique_vals = pd.concat([annual_dfs[yr][d] for yr in years]).unique()
+            
+            dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+
+        # Prepare parameter
+        domains = [dim_sets[d] for d in dims]
+        p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter}"))
+        param = gt.Parameter(m, bb_parameter, domains, description=p_desc)
+
+        for yr in tqdm(years, desc="  Writing"):
+            # pick annual df
+            df_y = annual_dfs[yr]
+
+            # Filter to final_cols
+            df_y = df_y[final_cols]
+
+            # populate parameter
+            param.setRecords(df_y)
+
+            # Add year to filename if multiple years
+            fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
+            output_file = os.path.join(output_folder, fname)
+
+            # Write
+            m.write(output_file)
+    # Fallback to gdxpds
+    except:
+        log_status("  .. Gams Transfer failed, falling back to gdxpds.", logs, level="warn") 
+        try:
+            from gdxpds import to_gdx
+            for yr in tqdm(years, desc="  Writing"):
+
+                # prepare annual content
+                df_y = annual_dfs[yr]
+                df_y = df_y[final_cols]
+                dataframes = {bb_parameter: df_y}
+
+                # Add year to filename if multiple years
+                fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
+                output_file = os.path.join(output_folder, fname)
+
+                # write
+                to_gdx(dataframes, path=output_file)
+
+        except Exception as e2:
+            log_status(f"Both GAMS Transfer and gdxpds failed for '{output_file}': {e2}", logs, level="error")
+            raise
+
+
+# ==============================================================================
+# DF PROCESSING
+# ==============================================================================
 
 def prepare_BB_df(
     df: pd.DataFrame,
@@ -122,47 +350,18 @@ def prepare_BB_df(
     # pick only final_cols to returned df, polish, and return
     melted_df = melted_df[final_cols]
     melted_df['value'] = melted_df['value'].fillna(value=0)
-    melted_df = melted_df.convert_dtypes()
+
     return melted_df
-
-
-def write_BB_gdx(
-    df: Optional[pd.DataFrame],
-    output_file: str,
-    **kwargs: Any
-) -> None:
-    """
-    Writes the DataFrame to gdx
-
-    Variables: output_file (DataFrame) with 'value' column. Other columns are treated as dimensions.
-               bb_parameter (string) used to create gdx parameter name
-               bb_parameter_dimensions (list of strings) used to filter written columns.  E.g. ['grid', 'node', 'f', 't']
-    """
-    if df is None:
-        print("Skipping writing GDX: No data to write")
-        return
-        
-    # Prepare required parameters
-    bb_parameter = kwargs.get('bb_parameter')        
-    bb_parameter_dimensions = kwargs.get('bb_parameter_dimensions')
-
-    # add 'value' to final_cols
-    final_cols = bb_parameter_dimensions.copy()
-    final_cols.append('value')
-
-    # write gdx
-    dataframes = {bb_parameter: df}
-    to_gdx(dataframes, path=output_file)
 
 
 def calculate_average_year_df(
     input_df: pd.DataFrame,
     round_precision: int = 0,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> pd.DataFrame:
     """
     Assumes long format input_df with columns bb_parameter_dimensions and 'time' and 'value'
-        * 'time' is datatime format presentation of time, e.g 2000-01-01 00:00:00 
+        * 'time' is datetime format presentation of time, e.g 2000-01-01 00:00:00
         * 't' is t-index format presentation of time, e.g. t000001
 
     Calculates 'hour_of_year' as hours elapsed since Jan 1, starting at 1.
@@ -177,159 +376,253 @@ def calculate_average_year_df(
         * ValueError if input_df columns do not have all bb_parameter_dimensions
         * ValueError if bb_parameter_dimensions cover only 'f' and 't'
     """
+
     # ---- Parameters and checks ----
-    # Retrieve mandatory kwargs
-    processor_name = kwargs.get('processor_name') # for error messages
-    bb_parameter_dimensions = kwargs.get('bb_parameter_dimensions')
-    quantile_map = kwargs.get('quantile_map')
+    processor_name = kwargs.get("processor_name")  # for error messages
+    bb_parameter_dimensions = kwargs.get("bb_parameter_dimensions")
+    quantile_map = kwargs.get("quantile_map")
+
+    if bb_parameter_dimensions is None or quantile_map is None:
+        raise ValueError(
+            f"processor '{processor_name}': 'bb_parameter_dimensions' and 'quantile_map' must be provided."
+        )
 
     # Check for 'time' column.
-    if 'time' not in input_df.columns:
-        raise ValueError(f"processor '{processor_name}' does not have 'time' column. Check previous functions.")
+    if "time" not in input_df.columns:
+        raise ValueError(
+            f"processor '{processor_name}' does not have 'time' column. "
+            "Check previous functions."
+        )
 
-    # Ensure time column is datetime and sort by time.
-    input_df['time'] = pd.to_datetime(input_df['time'])
-    input_df = input_df.sort_values(by='time')
+    # Ensure time column is datetime (avoid re-parsing if already correct dtype).
+    if not np.issubdtype(input_df["time"].dtype, np.datetime64):
+        input_df = input_df.copy()
+        input_df["time"] = pd.to_datetime(input_df["time"])
 
-    # Check that data covers more than one year.
-    years = input_df['time'].dt.year.unique()
+    # Check that data covers more than one year (no need to sort for this).
+    years = input_df["time"].dt.year.unique()
     if len(years) <= 1:
-        raise ValueError(f"processor '{processor_name}' DataFrame covers only a year or less. Cannot calculate average year. Use 'calculate_average_year': False in config file?")
+        raise ValueError(
+            f"processor '{processor_name}' DataFrame covers only a year or less. "
+            "Cannot calculate average year. Use 'calculate_average_year': False in config file?"
+        )
 
     # Check that bb_parameter_dimensions includes both 't' and 'f'
-    if not ('t' in bb_parameter_dimensions and 'f' in bb_parameter_dimensions):
-        raise ValueError(f"processor '{processor_name}' dimensions '{bb_parameter_dimensions}' do not include 'f' and 't'. Cannot calculate average year. Use 'calculate_average_year': False in config file?")
+    if not ("t" in bb_parameter_dimensions and "f" in bb_parameter_dimensions):
+        raise ValueError(
+            f"processor '{processor_name}' dimensions '{bb_parameter_dimensions}' "
+            "do not include 'f' and 't'. Cannot calculate average year. "
+            "Use 'calculate_average_year': False in config file?"
+        )
+
+    # ---- Dimension handling ----
+    # Determine additional dimension columns from bb_parameter_dimensions, excluding 'f' and 't'
+    dim_cols = [
+        col
+        for col in bb_parameter_dimensions
+        if col not in ("f", "t") and col in input_df.columns
+    ]
+
+    # Check that we have all requested dimensions in the DataFrame
+    if set(dim_cols + ["f", "t"]) != set(bb_parameter_dimensions):
+        raise ValueError(
+            f"Average year calculation did not find all bb_parameter_dimensions: "
+            f"'{bb_parameter_dimensions}' from processor '{processor_name}' DataFrame columns."
+        )
+
+    if not dim_cols:
+        raise ValueError(
+            f"processor '{processor_name}' dimensions '{bb_parameter_dimensions}' "
+            "do not include anything but 'f' and 't'."
+        )
+
+    # Restrict columns early to reduce memory use in heavy operations.
+    # We no longer need original 'f', 't', or any extra columns at this point.
+    cols_to_keep = dim_cols + ["time", "value"]
+    input_df = input_df[cols_to_keep].copy()
 
     # ---- Create helper columns ----
-    # Create 'hour_of_year' column (hours elapsed since Jan 1, starting at 1).
-    start_of_year = input_df['time'].dt.to_period('Y').dt.start_time
-    input_df['hour_of_year'] = ((input_df['time'] - start_of_year).dt.total_seconds() // 3600 + 1).astype(int)
-    # Only process hours up to 8760 (ignore extra hours from leap years)
-    input_df = input_df[input_df['hour_of_year'] <= 8760]
+    # Fast hour_of_year: avoid datetime arithmetic, use dayofyear + hour.
+    time = input_df["time"]
+    day_of_year = time.dt.dayofyear.to_numpy()
+    hour = time.dt.hour.to_numpy()
+    hour_of_year = (day_of_year - 1) * 24 + hour + 1
 
-    # Determine additional dimension columns from bb_parameter_dimensions, excluding 'f' and 't'
-    dim_cols = [col for col in bb_parameter_dimensions if col != 'f' and col != 't' and col in input_df.columns]
-    if set(dim_cols + ['f'] + ['t']) != set(bb_parameter_dimensions):
-        raise ValueError(f"Average year calculation did not find all bb_parameter_dimensions: '{bb_parameter_dimensions}' from processor '{processor_name}' DataFrame columns.")
-    if not dim_cols:
-        raise ValueError(f"processor '{processor_name}' dimensions '{bb_parameter_dimensions}' do not include anything but 'f' and 't'.")
+    input_df["hour_of_year"] = hour_of_year.astype(np.int32)
+
+    # Only process hours up to 8760 (ignore extra hours from leap years)
+    input_df = input_df[input_df["hour_of_year"] <= 8760]
 
     # ---- Quantile computation ----
     # Vectorized quantile computation:
-    # Group by the additional dimensions and 'hour_of_year' then compute the three quantiles.
+    # Group by the additional dimensions and 'hour_of_year' then compute the quantiles.
+    q_values = list(quantile_map.keys())
+
     df_quant = (
-        input_df.groupby(dim_cols + ['hour_of_year'], observed=True)['value']
-        .quantile(list(quantile_map.keys()))
-        .reset_index(name='value')
+        input_df
+        .groupby(dim_cols + ["hour_of_year"], observed=True)["value"]
+        .quantile(q_values)
+        # quantile with sequence -> MultiIndex with a 'quantile' level
+        .rename_axis(index=dim_cols + ["hour_of_year", "quantile"])
+        .reset_index()
     )
-    # Rename the quantile column (it comes from the groupby quantile call)
-    df_quant = df_quant.rename(columns={'level_{}'.format(len(dim_cols) + 1): 'quantile'})
+    # df_quant now has columns: dim_cols..., 'hour_of_year', 'quantile', 'value'
 
-    # Create a complete Cartesian product for each group, each quantile, and every hour from 1 to 8760.
-    # First, get unique group combinations.
+    # ---- Build full grid (Cartesian product) ----
+    # Unique combinations of all dimension columns
     unique_dims = input_df[dim_cols].drop_duplicates()
-    # DataFrame for quantile values.
-    quantiles_df = pd.DataFrame({'quantile': list(quantile_map.keys())})
-    # DataFrame for hours.
-    hours_df = pd.DataFrame({'hour_of_year': np.arange(1, 8761)})
 
-    # Create the full_grid (Cartesian product using a cross join).
-    unique_dims['_key'] = 1
-    quantiles_df['_key'] = 1
-    hours_df['_key'] = 1
-    full_grid = unique_dims.merge(quantiles_df, on='_key').merge(hours_df, on='_key')
-    full_grid = full_grid.drop('_key', axis=1)
+    # Hours 1..8760
+    hours_df = pd.DataFrame({"hour_of_year": np.arange(1, 8761, dtype=np.int32)})
+
+    # Quantiles as in quantile_map (order preserved)
+    quantiles_df = pd.DataFrame({"quantile": q_values})
+
+    # Cross join using pandas 'cross' merge 
+    full_grid = (
+        unique_dims
+        .merge(hours_df, how="cross")
+        .merge(quantiles_df, how="cross")
+    )
 
     # Merge the computed quantile results with the complete grid.
-    df_full = full_grid.merge(df_quant, on=dim_cols + ['hour_of_year', 'quantile'], how='left')
+    df_full = full_grid.merge(
+        df_quant,
+        on=dim_cols + ["hour_of_year", "quantile"],
+        how="left",
+    )
 
-    # ---- Prepare df_final ----
-    # Add the 't' and 'f' columns vectorized and categorize
-    df_full['t'] = df_full['hour_of_year'].apply(lambda x: 't' + str(x).zfill(6))
-    df_full['t'] = df_full['t'].astype('category')  
-    df_full['f'] = df_full['quantile'].map(quantile_map)
-    df_full['f'] = df_full['f'].astype('category') 
+    # ---- Prepare final DataFrame ----
+    # Create t-index as 't000001' style, vectorized
+    df_full["t"] = "t" + df_full["hour_of_year"].astype(str).str.zfill(6)
+    df_full["t"] = df_full["t"].astype("category")
 
-    # Fill missing quantile values with 0, round values
-    df_full['value'] = df_full['value'].fillna(0)
-    df_full['value'] = df_full['value'].round(round_precision)
+    # Map quantile -> f
+    df_full["f"] = df_full["quantile"].map(quantile_map)
+    df_full["f"] = df_full["f"].astype("category")
 
-    # Reorder columns to match bb_parameter_dimensions plus 'value'.
-    # Here, bb_parameter_dimensions is assumed to include 't', 'f', and the remaining dimension columns.
-    df_final = df_full[bb_parameter_dimensions + ['value']]
+    # Fill missing quantile values with 0, then round
+    df_full["value"] = df_full["value"].fillna(0)
+    if round_precision is not None:
+        df_full["value"] = df_full["value"].round(round_precision)
+
+    # Reorder columns to match bb_parameter_dimensions plus 'value'
+    df_final = df_full[bb_parameter_dimensions + ["value"]]
+
     return df_final
 
 
-def write_BB_gdx_annual(
+def split_timeseries_to_annual_gdx_frames(
     df: Optional[pd.DataFrame],
-    output_folder,
-    **kwargs: Any
-) -> None:
+    logs: List[str],
+    *,
+    bb_parameter_dimensions: Sequence[str],
+    time_col: str = "time",
+    year_col: str = "year",
+    max_hours: int = 8760,
+    nan_to_zero: bool = True,
+    inf_to_zero: bool = True,
+) -> Dict[int, pd.DataFrame]:
     """
-    Splits the processed DataFrame by year, remaps the time labels per year,
-    and writes each year's data to a separate GDX file. 
-    
-    Variables: 
-        df (DataFrame): DataFrame with 'value' column. Other columns are treated as dimensions.
-        **kwargs: Additional parameters including:
-            bb_parameter (string): Used to create GDX parameter name
-            bb_parameter_dimensions (list of strings): Used to filter written columns. 
-                                                       E.g. ['grid', 'node', 'f', 't']
-            gdx_name_suffix (string): Used when generating the output file name
-    
+    Split a multi-year timeseries DF into annual DF chunks and remap 't' labels per year.
+
+    - Drops 't' if present and rebuilds it as t000001.. per (year × dims{f,t} ) group
+    - Truncates to `max_hours` to avoid leap-year overflow
+    - Casts all dimension columns to str and 'value' to float64
+    - Converts NaN/inf to zero if nan_to_zero=True
+    - Ensures each annual frame has a RangeIndex (fast path for gams.transfer.setRecords)
+
     Returns:
-        None: Creates GDX files in the output folder
-    
-    Note: 
-        - Drops hours after t8760 to handle leap years
+        dict[year -> DataFrame with columns bb_parameter_dimensions + ['value']]
     """
-    logs = []
+    if df is None or len(df) == 0:
+        log_status("Abort: No data to split (empty df).", logs, level="error")
+        return {}
 
-    if df is None:
-        log_status("Abort: No data to write", logs, level="warn")
-        return
+    dims = list(bb_parameter_dimensions)
+    dims_no_t = [d for d in dims if d != "t"]
+    required_cols = set(dims_no_t) | {time_col, year_col, "value"}
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        log_status(f"Skipping annual GDX writing due to missing required columns: {missing}", logs, level="error")
+        return {}
 
-    # Drop t for improved performance and reconstruct it later 
-    df = df.drop(columns='t', errors='ignore')
+    # Work copy without 't' (rebuild it below)
+    work = df.drop(columns="t", errors="ignore").copy()
 
-    # Prepare required parameters
-    bb_parameter = kwargs.get('bb_parameter')        
-    bb_parameter_dimensions = kwargs.get('bb_parameter_dimensions')
-    gdx_name_suffix = kwargs.get('gdx_name_suffix')
+    if work["value"].dtype != np.float64:
+        work["value"] = work["value"].astype(np.float64)
 
-    # Assure consistent column order
-    dim_cols = [col for col in bb_parameter_dimensions if col not in {'f', 't'}]
-    final_cols = bb_parameter_dimensions + ['value']
-    single_year = df['year'].nunique() == 1
 
-    # Assign new hourly 't' values per dimension group and year
-    grouped = df.groupby(['year'] + dim_cols, group_keys=False, observed=True)
+    # Handle NaN/inf before splitting
+    if nan_to_zero or inf_to_zero:
+        mask = pd.isna(work["value"])
+        if inf_to_zero:
+            mask |= ~np.isfinite(work["value"])
+        
+        n_bad = mask.sum()
+        if n_bad:
+            log_status(f"Converted {n_bad} NaN/inf values to 0.0 during annual split.", logs, level="info")
+            work.loc[mask, "value"] = 0.0
 
-    def map_t(group):
-        group = group.sort_values('time')
-        group = group.iloc[:8760]  # truncate leap years if needed
-        group['t'] = ['t' + str(i + 1).zfill(6) for i in range(len(group))]
-        return group
+    # Grouping excludes f and t
+    group_dims = [c for c in dims if c not in {"f", "t"}]
     
-    df_remapped = grouped.apply(map_t)
+    # Pre-compute 't' labels once (reusable array)
+    t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
+    
+    final_cols = dims + ["value"]
+    out: Dict[int, pd.DataFrame] = {}
 
-    # process year-by-year
-    for yr, group in df_remapped.groupby('year'):
-        group_out = group[final_cols]
+    # Pre-compute 't' labels once
+    t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
 
-        # File naming
-        file_name = (
-            f"{bb_parameter}_{gdx_name_suffix}.gdx"
-            if single_year
-            else f"{bb_parameter}_{gdx_name_suffix}_{yr}.gdx"
-        )
-        file_path = os.path.join(output_folder, file_name)
+    final_cols = dims + ["value"]
+    out: Dict[int, pd.DataFrame] = {}
 
-        # Write to GDX
-        to_gdx({bb_parameter: group_out}, path=file_path)
+    # Process by year first (smaller chunks)
+    for yr, df_yr in work.groupby(year_col, observed=True, sort=False):
+        df_yr = df_yr.copy()
 
-    return logs
+        if group_dims:
+            # Sort only within this year
+            sort_cols = group_dims + [time_col]
+            df_yr = df_yr.sort_values(sort_cols, kind="mergesort")
 
+            # OPTIMIZATION: Replace cumcount() with numpy operations
+            # Create group IDs and compute differences
+            group_ids = df_yr.groupby(group_dims, observed=True, sort=False).ngroup()
+
+            # Fast row numbering: count within groups using diff
+            group_changes = np.diff(group_ids.values, prepend=-1) != 0
+            row_nums = np.arange(len(df_yr))
+            row_nums -= np.repeat(row_nums[group_changes], np.diff(np.append(np.where(group_changes)[0], len(df_yr))))
+
+            df_yr['_row_num'] = row_nums
+        else:
+            # No grouping needed
+            df_yr['_row_num'] = np.arange(len(df_yr))
+
+        # Filter to max_hours
+        df_yr = df_yr[df_yr['_row_num'] < max_hours]
+
+        # OPTIMIZATION: Direct array assignment (already fast, but ensure no copy)
+        row_nums_filtered = df_yr['_row_num'].values
+        df_yr['t'] = t_labels[row_nums_filtered]
+
+        # Drop temporary columns
+        frame = df_yr[final_cols].reset_index(drop=True)
+        out[int(yr)] = frame
+    
+    if not out:
+        log_status("No annual frames were produced after remap/filter.", logs, level="warn")
+
+    return out
+
+
+# ==============================================================================
+# TS IMPORT FILE GENERATION
+# ==============================================================================
 
 def update_import_timeseries_inc(
     output_folder: str,
@@ -405,16 +698,17 @@ def update_import_timeseries_inc(
     # Define the output file path
     output_file = os.path.join(output_folder, 'import_timeseries.inc')
 
-    # Read existing content (or empty string if file doesn’t exist)
+    # Read existing content (or empty string if file doesn't exist)
     try:
         with open(output_file, 'r') as f:
             existing = f.read()
     except FileNotFoundError:
         existing = ''
 
-    # Append only if the exact block isn’t already in the file
+    # Append only if the exact block isn't already in the file
     if text_block not in existing:
         with open(output_file, 'a') as f:
             f.write(text_block)
     else:
         pass
+

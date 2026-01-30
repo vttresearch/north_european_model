@@ -1,23 +1,59 @@
-# src/pipeline/processor.py
+# src/pipeline/timeseries_processor.py
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import importlib.util
 import pandas as pd
-from src.utils import log_status
-from src.hash_utils import compute_processor_code_hash
-from src.utils import trim_df, collect_domains, collect_domain_pairs
-from src.GDX_exchange import (
-    prepare_BB_df,
-    write_BB_gdx,
-    calculate_average_year_df,
-    write_BB_gdx_annual,
-    update_import_timeseries_inc
-)
+import src.hash_utils as hash_utils
+import src.utils as utils
+import src.GDX_exchange as GDX_exchange 
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
-from datetime import datetime
+from typing import Optional, Any
+
+
+@dataclass
+class ProcessorResult:
+    """Results from a single processor execution."""
+    main_result: pd.DataFrame
+    secondary_result: Optional[Any] = None
+    log_messages: list[str] = field(default_factory=list)
+    
+    def add_log(self, message: str, level: str = "info"):
+        """Add a log message."""
+        self.log_messages.append(f"[{level.upper()}] {message}")
+
+@dataclass
+class ProcessorRunnerResult:
+    """
+    Results from ProcessorRunner execution.
+    
+    This dataclass encapsulates all outputs from running a single
+    timeseries processor, including the processed data's domain
+    information and any secondary outputs.
+    
+    Attributes
+    ----------
+    processor_name : str
+        Name of the processor that was executed
+    secondary_result : Any | None
+        Optional secondary output (e.g., metadata, statistics)
+        that will be cached for use in other pipeline stages
+    ts_domains : dict[str, set]
+        Mapping of domain names to sets of values found in the
+        processed data (e.g., {'grid': {'FI', 'SE'}, 'node': {...}})
+    ts_domain_pairs : dict[str, set[tuple]]
+        Mapping of domain pair keys to sets of tuples representing
+        relationships (e.g., {('grid', 'node'): {('FI', 'N1'), ...}})
+    log_messages : list[str]
+        Accumulated log messages from processor execution
+    """
+    processor_name: str
+    secondary_result: Optional[Any]
+    ts_domains: dict[str, set]
+    ts_domain_pairs: dict[str, set[tuple]]
+    log_messages: list[str]
 
 
 @dataclass
@@ -29,65 +65,35 @@ class ProcessorRunner:
     cache_manager: CacheManager
     source_excel_data_pipeline: SourceExcelDataPipeline
 
-
-    def _parse_processor_result(self, result) -> tuple[pd.DataFrame, object, str]:
+    def _update_processor_hash(self, processor_file: Path, processor_name: str):
         """
-        Parse the result returned from a processor's run method.
+        Update the cached hash for this processor.
 
-        Returns:
-            tuple: (main_result, secondary_result, processor_log)
+        This is called after processor execution (successful or skipped) to mark
+        the processor code as "seen" at this version. This prevents unnecessary
+        reruns when the processor hasn't changed.
+
+        Note: This is separate from CacheManager._validate_processor_code_changes()
+        which only READS hashes to determine what needs to run. The update happens
+        here to ensure we only mark processors as "up-to-date" after they've 
+        actually executed successfully.
         """
-        main_result = None
-        secondary_result = None
-        processor_log = ""   # Note: processor log is a string, because then we can distinct it from secondary results
-
-        if isinstance(result, pd.DataFrame):
-            main_result = result
-
-        elif isinstance(result, tuple):
-            if len(result) == 2:
-                main_result, second = result
-
-                if isinstance(second, str):
-                    processor_log = second
-                    secondary_result = None
-                else:
-                    secondary_result = second
-                    processor_log = ""
-
-            elif len(result) == 3:
-                main_result, secondary_result, processor_log = result
-
-                if not isinstance(processor_log, str):
-                    print("⚠️ Warning: Expected a string for processor_log, got", type(processor_log))
-                    processor_log = str(processor_log)
-
-            else:
-                raise ValueError(f"Unexpected number of values returned from processor: {len(result)}")
-
-        else:
-            raise TypeError(f"Processor returned unsupported result type: {type(result)}")
-
-        if not isinstance(main_result, pd.DataFrame):
-            raise TypeError("Processor must return a pandas DataFrame as the first result.")
-
-        return main_result, secondary_result, processor_log
+        hash_value = hash_utils.compute_file_hash(processor_file)
+        self.cache_manager.save_processor_hash(processor_name, hash_value)
 
 
-    def run(self) -> tuple[str, object, dict, set]:
+    def run(self) -> ProcessorRunnerResult:
         """
-        Run a single processor and return its secondary result.
-
-        Returns:
-            tuple: (processor_name, secondary_result)
+        Run a single processor and return structured results.
         """
+        # --- Inititalization ---
         spec = self.processor_spec["spec"]
         processor_name = self.processor_spec["name"]
         human_name = self.processor_spec["human_name"]
         processor_file = Path(self.processor_spec["file"])
         
         log_messages = []
-        log_status(f"{human_name}", log_messages, section_start_length=45)
+        utils.log_status(f"{human_name}", log_messages, section_start_length=45)
 
         # Extract config values
         start_date = pd.to_datetime(self.config.get("start_date"))
@@ -109,7 +115,7 @@ class ProcessorRunner:
 
         ProcessorClass = getattr(module, processor_name)
 
-        # Prepare kwargs
+        # Prepare processor kwargs
         processor_kwargs = {
             "input_folder": os.path.join(self.input_folder, "timeseries"),
             "input_file": spec.get("input_file", ""),
@@ -122,91 +128,142 @@ class ProcessorRunner:
             **spec
         }
 
-        # Demand data
+
+        # --- Handle demand data ---
         demand_grid = spec.get("demand_grid")
         if demand_grid:
             df_annual_demands = self.source_excel_data_pipeline.df_demanddata
-            df_filtered = df_annual_demands[df_annual_demands["grid"].str.lower() == demand_grid.lower()]
+
+            # Filter to the specific grid
+            df_filtered = df_annual_demands[
+                df_annual_demands["grid"].str.lower() == demand_grid.lower()
+            ]
+
+            if df_filtered.empty:
+                utils.log_status(
+                    f"No demand data found for grid '{demand_grid}'. Skipping processor '{human_name}'.",
+                    log_messages,
+                    level="warn",
+                )
+                self._update_processor_hash(processor_file, processor_name)
+                return ProcessorRunnerResult(
+                    processor_name=processor_name,
+                    secondary_result=None,
+                    ts_domains={},
+                    ts_domain_pairs={},
+                    log_messages=log_messages
+                )
+
             processor_kwargs["df_annual_demands"] = df_filtered
 
-        # BB Conversion kwargs
+
+        # --- Prepare and run processor ---
+        # Prepare BB Conversion kwargs
         bb_conversion_kwargs = {
             "processor_name": processor_name,
             "bb_parameter": bb_parameter,
             "bb_parameter_dimensions": spec.get("bb_parameter_dimensions"),
             "custom_column_value": spec.get("custom_column_value"),
             "quantile_map": spec.get("quantile_map", {0.5: "f01", 0.1: "f02", 0.9: "f03"}),
-            "gdx_name_suffix": gdx_name_suffix
+            "gdx_name_suffix": gdx_name_suffix,
+            "is_demand": bool(demand_grid)
         }
-        if demand_grid:
-            bb_conversion_kwargs["is_demand"] = True
 
-        # Instantiate and run
+        # Instantiate and run processor
         processor_instance = ProcessorClass(**processor_kwargs)
-        result = processor_instance.run_processor()
-        main_result, secondary_result, processor_log = self._parse_processor_result(result)
+        processor_result = processor_instance.run_processor()
 
+        # Extract results from ProcessorResult dataclass
+        main_result = processor_result.main_result
+        secondary_result = processor_result.secondary_result
+        log_messages.extend(processor_result.log_messages)
+
+
+        # --- Convert results to BB format and write them ---
         # Trim + convert to BB
-        trimmed_result = trim_df(main_result, rounding_precision)
-        main_result_bb = prepare_BB_df(trimmed_result, start_date, country_codes, **bb_conversion_kwargs)
+        trimmed_result = utils.trim_df(main_result, rounding_precision)
+        main_result_bb = GDX_exchange.prepare_BB_df(
+            trimmed_result, start_date, country_codes, **bb_conversion_kwargs
+        )
 
-        # Add processor log to logs
-        # Note: appending instead of extending, because processor log is a string
-        if processor_log != "":
-            log_messages.append(processor_log)
-
-        # Write CSV
+        # Write trimmed results (wide format) to CSV if requested
         if write_csv_files:
             if process_only_single_year:
                 csv_file = f"{bb_parameter}_{gdx_name_suffix}.csv"
             else:
                 csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
+
             csv_path = os.path.join(self.output_folder, csv_file)
             trimmed_result.to_csv(csv_path)
-            log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
+            utils.log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
 
-        # Write annual GDX
-        writer_logs = write_BB_gdx_annual(main_result_bb, self.output_folder, **bb_conversion_kwargs)
-        if writer_logs is not None: log_messages.extend(writer_logs)
-        log_status(f"Annual GDX files for Backbone written to '{self.output_folder}'", log_messages, level="info")
+        # Write results (BB format) to annual GDX files
+        utils.log_status("Preparing annual GDX files...", log_messages)
+        GDX_exchange.write_BB_gdx_annual(main_result_bb, self.output_folder, log_messages, **bb_conversion_kwargs)
+        GDX_exchange.update_import_timeseries_inc(self.output_folder, **bb_conversion_kwargs)        
 
-        # Update import_timeseries.inc
-        update_import_timeseries_inc(self.output_folder, **bb_conversion_kwargs)
 
-        # Average year processing
+        # --- Average year processing ---
         if spec.get("calculate_average_year", False):
-            avg_df = calculate_average_year_df(main_result_bb, round_precision=rounding_precision, **bb_conversion_kwargs)
+            utils.log_status("Calculating average year GDX file...", log_messages)
+            # Calculate average year
+            avg_df = GDX_exchange.calculate_average_year_df(
+                main_result_bb, 
+                round_precision=rounding_precision, 
+                **bb_conversion_kwargs
+            )
+
+            # Write CSV if requested
             if write_csv_files:
                 if process_only_single_year:
                     avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year.csv"
                 else:
                     avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year_from_{start_date.year}-{end_date.year}.csv"
+
                 avg_csv_path = os.path.join(self.output_folder, avg_csv)
                 avg_df.to_csv(avg_csv_path)
-                log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
+                utils.log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
 
-            forecast_gdx_path = os.path.join(self.output_folder, f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx")
-            write_BB_gdx(avg_df, forecast_gdx_path, **bb_conversion_kwargs)
-            update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs)
-            log_status(f"Average year GDX for Backbone written to '{self.output_folder}'", log_messages, level="info")
+            # Write average year GDX file
+            utils.log_status("Writing average year GDX file...", log_messages)
+            forecast_gdx_path = os.path.join(
+                self.output_folder,
+                f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
+            )
+            GDX_exchange.write_BB_gdx(avg_df, forecast_gdx_path, log_messages, **bb_conversion_kwargs)
 
+            # Update import file
+            GDX_exchange.update_import_timeseries_inc(
+                self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs
+            )
+
+            utils.log_status(f"Average year GDX written to '{self.output_folder}'", log_messages, level="info")
+
+        # --- Post-processing activities ---
         # Save secondary result to cache
         if secondary_result is not None:
             secondary_output_name = spec.get("secondary_output_name")
-            self.cache_manager.save_secondary_result(processor_name, secondary_result, secondary_output_name)
+            self.cache_manager.save_secondary_result(
+                processor_name, secondary_result, secondary_output_name
+            )
 
-        # collect domains and domain pairs
+        # Collect domains and domain pairs
         domains = ['grid', 'node', 'flow', 'group']
         domain_pairs = [['grid', 'node'], ['flow', 'node']]
-        local_ts_domains = collect_domains(main_result_bb, domains)
-        local_ts_domain_pairs = collect_domain_pairs(main_result_bb, domain_pairs)
-
+        local_ts_domains = utils.collect_domains(main_result_bb, domains)
+        local_ts_domain_pairs = utils.collect_domain_pairs(main_result_bb, domain_pairs)
 
         # Save processor hash
-        hash_value = compute_processor_code_hash(processor_file)
-        self.cache_manager.save_processor_hash(processor_name, hash_value)
+        self._update_processor_hash(processor_file, processor_name)
 
-        return processor_name, secondary_result, local_ts_domains, local_ts_domain_pairs, log_messages
+        # Return structured result
+        return ProcessorRunnerResult(
+            processor_name=processor_name,
+            secondary_result=secondary_result,
+            ts_domains=local_ts_domains,
+            ts_domain_pairs=local_ts_domain_pairs,
+            log_messages=log_messages
+        )
 
 
 

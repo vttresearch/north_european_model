@@ -1,9 +1,10 @@
-# src/pipeline/excel_context.py
+# src/pipeline/bb_excel_context.py
 
 from dataclasses import dataclass
 from src.pipeline.cache_manager import CacheManager
+from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
+from src.pipeline.timeseries_pipeline import TimeseriesRunResult
 from pathlib import Path
-import pandas as pd
 
 @dataclass
 class BBExcelBuildContext:
@@ -17,20 +18,7 @@ class BBExcelBuildContext:
     # From config file
     config: dict
 
-    # Cache manager
+    # Pipeline components
     cache_manager: CacheManager
-
-    # DataFrames from InputDataPipeline
-    df_demanddata: pd.DataFrame
-    df_transferdata: pd.DataFrame
-    df_unittypedata: pd.DataFrame
-    df_unitdata: pd.DataFrame
-    df_remove_units: pd.DataFrame
-    df_storagedata: pd.DataFrame
-    df_fueldata: pd.DataFrame
-    df_emissiondata: pd.DataFrame
-
-    # From TimeseriesPipeline
-    secondary_results: dict
-    ts_domains: dict
-    ts_domain_pairs: dict
+    source_data: SourceExcelDataPipeline
+    ts_results: TimeseriesRunResult  

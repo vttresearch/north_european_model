@@ -142,8 +142,24 @@ else
     mSettings('schedule', 't_forecastLengthDecreasesFrom') = 0; // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read
     mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
     mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
-    mSettings('schedule', 't_improveForecastNew') = 168;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
+    mSettings('schedule', 't_improveForecastNew') = 24*10;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
     mSettings('schedule', 'boundForecastEnds') = 0;                // 0/1 parameter if last v_state and v_online in f02,f03,... are bound to f01
+
+
+    // Shorter forecast improvement for cf nodes
+    option flowNode_tmp < ts_cf;
+    p_gn_improveForecastNew(flowNode_tmp, 'ts_cf_') = 24*4;
+
+    // longer improvement for hydro influx
+    option gn_tmp < ts_influx;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'psOpen')}= 168*4;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'reservoir')}= 168*4;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'ror')}= 168*4;
+
+    // shorter improvement for upward and downward ts
+    option gn_tmp < ts_node;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_node_') $ {SameAs(grid, 'psOpen')}= 24*4;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_node_') $ {SameAs(grid, 'reservoir')}= 24*4;
 
     // Define the number of forecasts used by the model
     mSettings('schedule', 'forecasts') = 2;

@@ -1,9 +1,12 @@
+# src/processors/hydro_mingen_limits_MAF2019.py
+
 import os
 import pandas as pd
 from datetime import date
-from src.utils import log_status
+from src.processors.base_processor import BaseProcessor
 
-class hydro_mingen_limits_MAF2019:
+
+class hydro_mingen_limits_MAF2019(BaseProcessor):
     """
     This class processes min/max generation data in several steps:
 
@@ -21,13 +24,16 @@ class hydro_mingen_limits_MAF2019:
         process_maxGen (bool): If True, process and print maximum generation limits as well. Default is False.
 
     Returns:
-        summary_df: DateTime index from start_date to end_date
-                    Processed countries as column names
-                    hydro power minimum generation in MW as column values
-        hydro_mingen_nodes: list of nodes that have minimum generation limits
+        main_result (pd.DataFrame): DateTime index from start_date to end_date
+                                    Processed countries as column names
+                                    hydro power minimum generation in MW as column values
+        secondary_result (list): List of nodes that have minimum generation limits
     """
 
-    def __init__(self, **kwargs_processor):
+    def __init__(self, **kwargs):
+        # Initialize base class
+        super().__init__(**kwargs)
+        
         # List of required parameters
         required_params = [
             'input_folder', 
@@ -37,55 +43,32 @@ class hydro_mingen_limits_MAF2019:
         ]
 
         # Check if all required parameters are present
-        missing_params = [param for param in required_params if param not in kwargs_processor]
+        missing_params = [param for param in required_params if param not in kwargs]
         if missing_params:
             raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
 
         # Unpack parameters
-        self.input_folder = kwargs_processor['input_folder']
-        self.country_codes = kwargs_processor['country_codes']
-        self.start_date = kwargs_processor['start_date']
-        self.end_date = kwargs_processor['end_date']
+        self.input_folder = kwargs['input_folder']
+        self.country_codes = kwargs['country_codes']
+        self.start_date = kwargs['start_date']
+        self.end_date = kwargs['end_date']
 
         # Global input file (for non-Norway countries)
         self.input_csv = "PECD-hydro-weekly-reservoir-min-max-generation.csv"
 
         # Parameters for processing the generation limits.
         self.minvariable_header = "Minimum Generation in MW"
-        self.suffix_reservoir = {'AL00': '',
-                                'AT00': '',
-                                'BA00': '',
-                                'BG00': '',
-                                'CZ00': '',
-                                'DE00': '',
-                                'ES00': '',
-                                'FI00': '_reservoir',
-                                'GR00': '',
-                                'HR00': '',
-                                'ITCN': '',
-                                'ITCS': '',
-                                'ITN1': '',
-                                'ITS1': '',
-                                'ITSA': '',
-                                'LT00': '',
-                                'LV00': '',
-                                'MK00': '',
-                                'RO00': '',
-                                'RS00': '',
-                                'SE01': '_reservoir',
-                                'SE02': '_reservoir',
-                                'SE03': '_reservoir',
-                                'SE04': '_reservoir',
-                                'SK00': '',
-                                'TR00': '',
-                                'FR00': '_reservoir',
-                                'ME00': '',
-                                'PL00': '',
-                                'PT00': '',
-                                'NON1': '_psOpen',
-                                'NOM1': '_psOpen',
-                                'NOS0': '_psOpen',
-                                }
+        self.suffix_reservoir = {
+            'FI00': '_reservoir',
+            'SE01': '_reservoir',
+            'SE02': '_reservoir',
+            'SE03': '_reservoir',
+            'SE04': '_reservoir',
+            'FR00': '_reservoir',
+            'NON1': '_psOpen',
+            'NOM1': '_psOpen',
+            'NOS0': '_psOpen',
+        }
 
         # Norway-specific file parameters.
         self.norway_file_first = "PEMMDB_"
@@ -96,22 +79,22 @@ class hydro_mingen_limits_MAF2019:
         self.start_year = pd.to_datetime(self.start_date).year
         self.end_year = pd.to_datetime(self.end_date).year
 
-        # Initialize log message list
-        self.processor_log = []
-
     def process_global_country(self, country, country_df):
         """
         Processes global minimum generation data for one country from the CSV input.
-        Parameters:  country     -- The country code (e.g., 'AT00')
-                     country_df  -- The country-level CSV DataFrame (already filtered by year)
+        
+        Parameters:
+            country (str): The country code (e.g., 'AT00')
+            country_df (pd.DataFrame): The country-level CSV DataFrame (already filtered by year)
 
-        Returns: A DataFrame with a time index, 
-                                    column 'group' = 'UC_'<country>_<suffix_reservoir>, 
-                                    column 'param_policy' = 'userconstraintRHS'
+        Returns:
+            pd.DataFrame: A DataFrame with a time index, 
+                         column 'group' = 'UC_'<country>_<suffix_reservoir>, 
+                         column 'param_policy' = 'userconstraintRHS'
         """
         date_index = pd.date_range(self.start_date, self.end_date, freq='60 min')
         df_result = pd.DataFrame(index=date_index)
-        country_suffix = self.suffix_reservoir[country]
+        country_suffix = self.suffix_reservoir.get(country, '')
 
         for year in range(self.start_year, self.end_year + 1):
             df_year = country_df[country_df["year"] == year].copy().reset_index(drop=True)
@@ -147,16 +130,16 @@ class hydro_mingen_limits_MAF2019:
         Processes min/max generation data for one Norway country from an Excel file.
 
         Parameters:
-          country  -- The Norway country code (e.g., 'NOM1')
-          filename -- The path to the Norway Excel input file
+            country (str): The Norway country code (e.g., 'NOM1')
+            filename (str): The path to the Norway Excel input file
 
         Returns:
-          A DataFrame with a time index and a "genLimit" level containing the processed data.
-          If process_maxGen is False, only the min generation data is returned.
+            pd.DataFrame: A DataFrame with a time index and a "genLimit" level containing the processed data.
+                         If process_maxGen is False, only the min generation data is returned.
         """
         date_index = pd.date_range(self.start_date, self.end_date, freq='60 min')
         df_result = pd.DataFrame(index=date_index)
-        country_suffix = self.suffix_reservoir[country]
+        country_suffix = self.suffix_reservoir.get(country, '')
 
         try:
             df_input = pd.read_excel(
@@ -166,7 +149,7 @@ class hydro_mingen_limits_MAF2019:
                 skiprows=12
             )
         except Exception as e:
-            log_status(f"Error reading file {filename}: {e}", self.processor_log, level="warn")
+            self.log(f"Error reading file {filename}: {e}", level="warn")
             return None
 
         # Convert Excel column headers (which represent years) from floats to ints.
@@ -199,21 +182,26 @@ class hydro_mingen_limits_MAF2019:
         df_result = df_result.set_index(['time', 'param_policy'])
         return df_result
 
-
-    def run_processor(self):
+    def process(self) -> pd.DataFrame:
         """
-        Executes the processing steps:
+        Main processing logic that executes the processing steps:
           - Reads the global CSV input for non-Norway countries.
           - Processes each country (using the Norway method when appropriate).
-          - Merges all individual DataFrames into a summary and writes it to a CSV file.
+          - Merges all individual DataFrames into a summary.
+          
+        Returns:
+            pd.DataFrame: Summary DataFrame with hydro minimum generation limits
         """
+        self.log("Reading input data...")
+        
         # Read the global CSV input file.
         inputfile = os.path.join(self.input_folder, self.input_csv)
         try:
             global_df = pd.read_csv(inputfile)
         except Exception as e:
-            log_status(f"Error reading input CSV file: {e}", self.processor_log, level="warn")
-            return
+            self.log(f"Error reading input CSV file: {e}", level="warn")
+            # Return empty DataFrame if input fails
+            return pd.DataFrame()
 
         # Filter the global DataFrame by year range.
         global_df = global_df[(global_df["year"] >= self.start_year) & (global_df["year"] <= self.end_year)]
@@ -222,7 +210,7 @@ class hydro_mingen_limits_MAF2019:
 
         # Prepare the summary DataFrame 
         summary_df = pd.DataFrame()
-        log_status(f"Processing the input file...", self.processor_log, level="info")
+        self.log("Processing country level limits...")
 
         # Process each country.
         for country in self.country_codes:
@@ -247,50 +235,11 @@ class hydro_mingen_limits_MAF2019:
         # Drop columns if their sum is zero
         summary_df = summary_df.loc[:, summary_df.sum() != 0]
 
-        # Pick nodes with active mingen limits
+        # Pick nodes with active mingen limits and store as secondary result
         hydro_mingen_nodes = summary_df.columns.tolist()
+        self.secondary_result = hydro_mingen_nodes
 
-        # Return results
-        return summary_df, hydro_mingen_nodes, "\n".join(self.processor_log)
+        self.log("Hydro mingen time series built.")
 
-
-
-# __main__ for testing this function directly
-if __name__ == "__main__":
-    input_folder = os.path.join("..\\src_files\\timeseries")
-    output_folder = os.path.join("..\\inputData-test")
-    output_file = os.path.join(output_folder, f'test_hydro_generation_limits.csv')
-    country_codes = [
-        'FI00', 'FR00', 'UK00', 'LT00', 'LV00', 'NL00', 'NOS0', 'NOM1',
-        'NON1', 'PL00', 'SE01', 'SE02', 'SE03', 'SE04'
-    ]
-    start_date = "1982-01-01 00:00:00"
-    end_date = "2021-01-01 00:00:00"
-
-    kwargs_processor = {'input_folder': input_folder,
-                        'country_codes': country_codes,
-                        'start_date': start_date,
-                        'end_date': end_date
-    }
-
-    # Set process_maxGen to True to process maximum generation limits,
-    # or leave it as False (default) to process only minimum generation limits.
-    processor = hydro_mingen_limits_MAF2019(**kwargs_processor)
-    result = processor.run_processor()
-
-    # Ensure the output directory exists.
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    # Handle an optional second DataFrame and possible no result
-    if isinstance(result, tuple) and len(result) == 2:
-        summary_df, df_optional = result
-    elif result is None:
-        print(f"processor did not return any DataFrame.")
-    else:
-        summary_df = result  
-
-    # Write to a csv.
-    if summary_df is not None:
-        print(f"writing {output_file}")
-        summary_df.to_csv(output_file)
+        # Return the main result DataFrame
+        return summary_df

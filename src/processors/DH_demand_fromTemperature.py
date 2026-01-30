@@ -1,21 +1,20 @@
+# src/processors/DH_demand_fromTemperature.py
+
 import os
 import pandas as pd
 import numpy as np
-from src.utils import log_status
+from src.processors.base_processor import BaseProcessor
 
 
-class DH_demand_fromTemperature:
+class DH_demand_fromTemperature(BaseProcessor):
     """
     Class to process district heating demand timeseries for countries.
-
-    Parameters:
-        input_folder (str): Relative location of input files.
-        country_codes (list): List of country codes.
-        start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
-        end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
     """
 
     def __init__(self, **kwargs_processor):
+        # Initialize base class
+        super().__init__(**kwargs_processor)
+
         # List of required parameters
         required_params = [
             'input_folder', 
@@ -25,10 +24,6 @@ class DH_demand_fromTemperature:
             'df_annual_demands', 
             'scenario_year'
         ]
-        optional_params = {
-            'exclude_grids': [],
-            'exclude_nodes': []
-        }
 
         # Check if all required parameters are present
         missing_params = [param for param in required_params if param not in kwargs_processor]
@@ -39,19 +34,12 @@ class DH_demand_fromTemperature:
         for param in required_params:
             setattr(self, param, kwargs_processor.get(param))        
 
-        # Unpack optional parameters with defaults if not provided
-        for key, default in optional_params.items():
-            setattr(self, key, kwargs_processor.get(key, default))
-
         # Extract start and end years from the provided dates.
         self.startyear = pd.to_datetime(self.start_date).year
         self.endyear = pd.to_datetime(self.end_date).year
 
         # build input file path
         self.input_file = os.path.join(self.input_folder, 'Temperature.csv')
-
-        # Initialize log message list
-        self.processor_log = []
 
 
     def get_temperature_profile(self, processed_countries):
@@ -143,7 +131,6 @@ class DH_demand_fromTemperature:
 
             # Sum over the whole series (skipping NaNs).
             total = s.sum(skipna=True)
-
             if total and total != 0:
                 # Scale so that the total equals the number of valid years.
                 df_profiles[country] = s * (num_years / total)
@@ -168,13 +155,8 @@ class DH_demand_fromTemperature:
 
             # Process each demand row for the country.
             for _, row in country_demand.iterrows():
-                # Determine the node suffix in a case-insensitive way.
-                suffix = ''
-                if 'node_suffix' in row and pd.notna(row['node_suffix']):
-                    suffix = str(row['node_suffix'])
-
-                # Build the new column name: if no suffix, use the country code; otherwise, use country+suffix.
-                col_name = country if suffix == '' else country + '_' + suffix
+                # Pick node name to column name
+                col_name = str(row['node'])
 
                 # Retrieve annual demand from 'mwh/year'.
                 annual_demand = row['twh/year']*10**6
@@ -196,8 +178,6 @@ class DH_demand_fromTemperature:
                 # B = annual_demand * constant_share / 8760
                 A = annual_demand * (1 - constant_share)
                 B = annual_demand * constant_share / 8760
-
-                #print(f"      {col_name}.. {round(annual_demand/10**6, 1)} TWh/year")
                 
                 # Compute the new profile using the base profile from df_profiles_norm.
                 df_profiles_result[col_name] = A * df_profiles_norm[country] + B
@@ -205,84 +185,29 @@ class DH_demand_fromTemperature:
         return df_profiles_result
 
 
-    def run_processor(self):
-
-        # Filter countries in country codes that actually have annual demand data
+    def process(self) -> pd.DataFrame:
+        """
+        Main processing logic - implements the abstract method from BaseProcessor.
+        """
+        # Filter countries
         countries_with_data = self.df_annual_demands['country'].unique()
-        processed_countries = [code for code in self.country_codes if code in countries_with_data]
+        processed_countries = [
+            code for code in self.country_codes if code in countries_with_data
+        ]
 
-        # Get the raw hourly profiles.
-        log_status(f"Constructing heat demand profiles from '{self.input_file}'.. ", self.processor_log)
-        temp_profiles = self.get_temperature_profile(processed_countries)
+        # Get the raw hourly profiles
+        self.log(f"Constructing heat demand profiles from '{self.input_file}'...")
+        out_df = self.get_temperature_profile(processed_countries)
 
-        log_status("Normalizing demand profiles..", self.processor_log)
-        norm_profiles = self.normalize_profiles(temp_profiles, processed_countries)
+        self.log("Normalizing demand profiles...")
+        out_df = self.normalize_profiles(out_df, processed_countries)
 
-        log_status("Building demand time series..", self.processor_log)
-        summary_df = self.build_demands(norm_profiles, self.df_annual_demands, processed_countries)
-        
-        # Renaming column titles from country to <country>_<grid> or <country>_<grid>_<suffix> if suffix exists,
-        # e.g. DE00 -> DE00_dheat and FI00 -> FI00_dheat_HKI
-        grid = self.df_annual_demands['grid'].iloc[0]
-        new_columns = {}
-        for col in summary_df.columns:
-            for country in processed_countries:
-                if col.startswith(country):
-                    # Capture any suffix after the country code.
-                    suffix = col[len(country):]  # e.g., '' or 'HKI'
-                    # Build the new column name
-                    new_columns[col] = f"{country}_{grid}" + suffix
-                    break  # Found matching country code, move to next column.
-        summary_df = summary_df.rename(columns=new_columns)
+        self.log("Building demand time series...")
+        out_df = self.build_demands(out_df, self.df_annual_demands, processed_countries)
 
-        # Mandatory secondary results
-        secondary_result = None
+        # Set secondary result if needed
+        self.secondary_result = None
 
-        # Note: returning processor log as a string, because then we can distinct it from secondary results which might be a list of strings
-        return summary_df, secondary_result, "\n".join(self.processor_log)
+        self.log("Demand time series built.", level="info")
 
-
-# __main__ allows testing by calling this .py file directly.
-if __name__ == '__main__':
-    # Define the input parameters.
-    input_folder = os.path.join("..\\inputFiles\\timeseries")
-    output_folder = os.path.join("..\\inputData-test")
-    output_file = os.path.join(output_folder, 'test_heat_demand.csv')
-    country_codes = [
-        'FI00', 'FR00', 'NOM1'
-    ]
-    start_date = '1982-01-01 00:00:00'
-    end_date = '2021-01-01 00:00:00'
-    scenario_year = 2025 
-
-    # Constructed demand data for testing
-    annual_demands = {
-        'country': ['FI00', 'FR00'],
-        'grid': ['dheat', 'dheat'],
-        'node_suffix': ['HKI', ''],
-        'year': [2025, 2025],
-        'twh/year': [1000, 100],
-        'constant_share': [0.3, 0.4]
-        }
-
-    df_annual_demands = pd.DataFrame(annual_demands)
-
-    kwargs_processor = {'input_folder': input_folder,
-                        'country_codes': country_codes,
-                        'start_date': start_date,
-                        'end_date': end_date,
-                        'scenario_year': scenario_year, 
-                        'df_annual_demands': df_annual_demands
-    }
-
-    # Create an instance of DH_demand_ts and run the processing.
-    processor = DH_demand_fromTemperature(**kwargs_processor)
-    summary_df = processor.run_processor()
-
-    # Ensure the output directory exists.
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    # Write the scaled profiles to a CSV file.
-    print(f"writing {output_file}")
-    summary_df.to_csv(output_file)
+        return(out_df)

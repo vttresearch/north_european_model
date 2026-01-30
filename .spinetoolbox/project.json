@@ -91,10 +91,12 @@
                     "known_filters": {
                         "db_url@Input data": {
                             "scenario_filter": {
-                                "asd": true
+                                "testing": true
                             },
                             "alternative_filter": {
-                                "input_National Trends_2025": true
+                                "asd": true,
+                                "input_National Trends_2025": true,
+                                "input_National Trends_2030": true
                             }
                         }
                     },
@@ -237,6 +239,36 @@
                         "scenario_filter": true
                     }
                 }
+            },
+            {
+                "name": "from Input data to Copy_timeseries",
+                "from": [
+                    "Input data",
+                    "right"
+                ],
+                "to": [
+                    "Copy_timeseries",
+                    "left"
+                ],
+                "filter_settings": {
+                    "known_filters": {
+                        "db_url@Input data": {
+                            "scenario_filter": {
+                                "testing": true
+                            },
+                            "alternative_filter": {
+                                "asd": true,
+                                "input_National Trends_2025": true,
+                                "input_National Trends_2030": true
+                            }
+                        }
+                    },
+                    "auto_online": true,
+                    "enabled_filter_types": {
+                        "alternative_filter": false,
+                        "scenario_filter": true
+                    }
+                }
             }
         ],
         "jumps": []
@@ -269,8 +301,8 @@
         "Export_to_BB": {
             "type": "Exporter",
             "description": "",
-            "x": -5.912975620167174,
-            "y": -60.880572983364345,
+            "x": -8.965617340680039,
+            "y": -148.38963563806658,
             "output_time_stamps": false,
             "cancel_on_error": true,
             "output_labels": [
@@ -284,15 +316,15 @@
         "Transform_to_BB_sets": {
             "type": "Data Transformer",
             "description": "",
-            "x": -127.63219679607047,
-            "y": -58.59441492394001,
+            "x": -127.6321967960705,
+            "y": -148.13857205898415,
             "specification": "Transform_to_BB_sets"
         },
         "Input data": {
             "type": "Data Store",
             "description": "",
-            "x": -274.80391608172516,
-            "y": -57.50573111811137,
+            "x": -274.8030021718633,
+            "y": -57.505731118111356,
             "url": {
                 "dialect": "sqlite",
                 "host": "",
@@ -308,14 +340,14 @@
         "convert_excel_to_gdx": {
             "type": "Tool",
             "description": "",
-            "x": -516.2151834563517,
-            "y": -61.51273320777793,
+            "x": -519.2705669064502,
+            "y": -60.494272057745135,
             "specification": "convert_excel_to_gdx",
             "execute_in_work": false,
             "cmd_line_args": [
                 {
-                    "type": "resource",
-                    "arg": "toolbox_workflow/input/inputData.xlsx"
+                    "type": "literal",
+                    "arg": "toolbox_workflow/input/"
                 }
             ],
             "kill_completed_processes": false,
@@ -324,14 +356,14 @@
         "Import_from_GDX": {
             "type": "Importer",
             "description": "",
-            "x": -401.7042313172171,
-            "y": -58.428459570670285,
+            "x": -399.6691368368752,
+            "y": -60.463554051012196,
             "specification": "Import_from_GDX",
             "cancel_on_error": false,
             "on_conflict": "merge",
             "file_selection": [
                 [
-                    "toolbox_workflow/*.gdx",
+                    "toolbox_workflow/input/*.gdx",
                     true
                 ]
             ]
@@ -339,14 +371,18 @@
         "Copy_timeseries": {
             "type": "Tool",
             "description": "",
-            "x": 122.64462078112916,
-            "y": -61.96075314708334,
+            "x": 123.66216802130013,
+            "y": -62.97830038725431,
             "specification": "copy_timeseries",
             "execute_in_work": false,
             "cmd_line_args": [
                 {
                     "type": "resource",
                     "arg": "inputData.gdx"
+                },
+                {
+                    "type": "resource",
+                    "arg": "db_url@Input data"
                 }
             ],
             "kill_completed_processes": false,
@@ -355,8 +391,8 @@
         "build_input_data": {
             "type": "Tool",
             "description": "",
-            "x": -639.7258887381437,
-            "y": -130.63180420180873,
+            "x": -636.4997486313304,
+            "y": -132.8882095473472,
             "specification": "build_input_data",
             "execute_in_work": false,
             "cmd_line_args": [
@@ -375,14 +411,9 @@
         "Config": {
             "type": "Data Connection",
             "description": "",
-            "x": -768.0195416687312,
-            "y": -132.4138399810813,
+            "x": -765.9835332785278,
+            "y": -134.44984837128504,
             "file_references": [
-                {
-                    "type": "path",
-                    "relative": true,
-                    "path": "src_files/config_test.ini"
-                },
                 {
                     "type": "path",
                     "relative": true,

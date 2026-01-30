@@ -1,3 +1,5 @@
+# src/excel_exchange.py
+
 import os
 import pandas as pd
 from openpyxl import load_workbook
@@ -6,76 +8,126 @@ from openpyxl.styles import Alignment
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import re
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Sequence
 from src.utils import log_status
 
 
-
-def merge_excel_files(
+def read_input_excels(
     input_folder: Union[Path, str],
-    excel_files: List[str],
+    files: Sequence[str],
     sheet_name_prefix: str,
-    isMandatory: bool = True
-) -> pd.DataFrame:
+    logs: List[str],
+    *,
+    drop_note_columns: bool = True,
+    add_source_cols: bool = True,
+) -> List[pd.DataFrame]:
     """
-    Merges multiple Excel files:
-      - Reads only sheets starting with sheet_name_prefix from each file.
-      - Checks for duplicate entries within each sheet except 'value'
-      - 'note' and 'Note' columns are dropped from the final DataFrame
-      - Merges into one DataFrame.
+    Read Excel sheets whose names start with `sheet_name_prefix` (case-insensitive) from
+    each file in `files` and return one DataFrame per matched sheet.
 
-    Parameters:
-        input_folder (Path or str): Folder containing Excel files.
-        excel_files (list of str): List of file names.
-        sheet_name_prefix (str): Prefix to match sheet names.
-        isMandatory (bool): Fail if sheets not found.
+    Cleaning steps
+    --------------
+    - Drop columns whose header is empty/whitespace or auto-generated as 'Unnamed: x'.
+    - Optionally drop any column named 'note' (any casing).
+    - Truncate the DataFrame at the first fully empty row (drop that row and all below).
+      An "empty" cell is NA or a string consisting only of whitespace.
 
-    Returns:
-        pd.DataFrame: Merged DataFrame.
+    Parameters
+    ----------
+    input_folder : Union[Path, str]
+        Directory containing the Excel files.
+    files : Sequence[str]
+        Filenames (relative to `input_folder`) to scan.
+    sheet_name_prefix : str
+        Case-insensitive prefix used to select sheets within each workbook.
+    logs : List[str]
+        Log accumulator passed to `log_status`.
+    drop_note_columns : bool, default True
+        If True, drop any column named 'note' (any casing).
+    add_source_cols : bool, default True
+        If True, append '_source_file' and '_source_sheet'.
 
-    Raises:
-        FileNotFoundError: If unable to open any Excel file
-        ValueError: If mandatory sheets are missing or duplicates are detected
-
+    Returns
+    -------
+    List[pd.DataFrame]
+        One DataFrame per matched sheet. Returns [] if nothing was loaded.
     """
-    excel_sheets: List[pd.DataFrame] = []
+    dataframes: List[pd.DataFrame] = []
+    input_folder = str(input_folder)
 
-    for file_name in excel_files:
-        # Construct full path to the Excel file
+    log_status(
+        f"Reading Excel files for '{sheet_name_prefix}': {len(files)} file(s) ...",
+        logs, level=None
+    )
+
+    for file_name in files:
         file_path = os.path.join(input_folder, file_name)
         try:
-            # Open the Excel file
-            excel_file = pd.ExcelFile(file_path)
+            xls = pd.ExcelFile(file_path)
         except Exception as e:
-            raise FileNotFoundError(f"Unable to open {file_path}: {e}")
+            log_status(f"Unable to open {file_path}: {e}", logs, level="warn")
+            continue
 
-        # Find all sheets with names starting with the specified prefix (case-insensitive)
-        sheet_names = [sheet for sheet in excel_file.sheet_names if sheet.lower().startswith(sheet_name_prefix.lower())]
+        # Match sheets by prefix (case-insensitive)
+        matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
+        if not matched:
+            log_status(
+                f"No sheets starting with '{sheet_name_prefix}' in '{file_name}'.",
+                logs, level="warn"
+            )
+            continue
 
-        # If sheets are mandatory but none are found, raise an error
-        if isMandatory and not sheet_names:
-            raise ValueError(f"Excel file '{file_name}' does not contain any sheet starting with '{sheet_name_prefix}'.")
-
-        # Process each matching sheet
-        for sheet in sheet_names:
-            df = pd.read_excel(excel_file, sheet_name=sheet, header=0)
-
-            # Check for duplicates based on all columns except 'value'
-            columns_to_check = [col for col in df.columns if col.lower() != 'value']
-            if df.duplicated(subset=columns_to_check).any():
-                duplicates = df[df.duplicated(subset=columns_to_check, keep=False)]
-                raise ValueError(
-                    f"Duplicate entries detected in file '{file_name}', sheet '{sheet}' based on {columns_to_check}.\n"
-                    f"Duplicates:\n{duplicates}"
+        for sheet in matched:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet, header=0)
+            except Exception as e:
+                log_status(
+                    f"Failed reading sheet '{sheet}' in '{file_name}': {e}",
+                    logs, level="warn"
                 )
+                continue
 
-            # Remove note columns if they exist
-            df = df.drop(['note', 'Note'], axis=1, errors='ignore')
-            excel_sheets.append(df)
+            # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
+            # Consider empty if None, whitespace-only, or header starts with 'unnamed:' (case-insensitive).
+            empty_title_cols = [
+                c for c in df.columns
+                if c is None
+                or (isinstance(c, str) and (c.strip() == "" or c.lower().startswith("unnamed:")))
+            ]
+            if empty_title_cols:
+                df = df.drop(columns=empty_title_cols, errors="ignore")
 
-    # Merge all sheets or return empty DataFrame if no sheets were found
-    merged_df = pd.concat(excel_sheets, ignore_index=True) if excel_sheets else pd.DataFrame()
-    return merged_df
+            # Optionally drop 'note' columns (any casing)
+            if drop_note_columns:
+                note_cols = [c for c in df.columns if isinstance(c, str) and c.lower() == "note"]
+                if note_cols:
+                    df = df.drop(columns=note_cols, errors="ignore")
+
+            # --- Truncate at the first fully empty row ---
+            # Treat empty strings/whitespace as NA, then find first all-NA row.
+            _tmp = df.replace(r"^\s*$", pd.NA, regex=True)
+            row_is_empty = _tmp.isna().all(axis=1)
+
+            if row_is_empty.any():
+                first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
+                df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
+
+            # Optionally add provenance columns
+            if add_source_cols:
+                df = df.copy()
+                df["_source_file"] = file_name
+                df["_source_sheet"] = sheet
+
+            dataframes.append(df)
+
+    if not dataframes:
+        log_status(
+            f"No dataframes loaded for prefix '{sheet_name_prefix}'. Returning empty list.",
+            logs, level="warn"
+        )
+        return []
+
+    return dataframes
 
 
 
@@ -131,9 +183,9 @@ def adjust_excel(output_file):
         * Adjust each column's width.
         * Skip remaining processing if sheet has only 1 row.
         * If A2 is empty, iterate non-empty cells in row 2:
-                - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
-                - Centre align columns
-                - set the column width to 6 
+            - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+            - Centre align columns
+            - set the column width to 6 
         * Freeze top row
         * Create and apply table formatting
         * Add explanatory texts after (right from) the generated table in case of "fake MultiIndex"
@@ -143,53 +195,60 @@ def adjust_excel(output_file):
     wb = load_workbook(output_file)
 
     for ws in wb.worksheets:
-        # Adjust each column's width
-        for col_cells in ws.columns:
+        max_row = ws.max_row
+        max_col = ws.max_column
+
+        # Adjust each column's width (based on longest value in column)
+        for col_idx in range(1, max_col + 1):
+            col_letter = get_column_letter(col_idx)
             max_length = 0
-            col_letter = get_column_letter(col_cells[0].column)
-            for cell in col_cells:
-                if cell.value is not None:
-                    max_length = max(max_length, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = max_length + 6  # add extra padding
+
+            for row_idx in range(1, max_row + 1):
+                value = ws.cell(row=row_idx, column=col_idx).value
+                if value is not None:
+                    length = len(str(value))
+                    if length > max_length:
+                        max_length = length
+
+            ws.column_dimensions[col_letter].width = max_length + 6  # padding
+
 
         # Skip remaining processing if sheet has only 1 row
         if ws.max_row == 1:
             continue
 
-        # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
-        if ws["A2"].value is None:
+        # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and GDXXRW
+        has_fake_multiindex = ws["A2"].value is None
+        if has_fake_multiindex:
+            # Pre-create alignments to avoid recreating them in loops
+            center_align = Alignment(horizontal="center")
+            rotated_header_align = Alignment(horizontal="center", textRotation=90)
+
             # Iterate cells in row 2 if cells are not empty
             for cell in ws[2]:
-                if cell.value is not None:
-                    # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
-                    ws.cell(row=1, column=cell.col_idx).alignment = Alignment(textRotation=90)
+                if cell.value is None:
+                    continue
 
-                    # Centre align entire columns that have text in row 2 
-                    col_index = cell.column
-                    # Iterate over all cells in this column
-                    for row_cells in ws.iter_rows(min_col=col_index, max_col=col_index):
-                        for c in row_cells:
-                            # Preserve any existing text rotation
-                            current_rotation = c.alignment.textRotation if c.alignment else 0
-                            c.alignment = Alignment(horizontal='center', textRotation=current_rotation)
-                    col_letter = get_column_letter(cell.column)
+                col_idx = cell.col_idx
+                col_letter = get_column_letter(col_idx)
 
-                    # set the column width to 6 
-                    ws.column_dimensions[col_letter].width = 6       
+                # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                header_cell = ws.cell(row=1, column=col_idx)
+                header_text = str(header_cell.value) if header_cell.value is not None else ""
+                if len(header_text) > 6:
+                    header_cell.alignment = rotated_header_align
 
-        # Special handling for 'p_gnu_io' sheet - replace zeros with empty strings in 'capacity' column
-        if ws.title in ['p_gnu_io', 'p_unit', 'p_gn', 'p_gnBoundaryPropertiesForStates']:
-            # Replace all zeros with empty strings in all columns of all sheets
-            # Skip header row (row 1)
-            for row in range(2, ws.max_row + 1):
-                for col in range(1, ws.max_column + 1):
-                    cell = ws.cell(row=row, column=col)
-                    if cell.value == 0 or cell.value == '0':
-                        cell.value = ''
+                # Centre align column values from row 2 downwards
+                for row_idx in range(2, max_row + 1):
+                    ws.cell(row=row_idx, column=col_idx).alignment = center_align
+
+                # Set the column width to 6 for these rotated / “special” columns
+                ws.column_dimensions[col_letter].width = 6 
 
         # Freeze the top row
         ws.freeze_panes = "A2"
 
+        # Create and apply table formatting
         # Derive table name from sheet name: remove any non-word characters and append _table.
         table_name = re.sub(r'\W+', '_', ws.title) + "_table"
         # Apply Excel table formatting
@@ -205,14 +264,11 @@ def adjust_excel(output_file):
         table.headerRowCount = 1
         ws.add_table(table)
 
-
-        # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
+        # If fake MultiIndex, add explanatory texts to the right of the table
         if ws["A2"].value is None:
-            # Add explanatory texts after (right from) the generated table
             n = ws.max_column + 2
             ws.cell(row=1, column=n, value='The first row labels are for excel Table headers.')
             ws.cell(row=2, column=n, value='The Second row labels are for GDXXRW converting excel to GDX.')
-
 
     # save the adjusted file
     wb.save(output_file)

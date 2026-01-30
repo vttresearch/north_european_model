@@ -174,9 +174,9 @@ loop(gn_tmp(grid, node),
     // if data only also in other forecasts than 'f00'
     else
         gn_tmp_(grid, node)
-            ${ [smax((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) = smin((ff, tt), ts_influx(grid, node, ff, tt)) ]
+            ${ [smax((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) = smin((ff, tt), ts_node(grid, node, 'upwardLimit', ff, tt)) ]
               } = yes;
-    ); // END if(more than one f in ts_influx)
+    ); // END if(more than one f in ts_node)
 ); // END loop(gn_tmp)
 
 // replacing values in p_gnBoundaryPropertiesForStates
@@ -188,47 +188,64 @@ p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'upwardLimit', 'constant') 
 ts_node(gn_tmp_, 'upwardLimit', ff, tt) = 0;
 
 
+* --- converting constant ts_node('downwardLimit') to actual constant in p_gnBoundaryProperties ---------
+// gn in ts_node
+option gn_tmp < ts_node;
+// f in ts_node
+option ff < ts_node;
+// t in ts_node
+option tt < ts_node;
+
+// initialize gn_tmp_
+option clear = gn_tmp_;
+
+// find gn that have constant ts_node('downwardLimit')
+loop(gn_tmp(grid, node),
+    // if data only in 'f00'
+    if(sum(tt, ts_node(grid, node, 'downwardLimit', 'f01', tt)) = 0,
+        gn_tmp_(grid, node)
+            ${ [smax(tt, ts_node(grid, node, 'downwardLimit', 'f00', tt)) = smin(tt, ts_node(grid, node, 'downwardLimit', 'f00', tt)) ]
+              } = yes;
+    // if data only also in other forecasts than 'f00'
+    else
+        gn_tmp_(grid, node)
+            ${ [smax((ff, tt), ts_node(grid, node, 'downwardLimit', ff, tt)) = smin((ff, tt), ts_node(grid, node, 'downwardLimit', ff, tt)) ]
+              } = yes;
+    ); // END if(more than one f in ts_node)
+); // END loop(gn_tmp)
+
+// replacing values in p_gnBoundaryPropertiesForStates
+p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useTimeSeries') = 0;
+p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useConstant') = 1;
+p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'downwardLimit', 'constant') = ts_node(grid, node, 'downwardLimit', 'f00', 't000001');
+
+// clear timeseries from ts_node to speed up compilation
+ts_node(gn_tmp_, 'downwardLimit', ff, tt) = 0;
+
+
 
 
 * --------------------------------------------------------------------------------
 * temporary manual fixes
 * --------------------------------------------------------------------------------
 
-// setting hydro power hourly minimum generation to min(timeseries data, 30% from capacity)
-option group_tmp < ts_groupPolicy;
-loop(group_tmp,
-
-    option clear = gnu_tmp;
-
-    gnu_tmp(grid, node, unit)
-    $ {p_userconstraint(group_tmp, grid, node, unit, '-', 'v_gen')}
-    = yes;
-
-    tmp = sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'));
-    ts_groupPolicy(group_tmp, 'userConstraintRHS', t)
-        $ ts_groupPolicy(group_tmp, 'userConstraintRHS', t)
-        = min( ts_groupPolicy(group_tmp, 'userConstraintRHS', t),
-               sum(gnu_tmp, p_gnu_io(gnu_tmp, 'input', 'capacity'))*0.3 
-               );
-);
-
-
 
 // setting cautious forecasts for hydro power nodes with timeseries downward limit
 option gn_tmp < ts_node;
-ts_node(gn_tmp, 'upwardLimit', 'f01', t) $ ts_node(gn_tmp, 'upwardLimit', 'f00', t) = ts_node(gn_tmp, 'upwardLimit', 'f00', t);
-ts_node(gn_tmp, 'upwardLimit', 'f02', t) $ ts_node(gn_tmp, 'upwardLimit', 'f00', t) = ts_node(gn_tmp, 'upwardLimit', 'f00', t) * 0.9;
-ts_node(gn_tmp, 'upwardLimit', 'f03', t) $ ts_node(gn_tmp, 'upwardLimit', 'f00', t) = ts_node(gn_tmp, 'upwardLimit', 'f00', t) * 1.1;
+option tt < ts_node;
 
-ts_node(gn_tmp, 'downwardLimit', 'f01', t) $ ts_node(gn_tmp, 'downwardLimit', 'f00', t) = ts_node(gn_tmp, 'downwardLimit', 'f00', t);
-ts_node(gn_tmp, 'downwardLimit', 'f02', t) $ ts_node(gn_tmp, 'downwardLimit', 'f00', t) = ts_node(gn_tmp, 'downwardLimit', 'f00', t) * 1.1;
-ts_node(gn_tmp, 'downwardLimit', 'f03', t) $ ts_node(gn_tmp, 'downwardLimit', 'f00', t) = ts_node(gn_tmp, 'downwardLimit', 'f00', t) * 0.9;
+ts_node(gn_tmp, 'upwardLimit', 'f01', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt);
+ts_node(gn_tmp, 'upwardLimit', 'f02', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 0.9;
+ts_node(gn_tmp, 'upwardLimit', 'f03', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 1.1;
+
+ts_node(gn_tmp, 'downwardLimit', 'f01', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt);
+ts_node(gn_tmp, 'downwardLimit', 'f02', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 1.1;
+ts_node(gn_tmp, 'downwardLimit', 'f03', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 0.9;
 
 
-
-
-// Increasing storage start levels for psOpen and reservoir hydro
+// Set storage start levels for psOpen and reservoir hydro
 option clear = gn_tmp;
+option tt < ts_node;
 gn_tmp(grid, node) 
     $ {[sameAs(grid, 'psOpen') or sameAs(grid, 'reservoir')]
        and p_gn(grid, node, 'boundStart') = 1
@@ -236,11 +253,13 @@ gn_tmp(grid, node)
        }
     = yes;
 p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant')
-    = max(0.9 * p_gnBoundaryPropertiesForStates(gn_tmp, 'upwardLimit', 'constant'),
-          0.9 * ts_node(gn_tmp, 'upwardLimit', 'f00', 't000001')
+    = max(0.7 * p_gnBoundaryPropertiesForStates(gn_tmp, 'upwardLimit', 'constant'),
+          0.7 * smax(tt, ts_node(gn_tmp, 'upwardLimit', 'f00', tt))
           );
-
-
+p_gnBoundaryPropertiesForStates('reservoir', 'ES00_reservoir', 'reference', 'constant')
+    = max(0.5 * p_gnBoundaryPropertiesForStates('reservoir', 'ES00_reservoir', 'upwardLimit', 'constant'),
+          0.5 * smax(tt, ts_node('reservoir', 'ES00_reservoir', 'upwardLimit', 'f00', tt))
+          );
 
 
 * --------------------------------------------------------------------------------

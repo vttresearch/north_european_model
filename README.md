@@ -6,8 +6,9 @@ This readme has the following main sections
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
 - [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
 - [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
+- [Updating the conda environment](#Updating-the-conda-environment)
 - [Downloading required time series files](#downloading-required-time-series-files)
-- [Building and copying input files for Backbone](#building-and-copying-input-files-for-backbone)
+- [Building input files for Backbone and running the model](#Building-input-files-for-Backbone-and-running-the-model)
 - [Running Backbone](#running-backbone)
 
 
@@ -17,7 +18,8 @@ This readme has the following main sections
 * Anu Purhonen - Time series
 * Miika Rämä - District heating data
 * Pauli Hiltunen - District heating data, testing
-* Eric Harrison - Testing
+* Eric Harrison - Data sets, testing
+* Justinas Jasiunas - H2 heavy scenario, testing
 
 
 ## License
@@ -102,6 +104,21 @@ After these steps, you should have the required software and environment ready.
 NOTE: GamsAPI is possible to install also for much older GAMS versions, see https://github.com/NREL/gdx-pandas
 
  
+## Updating the conda environment
+
+[Back to top](#North-European-energy-system-model)
+
+Some updates might require updating the conda environment. This is relatively easy process when following these steps:
+  * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to windows search bar), 
+  * In Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
+  * In Miniconda, update the environment by running following:
+	
+  ```
+	conda env update -n=northEuropeanModel --file=environment.yml
+  ```
+	
+Follow the instructions in the dialogue and install the required updates, if there are any. No further actions are needed.
+
 
 
 ## Downloading required time series files
@@ -151,79 +168,83 @@ Note: EV timeseries are still work-in-progress, but will be added.
 
 ## (Optional) Installing and setting up a Spine Toolbox project
 
-Spine Toolbox is an open source Python package to manage data, scenarios and workflows for modelling and simulation.
+[Spine Toolbox](https://github.com/spine-tools/Spine-Toolbox) is an open source Python package to manage data, scenarios and workflows for modelling and simulation.
 You can use the Spine Toolbox for the workflow management if you so choose.
 
-First install Spine-Toolbox:
+First install Spine Toolbox:
 
 1. Install pipx. pipx helps in creating an isolated environment for Spine Toolbox to avoid package conflicts. Open a terminal and run
 
- python -m pip install --user pipx
+```
+python -m pip install --user pipx
+```
 
-After pipx has been installed, run
+2. After pipx has been installed, run
 
- python -m pipx ensurepath
+```
+python -m pipx ensurepath
+```
 
-2. Restart the terminal or re-login for the changes of the latest command to take effect.
+3. Restart the terminal or re-login for the changes of the latest command to take effect.
 
-3. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
+4. Choose which Spine Toolbox version to install. Latest release version from PyPi is installed using
 
- python -m pipx install spinetoolbox
+```
+python -m pipx install spinetoolbox
+```
 
-Open toolbox by typing: 
+Open Spine Toolbox by typing in the terminal: 
 
+```
 spinetoolbox
+```
 
 Go to:
-File -> Open project -> choose the northernEuropeanModel folder. You can see a spine toolbox logo next to it. If your north european model is installed under backbone, it is not enough to just choose the backbone folder as it is a separate toolbox project.
+File -> Open project -> choose the north_european_model folder. You can see a Spine Toolbox logo next to it. If your North European Model is installed under Backbone, it is not enough to just choose the Backbone folder as it is a separate Spine Toolbox project.
 
-To get the miniconda environment 'northEuropeanModel' running in toolbox, it needs to be set as the python kernel.
-Go to File -> Settings -> Tools. Under Python click Make Python Kernel. Choose the defaults.
+To get the Miniconda environment 'northEuropeanModel' running in Spine Toolbox, it needs to be set as the Python kernel:
 
-Take a copy of the BB_data.sqlite database from backbone folder. It is located in
-**backbone/.spinetoolbox/items/bb_data**
-You can put it anywhere you like.
-Go to the toolbox Design View and click the Input_data database editor. Choose the path to that copied file from the Data Store Properties window that opened to the right side.
+1. Open Miniconda Prompt.
 
-## Building and copying input files for Backbone
+2. Activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
+   
+3. Install an additional package by typing `pip install ipykernel`.
+
+4. In Spine Toolbox, double-click the `build_input_data` project item in the Design View, which will open the Tool specification editor.
+
+5. In the Tool specification editor, select Jupyter Console and then, next to `Kernel`, select the northEuropeanModel environment.
+
+Take a copy of the BB_data_template.sqlite database from the Backbone folder. It is located in
+**backbone/.spinetoolbox/items/bb_data_template**
+You can put it anywhere you like and rename it if you wish.
+Go to the Spine Toolbox Design View and click the Input_data project item. Choose the path to that copied database file from the Data Store Properties window that opened to the right side.
+
+## Building input files for Backbone and running the model
 
 [Back to top](#North-European-energy-system-model)
 
 ### Building input files
 
 Inputs are build with a python script which is easiest to run with Miniconda handling the packages and environments.
- * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to Windows search bar), 
- * In Miniconda, go to folder `backbone\north_european_model\` by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
+ * Open the installed Miniconda Prompt (e.g. type `miniconda` to Windows search bar), 
+ * In Miniconda, go to the model folder e.g. `c:\backbone\north_european_model\` by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
  * In Miniconda, activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
- * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2025.ini`).
+ * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2030.ini`).
 
 
-At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~9 minutes, and has ~300 files. Writing some larger sets of GDX files might take up to 60 seconds and the code might seem stuck for those periods, but should eventually proceed.
+At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~7 minutes, and has ~300 files. Writing some larger sets of GDX files might take up to 60 seconds and the code might seem stuck for those periods, but should eventually proceed.
 
-The `config_NT2025.ini` writes output files to **'backbone\north_european_model\input_National Trends_2025\'** folder. Copy these files to **backbone\input**
+The `config_NT2030.ini` writes output files to **'backbone\north_european_model\input_National Trends_2030\'** folder. 
 
-You can alternatively run Backbone directly from the created output folder, see instructions from [Running Backbone](#running-backbone).
+
+You can run Backbone either directly from the created output folder or by copying these files to **backbone\input**, see instructions from [Running Backbone](#running-backbone).
 
 
 ### Choosing VRE processor
 
-Current `config_NT2025.ini` is using MAF2019 timeseries and `config_test.ini` the new PECD timeseries. It is not recommended to edit these files, but instead take a copy, rename it, and edit your own file.
+Current `config_NT2030.ini` is using PECD timeseries, but old MAF2019 processor is still available. It is not recommended to edit config files stored in GIT, but instead take a copy, rename it, and edit your own file.
 
-Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The default configuration for MAF2019 processor for PV looks like this:
-
-	'PV': {
-		'processor_name': 'VRE_MAF2019',
-		'bb_parameter': 'ts_cf',
-  		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
-		'custom_column_value': {'flow': 'PV'},
-		'gdx_name_suffix': 'PV',
-		'calculate_average_year': True,
-		'rounding_precision': 5,
-		'input_file': 'PECD-MAF2019-wide-PV.csv',
-		'attached_grid': 'elec'
-	},
-
-and the default configuration for the new PECD processor for onshore wind like this:
+Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The default configuration for new PECD processors for onshore wind looks like this:
 
 	'wind_onshore': {
 		'processor_name': 'VRE_PECD',
@@ -237,21 +258,36 @@ and the default configuration for the new PECD processor for onshore wind like t
 		'attached_grid': 'elec'
 	},
 
-It is possible to choose between these by copying the examples from either `config_NT2025.ini` or `config_test.ini` to your own config file.
+
+and the old configuration for the MAF2019 processor for PV would like this:
+
+	'PV': {
+		'processor_name': 'VRE_MAF2019',
+		'bb_parameter': 'ts_cf',
+  		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+		'custom_column_value': {'flow': 'PV'},
+		'gdx_name_suffix': 'PV',
+		'calculate_average_year': True,
+		'rounding_precision': 5,
+		'input_file': 'PECD-MAF2019-wide-PV.csv',
+		'attached_grid': 'elec'
+	},
+
 
 
 ### Copying input files to c:\backbone\input
 
-The default use case often is the copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
+A recommended approach is to run the model directly from `<output_folder>` by giving the `--input_folder='.\north_european_model\<output_folder>'` command line option for Backbone.
 
-An alternative approach is to run the model directly from `<output_folder>` by giving the `--input_folder='.\north_european_model\<output_folder>'` command line option for Backbone.
+Alternative use cases are to rename the folder to avoid a case where the consecutive runs of the python script would overwrite the files, or to copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
+
 
 
 ### Checking run specification files
 
 Users might want the check the contents of following files, but this is not needed if the default settings are ok.
 
-The script automatically copies the following run specification files from `src_files\GAMS_files` to `<output_folder>`, and the user is free to edit them afterwards. In most cases, users do not need to edit these at all.
+The script automatically copies the following required run specification files from `src_files\GAMS_files` to `<output_folder>`, and the user is free to edit them afterwards. In most cases, users do not need to edit these at all.
 * `1_options.gms` - some solver settings documented inside the file
 * `timeAndSamples.inc` - sets defining timestep and forecast domains in Backbone 
 * `modelsInit_example.gms` - a default modelsInit file calling scheduleInit.gms
@@ -294,12 +330,12 @@ Run the model by running Backbone.gms in GAMS. The model supports the following 
 * `--input_dir` allows setting a custom location for the input directory. The default value is 'input'. 
 
 Working command line options for `backbone.gms` would be, for example:
-
-* Running the model with all default assumptions: `--input_file_excel=inputData.xlsx`
+* running the model directly from <output_folder>, full year, climate year 2011: `--input_dir=".\north_european_model\input_National Trends_2030" --input_file_excel=inputData.xlsx --climateYear=1995`
+* Running the model from `.\backbone\input` with all default assumptions: `--input_file_excel=inputData.xlsx`
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
-* running the model directly from <output_folder>: `--input_dir=".\north_european_model\input_National Trends_2025" --input_file_excel=inputData.xlsx`
 
-**Note:** Use " instead of ' when writing e.g. folder names with spaces. For example, --input_dir='.\dir with spaces' does not work in many workflows, but --input_dir=".\dir with spaces" should work.
+
+**NOTE:** Use " instead of ' when writing e.g. folder names with spaces. For example, --input_dir='.\dir with spaces' does not work in many workflows, but --input_dir=".\dir with spaces" should work.
 
 Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 
