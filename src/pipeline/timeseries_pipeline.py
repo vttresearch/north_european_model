@@ -8,8 +8,7 @@ from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_processor import ProcessorRunner
 from src.utils import log_status
 from src.utils import collect_domains, collect_domain_pairs
-from gdxpds import to_gdx
-from src.GDX_exchange import update_import_timeseries_inc
+from src.GDX_exchange import write_BB_gdx, update_import_timeseries_inc
 
 @dataclass
 class TimeseriesRunResult:
@@ -405,7 +404,9 @@ class TimeseriesPipeline:
 
                 # Write gdx file, update GAMS import instructions
                 output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
-                to_gdx({"ts_influx": df_other_demands}, path=output_file_other)
+                write_BB_gdx(df_other_demands, str(output_file_other), self.logs,
+                             bb_parameter="ts_influx",
+                             bb_parameter_dimensions=["grid", "node", "f", "t"])
                 update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
 

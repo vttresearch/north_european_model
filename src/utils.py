@@ -146,13 +146,12 @@ def parse_sys_args():
 def check_dependencies():
     """
     Verifies required dependencies.
-        - Python ≥ 3.12
-        - pandas ≥ 2.2
+        - Python >= 3.12
+        - pandas >= 2.2
         - pyarrow
         - tqdm
-        - gdxpds with accessible to_gdx
         - gams.transfer importable
-        - gams executable accessible in PATH        
+        - gams executable accessible in PATH
 
     Raises RuntimeError if any requirement is not met.
     """
@@ -176,21 +175,15 @@ def check_dependencies():
 
     # Check pyarrow availability
     try:
-        pyarrow = importlib.import_module("gdxpds")
+        importlib.import_module("pyarrow")
     except ImportError:
         errors.append("pyarrow not installed, see readme.md how to install/update the environment.")
 
     # Check tqdm availability
     try:
-        tqdm = importlib.import_module("gdxpds")
+        importlib.import_module("tqdm")
     except ImportError:
         errors.append("tqdm not installed, see readme.md how to install/update the environment.")
-
-    # Check gdxpds availability
-    try:
-        gdxpds = importlib.import_module("gdxpds")
-    except ImportError:
-        errors.append("gdxpds not installed, see readme.md how to install/update the environment.")
 
     # Check gams.transfer importability
     try:

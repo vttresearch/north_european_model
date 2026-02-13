@@ -1,6 +1,5 @@
 import time
 from pathlib import Path
-from gdxpds import to_gdx   # needed here to ensure gdxpds is imported before pandas
 import src.config_reader as config_reader
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
