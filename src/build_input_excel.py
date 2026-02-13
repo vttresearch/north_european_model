@@ -1695,7 +1695,7 @@ class BuildInputExcel:
         try: 
             excel_exchange.check_if_bb_excel_open(self.output_file)
         except Exception as e:
-            utils.log_status(f"{e}", self.builder_logs, level="warn")
+            utils.log_status(f"Cannot write Backbone input Excel '{self.output_file}': {e}", self.builder_logs, level="warn")
             return self.builder_logs, self.bb_excel_succesfully_built
 
         # Create p_gnu_io

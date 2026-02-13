@@ -14,6 +14,7 @@ from typing import Optional
 # --- module-level globals (defaults) ---
 _PRINT_ALL_ELAPSED_TIMES: bool = False
 _START_TIME: float = time.time()
+_WARNING_LOG: list[str] = []
 
 def init_logging(*, print_all_elapsed_times: Optional[bool] = None,
                  start_time: Optional[float] = None) -> None:
@@ -21,12 +22,18 @@ def init_logging(*, print_all_elapsed_times: Optional[bool] = None,
     Initialize module-wide logging switches without touching every call site.
     Call once at startup (after config is loaded).
     """
-    global _PRINT_ALL_ELAPSED_TIMES, _START_TIME
+    global _PRINT_ALL_ELAPSED_TIMES, _START_TIME, _WARNING_LOG
     if print_all_elapsed_times is not None:
         _PRINT_ALL_ELAPSED_TIMES = bool(print_all_elapsed_times)
     if start_time is not None:
         _START_TIME = float(start_time)
+    _WARNING_LOG = []
 
+
+
+def get_warning_log() -> list[str]:
+    """Return a copy of all warning/error messages collected since init_logging."""
+    return list(_WARNING_LOG)
 
 
 def elapsed_time(start_time):
@@ -92,6 +99,9 @@ def log_status(message: str,
         formatted = f"{start}{prefix} {elapsed_prefix}{message}{end}"
 
     log.append(formatted)
+
+    if level in ("warn", "error"):
+        _WARNING_LOG.append(formatted)
 
     if print_to_screen:
         print(formatted)
@@ -379,7 +389,7 @@ def copy_gams_files(input_folder: Path, output_folder: Path, logs: list[str]) ->
     gams_src_folder = input_folder / "GAMS_files"
 
     if not gams_src_folder.exists():
-        log_status(f"⚠️ WARNING: GAMS source folder not found: {gams_src_folder}", logs, level="warn")
+        log_status(f"GAMS source folder not found: {gams_src_folder}", logs, level="warn")
         return
 
     copied_any = False
@@ -390,7 +400,7 @@ def copy_gams_files(input_folder: Path, output_folder: Path, logs: list[str]) ->
         copied_any = True
 
     if not copied_any:
-        log_status(f"WARNING: No GAMS files were found to copy in {gams_src_folder}", logs, level="warn")
+        log_status(f"No GAMS files found to copy in {gams_src_folder}", logs, level="warn")
 
 
 def is_val_empty(

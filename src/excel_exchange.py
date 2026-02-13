@@ -122,7 +122,7 @@ def read_input_excels(
 
     if not dataframes:
         log_status(
-            f"No dataframes loaded for prefix '{sheet_name_prefix}'. Returning empty list.",
+            f"No dataframes loaded for prefix '{sheet_name_prefix}' from files: {list(files)}.",
             logs, level="warn"
         )
         return []
@@ -148,7 +148,7 @@ def add_index_sheet(input_folder, output_file):
     try:
         df_index = pd.read_excel(index_path, header=0)
     except:
-        log_status(f"Warning, '{index_path}' not found and index sheet was not added to the BB input excel", self.builder_logs, level="warn")
+        log_status(f"'{index_path}' not found, index sheet was not added to the BB input Excel.", self.builder_logs, level="warn")
         return
 
     # Load the output Excel workbook which already has multiple sheets

@@ -59,7 +59,7 @@ class VRE_MAF2019(BaseProcessor):
         self.log(f"Reading cf data from '{file_path}'..")
         
         if not os.path.isfile(file_path):
-            self.log(f"Warning! Input file '{file_path}' not found, skipping time series!!!", level="warn")
+            self.log(f"Input file '{file_path}' not found, skipping VRE_MAF2019 time series.", level="warn")
             return pd.DataFrame()
         
         self.log("Processing the input file..")

@@ -731,7 +731,7 @@ def merge_row_by_row(
     # --- Input filtering & column union ---------------------------------------
     frames = [df for df in dfs if df is not None and not getattr(df, "empty", True)]
     if not frames:
-        utils.log_status("merge_row_by_row: No data provided. Returning empty DataFrame.", logs, level="warn")
+        utils.log_status(f"[merge_row_by_row] No data provided for key_columns={list(key_columns)}. Returning empty DataFrame.", logs, level="warn")
         return pd.DataFrame()
 
     # Build a union of columns preserving first-seen order across frames.

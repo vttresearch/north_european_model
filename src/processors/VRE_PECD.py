@@ -330,7 +330,7 @@ class VRE_PECD(BaseProcessor):
         self.log(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...")
 
         if not filtered_files:
-            self.log("No valid CSV files found after filtering.", level="warn")
+            self.log(f"No valid CSV files found in '{csv_folder}' after date filtering.", level="warn")
             return df_csv_summary
 
         # Process country code mapping using the first valid CSV file
@@ -356,7 +356,7 @@ class VRE_PECD(BaseProcessor):
         country_code_mapping = self._process_country_code_mapping(df_first, country_codes)
 
         if not country_code_mapping:
-            self.log("No country code mappings found.", level="warn")
+            self.log(f"No country code mappings found in '{csv_folder}'. Check CSV column headers vs. country_codes.", level="warn")
 
         # Process each filtered CSV file and update the master DataFrame
         for file in filtered_files:

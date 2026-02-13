@@ -70,7 +70,7 @@ class TimeseriesPipeline:
             bb_parameter_dimensions: list | None = spec.get("bb_parameter_dimensions")
 
             if not processor_name or not bb_parameter or not bb_parameter_dimensions:
-                log_status(f"Warning! {human_name} spec is incomplete. Skipping.", 
+                log_status(f"Timeseries spec '{human_name}' is incomplete (missing processor_name, bb_parameter, or bb_parameter_dimensions). Skipping.",
                            specs_logs, level="warn")
                 continue
 

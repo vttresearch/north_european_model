@@ -280,7 +280,7 @@ class CacheManager:
             # Compute sheet-level hashes for each file
             for f in current_files:
                 if f == '':
-                    utils.log_status(f"File name cannot be '', check config file", 
+                    utils.log_status(f"Empty file name in config category '{category}', check config file.",
                                    log, level="error")
                     continue
                 

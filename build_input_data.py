@@ -205,6 +205,17 @@ def main(input_folder: Path, config_file: Path):
         minutes, seconds = utils.elapsed_time(start_time)
         utils.log_status(f"Completed in {minutes} min {seconds} sec.", log_messages, level="done")
 
+        # Repeat collected warnings and errors at the end for visibility
+        warnings = utils.get_warning_log()
+        if warnings:
+            utils.log_status("Warnings and errors summary",
+                             log_messages, level="none",
+                             add_empty_line_before=True,
+                             section_start_length=55)
+            for w in warnings:
+                log_messages.append(w)
+                print(w)
+
         # Define log path
         log_path = output_folder / "summary.log"
         utils.log_status(f"Writing the log to {log_path}", log_messages, level="run", add_empty_line_before=True)

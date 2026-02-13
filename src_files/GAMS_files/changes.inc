@@ -8,7 +8,7 @@ and should be placed in the Backbone input folder, see instructions from 'Run sp
 of the Northern European Model readme.
 
 Contents 
-- Default values for command line parameters if not given
+- Initialization
 - Reading additional input data
     - inputData_add1.xlsx
     - inputData_add2.xlsx
@@ -27,14 +27,13 @@ $offtext
 * Default values for command line parameters if not given
 * --------------------------------------------------------------------------------
 
-// set values global to be available also when reading other files
+* Default values for command line parameters if not given
+* use global that values are available also when reading other files
 $if not set modelYear $setglobal modelYear 2025
 $if not set climateYear $setglobal tsYear 2015
 $if not set modelledDays $setglobal modelledDays 365
 $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%
-
-
 
 
 
