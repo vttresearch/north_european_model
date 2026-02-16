@@ -30,13 +30,14 @@ class TimeseriesPipeline:
     
     def __init__(self, config: dict, input_folder: Path, output_folder: Path,
                  cache_manager: CacheManager, source_excel_data_pipeline: SourceExcelDataPipeline,
-                 reference_ts_folder: Path = None):
+                 reference_ts_folder: Path = None, scenario_year: int = None):
         self.config = config
         self.input_folder = input_folder
         self.output_folder = output_folder
         self.cache_manager = cache_manager
         self.source_excel_data_pipeline = source_excel_data_pipeline
         self.reference_ts_folder = reference_ts_folder
+        self.scenario_year = scenario_year
         self.secondary_results = {}
         self.logs = []
         self.df_annual_demands = source_excel_data_pipeline.df_demanddata
@@ -482,7 +483,8 @@ class TimeseriesPipeline:
                     input_folder=self.input_folder,
                     output_folder=self.output_folder,
                     source_excel_data_pipeline=self.source_excel_data_pipeline,
-                    cache_manager=self.cache_manager
+                    cache_manager=self.cache_manager,
+                    scenario_year=self.scenario_year
                 )
                 log_status(f"Running: {processor['name']}", self.logs, level="run", add_empty_line_before=True)
 

@@ -36,6 +36,18 @@ def get_warning_log() -> list[str]:
     return list(_WARNING_LOG)
 
 
+def reset_warning_log() -> None:
+    """Clear accumulated warnings/errors. Call between loop iterations."""
+    global _WARNING_LOG
+    _WARNING_LOG = []
+
+
+def reset_start_time() -> None:
+    """Reset the elapsed-time clock. Call between loop iterations."""
+    global _START_TIME
+    _START_TIME = time.time()
+
+
 def elapsed_time(start_time):
     elapsed_seconds = time.time() - start_time
     minutes = int(elapsed_seconds // 60)

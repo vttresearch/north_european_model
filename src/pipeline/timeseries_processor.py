@@ -65,6 +65,7 @@ class ProcessorRunner:
     output_folder: Path
     cache_manager: CacheManager
     source_excel_data_pipeline: SourceExcelDataPipeline
+    scenario_year: Optional[int] = None
 
     def _update_processor_hash(self, processor_file: Path, processor_name: str):
         """
@@ -123,7 +124,7 @@ class ProcessorRunner:
             "country_codes": country_codes,
             "start_date": self.config.get("start_date"),
             "end_date": self.config.get("end_date"),
-            "scenario_year": self.config.get("scenario_years", [None])[0],
+            "scenario_year": self.scenario_year,
             "exclude_nodes": self.config.get("exclude_nodes", []),
             "attached_grid": spec.get("attached_grid"),
             **spec

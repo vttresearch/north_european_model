@@ -53,6 +53,11 @@ def main(input_folder: Path, config_file: Path):
     for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
 
         # --- 2.1. Preparations ---
+        # Reset warning log and elapsed-time clock from previous iteration
+        utils.reset_warning_log()
+        utils.reset_start_time()
+        iteration_start_time = time.time()
+
         # accumulated log messages to be written to summary.log
         log_messages = []
 
@@ -142,7 +147,8 @@ def main(input_folder: Path, config_file: Path):
                 output_folder,
                 cache_manager,
                 source_excel_data_pipeline,
-                reference_ts_folder=reference_ts_folder
+                reference_ts_folder=reference_ts_folder,
+                scenario_year=year
             )
             ts_results = ts_pipeline.run()
             log_messages.extend(ts_results.logs)
@@ -208,9 +214,13 @@ def main(input_folder: Path, config_file: Path):
         status_dict = {"workflow_run_successfully": True}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
-        # Printing elapsed time
-        minutes, seconds = utils.elapsed_time(start_time)
+        # Printing elapsed time (per iteration)
+        minutes, seconds = utils.elapsed_time(iteration_start_time)
         utils.log_status(f"Completed in {minutes} min {seconds} sec.", log_messages, level="done")
+
+        # Cumulative time (console only, not in log)
+        cum_minutes, cum_seconds = utils.elapsed_time(start_time)
+        print(f"  (Cumulative time: {cum_minutes} min {cum_seconds} sec)")
 
         # Repeat collected warnings and errors at the end for visibility
         warnings = utils.get_warning_log()
