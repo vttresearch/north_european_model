@@ -47,6 +47,9 @@ def main(input_folder: Path, config_file: Path):
     scenario_years = config.get('scenario_years')
     scenario_alternatives = config.get('scenario_alternatives')
 
+    # Reference folder for copying input-data-independent timeseries between iterations
+    reference_ts_folder = None
+
     for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
 
         # --- 2.1. Preparations ---
@@ -134,14 +137,19 @@ def main(input_folder: Path, config_file: Path):
             )
 
             ts_pipeline = TimeseriesPipeline(
-                config, 
-                input_folder, 
-                output_folder, 
-                cache_manager, 
-                source_excel_data_pipeline
+                config,
+                input_folder,
+                output_folder,
+                cache_manager,
+                source_excel_data_pipeline,
+                reference_ts_folder=reference_ts_folder
             )
             ts_results = ts_pipeline.run()
             log_messages.extend(ts_results.logs)
+
+            # Set reference folder for subsequent iterations to enable copy optimization
+            if reference_ts_folder is None:
+                reference_ts_folder = output_folder
         else:
             utils.log_status(
                 "Timeseries results are up-to-date. Loading from cache.",

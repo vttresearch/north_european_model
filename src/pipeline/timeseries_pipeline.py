@@ -2,6 +2,10 @@
 
 from pathlib import Path
 from dataclasses import dataclass
+import json
+import shutil
+import glob as glob_module
+import pickle
 import pandas as pd
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
@@ -9,6 +13,7 @@ from src.pipeline.timeseries_processor import ProcessorRunner
 from src.utils import log_status
 from src.utils import collect_domains, collect_domain_pairs
 from src.GDX_exchange import write_BB_gdx, update_import_timeseries_inc
+import src.json_exchange as json_exchange
 
 @dataclass
 class TimeseriesRunResult:
@@ -24,12 +29,14 @@ class TimeseriesPipeline:
     """
     
     def __init__(self, config: dict, input_folder: Path, output_folder: Path,
-                 cache_manager: CacheManager, source_excel_data_pipeline: SourceExcelDataPipeline):
+                 cache_manager: CacheManager, source_excel_data_pipeline: SourceExcelDataPipeline,
+                 reference_ts_folder: Path = None):
         self.config = config
         self.input_folder = input_folder
         self.output_folder = output_folder
         self.cache_manager = cache_manager
         self.source_excel_data_pipeline = source_excel_data_pipeline
+        self.reference_ts_folder = reference_ts_folder
         self.secondary_results = {}
         self.logs = []
         self.df_annual_demands = source_excel_data_pipeline.df_demanddata
@@ -235,6 +242,112 @@ class TimeseriesPipeline:
         return all_demand_grids - processed_grids
 
 
+    def _copy_processor_from_reference(self, processor_spec: dict) -> dict:
+        """
+        Copy GDX files and cache data for a single input-data-independent processor
+        from the reference folder instead of re-running it.
+
+        Returns a dict with keys: secondary_result, ts_domains, ts_domain_pairs, log_messages
+        """
+        spec = processor_spec["spec"]
+        processor_name = processor_spec["name"]
+        human_name = processor_spec["human_name"]
+        bb_parameter = spec.get("bb_parameter")
+        gdx_name_suffix = spec.get("gdx_name_suffix", "")
+
+        copy_logs = []
+        log_status(f"{human_name}", copy_logs, section_start_length=45)
+
+        ref_folder = Path(self.reference_ts_folder)
+
+        # Safety check: reference folder must exist
+        if not ref_folder.exists():
+            log_status(
+                f"Reference folder {ref_folder} does not exist. Cannot copy.",
+                copy_logs, level="warn"
+            )
+            return {"secondary_result": None, "ts_domains": {}, "ts_domain_pairs": {}, "log_messages": copy_logs}
+
+        # 1. Copy GDX files
+        fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
+        pattern = str(ref_folder / f"{fname_base}*.gdx")
+        gdx_files = glob_module.glob(pattern)
+
+        copied_count = 0
+        for gdx_file in gdx_files:
+            dest = Path(self.output_folder) / Path(gdx_file).name
+            shutil.copy2(gdx_file, dest)
+            copied_count += 1
+
+        if copied_count:
+            log_status(f"Copied {copied_count} GDX file(s) from reference folder", copy_logs, level="info")
+        else:
+            log_status(f"No GDX files found matching {fname_base}*.gdx in reference folder", copy_logs, level="warn")
+
+        # 2. Update import_timeseries.inc for this processor
+        bb_kwargs = {"bb_parameter": bb_parameter, "gdx_name_suffix": gdx_name_suffix}
+        update_import_timeseries_inc(self.output_folder, **bb_kwargs)
+
+        if spec.get("calculate_average_year", False):
+            update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **bb_kwargs)
+
+        # 3. Copy secondary results (pickle files) if processor has secondary_output_name
+        secondary_result = None
+        secondary_output_name = spec.get("secondary_output_name")
+        if secondary_output_name:
+            ref_pkl = ref_folder / "cache" / "secondary_results" / f"{processor_name}.pkl"
+            if ref_pkl.exists():
+                dest_pkl = self.cache_manager.secondary_results_folder / f"{processor_name}.pkl"
+                dest_pkl.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ref_pkl, dest_pkl)
+                log_status(f"Copied secondary result: {processor_name}.pkl", copy_logs, level="info")
+                with open(ref_pkl, "rb") as f:
+                    pkl_data = pickle.load(f)
+                secondary_result = pkl_data.get(secondary_output_name)
+
+        # 4. Load domain data from reference folder's cache
+        ref_domain_file = ref_folder / "cache" / f"processor_domains_{processor_name}.json"
+        ts_domains = {}
+        ts_domain_pairs = {}
+
+        if ref_domain_file.exists():
+            domain_cache = json_exchange.load_json(ref_domain_file)
+            raw_domains = domain_cache.get("ts_domains", {})
+            for key, vals in raw_domains.items():
+                ts_domains[key] = set(vals) if isinstance(vals, list) else vals
+            raw_pairs = domain_cache.get("ts_domain_pairs", {})
+            for key, vals in raw_pairs.items():
+                if isinstance(vals, list):
+                    ts_domain_pairs[key] = set(tuple(v) for v in vals)
+                else:
+                    ts_domain_pairs[key] = vals
+        else:
+            log_status(f"No domain cache found at {ref_domain_file}", copy_logs, level="warn")
+
+        # 5. Copy processor hash from reference for cache consistency
+        ref_hash_file = ref_folder / "cache" / "processor_hashes.json"
+        if ref_hash_file.exists():
+            ref_hashes = json_exchange.load_json(ref_hash_file)
+            if processor_name in ref_hashes:
+                self.cache_manager.save_processor_hash(processor_name, ref_hashes[processor_name])
+
+        # Save domain cache to current output folder's cache as well
+        if ts_domains or ts_domain_pairs:
+            domain_cache_data = {
+                "ts_domains": {k: list(v) for k, v in ts_domains.items()},
+                "ts_domain_pairs": {k: [list(t) for t in v] for k, v in ts_domain_pairs.items()}
+            }
+            domain_file = Path(self.cache_manager.cache_folder) / f"processor_domains_{processor_name}.json"
+            json_exchange.save_json(domain_file, domain_cache_data)
+
+        return {
+            "secondary_result": secondary_result,
+            "ts_domains": ts_domains,
+            "ts_domain_pairs": ts_domain_pairs,
+            "log_messages": copy_logs
+        }
+
+
     def run(self) -> TimeseriesRunResult:
         """
         Execute the full timeseries processing pipeline.
@@ -329,13 +442,30 @@ class TimeseriesPipeline:
                 if needs_rerun and not is_disabled:
                     processors_to_rerun.add(human_name)
 
-        # Log what will run
+        # Separate input-data-independent processors for copying from reference folder
+        processors_to_copy = set()
+        if self.reference_ts_folder and Path(self.reference_ts_folder) != Path(self.output_folder):
+            timeseries_specs_raw = self.config.get("timeseries_specs", {})
+            for human_name in list(processors_to_rerun):
+                spec = timeseries_specs_raw.get(human_name, {})
+                if not spec.get('is_input_data_dependent', True):
+                    processors_to_copy.add(human_name)
+                    processors_to_rerun.discard(human_name)
+
+        # Log what will run and what will be copied
         log_status(
             f"{len(processors_to_rerun)} timeseries processor(s) need to be run: "
             f"{', '.join(sorted(processors_to_rerun)) if processors_to_rerun else 'none'}",
             self.logs,
             level="info"
         )
+        if processors_to_copy:
+            log_status(
+                f"{len(processors_to_copy)} processor(s) will be copied from reference folder: "
+                f"{', '.join(sorted(processors_to_copy))}",
+                self.logs,
+                level="info"
+            )
             
         # --- 3. Run selected processors ---
         all_ts_domains = {}
@@ -369,6 +499,25 @@ class TimeseriesPipeline:
                     all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
     
                 self.logs.extend(result.log_messages)
+
+        # --- 3b. Copy input-data-independent processors from reference folder ---
+        if processors_to_copy:
+            copy_iter = (p for p in self.processors if p['human_name'] in processors_to_copy)
+
+            for processor in copy_iter:
+                log_status(f"Copying: {processor['name']}", self.logs, level="run", add_empty_line_before=True)
+
+                copy_result = self._copy_processor_from_reference(processor)
+
+                self.secondary_results[processor["name"]] = copy_result["secondary_result"]
+
+                for dom, vals in copy_result["ts_domains"].items():
+                    all_ts_domains.setdefault(dom, set()).update(vals)
+
+                for pair_key, tuples in copy_result["ts_domain_pairs"].items():
+                    all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
+
+                self.logs.extend(copy_result["log_messages"])
 
 
         # --- 4. Process Other Demands ---
