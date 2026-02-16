@@ -21,6 +21,7 @@ class VRE_PECD(BaseProcessor):
         start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
         end_date (str): End datetime (e.g., '2021-12-31 23:00:00').
         attached_grid (str): Suffix to append to country codes in output columns.
+        scaling_factor (float): Applies logit scaling for the timeseries, e.g. 0.8 reduces the annual average by 20%.
 
     Returns:
         main_result (pd.DataFrame): DataFrame with processed time series data indexed by datetime
@@ -50,7 +51,10 @@ class VRE_PECD(BaseProcessor):
         # Unpack required parameters
         for param in required_params:
             setattr(self, param, kwargs.get(param))
-        
+
+        # Optional parameters
+        self.scaling_factor = kwargs.get('scaling_factor', 1)
+
         # Ensure start_date and end_date are datetime objects
         if not isinstance(self.start_date, datetime):
             self.start_date = pd.to_datetime(self.start_date)
@@ -92,6 +96,12 @@ class VRE_PECD(BaseProcessor):
             self.csv_folder, self.country_codes, self.start_date, self.end_date
         )
 
+        # Apply logit-normal scaling if scaling_factor differs from 1
+        if self.scaling_factor != 1:
+            self.log(f"Applying logit scaling with factor {self.scaling_factor}...")
+            for col in summary_df.columns:
+                summary_df[col] = self._apply_logit_scaling(summary_df[col], self.scaling_factor)
+
         # Rename country columns to indicate the attached grid
         for country in self.country_codes:
             if country in summary_df.columns:
@@ -105,6 +115,40 @@ class VRE_PECD(BaseProcessor):
 
         return summary_df
     
+    def _apply_logit_scaling(self, series, target_scaling, epsilon=1e-6):
+        """
+        Adjusts capacity factor using Logit-Normal transformation.
+        Shifts the mean of a [0,1] bounded series by target_scaling multiplier
+        while preserving the overall shape and bounds.
+        """
+        original_mean = series.mean()
+        target_mean = original_mean * target_scaling
+
+        if original_mean == 0:
+            return series
+
+        # Map to latent space (logit)
+        clipped = np.clip(series.values, epsilon, 1 - epsilon)
+        y = np.log(clipped / (1 - clipped))
+
+        # Binary search for the offset
+        low, high = -15.0, 15.0
+        for _ in range(20):
+            mid = (low + high) / 2
+            transformed = 1 / (1 + np.exp(-(y + mid)))
+            if transformed.mean() < target_mean:
+                low = mid
+            else:
+                high = mid
+
+        final_values = 1 / (1 + np.exp(-(y + mid)))
+
+        # Preserve hard 0s and 1s
+        final_values[series == 0] = 0
+        final_values[series == 1] = 1
+
+        return pd.Series(final_values, index=series.index)
+
     def _calculate_annual_summary(self, df):
         """
         Calculate annual average capacity factors from the entire timeseries.
