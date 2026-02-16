@@ -54,8 +54,6 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'write_csv_files': inputdata.getboolean('write_csv_files', False),
         'force_full_rerun': inputdata.getboolean('force_full_rerun', False),
         'print_all_elapsed_times': inputdata.getboolean('print_all_elapsed_times', False),
-        'disable_all_ts_processors': inputdata.getboolean('disable_all_ts_processors', False),
-        'disable_other_demand_ts': inputdata.getboolean('disable_other_demand_ts', False),
 
         # Scenario settings
         'scenarios': ast.literal_eval(inputdata.get('scenarios')),

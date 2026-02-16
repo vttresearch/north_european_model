@@ -616,30 +616,6 @@ class CacheManager:
             if curr_status and not prev_status:
                 full_rerun_reason = "Config file now wants to print csv files, starting a full rerun."
 
-        # Status of disable_all_ts_processors changed
-        if not full_rerun_reason:
-            prev_status = prev_config["disable_all_ts_processors"]
-            curr_status = self.config["disable_all_ts_processors"]
-            if prev_status != curr_status:
-                if prev_status:
-                    full_rerun_reason = ("All timeseries processors were previously disabled, but are now enabled. "
-                                         "Starting a full rerun.")
-                else:
-                    full_rerun_reason = ("All timeseries processors were previously enabled, but are now disabled. "
-                                         "Starting a full rerun.")
-    
-        # Status of disable_other_demand_ts changed
-        if not full_rerun_reason:
-            prev_status = prev_config["disable_other_demand_ts"]
-            curr_status = self.config["disable_other_demand_ts"]
-            if prev_status != curr_status:
-                if prev_status:
-                    full_rerun_reason = ("Other demand timeseries were previously disabled, but are now enabled. "
-                                         "Starting a full rerun.")
-                else:
-                    full_rerun_reason = ("Other demand timeseries were previously enabled, but are now disabled. " 
-                                         "Starting a full rerun.")
-    
         # 2) Check source code based full reruns. 
         # Overall orchestration code changed
         overall_files = [
@@ -759,7 +735,6 @@ class CacheManager:
             or self.demand_files_changed
             or self.other_input_files_changed
             or any(self.timeseries_changed.values())
-            or self.config["disable_other_demand_ts"]
             or self.bb_excel_pipeline_code_updated
             or not bb_excel_succesfully_built
         )
@@ -783,7 +758,7 @@ class CacheManager:
         relevant_keys = [
             "country_codes", "exclude_grids", "exclude_nodes",
             "start_date", "end_date", "write_csv_files", 
-            "disable_all_ts_processors", "disable_other_demand_ts", "timeseries_specs"
+            "timeseries_specs"
         ]
         data = {k: self.config[k] for k in relevant_keys if k in self.config}
         json_exchange.save_json(self.cache_folder / "config_structural.json", data)

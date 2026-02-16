@@ -87,10 +87,6 @@ class TimeseriesPipeline:
                            specs_logs, level="warn")
                 continue
             
-            if spec.get("disabled", False):
-                log_status(f"Skipping '{processor_name}' due 'disable' flag in timeseries_specs in config file", 
-                           specs_logs, level="info")
-
             processor_file = processors_base / f"{processor_name}.py"
 
             enriched_spec: dict = {
@@ -98,8 +94,6 @@ class TimeseriesPipeline:
                 "file": str(processor_file),
                 "spec": spec,
                 "human_name": human_name,
-                "disabled": bool(spec.get("disabled", False)),
-                "reserve_grid_when_disabled": bool(spec.get("reserve_grid_when_disabled", True)),
             }
             specs.append(enriched_spec)
 
@@ -221,23 +215,13 @@ class TimeseriesPipeline:
             .unique()
         )
         
-        # Get grids processed by enabled processors
+        # Get grids processed by explicit processors
         timeseries_specs = self.config["timeseries_specs"]
-        disable_all = self.config['disable_all_ts_processors']
-        
+
         processed_grids = set()
         for spec in timeseries_specs.values():
             demand_grid = spec.get("demand_grid", "").lower()
-            if not demand_grid:
-                continue
-            
-            is_disabled = spec.get("disabled", False) or disable_all
-            should_reserve = spec.get("reserve_grid_when_disabled", True)
-            
-            # Grid is "processed" if either:
-            # 1. Processor is enabled, OR
-            # 2. Processor is disabled but reserves the grid
-            if not is_disabled or (is_disabled and should_reserve):
+            if demand_grid:
                 processed_grids.add(demand_grid)
         
         return all_demand_grids - processed_grids
@@ -361,7 +345,6 @@ class TimeseriesPipeline:
            - Log the start of timeseries processing.
 
         2. Determine processors to rerun
-           - Check if user has disabled all timeseries processors. If not,
            - Build a set of processors to run
 
         3. Run selected processors
@@ -372,7 +355,6 @@ class TimeseriesPipeline:
              * Normalize outputs to avoid type inconsistencies.
 
         4. Process other demands
-           - Check that user has not disable other demand timeseries
            - Identify demand grids present in ``df_annual_demands`` but not
              covered by explicit processors.
            - Generate hourly timeseries for these with
@@ -413,35 +395,22 @@ class TimeseriesPipeline:
             add_empty_line_before=True
         )
 
-        # Check if user has disabled all timeseries processors
-        disable_all_ts_processors = self.config['disable_all_ts_processors']
-        if disable_all_ts_processors:
-            log_status(
-                "User has disabled all timeseries processors in the config file",
-                self.logs,
-                level="info",
-                add_empty_line_before=True
-            )
-
         # Build set of processors to run
         processors_to_rerun = set()
-        if not disable_all_ts_processors:
-            # Load processor specs
-            self.processors, specs_logs = self._load_all_processor_specs()
-            self.logs.extend(specs_logs)
+        self.processors, specs_logs = self._load_all_processor_specs()
+        self.logs.extend(specs_logs)
 
-            # Get processors marked for rerun by cache manager
-            # (includes config changes, code changes, and full rerun flag)
-            for proc in self.processors:
-                human_name = proc["human_name"]
-                is_disabled = proc.get('disabled', False)
-                needs_rerun = (
-                    self.cache_manager.full_rerun 
-                    or self.cache_manager.timeseries_changed.get(human_name, False)
-                )
+        # Get processors marked for rerun by cache manager
+        # (includes config changes, code changes, and full rerun flag)
+        for proc in self.processors:
+            human_name = proc["human_name"]
+            needs_rerun = (
+                self.cache_manager.full_rerun
+                or self.cache_manager.timeseries_changed.get(human_name, False)
+            )
 
-                if needs_rerun and not is_disabled:
-                    processors_to_rerun.add(human_name)
+            if needs_rerun:
+                processors_to_rerun.add(human_name)
 
         # Separate input-data-independent processors for copying from reference folder
         processors_to_copy = set()
@@ -525,40 +494,35 @@ class TimeseriesPipeline:
         # --- 4. Process Other Demands ---
         log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
             
-        disable_other_demand_ts = self.config['disable_other_demand_ts']
-        if disable_other_demand_ts:
-            log_status("User has disabled all 'other demand' timeseries in the config file.", self.logs, level="info", add_empty_line_before=True)
+        unprocessed_grids = self._get_unprocessed_demand_grids()
 
-        if not disable_other_demand_ts:
-            unprocessed_grids = self._get_unprocessed_demand_grids()
+        if unprocessed_grids:
+            log_status("Processing other demands", self.logs, level="run")
+            for grid in sorted(unprocessed_grids):
+                log_status(f" .. {grid}", self.logs, level="None")
 
-            if unprocessed_grids:
-                log_status("Processing other demands", self.logs, level="run")
-                for grid in sorted(unprocessed_grids):
-                    log_status(f" .. {grid}", self.logs, level="None")
+            # Create timeseries for other demands
+            df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
-                # Create timeseries for other demands
-                df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
+            # Collect domain info
+            other_domains = collect_domains(df_other_demands, ['grid', 'node'])
+            other_domain_pairs = collect_domain_pairs(df_other_demands, [['grid', 'node']])
 
-                # Collect domain info
-                other_domains = collect_domains(df_other_demands, ['grid', 'node'])
-                other_domain_pairs = collect_domain_pairs(df_other_demands, [['grid', 'node']])
+            for dom, vals in other_domains.items():
+                all_ts_domains.setdefault(dom, set()).update(vals)
 
-                for dom, vals in other_domains.items():
-                    all_ts_domains.setdefault(dom, set()).update(vals)
+            for pair_key, tuples in other_domain_pairs.items():
+                all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
 
-                for pair_key, tuples in other_domain_pairs.items():
-                    all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
+            if self.config["write_csv_files"]:
+                df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
 
-                if self.config["write_csv_files"]:
-                    df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
-
-                # Write gdx file, update GAMS import instructions
-                output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
-                write_BB_gdx(df_other_demands, str(output_file_other), self.logs,
-                             bb_parameter="ts_influx",
-                             bb_parameter_dimensions=["grid", "node", "f", "t"])
-                update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+            # Write gdx file, update GAMS import instructions
+            output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
+            write_BB_gdx(df_other_demands, str(output_file_other), self.logs,
+                         bb_parameter="ts_influx",
+                         bb_parameter_dimensions=["grid", "node", "f", "t"])
+            update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
 
         # --- 5. Cache management ---
