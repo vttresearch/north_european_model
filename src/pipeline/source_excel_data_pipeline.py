@@ -34,7 +34,7 @@ class SourceExcelDataPipeline:
         self.scenario = scenario
         self.scenario_year = scenario_year
         self.scenario_alternative = scenario_alternative
-        self.country_codes = country_codes or []
+        self.country_codes = country_codes
 
         self.df_demanddata = pd.DataFrame()
         self.df_transferdata = pd.DataFrame()
@@ -61,7 +61,7 @@ class SourceExcelDataPipeline:
 
         # --- global datasets ---
         # unittypedata
-        files = self.config.get('unittypedata_files', [])
+        files = self.config['unittypedata_files']
         if len(files) > 0:
             dfs = excel_exchange.read_input_excels(input_folder, files, 'unittypedata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logs) for df in dfs]
@@ -76,7 +76,7 @@ class SourceExcelDataPipeline:
             )
 
         # fueldata
-        files = self.config.get('fueldata_files', [])
+        files = self.config['fueldata_files']
         if len(files) > 0:
             dfs = excel_exchange.read_input_excels(input_folder, files, 'fueldata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logs) for df in dfs]
@@ -91,7 +91,7 @@ class SourceExcelDataPipeline:
             )                      
 
         # emissiondata
-        files = self.config.get('emissiondata_files', [])
+        files = self.config['emissiondata_files']
         if len(files) > 0:        
             dfs = excel_exchange.read_input_excels(input_folder, files, 'emissiondata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logs) for df in dfs]
@@ -107,11 +107,11 @@ class SourceExcelDataPipeline:
  
 
         # --- country-level datasets ---
-        exclude_grids = self.config.get('exclude_grids', [])
-        exclude_nodes = self.config.get('exclude_nodes', [])
+        exclude_grids = self.config['exclude_grids']
+        exclude_nodes = self.config['exclude_nodes']
 
         # demanddata
-        files = self.config.get('demanddata_files', [])
+        files = self.config['demanddata_files']
         if len(files) > 0:           
             dfs = excel_exchange.read_input_excels(input_folder, files, 'demanddata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logs) for df in dfs]
@@ -131,7 +131,7 @@ class SourceExcelDataPipeline:
             )                
 
         # storagedata
-        files = self.config.get('storagedata_files', [])
+        files = self.config['storagedata_files']
         if len(files) > 0:            
             dfs = excel_exchange.read_input_excels(input_folder, files, 'storagedata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'storagedata', self.logs) for df in dfs]
@@ -150,7 +150,7 @@ class SourceExcelDataPipeline:
             )        
 
         # unitdata
-        files = self.config.get('unitdata_files', [])
+        files = self.config['unitdata_files']
         if len(files) > 0:           
             dfs = excel_exchange.read_input_excels(input_folder, files, 'unitdata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logs) for df in dfs]     
@@ -170,7 +170,7 @@ class SourceExcelDataPipeline:
             )                    
          
         # transferdata
-        files = self.config.get('transferdata_files', [])
+        files = self.config['transferdata_files']
         if len(files) > 0:         
             dfs = excel_exchange.read_input_excels(input_folder, files, 'transferdata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logs) for df in dfs]       
@@ -195,7 +195,7 @@ class SourceExcelDataPipeline:
 
         # --- custom datasets ---
         # userconstraintdata
-        files = self.config.get('userconstraintdata_files', [])
+        files = self.config['userconstraintdata_files']
         if len(files) > 0:         
             dfs = excel_exchange.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
             dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs, check_underscore_values = False) 

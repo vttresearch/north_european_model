@@ -12,7 +12,7 @@ class BuildInputExcel:
         self.output_folder = context.output_folder
         self.scen_tags = context.scen_tags
         self.config = context.config
-        self.country_codes = self.config.get("country_codes", [])
+        self.country_codes = self.config["country_codes"]
 
         # From InputDataPipeline
         self.source_data = context.source_data

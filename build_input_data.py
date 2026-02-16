@@ -35,7 +35,7 @@ def main(input_folder: Path, config_file: Path):
 
     # Initialize logging function
     utils.init_logging(
-        print_all_elapsed_times = config.get('print_all_elapsed_times'),
+        print_all_elapsed_times = config['print_all_elapsed_times'],
         start_time = start_time
     )
 
@@ -43,9 +43,9 @@ def main(input_folder: Path, config_file: Path):
     # --- 2. The (scenario, year, alternative) loop ---
 
     # Lists of scenarios, scenario_years, and alternatives
-    scenarios = config.get('scenarios')
-    scenario_years = config.get('scenario_years')
-    scenario_alternatives = config.get('scenario_alternatives')
+    scenarios = config['scenarios']
+    scenario_years = config['scenario_years']
+    scenario_alternatives = config['scenario_alternatives']
 
     # Reference folder for copying input-data-independent timeseries between iterations
     reference_ts_folder = None
@@ -75,7 +75,7 @@ def main(input_folder: Path, config_file: Path):
         utils.log_status(f"Run timestamp: {now_str}", log_messages, level="info")
 
         # Build output folder_name, check existence
-        output_folder_prefix = config.get('output_folder_prefix', 'output')
+        output_folder_prefix = config['output_folder_prefix']
         if alternative:
             folder_name = f"{output_folder_prefix}_{scenario}_{year}_{alternative}"
         else:
@@ -116,7 +116,7 @@ def main(input_folder: Path, config_file: Path):
             scenario=scenario,
             scenario_year=year,
             scenario_alternative=alternative,
-            country_codes=config.get('country_codes') 
+            country_codes=config['country_codes']
         )
 
         # Run if needed

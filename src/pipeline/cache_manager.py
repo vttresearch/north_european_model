@@ -114,8 +114,8 @@ class CacheManager:
         def parse(dt): 
             return datetime.strptime(dt, "%Y-%m-%d %H:%M:%S")
 
-        old_start = parse(prev.get("start_date", config["start_date"]))
-        old_end = parse(prev.get("end_date", config["end_date"]))
+        old_start = parse(prev["start_date"])
+        old_end = parse(prev["end_date"])
         new_start = parse(config["start_date"])
         new_end = parse(config["end_date"])
 
@@ -165,7 +165,7 @@ class CacheManager:
             config (dict): Configuration dictionary containing timeseries_specs
             log (list[str]): Log messages list to append status updates
         """
-        timeseries_specs = config.get("timeseries_specs", {})
+        timeseries_specs = config["timeseries_specs"]
         if not timeseries_specs:
             return
 
@@ -274,7 +274,7 @@ class CacheManager:
         all_hashes_to_save = {}
 
         for category, sheet_prefix in category_to_prefix.items():
-            current_files = config.get(category, [])
+            current_files = config[category]
             current_hashes = {}  # {filename: {sheetname: hash}}
 
             # Compute sheet-level hashes for each file
@@ -389,8 +389,8 @@ class CacheManager:
         If `rerun_all_ts` is True, all processors are rerun.
         If `demand_files_changed` is True, all processors with 'demand_grid' are rerun.
         """
-        curr_specs = config.get("timeseries_specs", {})
-        prev_specs = prev_config.get("timeseries_specs", {})
+        curr_specs = config["timeseries_specs"]
+        prev_specs = prev_config["timeseries_specs"]
 
         for key, curr_spec in curr_specs.items():
             # Default to rerun if key not in previous spec
@@ -593,13 +593,13 @@ class CacheManager:
                                  "Starting a new run.")
 
         # User-requested full rerun
-        if self.config.get('force_full_rerun', False):
+        if self.config['force_full_rerun']:
             full_rerun_reason = "User has requested a full rerun."
 
         # Topology changes
         if not full_rerun_reason:
             keys = ["country_codes", "exclude_grids", "exclude_nodes"]
-            if any(prev_config.get(k) != self.config.get(k) for k in keys):
+            if any(prev_config[k] != self.config[k] for k in keys):
                 full_rerun_reason = ("Config file topology, e.g. included countries, have changed. "
                                      "Starting a full rerun.")
 
@@ -611,15 +611,15 @@ class CacheManager:
     
         # Check if csv writing was previously disable, but is now enabled
         if not full_rerun_reason:
-            prev_status = prev_config.get("write_csv_files", False) 
-            curr_status = self.config.get("write_csv_files", False)
+            prev_status = prev_config["write_csv_files"]
+            curr_status = self.config["write_csv_files"]
             if curr_status and not prev_status:
                 full_rerun_reason = "Config file now wants to print csv files, starting a full rerun."
 
         # Status of disable_all_ts_processors changed
         if not full_rerun_reason:
-            prev_status = prev_config.get("disable_all_ts_processors", False) 
-            curr_status = self.config.get("disable_all_ts_processors", False)
+            prev_status = prev_config["disable_all_ts_processors"]
+            curr_status = self.config["disable_all_ts_processors"]
             if prev_status != curr_status:
                 if prev_status:
                     full_rerun_reason = ("All timeseries processors were previously disabled, but are now enabled. "
@@ -630,8 +630,8 @@ class CacheManager:
     
         # Status of disable_other_demand_ts changed
         if not full_rerun_reason:
-            prev_status = prev_config.get("disable_other_demand_ts", False)
-            curr_status = self.config.get("disable_other_demand_ts", False)
+            prev_status = prev_config["disable_other_demand_ts"]
+            curr_status = self.config["disable_other_demand_ts"]
             if prev_status != curr_status:
                 if prev_status:
                     full_rerun_reason = ("Other demand timeseries were previously disabled, but are now enabled. "
@@ -644,6 +644,7 @@ class CacheManager:
         # Overall orchestration code changed
         overall_files = [
             Path("./build_input_data.py"),
+            Path("./src/config_reader.py"),
             Path("./src/pipeline/cache_manager.py"),
             Path("./src/utils.py"),
             Path("./src/hash_utils.py"),
@@ -706,7 +707,7 @@ class CacheManager:
             utils.log_status(f"Cleared cache files.", self.logs, level="done")
 
             # Mark all timeseries for rerun
-            timeseries_specs = self.config.get("timeseries_specs", {})
+            timeseries_specs = self.config["timeseries_specs"]
             for key in timeseries_specs.keys():
                 self.timeseries_changed[key] = True
     
@@ -758,7 +759,7 @@ class CacheManager:
             or self.demand_files_changed
             or self.other_input_files_changed
             or any(self.timeseries_changed.values())
-            or self.config.get("disable_other_demand_ts", False)
+            or self.config["disable_other_demand_ts"]
             or self.bb_excel_pipeline_code_updated
             or not bb_excel_succesfully_built
         )

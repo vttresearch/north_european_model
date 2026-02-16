@@ -67,8 +67,8 @@ class TimeseriesPipeline:
         """
         specs: list[dict] = []
         specs_logs: list[str] = []
-        timeseries_specs: dict = self.config.get("timeseries_specs", {})
-        exclude_grids: list[str] = self.config.get("exclude_grids", [])
+        timeseries_specs: dict = self.config["timeseries_specs"]
+        exclude_grids: list[str] = self.config["exclude_grids"]
         processors_base = Path("src/processors")
 
         for human_name, spec in timeseries_specs.items():
@@ -222,8 +222,8 @@ class TimeseriesPipeline:
         )
         
         # Get grids processed by enabled processors
-        timeseries_specs = self.config.get("timeseries_specs", {})
-        disable_all = self.config.get('disable_all_ts_processors', False)
+        timeseries_specs = self.config["timeseries_specs"]
+        disable_all = self.config['disable_all_ts_processors']
         
         processed_grids = set()
         for spec in timeseries_specs.values():
@@ -414,7 +414,7 @@ class TimeseriesPipeline:
         )
 
         # Check if user has disabled all timeseries processors
-        disable_all_ts_processors = self.config.get('disable_all_ts_processors', False)
+        disable_all_ts_processors = self.config['disable_all_ts_processors']
         if disable_all_ts_processors:
             log_status(
                 "User has disabled all timeseries processors in the config file",
@@ -446,7 +446,7 @@ class TimeseriesPipeline:
         # Separate input-data-independent processors for copying from reference folder
         processors_to_copy = set()
         if self.reference_ts_folder and Path(self.reference_ts_folder) != Path(self.output_folder):
-            timeseries_specs_raw = self.config.get("timeseries_specs", {})
+            timeseries_specs_raw = self.config["timeseries_specs"]
             for human_name in list(processors_to_rerun):
                 spec = timeseries_specs_raw.get(human_name, {})
                 if not spec.get('is_input_data_dependent', True):
@@ -525,7 +525,7 @@ class TimeseriesPipeline:
         # --- 4. Process Other Demands ---
         log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
             
-        disable_other_demand_ts = self.config.get('disable_other_demand_ts', False)
+        disable_other_demand_ts = self.config['disable_other_demand_ts']
         if disable_other_demand_ts:
             log_status("User has disabled all 'other demand' timeseries in the config file.", self.logs, level="info", add_empty_line_before=True)
 
@@ -550,7 +550,7 @@ class TimeseriesPipeline:
                 for pair_key, tuples in other_domain_pairs.items():
                     all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
 
-                if self.config.get("write_csv_files", False):
+                if self.config["write_csv_files"]:
                     df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
 
                 # Write gdx file, update GAMS import instructions
