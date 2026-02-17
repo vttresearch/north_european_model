@@ -14,6 +14,7 @@ from typing import Optional
 # --- module-level globals (defaults) ---
 _PRINT_ALL_ELAPSED_TIMES: bool = False
 _START_TIME: float = time.time()
+_WARNING_LOG: list[str] = []
 
 def init_logging(*, print_all_elapsed_times: Optional[bool] = None,
                  start_time: Optional[float] = None) -> None:
@@ -21,12 +22,30 @@ def init_logging(*, print_all_elapsed_times: Optional[bool] = None,
     Initialize module-wide logging switches without touching every call site.
     Call once at startup (after config is loaded).
     """
-    global _PRINT_ALL_ELAPSED_TIMES, _START_TIME
+    global _PRINT_ALL_ELAPSED_TIMES, _START_TIME, _WARNING_LOG
     if print_all_elapsed_times is not None:
         _PRINT_ALL_ELAPSED_TIMES = bool(print_all_elapsed_times)
     if start_time is not None:
         _START_TIME = float(start_time)
+    _WARNING_LOG = []
 
+
+
+def get_warning_log() -> list[str]:
+    """Return a copy of all warning/error messages collected since init_logging."""
+    return list(_WARNING_LOG)
+
+
+def reset_warning_log() -> None:
+    """Clear accumulated warnings/errors. Call between loop iterations."""
+    global _WARNING_LOG
+    _WARNING_LOG = []
+
+
+def reset_start_time() -> None:
+    """Reset the elapsed-time clock. Call between loop iterations."""
+    global _START_TIME
+    _START_TIME = time.time()
 
 
 def elapsed_time(start_time):
@@ -93,6 +112,9 @@ def log_status(message: str,
 
     log.append(formatted)
 
+    if level in ("warn", "error"):
+        _WARNING_LOG.append(formatted)
+
     if print_to_screen:
         print(formatted)
 
@@ -136,13 +158,12 @@ def parse_sys_args():
 def check_dependencies():
     """
     Verifies required dependencies.
-        - Python ≥ 3.12
-        - pandas ≥ 2.2
+        - Python >= 3.12
+        - pandas >= 2.2
         - pyarrow
         - tqdm
-        - gdxpds with accessible to_gdx
         - gams.transfer importable
-        - gams executable accessible in PATH        
+        - gams executable accessible in PATH
 
     Raises RuntimeError if any requirement is not met.
     """
@@ -166,21 +187,15 @@ def check_dependencies():
 
     # Check pyarrow availability
     try:
-        pyarrow = importlib.import_module("gdxpds")
+        importlib.import_module("pyarrow")
     except ImportError:
         errors.append("pyarrow not installed, see readme.md how to install/update the environment.")
 
     # Check tqdm availability
     try:
-        tqdm = importlib.import_module("gdxpds")
+        importlib.import_module("tqdm")
     except ImportError:
         errors.append("tqdm not installed, see readme.md how to install/update the environment.")
-
-    # Check gdxpds availability
-    try:
-        gdxpds = importlib.import_module("gdxpds")
-    except ImportError:
-        errors.append("gdxpds not installed, see readme.md how to install/update the environment.")
 
     # Check gams.transfer importability
     try:
@@ -214,9 +229,6 @@ def trim_df(df, round_precision=0):
         last_valid_pos = np.where(mask)[0][-1]
         df = df.iloc[first_valid_pos:last_valid_pos + 1]
 
-    # Convert dtypes (so that e.g. rounding to 0 decimals gives integers)
-    df = df.convert_dtypes()
-
     return df
 
 
@@ -226,7 +238,7 @@ def standardize_df_dtypes(
     convert_numeric: bool = False,
     fill_numeric_na: bool = False,
     treat_nan_string_as_na: bool = True,
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Standardize DataFrame column dtypes to a consistent set:
     - Empty columns (all NA) → object
@@ -379,7 +391,7 @@ def copy_gams_files(input_folder: Path, output_folder: Path, logs: list[str]) ->
     gams_src_folder = input_folder / "GAMS_files"
 
     if not gams_src_folder.exists():
-        log_status(f"⚠️ WARNING: GAMS source folder not found: {gams_src_folder}", logs, level="warn")
+        log_status(f"GAMS source folder not found: {gams_src_folder}", logs, level="warn")
         return
 
     copied_any = False
@@ -390,7 +402,7 @@ def copy_gams_files(input_folder: Path, output_folder: Path, logs: list[str]) ->
         copied_any = True
 
     if not copied_any:
-        log_status(f"WARNING: No GAMS files were found to copy in {gams_src_folder}", logs, level="warn")
+        log_status(f"No GAMS files found to copy in {gams_src_folder}", logs, level="warn")
 
 
 def is_val_empty(
@@ -398,7 +410,7 @@ def is_val_empty(
     logs: list[str],
     treat_zero_as_empty: bool = True,
     ident: str = "is_val_empty",
-) -> bool:
+    ) -> bool:
     """
     Return True if `val` is considered empty.
 

@@ -7,7 +7,8 @@ import importlib.util
 import pandas as pd
 import src.hash_utils as hash_utils
 import src.utils as utils
-import src.GDX_exchange as GDX_exchange 
+import src.GDX_exchange as GDX_exchange
+import src.json_exchange as json_exchange
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from typing import Optional, Any
@@ -64,6 +65,7 @@ class ProcessorRunner:
     output_folder: Path
     cache_manager: CacheManager
     source_excel_data_pipeline: SourceExcelDataPipeline
+    scenario_year: Optional[int] = None
 
     def _update_processor_hash(self, processor_file: Path, processor_name: str):
         """
@@ -96,9 +98,9 @@ class ProcessorRunner:
         utils.log_status(f"{human_name}", log_messages, section_start_length=45)
 
         # Extract config values
-        start_date = pd.to_datetime(self.config.get("start_date"))
-        end_date = pd.to_datetime(self.config.get("end_date"))
-        country_codes = self.config.get("country_codes", [])
+        start_date = pd.to_datetime(self.config["start_date"])
+        end_date = pd.to_datetime(self.config["end_date"])
+        country_codes = self.config["country_codes"]
         rounding_precision = spec.get("rounding_precision", 0)
         bb_parameter = spec.get("bb_parameter")
         gdx_name_suffix = spec.get("gdx_name_suffix", "")
@@ -120,10 +122,10 @@ class ProcessorRunner:
             "input_folder": os.path.join(self.input_folder, "timeseries"),
             "input_file": spec.get("input_file", ""),
             "country_codes": country_codes,
-            "start_date": self.config.get("start_date"),
-            "end_date": self.config.get("end_date"),
-            "scenario_year": self.config.get("scenario_years", [None])[0],
-            "exclude_nodes": self.config.get("exclude_nodes", []),
+            "start_date": start_date,
+            "end_date": end_date,
+            "scenario_year": self.scenario_year,
+            "exclude_nodes": self.config["exclude_nodes"],
             "attached_grid": spec.get("attached_grid"),
             **spec
         }
@@ -252,6 +254,14 @@ class ProcessorRunner:
         domain_pairs = [['grid', 'node'], ['flow', 'node']]
         local_ts_domains = utils.collect_domains(main_result_bb, domains)
         local_ts_domain_pairs = utils.collect_domain_pairs(main_result_bb, domain_pairs)
+
+        # Save per-processor domain data for copy optimization
+        domain_cache_data = {
+            "ts_domains": {k: list(v) for k, v in local_ts_domains.items()},
+            "ts_domain_pairs": {k: [list(t) for t in v] for k, v in local_ts_domain_pairs.items()}
+        }
+        domain_file = Path(self.cache_manager.cache_folder) / f"processor_domains_{processor_name}.json"
+        json_exchange.save_json(domain_file, domain_cache_data)
 
         # Save processor hash
         self._update_processor_hash(processor_file, processor_name)

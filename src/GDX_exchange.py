@@ -22,9 +22,7 @@ def write_BB_gdx(
     **kwargs: Any
 ) -> None:
     """
-    Write a DataFrame to a GDX file.
-    
-    Tries gams.transfer first, automatically falls back to gdxpds on failure.
+    Write a DataFrame to a GDX file using gams.transfer.
 
     Parameters:
         df: DataFrame with columns matching bb_parameter_dimensions + 'value'
@@ -34,7 +32,7 @@ def write_BB_gdx(
             - bb_parameter: str -> GDX parameter name
             - bb_parameter_dimensions: Sequence[str] -> dimension columns (optional, inferred if missing)
 
-    Returns: 
+    Returns:
         None: Writes content to output_file
     """
     if df is None or len(df) == 0:
@@ -62,39 +60,22 @@ def write_BB_gdx(
     # Select only required columns
     work = df[final_cols]
 
-    try:
-        # --- Try GAMS Transfer first ---
-        m = gt.Container()
+    m = gt.Container()
 
-        # Create Sets for each dimension
-        dim_sets = {}
-        for d in dims:
-            unique_vals = work[d].unique()
-            dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+    # Create Sets for each dimension
+    dim_sets = {}
+    for d in dims:
+        unique_vals = work[d].unique()
+        dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
 
-        # Create Parameter
-        domain = [dim_sets[d] for d in dims]
-        p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter} written via gams.transfer"))
-        param = gt.Parameter(m, bb_parameter, domain, description=p_desc)
-        param.setRecords(work)
+    # Create Parameter
+    domain = [dim_sets[d] for d in dims]
+    p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter} written via gams.transfer"))
+    param = gt.Parameter(m, bb_parameter, domain, description=p_desc)
+    param.setRecords(work)
 
-        # Write
-        m.write(output_file)
-
-    except Exception as e:
-        # --- Fallback to gdxpds ---
-        log_status(
-            f"GAMS Transfer failed for '{output_file}': {e}. Falling back to gdxpds.",
-            logs,
-            level="warn"
-        )
-        try:
-            from gdxpds import to_gdx
-            dataframes = {bb_parameter: work}
-            to_gdx(dataframes, path=output_file)
-        except Exception as e2:
-            log_status(f"Both GAMS Transfer and gdxpds failed for '{output_file}': {e2}", logs, level="error")
-            raise
+    # Write
+    m.write(output_file)
 
 def write_BB_gdx_annual(
     df: Optional[pd.DataFrame],
@@ -104,12 +85,11 @@ def write_BB_gdx_annual(
 ) -> None:
     """
     Split a multi-year timeseries DataFrame by year and write each year to a separate GDX file.
-    
+
     This function:
       1. Splits the DataFrame by year using split_timeseries_to_annual_gdx_frames()
       2. Remaps 't' indices to t000001..t008760 for each year
       3. Writes each year to a separate GDX file (or single file if only one year)
-      4. Uses either gams.transfer or gdxpds backend
     
     Parameters:
         df: Multi-year DataFrame with columns matching bb_parameter_dimensions + helper columns
@@ -127,7 +107,7 @@ def write_BB_gdx_annual(
     """
     # --- initialization and checks ---
     if df is None or len(df) == 0:
-        log_status(f"Skipping annual GDX writing: No data to write", logs, level="warn")
+        log_status(f"Skipping annual GDX writing for '{kwargs.get('bb_parameter', '?')}_{kwargs.get('gdx_name_suffix', '?')}': no data to write.", logs, level="warn")
         return
 
     bb_parameter: Optional[str] = kwargs.get("bb_parameter")
@@ -135,7 +115,7 @@ def write_BB_gdx_annual(
     gdx_name_suffix: Optional[str] = kwargs.get("gdx_name_suffix", "")
 
     if not bb_parameter:
-        log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing", logs, level="warn")
+        log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing (gdx_name_suffix='{gdx_name_suffix}').", logs, level="warn")
         return
     
     # If dims not provided, infer all columns except 'value' as dimensions, preserving order.
@@ -158,8 +138,8 @@ def write_BB_gdx_annual(
     )
     
     if not annual_dfs:
-        log_status("No annual data available to write", logs, level="warn")
-        return    
+        log_status(f"No annual data available to write for '{bb_parameter}_{gdx_name_suffix}'.", logs, level="warn")
+        return
     
     # pick key characteristics
     years = sorted(annual_dfs.keys())
@@ -168,67 +148,43 @@ def write_BB_gdx_annual(
     # --- prepare and write annual gdx files ---
     fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
 
-    # Try writing each year with GAMS Transfer
-    try:
-        # Build container and sets
-        m = gt.Container()
+    # Build container and sets
+    m = gt.Container()
 
-        # Create a Set for each dimension with records = unique labels
-        dim_sets = {}
-        for d in dims:
-            if d == 't':
-                # For 't', use only one year's worth (always t000001..t008760)
-                # Pick from first annual df since all years have identical 't' structure
-                unique_vals = annual_dfs[years[0]][d].unique()
-            else:
-                # For other dimensions, collect unique values across ALL years
-                unique_vals = pd.concat([annual_dfs[yr][d] for yr in years]).unique()
-            
-            dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+    # Create a Set for each dimension with records = unique labels
+    dim_sets = {}
+    for d in dims:
+        if d == 't':
+            # For 't', use only one year's worth (always t000001..t008760)
+            # Pick from first annual df since all years have identical 't' structure
+            unique_vals = annual_dfs[years[0]][d].unique()
+        else:
+            # For other dimensions, collect unique values across ALL years
+            unique_vals = pd.concat([annual_dfs[yr][d] for yr in years]).unique()
 
-        # Prepare parameter
-        domains = [dim_sets[d] for d in dims]
-        p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter}"))
-        param = gt.Parameter(m, bb_parameter, domains, description=p_desc)
+        dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
 
-        for yr in tqdm(years, desc="  Writing"):
-            # pick annual df
-            df_y = annual_dfs[yr]
+    # Prepare parameter
+    domains = [dim_sets[d] for d in dims]
+    p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter}"))
+    param = gt.Parameter(m, bb_parameter, domains, description=p_desc)
 
-            # Filter to final_cols
-            df_y = df_y[final_cols]
+    for yr in tqdm(years, desc="  Writing"):
+        # pick annual df
+        df_y = annual_dfs[yr]
 
-            # populate parameter
-            param.setRecords(df_y)
+        # Filter to final_cols
+        df_y = df_y[final_cols]
 
-            # Add year to filename if multiple years
-            fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
-            output_file = os.path.join(output_folder, fname)
+        # populate parameter
+        param.setRecords(df_y)
 
-            # Write
-            m.write(output_file)
-    # Fallback to gdxpds
-    except:
-        log_status("  .. Gams Transfer failed, falling back to gdxpds.", logs, level="warn") 
-        try:
-            from gdxpds import to_gdx
-            for yr in tqdm(years, desc="  Writing"):
+        # Add year to filename if multiple years
+        fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
+        output_file = os.path.join(output_folder, fname)
 
-                # prepare annual content
-                df_y = annual_dfs[yr]
-                df_y = df_y[final_cols]
-                dataframes = {bb_parameter: df_y}
-
-                # Add year to filename if multiple years
-                fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
-                output_file = os.path.join(output_folder, fname)
-
-                # write
-                to_gdx(dataframes, path=output_file)
-
-        except Exception as e2:
-            log_status(f"Both GAMS Transfer and gdxpds failed for '{output_file}': {e2}", logs, level="error")
-            raise
+        # Write
+        m.write(output_file)
 
 
 # ==============================================================================
@@ -536,7 +492,7 @@ def split_timeseries_to_annual_gdx_frames(
         dict[year -> DataFrame with columns bb_parameter_dimensions + ['value']]
     """
     if df is None or len(df) == 0:
-        log_status("Abort: No data to split (empty df).", logs, level="error")
+        log_status(f"[split_timeseries_to_annual_gdx_frames] No data to split (empty df), dims={list(bb_parameter_dimensions)}.", logs, level="error")
         return {}
 
     dims = list(bb_parameter_dimensions)
@@ -544,7 +500,7 @@ def split_timeseries_to_annual_gdx_frames(
     required_cols = set(dims_no_t) | {time_col, year_col, "value"}
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        log_status(f"Skipping annual GDX writing due to missing required columns: {missing}", logs, level="error")
+        log_status(f"[split_timeseries_to_annual_gdx_frames] Missing required columns {missing} (dims={list(bb_parameter_dimensions)}).", logs, level="error")
         return {}
 
     # Work copy without 't' (rebuild it below)
@@ -615,7 +571,7 @@ def split_timeseries_to_annual_gdx_frames(
         out[int(yr)] = frame
     
     if not out:
-        log_status("No annual frames were produced after remap/filter.", logs, level="warn")
+        log_status(f"[split_timeseries_to_annual_gdx_frames] No annual frames produced after remap/filter (dims={list(bb_parameter_dimensions)}).", logs, level="warn")
 
     return out
 

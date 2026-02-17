@@ -198,7 +198,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         try:
             df_levels = pd.read_csv(self.levels_file)
         except Exception as e:
-            self.log(f"Error reading input CSV file: {e}", level="warn")
+            self.log(f"Error reading hydro storage levels CSV '{self.levels_file}': {e}", level="warn")
             return pd.DataFrame()
 
         # Convert columns to numeric (data from any year will work since they're identical)
@@ -209,7 +209,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         try:
             df_capacities = pd.read_csv(self.capacities_file)
         except Exception as e:
-            self.log(f"Error reading capacity CSV file: {e}", level="warn")
+            self.log(f"Error reading hydro capacities CSV '{self.capacities_file}': {e}", level="warn")
             return pd.DataFrame()
         df_capacities = df_capacities.set_index(["zone", "type", "variable"])
 

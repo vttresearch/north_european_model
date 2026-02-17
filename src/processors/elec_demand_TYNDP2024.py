@@ -209,7 +209,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
                 melted_list.append(df_melted)
                 
             except Exception as e:
-                self.log(f"Skipping sheet '{sheet_name}': {e}", level="warn")
+                self.log(f"Skipping sheet '{sheet_name}' in '{self.input_file}': {e}", level="warn")
                 continue
 
         if not melted_list:
@@ -416,7 +416,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         # Check for duplicate timestamps before reindexing
         if not input_df.index.is_unique:
             n_dupes = input_df.index.duplicated().sum()
-            self.log(f"Warning: Found {n_dupes} duplicate timestamps, keeping first occurrence", level="warn")
+            self.log(f"Found {n_dupes} duplicate timestamps in elec demand profiles, keeping first occurrence", level="warn")
             input_df = input_df[~input_df.index.duplicated(keep='first')]
         
         # Create a full hourly index for the defined date range

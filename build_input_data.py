@@ -1,6 +1,5 @@
 import time
 from pathlib import Path
-from gdxpds import to_gdx   # needed here to ensure gdxpds is imported before pandas
 import src.config_reader as config_reader
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
@@ -36,7 +35,7 @@ def main(input_folder: Path, config_file: Path):
 
     # Initialize logging function
     utils.init_logging(
-        print_all_elapsed_times = config.get('print_all_elapsed_times'),
+        print_all_elapsed_times = config['print_all_elapsed_times'],
         start_time = start_time
     )
 
@@ -44,13 +43,21 @@ def main(input_folder: Path, config_file: Path):
     # --- 2. The (scenario, year, alternative) loop ---
 
     # Lists of scenarios, scenario_years, and alternatives
-    scenarios = config.get('scenarios')
-    scenario_years = config.get('scenario_years')
-    scenario_alternatives = config.get('scenario_alternatives')
+    scenarios = config['scenarios']
+    scenario_years = config['scenario_years']
+    scenario_alternatives = config['scenario_alternatives']
+
+    # Reference folder for copying input-data-independent timeseries between iterations
+    reference_ts_folder = None
 
     for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
 
         # --- 2.1. Preparations ---
+        # Reset warning log and elapsed-time clock from previous iteration
+        utils.reset_warning_log()
+        utils.reset_start_time()
+        iteration_start_time = time.time()
+
         # accumulated log messages to be written to summary.log
         log_messages = []
 
@@ -68,7 +75,7 @@ def main(input_folder: Path, config_file: Path):
         utils.log_status(f"Run timestamp: {now_str}", log_messages, level="info")
 
         # Build output folder_name, check existence
-        output_folder_prefix = config.get('output_folder_prefix', 'output')
+        output_folder_prefix = config['output_folder_prefix']
         if alternative:
             folder_name = f"{output_folder_prefix}_{scenario}_{year}_{alternative}"
         else:
@@ -109,7 +116,7 @@ def main(input_folder: Path, config_file: Path):
             scenario=scenario,
             scenario_year=year,
             scenario_alternative=alternative,
-            country_codes=config.get('country_codes') 
+            country_codes=config['country_codes']
         )
 
         # Run if needed
@@ -135,14 +142,20 @@ def main(input_folder: Path, config_file: Path):
             )
 
             ts_pipeline = TimeseriesPipeline(
-                config, 
-                input_folder, 
-                output_folder, 
-                cache_manager, 
-                source_excel_data_pipeline
+                config,
+                input_folder,
+                output_folder,
+                cache_manager,
+                source_excel_data_pipeline,
+                reference_ts_folder=reference_ts_folder,
+                scenario_year=year
             )
             ts_results = ts_pipeline.run()
             log_messages.extend(ts_results.logs)
+
+            # Set reference folder for subsequent iterations to enable copy optimization
+            if reference_ts_folder is None:
+                reference_ts_folder = output_folder
         else:
             utils.log_status(
                 "Timeseries results are up-to-date. Loading from cache.",
@@ -201,9 +214,24 @@ def main(input_folder: Path, config_file: Path):
         status_dict = {"workflow_run_successfully": True}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
-        # Printing elapsed time
-        minutes, seconds = utils.elapsed_time(start_time)
+        # Printing elapsed time (per iteration)
+        minutes, seconds = utils.elapsed_time(iteration_start_time)
         utils.log_status(f"Completed in {minutes} min {seconds} sec.", log_messages, level="done")
+
+        # Cumulative time (console only, not in log)
+        cum_minutes, cum_seconds = utils.elapsed_time(start_time)
+        print(f"  (Cumulative time: {cum_minutes} min {cum_seconds} sec)")
+
+        # Repeat collected warnings and errors at the end for visibility
+        warnings = utils.get_warning_log()
+        if warnings:
+            utils.log_status("Warnings and errors summary",
+                             log_messages, level="none",
+                             add_empty_line_before=True,
+                             section_start_length=55)
+            for w in warnings:
+                log_messages.append(w)
+                print(w)
 
         # Define log path
         log_path = output_folder / "summary.log"

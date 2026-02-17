@@ -1,7 +1,11 @@
 import os
+import re
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment
+from openpyxl.worksheet.table import Table, TableStyleInfo
 import src.utils as utils
-import src.excel_exchange as excel_exchange
 from src.pipeline.bb_excel_context import BBExcelBuildContext
 
 
@@ -12,7 +16,7 @@ class BuildInputExcel:
         self.output_folder = context.output_folder
         self.scen_tags = context.scen_tags
         self.config = context.config
-        self.country_codes = self.config.get("country_codes", [])
+        self.country_codes = self.config["country_codes"]
 
         # From InputDataPipeline
         self.source_data = context.source_data
@@ -1687,16 +1691,168 @@ class BuildInputExcel:
 
 
 # ------------------------------------------------------
+# Excel post-processing
+# ------------------------------------------------------
+
+    def add_index_sheet(self):
+        """
+        Adds Index sheet to the excel
+            * loads preconstructed 'indexSheet.xlsx'
+            * picks rows where Symbol is in the sheet names
+        """
+        # skip processing if input folder is not defined
+        if self.input_folder == "":
+            return
+
+        # Construct full path to the index sheet file
+        index_path = os.path.join(self.input_folder, 'indexSheet.xlsx')
+
+        # Read the index sheet file (assuming the first row contains headers)
+        try:
+            df_index = pd.read_excel(index_path, header=0)
+        except Exception:
+            utils.log_status(f"'{index_path}' not found, index sheet was not added to the BB input Excel.", self.builder_logs, level="warn")
+            return
+
+        # Load the output Excel workbook which already has multiple sheets
+        wb = load_workbook(self.output_file)
+        existing_sheet_names = wb.sheetnames
+
+        # Filter rows: keep only rows where the 'Symbol' exists among the workbook's sheet names
+        df_filtered = df_index[df_index['Symbol'].isin(existing_sheet_names)]
+
+        # Create a new sheet named 'index'
+        new_sheet = wb.create_sheet(title='index')
+
+        # Write header row (row 1)
+        for col_num, header in enumerate(df_index.columns, start=1):
+            new_sheet.cell(row=1, column=col_num, value=header)
+
+        # Write the filtered data starting from row 2
+        for row_num, row in enumerate(df_filtered.itertuples(index=False, name=None), start=2):
+            for col_num, value in enumerate(row, start=1):
+                new_sheet.cell(row=row_num, column=col_num, value=value)
+
+        # Move the 'index' sheet to the first position in the workbook
+        wb._sheets.insert(0, wb._sheets.pop(wb._sheets.index(new_sheet)))
+
+        # Save the updated workbook back to the output file
+        wb.save(self.output_file)
+
+
+    def adjust_excel(self):
+        """
+        For each sheet in the Excel file
+            * Adjust each column's width.
+            * Skip remaining processing if sheet has only 1 row.
+            * If A2 is empty, iterate non-empty cells in row 2:
+                - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                - Centre align columns
+                - set the column width to 6
+            * Freeze top row
+            * Create and apply table formatting
+            * Add explanatory texts after (right from) the generated table in case of "fake MultiIndex"
+
+        Note: Empty A2 means the sheet has "fake MultiIndex" used as a compromize between excel and Backbone
+        """
+        wb = load_workbook(self.output_file)
+
+        for ws in wb.worksheets:
+            max_row = ws.max_row
+            max_col = ws.max_column
+
+            # Adjust each column's width (based on longest value in column)
+            for col_idx in range(1, max_col + 1):
+                col_letter = get_column_letter(col_idx)
+                max_length = 0
+
+                for row_idx in range(1, max_row + 1):
+                    value = ws.cell(row=row_idx, column=col_idx).value
+                    if value is not None:
+                        length = len(str(value))
+                        if length > max_length:
+                            max_length = length
+
+                ws.column_dimensions[col_letter].width = max_length + 6  # padding
+
+
+            # Skip remaining processing if sheet has only 1 row
+            if ws.max_row == 1:
+                continue
+
+            # If A2 is empty, the sheet has "fake MultiIndex" used as a compromize between excel and GDXXRW
+            has_fake_multiindex = ws["A2"].value is None
+            if has_fake_multiindex:
+                # Pre-create alignments to avoid recreating them in loops
+                center_align = Alignment(horizontal="center")
+                rotated_header_align = Alignment(horizontal="center", textRotation=90)
+
+                # Iterate cells in row 2 if cells are not empty
+                for cell in ws[2]:
+                    if cell.value is None:
+                        continue
+
+                    col_idx = cell.col_idx
+                    col_letter = get_column_letter(col_idx)
+
+                    # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                    header_cell = ws.cell(row=1, column=col_idx)
+                    header_text = str(header_cell.value) if header_cell.value is not None else ""
+                    if len(header_text) > 6:
+                        header_cell.alignment = rotated_header_align
+
+                    # Centre align column values from row 2 downwards
+                    for row_idx in range(2, max_row + 1):
+                        ws.cell(row=row_idx, column=col_idx).alignment = center_align
+
+                    # Set the column width to 6 for these rotated / "special" columns
+                    ws.column_dimensions[col_letter].width = 6
+
+            # Freeze the top row
+            ws.freeze_panes = "A2"
+
+            # Create and apply table formatting
+            # Derive table name from sheet name: remove any non-word characters and append _table.
+            table_name = re.sub(r'\W+', '_', ws.title) + "_table"
+            # Apply Excel table formatting
+            last_col_letter = get_column_letter(ws.max_column)
+            table_ref = f"A1:{last_col_letter}{ws.max_row}"
+            table = Table(displayName=table_name, ref=table_ref)
+            style = TableStyleInfo(name="TableStyleMedium9",
+                                   showFirstColumn=False,
+                                   showLastColumn=False,
+                                   showRowStripes=True,
+                                   showColumnStripes=False)
+            table.tableStyleInfo = style
+            table.headerRowCount = 1
+            ws.add_table(table)
+
+            # If fake MultiIndex, add explanatory texts to the right of the table
+            if ws["A2"].value is None:
+                n = ws.max_column + 2
+                ws.cell(row=1, column=n, value='The first row labels are for excel Table headers.')
+                ws.cell(row=2, column=n, value='The Second row labels are for GDXXRW converting excel to GDX.')
+
+        # save the adjusted file
+        wb.save(self.output_file)
+
+
+# ------------------------------------------------------
 # Main entry point for the script
 # ------------------------------------------------------
     def run(self):
 
-        # Check if the Excel file is already open before proceeding
-        try: 
-            excel_exchange.check_if_bb_excel_open(self.output_file)
-        except Exception as e:
-            utils.log_status(f"{e}", self.builder_logs, level="warn")
-            return self.builder_logs, self.bb_excel_succesfully_built
+        # Check if the Excel file is locked (e.g. open in Excel) before proceeding
+        if os.path.exists(self.output_file):
+            try:
+                with open(self.output_file, 'a'):
+                    pass
+            except OSError:
+                utils.log_status(
+                    f"The Backbone input excel file '{self.output_file}' is currently open. Please close it and rerun the code.",
+                    self.builder_logs, level="warn"
+                )
+                return self.builder_logs, self.bb_excel_succesfully_built
 
         # Create p_gnu_io
         if not self.df_unittypedata.empty and not self.df_unitdata.empty:
@@ -1845,8 +2001,8 @@ class BuildInputExcel:
             restype.to_excel(writer, sheet_name='restype', index=False)    
 
         # Apply the adjustments on the Excel file
-        excel_exchange.add_index_sheet(self.input_folder, self.output_file)      
-        excel_exchange.adjust_excel(self.output_file)
+        self.add_index_sheet()
+        self.adjust_excel()
 
         utils.log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
         self.bb_excel_succesfully_built = True

@@ -199,7 +199,7 @@ class hydro_mingen_limits_MAF2019(BaseProcessor):
         try:
             global_df = pd.read_csv(inputfile)
         except Exception as e:
-            self.log(f"Error reading input CSV file: {e}", level="warn")
+            self.log(f"Error reading hydro mingen input CSV '{inputfile}': {e}", level="warn")
             # Return empty DataFrame if input fails
             return pd.DataFrame()
 

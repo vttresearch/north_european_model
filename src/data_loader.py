@@ -1,37 +1,329 @@
 # src/data_loader.py
 
+import os
 import pandas as pd
 import numpy as np
-from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence, Any, Set
+from pathlib import Path
+from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence, Set
 import src.utils as utils
 
 
 
+def read_input_excels(
+    input_folder: Union[Path, str],
+    files: Sequence[str],
+    sheet_name_prefix: str,
+    logs: List[str],
+    *,
+    drop_note_columns: bool = True,
+    add_source_cols: bool = True,
+    ) -> List[pd.DataFrame]:
+    """
+    Read Excel sheets whose names start with `sheet_name_prefix` (case-insensitive) from
+    each file in `files` and return one DataFrame per matched sheet.
+
+    Cleaning steps
+    --------------
+    - Drop columns whose header is empty/whitespace or auto-generated as 'Unnamed: x'.
+    - Optionally drop any column named 'note' (any casing).
+    - Truncate the DataFrame at the first fully empty row (drop that row and all below).
+      An "empty" cell is NA or a string consisting only of whitespace.
+
+    Parameters
+    ----------
+    input_folder : Union[Path, str]
+        Directory containing the Excel files.
+    files : Sequence[str]
+        Filenames (relative to `input_folder`) to scan.
+    sheet_name_prefix : str
+        Case-insensitive prefix used to select sheets within each workbook.
+    logs : List[str]
+        Log accumulator passed to `log_status`.
+    drop_note_columns : bool, default True
+        If True, drop any column named 'note' (any casing).
+    add_source_cols : bool, default True
+        If True, append '_source_file' and '_source_sheet'.
+
+    Returns
+    -------
+    List[pd.DataFrame]
+        One DataFrame per matched sheet. Returns [] if nothing was loaded.
+    """
+    dataframes: List[pd.DataFrame] = []
+    input_folder = str(input_folder)
+
+    utils.log_status(
+        f"Reading Excel files for '{sheet_name_prefix}': {len(files)} file(s) ...",
+        logs, level=None
+    )
+
+    for file_name in files:
+        file_path = os.path.join(input_folder, file_name)
+        try:
+            xls = pd.ExcelFile(file_path)
+        except Exception as e:
+            utils.log_status(f"Unable to open {file_path}: {e}", logs, level="warn")
+            continue
+
+        # Match sheets by prefix (case-insensitive)
+        matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
+        if not matched:
+            utils.log_status(
+                f"No sheets starting with '{sheet_name_prefix}' in '{file_name}'.",
+                logs, level="warn"
+            )
+            continue
+
+        for sheet in matched:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet, header=0)
+            except Exception as e:
+                utils.log_status(
+                    f"Failed reading sheet '{sheet}' in '{file_name}': {e}",
+                    logs, level="warn"
+                )
+                continue
+
+            # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
+            # Consider empty if None, whitespace-only, or header starts with 'unnamed:' (case-insensitive).
+            empty_title_cols = [
+                c for c in df.columns
+                if c is None
+                or (isinstance(c, str) and (c.strip() == "" or c.lower().startswith("unnamed:")))
+            ]
+            if empty_title_cols:
+                df = df.drop(columns=empty_title_cols, errors="ignore")
+
+            # Optionally drop 'note' columns (any casing)
+            if drop_note_columns:
+                note_cols = [c for c in df.columns if isinstance(c, str) and c.lower() == "note"]
+                if note_cols:
+                    df = df.drop(columns=note_cols, errors="ignore")
+
+            # --- Truncate at the first fully empty row ---
+            # Treat empty strings/whitespace as NA, then find first all-NA row.
+            _tmp = df.replace(r"^\s*$", pd.NA, regex=True)
+            row_is_empty = _tmp.isna().all(axis=1)
+
+            if row_is_empty.any():
+                first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
+                df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
+
+            # Optionally add provenance columns
+            if add_source_cols:
+                df = df.copy()
+                df["_source_file"] = file_name
+                df["_source_sheet"] = sheet
+
+            dataframes.append(df)
+
+    if not dataframes:
+        utils.log_status(
+            f"No dataframes loaded for prefix '{sheet_name_prefix}' from files: {list(files)}.",
+            logs, level="warn"
+        )
+        return []
+
+    return dataframes
+
+
+def normalize_dataframe(
+    df: pd.DataFrame,
+    df_identifier: str,
+    logs: List[str],
+    *,
+    allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
+    lowercase_col_values: Sequence[str] = ("scenario", "generator_id", "method"),
+    ) -> pd.DataFrame:
+    """
+    Normalize a DataFrame with consistent column naming, 'method' handling,
+    and automatic dtype normalization.
+
+    What it does
+    ------------
+    1) Lower-cases all column names.
+    2) Lower-case column values (lowercase_col_values): lower-cases selected identifier-like columns (e.g. 'scenario').
+    3) Remove leading and trailing whitespace from string columns.
+    4) 'method' column: ensures existence; trims/lower-cases values; unknown methods
+       are warned and coerced to 'replace' against `allowed_methods`.
+    5) Missing/empties: treat empty strings and "-" as NA.
+    6) DType conversions via ``utils.standardize_df_dtypes``:
+       - Convert empty/NaN columns to Object dtype
+       - Convert numeric string columns to Float64
+       - Fill NA in Float64 columns with 0.
+    7) Column rename: for **numeric** columns named `*_output1`, drop the suffix to become the base
+       name; skip and warn if renaming would collide with an existing column.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame to be normalized. `None` or empty are skipped.
+    df_identifier : str
+        Fallback identifier for logging. If a DataFrame contains any of
+        `['_source_file','_source_sheet','file','sheet','source_file','source_sheet']`,
+        a per-DataFrame identifier is derived from their uniform values.
+    logs : list[str]
+        Log sink passed to `utils.log_status(...)`. Messages (warn/info) are appended there.
+    allowed_methods : list[str]
+        Allowed values for the 'method' column (case-insensitive). Unknown values default to 'replace'.
+    lowercase_col_values : Sequence[str], default ("scenario","generator_id","method")
+        Columns whose **values** should be lower-cased. (The 'method' column is canonicalized separately.)
+    """
+
+    allowed_set = {str(m).strip().lower() for m in allowed_methods}
+
+    # Skip None / empty DataFrames
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df_out = df.copy()
+
+    # 1) Standardize column name case
+    df_out.columns = df_out.columns.str.lower()
+
+    # Infer identifier from common source columns if available
+    parts = []
+    for col in ("_source_file", "_source_sheet", "file", "sheet", "source_file", "source_sheet"):
+        if col in df_out.columns:
+            vals = df_out[col].dropna().astype(str).unique()
+            if len(vals) > 0:
+                parts.append(vals[0])
+    ident = ":".join(parts) if parts else df_identifier
+
+    # 2) Lower-case selected columns' values
+    # Note: cannot be applied to 'method' which is already handled above
+    for col in lowercase_col_values:
+        if col in df_out.columns and col != "method":
+            df_out[col] = df_out[col].astype("string").str.lower()
+
+    # 3) Strip leading/trailing whitespace from all string columns
+    for col in df_out.columns:
+        if pd.api.types.is_string_dtype(df_out[col]) or pd.api.types.is_object_dtype(df_out[col]):
+            df_out[col] = df_out[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+
+    # 4) Ensure and normalize 'method'
+    if "method" not in df_out.columns:
+        df_out["method"] = "replace"
+    method = df_out["method"].astype("string").replace(r"^\s*$", pd.NA, regex=True).str.strip().str.lower()
+    method = method.fillna("replace")
+    unknown_vals = sorted(set(method.unique()) - allowed_set - {"replace"})
+    if unknown_vals:
+        utils.log_status(
+            f"[{ident}] Unknown method(s) {unknown_vals} encountered; defaulting to 'replace'.",
+            logs, level="warn"
+        )
+        method = method.where(~method.isin(unknown_vals), "replace")
+    df_out["method"] = method
+
+    # 5) Treat empty strings and blank markers as NA
+    df_out = df_out.replace({"": pd.NA})
+
+    # 6) dtype conversions (empty→object, numeric strings→Float64, fill numeric NA with 0)
+    df_out = utils.standardize_df_dtypes(df_out, convert_numeric=True, fill_numeric_na=True)
+    numeric_cols = list(df_out.select_dtypes(include=["Float64"]).columns)
+
+    # 7) Drop '_output1' suffix from **numeric** column names (avoid collisions)
+    to_rename: Dict[str, str] = {}
+    collisions: Dict[str, str] = {}
+    for c in numeric_cols:
+        if isinstance(c, str) and c.endswith("_output1"):
+            new = c[:-8]
+            if new in df_out.columns:  # would collide -> skip + warn
+                collisions[c] = new
+            else:
+                to_rename[c] = new
+
+    if collisions:
+        pairs = ", ".join(f"{old} -> {new}" for old, new in collisions.items())
+        utils.log_status(
+            f"[{ident}] Skipped renaming due to existing column name(s): {pairs}.",
+            logs, level="warn"
+        )
+
+    if to_rename:
+        df_out = df_out.rename(columns=to_rename)
+
+    return df_out
+
+
+def drop_underscore_values(
+    df: pd.DataFrame,
+    df_identifier: str,
+    logs: List[str],
+    ) -> pd.DataFrame:
+    """
+    Detect and drop rows containing underscores in string column values.
+
+    Scans all string/object columns whose name does not start with "_".
+    Rows where any checked column contains an underscore are dropped.
+    Warnings are logged with examples of the offending values.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Normalized DataFrame to check.
+    df_identifier : str
+        Identifier used in log messages.
+    logs : list[str]
+        Log accumulator for warnings.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with offending rows removed.
+    """
+    if df is None or df.empty:
+        return df
+
+    # Check string/object columns, excluding internal columns (starting with "_")
+    str_cols = [c for c in df.columns
+                if (pd.api.types.is_string_dtype(df[c]) or pd.api.types.is_object_dtype(df[c]))
+                and not str(c).startswith("_")]
+
+    bad_mask = pd.Series(False, index=df.index)
+    examples_per_col: Dict[str, List[str]] = {}
+
+    for c in str_cols:
+        m = df[c].astype("string").str.contains("_", na=False)
+        if m.any():
+            bad_mask |= m
+            examples_per_col[c] = list(df.loc[m, c].dropna().astype(str).unique()[:5])
+
+    if bad_mask.any():
+        total_bad = int(bad_mask.sum())
+        example_str = "; ".join(f"{col}: {vals}" for col, vals in list(examples_per_col.items())[:4])
+        utils.log_status(
+            f"[{df_identifier}] Underscores detected in {total_bad} row(s) across columns "
+            f"[{', '.join(examples_per_col.keys())}]. Examples -> {example_str}",
+            logs, level="warn"
+        )
+        df = df.loc[~bad_mask].copy()
+        utils.log_status(
+            f"[{df_identifier}] Dropped {total_bad} row(s) containing underscores.",
+            logs, level="warn"
+        )
+
+    return df
+
+
 def build_node_column(
-        df: pd.DataFrame
-        ) -> pd.DataFrame:
+    df: pd.DataFrame,
+    logs: List[str] = None,
+    ) -> pd.DataFrame:
     """
     Add a 'node' column to the DataFrame by concatenating country and grid identifiers.
-    
+
     Parameters:
     -----------
     df : pandas.DataFrame
         DataFrame containing at minimum 'country' and 'grid' columns.
         Optional 'node_suffix' column can be included for more specific node naming.
-    
-    Returns:
-    --------
-    pandas.DataFrame
-        Input DataFrame with new 'node' column added
-    
-    Raises:
-    -------
-    ValueError
-        If required columns ('country', 'grid') are missing from the DataFrame
-    
+    logs : list[str], optional
+        Log accumulator for warnings.
+
     Notes:
     ------
-    The node format is: "{country}_{grid}" or "{country}_{grid}_{node_suffix}" 
+    The node format is: "{country}_{grid}" or "{country}_{grid}_{node_suffix}"
     when node_suffix is present and not empty.
     """
     if df.empty: return df
@@ -40,14 +332,15 @@ def build_node_column(
     required_columns = ["country", "grid"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        raise ValueError(f"DataFrame is missing required columns: {', '.join(missing_columns)}")
+        utils.log_status(f"build_node_column: DataFrame is missing required columns: {', '.join(missing_columns)}", logs, level="warn")
+        return pd.DataFrame()
 
     # Create node column with optional suffix if available
     if "node_suffix" in df.columns:
         # Apply function to each row: combine country and grid, add suffix if it exists and is not empty
         df['node'] = df.apply(
             lambda row: f"{row['country']}_{row['grid']}" +
-                        (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) and row['node_suffix'] != "" else ""),
+                        (f"_{row['node_suffix']}" if pd.notnull(row['node_suffix']) else ""),
             axis=1
         )
     else:
@@ -60,15 +353,15 @@ def build_node_column(
 def build_unit_grid_and_node_columns(
     df_unitdata: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
-    log_messages: list[str] = None,
+    logs: list[str] = None,
     *,
     country_col: str = "country",
     generator_id_col: str = "generator_id",
-    blank_markers: Iterable[str] = ("", "-"),
-    empty_value: Any = np.nan,
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Add node_<put> columns (e.g., node_output1, node_input1) without merging full tech tables.
+
+    Assumes both DataFrames have been normalized (blank markers already converted to NA).
 
     Rules:
       - grid_<put> is fetched by generator_id from df_unittypedata (first row per id).
@@ -84,14 +377,12 @@ def build_unit_grid_and_node_columns(
     df_unittypedata : pd.DataFrame
         Must include [generator_id_col] and any subset of 'grid_<put>' columns.
         If multiple rows per generator_id exist, the first is used.
-    log_messages: list[str]
-        A list of strings where new log events are added.
+    logs : list[str], optional
+        Log accumulator for warnings.
     country_col : str
         Column name in df_unitdata used for country.
     generator_id_col : str
         Column name in df_unitdata used for join key.
-    blank_markers : iterable of str
-        Suffix values treated as blank (ignored).
 
     Returns
     -------
@@ -105,9 +396,9 @@ def build_unit_grid_and_node_columns(
     puts = [p for p in candidate_puts if f"grid_{p}" in df_unittypedata.columns]
     if not puts:
         utils.log_status(
-            (f"unittypedata table does not have a any column named grid_input1...6 or grid_output1...6 "
+            (f"unittypedata table does not have any column named grid_input1...6 or grid_output1...6. "
              "Check the files and names in the config file."),
-            log_messages,
+            logs,
             level="warn",
         )
         return out
@@ -123,12 +414,6 @@ def build_unit_grid_and_node_columns(
 
     # Note: Not warning about missing generator_id values, because build_unittype_unit_column already does that
 
-    # Pre-build Series mappers for each <put>
-    grid_maps = {}
-    for p in puts:
-        grid_col = f"grid_{p}"
-        grid_maps[p] = techs[grid_col] if grid_col in techs.columns else pd.Series(dtype="object")
-
     # Construct node_<put> per connection using map
     genID_series = out[generator_id_col]
     country_series = out[country_col].astype(object)
@@ -138,18 +423,14 @@ def build_unit_grid_and_node_columns(
         # map -> may yield NaN if this put is not defined for the generator_id
         grids = genID_series.map(techs[grid_col]) if grid_col in techs.columns else pd.Series(np.nan, index=out.index)
 
-        # mask: valid grid (not NaN, not in blank markers)
+        # mask: valid grid (not NaN — blank markers are already NA after normalization)
         valid = grids.notna()
-        for bm in blank_markers:
-            valid &= (grids != bm)
 
-        # Start with empty_value for all stored grid names
-        grid = pd.Series(empty_value, index=out.index, dtype=object)
+        grid = pd.Series(np.nan, index=out.index, dtype=object)
         grid.loc[valid] = grids[valid].astype(str)
         out[f"grid_{p}"] = grid
 
-        # Start with empty_value for stored node names
-        node = pd.Series(empty_value, index=out.index, dtype=object)
+        node = pd.Series(np.nan, index=out.index, dtype=object)
 
         # Build base where valid
         base = country_series[valid].astype(str) + "_" + grids[valid].astype(str)
@@ -158,7 +439,7 @@ def build_unit_grid_and_node_columns(
         suffix_col = f"node_suffix_{p}"
         if suffix_col in out.columns:
             suffix = out.loc[valid, suffix_col].astype(object)
-            use_suffix = suffix.notna() & (suffix.astype(str).str.len() > 0) & ~suffix.isin(blank_markers)
+            use_suffix = suffix.notna()
             node.loc[valid & ~use_suffix] = base
             node.loc[valid & use_suffix] = base[use_suffix] + "_" + suffix[use_suffix].astype(str)
         else:
@@ -170,8 +451,9 @@ def build_unit_grid_and_node_columns(
 
 
 def build_from_to_columns(
-        df: pd.DataFrame
-        ) -> pd.DataFrame:
+    df: pd.DataFrame,
+    logs: List[str] = None,
+    ) -> pd.DataFrame:
     """
     Constructs 'from_node' and 'to_node' columns using 'from', 'to', 'grid', and optional suffixes.
 
@@ -179,23 +461,22 @@ def build_from_to_columns(
     -----------
     df : pandas.DataFrame
         DataFrame containing 'from', 'to', 'grid', and optionally 'from_suffix', 'to_suffix'.
+    logs : list[str], optional
+        Log accumulator for warnings.
 
     Returns:
     --------
     pandas.DataFrame
         DataFrame with new 'from_node', 'to_node' columns added.
-
-    Raises:
-    -------
-    ValueError
-        If required columns ('from', 'to', 'grid') are missing.
+        Returns empty DataFrame if required columns are missing.
     """
     if df.empty: return df
 
     required_columns = ['from', 'to', 'grid']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        raise ValueError(f"DataFrame is missing required columns: {', '.join(missing_columns)}")
+        utils.log_status(f"build_from_to_columns: DataFrame is missing required columns: {', '.join(missing_columns)}", logs, level="warn")
+        return pd.DataFrame()
 
 
     df = df.copy()
@@ -217,33 +498,27 @@ def build_from_to_columns(
 def build_unittype_unit_column(
     df: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
-    source_data_logs: list[str] = None
+    logs: list[str] = None
     ) -> pd.DataFrame:
     """
     Add 'unittype' and 'unit' columns to DataFrame based on generator mappings.
-    
+
     Parameters:
     -----------
     df : pandas.DataFrame
         DataFrame containing at minimum 'country' and 'generator_id' columns.
         Optional 'unit_name_prefix' column can be included for more specific unit naming.
-        
     df_unittypedata : pandas.DataFrame
         Reference DataFrame mapping 'generator_id' to 'unittype' values
-
-    source_data_logs: list[str]
-        An input list of strings where new log events are added.
+    logs : list[str], optional
+        Log accumulator for warnings.
     
     Returns:
     --------
     pandas.DataFrame
-        Input DataFrame with new 'unittype' and 'unit' columns added
-    
-    Raises:
-    -------
-    ValueError
-        If required columns ('country', 'generator_id') are missing from the DataFrame
-    
+        Input DataFrame with new 'unittype' and 'unit' columns added.
+        Returns empty DataFrame if required columns are missing.
+
     Notes:
     ------
     - The 'unittype' is determined by case-insensitive lookup in df_unittypedata
@@ -259,7 +534,12 @@ def build_unittype_unit_column(
     required_columns = ["country", "generator_id"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        raise ValueError(f"DataFrame is missing required columns: {', '.join(missing_columns)}. Check all unitdata_files and remove_files.")
+        utils.log_status(
+            f"build_unittype_unit_column: DataFrame is missing required columns: {', '.join(missing_columns)}. "
+            "Check all unitdata_files and remove_files.",
+            logs, level="warn"
+        )
+        return pd.DataFrame()
 
     # Create a mapping from generator_id (lowercase) to unittype for efficient lookup
     unit_mapping = df_unittypedata.set_index(df_unittypedata['generator_id'].str.lower())['unittype']
@@ -270,12 +550,12 @@ def build_unittype_unit_column(
     # Identify generator_ids without match
     # Note: build_unit_grid_and_node_columns assumes that this is warned here
     missing_mask = df['unittype'].isna()
-    if missing_mask.any() and utils.log_status is not None:
+    if missing_mask.any():
         for generator_id in df.loc[missing_mask, 'generator_id'].unique():
             utils.log_status(
                 f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
                 "in any of the unittypedata files, check spelling.",
-                source_data_logs,
+                logs,
                 level="warn"
             )
 
@@ -287,7 +567,7 @@ def build_unittype_unit_column(
         # Apply function to each row: combine country and unittype, add prefix if it exists and is not empty
         df['unit'] = df.apply(
             lambda row: f"{row['country']}" +
-                        (f"_{row['unit_name_prefix']}" if pd.notnull(row['unit_name_prefix']) and row['unit_name_prefix'] != "" else "") +
+                        (f"_{row['unit_name_prefix']}" if pd.notnull(row['unit_name_prefix']) else "") +
                         f"_{row['unittype']}",
             axis=1
         )
@@ -301,220 +581,12 @@ def build_unittype_unit_column(
     return df
 
 
-def normalize_dataframe(
-    df: pd.DataFrame,
-    df_identifier: str,
-    logs: List[str],
-    *,
-    allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
-    lowercase_col_values: Sequence[str] = ("scenario", "generator_id", "method"),
-    lowercase_column_names: bool = True,
-    apply_numeric_dtype: bool = True,
-    treat_empty_as_na: bool = True,
-    check_underscore_values: bool = True,
-    drop_invalid_strings: bool = True,
-) -> pd.DataFrame:
-    """
-    Normalize a DataFrame with consistent column naming, 'method' handling,
-    optional underscore checks across string columns, and automatic dtype normalization.
-
-    What it does
-    ------------
-    1) Column names (lowercase_column_names): optionally lower-cases all column names.
-    2) 'method' column: ensures existence; trims/lower-cases values; unknown methods
-       are warned and coerced to 'replace' against `allowed_methods`.
-    3) Lower-case column values (lowercase_col_values): lower-cases selected identifier-like columns (e.g. 'scenario').
-    4) Missing/empties (treat_empty_as_na): optionally treat empty/whitespace as NA 
-    5) DType conversions :
-       - Convert empty/NaN columns to Object dtype
-       - Convert float64 to Float64
-       - For columns that are fully numeric after coercion 
-          -> numeric dtype
-          -> then fill NA with 0.
-    6) Column rename: for **numeric** columns named `*_output1`, drop the suffix to become the base
-       name; skip and warn if renaming would collide with an existing column.
-    7) Underscore check (check_underscores): for **all** string-typed columns whose **column name
-       does not start with "_"**, detect underscores in values; warn with examples and either
-       drop those rows (default) or keep them based on `drop_invalid_strings`.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Input DataFrame to be normalized. `None` or empty are skipped.
-    df_identifier : str
-        Fallback identifier for logging. If a DataFrame contains any of
-        `['_source_file','_source_sheet','file','sheet','source_file','source_sheet']`,
-        a per-DataFrame identifier is derived from their uniform values.
-    logs : list[str]
-        Log sink passed to `utils.log_status(...)`. Messages (warn/info) are appended there.
-    allowed_methods : list[str]
-        Allowed values for the 'method' column (case-insensitive). Unknown values default to 'replace'.
-    lowercase_col_values : Sequence[str], default ("scenario","generator_id","method")
-        Columns whose **values** should be lower-cased. (The 'method' column is canonicalized separately.)
-    lowercase_column_names : bool, default True
-        If True, convert column **names** to lower-case.
-    apply_numeric_dtype : bool, default True
-        If True, applies numeric datatype to fully numeric columns
-    treat_empty_as_na : bool, default True
-        If True, empty/whitespace-only strings are treated as NA before the global fillna(0).
-    check_underscore_values : bool, default True
-        If True, scan string columns (excluding columns whose name starts with "_") for underscores in values.
-    drop_invalid_strings : bool, default True
-        Backward-compatible flag name. If True, **drop** rows that contained underscores in any checked column.
-        If False, keep rows and only log.
-
-    Returns
-    -------
-    pandas.DataFrame
-        A normalized DataFrame (order preserved, empty inputs removed). Returns empty DataFrame if all inputs are empty.
-    """
-
-    allowed_set = {str(m).strip().lower() for m in allowed_methods}
-
-    def _infer_identifier_from_df(df: pd.DataFrame, fallback: str) -> str:
-        # Build an identifier from common source columns if available
-        parts = []
-        for col in ("_source_file", "_source_sheet", "file", "sheet", "source_file", "source_sheet"):
-            if col in df.columns:
-                vals = df[col].dropna().astype(str).unique()
-                if len(vals) > 0:
-                    parts.append(vals[0])
-        return ":".join(parts) if parts else fallback
-
-    def _canonicalize_method_series(s: pd.Series, *, ident: str) -> pd.Series:
-        # Normalize 'method' values to lower-case, strip, default unknowns to 'replace'
-        s2 = s.astype("string").replace(r"^\s*$", pd.NA, regex=True).str.strip().str.lower()
-        s2 = s2.fillna("replace")
-        unknown_vals = sorted(set(s2.unique()) - allowed_set - {"replace"})
-        if unknown_vals:
-            utils.log_status(
-                f"[{ident}] Unknown method(s) {unknown_vals} encountered; defaulting to 'replace'.",
-                logs, level="warn"
-            )
-            s2 = s2.where(~s2.isin(unknown_vals), "replace")
-        return s2
-
-    # Skip None / empty DataFrames
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df_out = df.copy()
-
-    # 1) Standardize column name case
-    if lowercase_column_names:
-        df_out.columns = df_out.columns.str.lower()
-
-    ident = _infer_identifier_from_df(df_out, df_identifier)
-
-    # 2) Ensure and normalize 'method'
-    if "method" not in df_out.columns:
-        df_out["method"] = "replace"
-    df_out["method"] = _canonicalize_method_series(df_out["method"], ident=ident)
-
-    # 3) Lower-case selected columns' values
-    # Note: cannot be applied to 'method' which is already handled above
-    for col in lowercase_col_values:
-        if col in df_out.columns and col != "method":
-            df_out[col] = df_out[col].astype("string").str.lower()
-
-    # 4) Treat empty strings as NA (optional)
-    if treat_empty_as_na:
-        df_out = df_out.replace(r"^\s*$", pd.NA, regex=True)
-
-    # 5) dtype conversions
-    # Convert empty columns (all NA/NaN/null values) to object dtype
-    for col in df_out.columns:
-        if df_out[col].isna().all():  # pd.isna() catches both NaN and pd.NA
-            df_out[col] = df_out[col].astype('object')
-
-    # Convert float64 columns to Float64
-    for col in df_out.columns:
-        if pd.api.types.is_float_dtype(df_out[col]) and df_out[col].dtype == 'float64':
-            df_out[col] = df_out[col].astype('Float64')            
-
-    # Classify numeric and object columns
-    numeric_cols: List[str] = []
-    object_cols: List[str] = []
-    for c in df_out.columns:
-        converted = pd.to_numeric(df_out[c], errors="coerce")
-        # Count sum of coerced NA
-        if converted.isna().sum() == 0:
-            numeric_cols.append(c)
-        else:
-            object_cols.append(c)
-
-    # Apply Float64 dtype when possible
-    if apply_numeric_dtype:
-        for c in numeric_cols:
-            df_out[c] = pd.to_numeric(df_out[c], errors="coerce").astype("Float64")
-            # Current code cannot reach this safeguard, but this is kept here if 
-            # if converted.isna().sum() == 0: is later relax e.g. to if converted.isna().mean() < 0.1:
-            if df_out[c].isna().any():
-                df_out[c] = df_out[c].fillna(0)
-
-    # 6) Drop '_output1' suffix from **numeric** column names (avoid collisions)
-    to_rename: Dict[str, str] = {}
-    collisions: Dict[str, str] = {}
-    for c in numeric_cols:
-        if isinstance(c, str) and c.endswith("_output1"):
-            new = c[:-8]
-            if new in df_out.columns:  # would collide -> skip + warn
-                collisions[c] = new
-            else:
-                to_rename[c] = new
-
-    if collisions:
-        pairs = ", ".join(f"{old} -> {new}" for old, new in collisions.items())
-        utils.log_status(
-            f"[{ident}] Skipped renaming due to existing column name(s): {pairs}.",
-            logs, level="warn"
-        )
-
-    if to_rename:
-        df_out = df_out.rename(columns=to_rename)
-
-    # 7) Underscore check in object_cols (exclude columns starting with "_")
-    if check_underscore_values:
-        cols_to_check = [c for c in object_cols if not str(c).startswith("_")]
-
-        bad_mask = pd.Series(False, index=df_out.index)
-        examples_per_col: Dict[str, List[str]] = {}
-
-        for c in cols_to_check:
-            m = df_out[c].astype("string").str.contains("_", na=False)
-            if m.any():
-                bad_mask |= m
-                examples_per_col[c] = list(df_out.loc[m, c].dropna().astype(str).unique()[:5])
-
-        if bad_mask.any():
-            total_bad = int(bad_mask.sum())
-            example_str = "; ".join(f"{col}: {vals}" for col, vals in list(examples_per_col.items())[:4])
-            utils.log_status(
-                f"[{ident}] Underscores detected in {total_bad} row(s) across columns "
-                f"[{', '.join(examples_per_col.keys())}]. Examples -> {example_str}",
-                logs, level="warn"
-            )
-            if drop_invalid_strings:
-                df_out = df_out.loc[~bad_mask].copy()
-                utils.log_status(
-                    f"[{ident}] Dropped {total_bad} row(s) containing underscores per configuration.",
-                    logs, level="info"
-                )
-            else:
-                utils.log_status(
-                    f"[{ident}] Kept rows with underscores per configuration.",
-                    logs, level="info"
-                )
-
-    return df_out
-
-
 def apply_whitelist(
     df: pd.DataFrame,
     filters: Optional[Dict[str, Union[str, int, List[Union[str, int]]]]],
     logs: List[str],
     df_identifier: str,
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Apply AND-combined whitelist filters to a DataFrame, tolerantly.
     Missing filter columns never raise; they are logged and skipped.
@@ -526,22 +598,6 @@ def apply_whitelist(
     - Special always-include values (if the corresponding filter key is present):
         * scenario: include 'all' (case-insensitive) in addition to provided values
         * year    : include 1 in addition to provided values
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-    filters : dict[str, str|int|list[str|int]] or None
-    logs : list[str]
-    df_identifier : str
-
-    Returns
-    -------
-    pd.DataFrame
-        Filtered copy. If `filters` is falsy or df is empty, returns a copy of the original.
-
-    Logging
-    -------
-    - WARN  "[ident] Whitelist skipped: missing column 'col'."
     """
     # Fast exits for None/empty/no-filters
     if df is None:
@@ -588,14 +644,14 @@ def apply_whitelist(
 def apply_blacklist(
     df_input: pd.DataFrame,
     df_name: str,
-    filters: Dict[str, Union[str, int, List[Union[str, int]]  ]  ],
-    source_data_logs: list[str] = None,
+    filters: Dict[str, Union[str, int, List[Union[str, int]]]],
+    logs: list[str] = None,
     *,
     log_warning: bool = True
     ) -> pd.DataFrame:
     """
     Filter DataFrame by excluding rows containing blacklisted values.
-    
+
     Parameters:
     -----------
     df_input : pandas.DataFrame
@@ -604,8 +660,8 @@ def apply_blacklist(
         Name of the DataFrame (used for error reporting)
     filters : dict
         Dictionary of {column_name: blacklisted_values} pairs
-    source_data_logs: list[str]
-        A list of strings where new log events are added.
+    logs : list[str], optional
+        Log accumulator for warnings.
     
     Returns:
     --------
@@ -627,7 +683,7 @@ def apply_blacklist(
     for col, val in filters.items():
         if col not in df_filtered.columns:
             if log_warning:
-                utils.log_status(f"Missing column in {df_name}: {col!r}", source_data_logs, level="warn")
+                utils.log_status(f"Missing column in {df_name}: {col!r}", logs, level="warn")
             continue  
 
         # Ensure val is a list for consistent processing
@@ -652,10 +708,10 @@ def apply_unit_grids_blacklist(
     exclude_grids: List[str],
     df_name: str = "unitdata",
     logs: list[str] = None
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     filters = {**{f"grid_input{i}":  exclude_grids for i in range(1, 6)},
                **{f"grid_output{i}": exclude_grids for i in range(1, 6)}}
-    return apply_blacklist(df, df_name, filters, source_data_logs=logs, log_warning=False)
+    return apply_blacklist(df, df_name, filters, logs=logs, log_warning=False)
 
 
 def apply_unit_nodes_blacklist(
@@ -663,10 +719,10 @@ def apply_unit_nodes_blacklist(
     exclude_nodes: List[str],
     df_name: str = "unitdata",
     logs: list[str] = None
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     filters = {**{f"node_input{i}":  exclude_nodes for i in range(1, 6)},
                **{f"node_output{i}": exclude_nodes for i in range(1, 6)}}
-    return apply_blacklist(df, df_name, filters, source_data_logs=logs, log_warning=False)
+    return apply_blacklist(df, df_name, filters, logs=logs, log_warning=False)
 
 
 
@@ -678,7 +734,7 @@ def merge_row_by_row(
     measure_cols: Sequence[str] = (),
     not_measure_cols: Sequence[str] = ("year",),
     meta_cols: Set[str] = {"_source_file", "_source_sheet", "method"},
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Merge DataFrames row-by-row in order, applying a per-row 'method'.
 
@@ -688,7 +744,6 @@ def merge_row_by_row(
     - 'method' column exists with valid, lowercase values
     - Empty strings converted to NA
     - Numeric columns properly typed
-    - No data quality issues remain
 
     Methods
     -------
@@ -731,7 +786,7 @@ def merge_row_by_row(
     # --- Input filtering & column union ---------------------------------------
     frames = [df for df in dfs if df is not None and not getattr(df, "empty", True)]
     if not frames:
-        utils.log_status("merge_row_by_row: No data provided. Returning empty DataFrame.", logs, level="warn")
+        utils.log_status(f"[merge_row_by_row] No data provided for key_columns={list(key_columns)}. Returning empty DataFrame.", logs, level="warn")
         return pd.DataFrame()
 
     # Build a union of columns preserving first-seen order across frames.
@@ -747,27 +802,25 @@ def merge_row_by_row(
         Infer measure columns from normalized frames.
         Since frames are already normalized:
         - Column names are lowercase
-        - Numeric columns are already typed correctly
-        - Empty values are already NA
+        - Numeric columns are Float64 (all-NA columns are object)
+        - So any Float64 column has at least one non-NA value
         """
         not_meas = set(not_measure_cols)
         candidates = []
-        
+
         for c in cols_union:
             if c in not_meas:
                 continue
-            
+
             # Skip booleans
             if any(c in df.columns and pd.api.types.is_bool_dtype(df[c]) for df in frames):
                 continue
-            
-            # Check if any frame has it as numeric with non-NA values
-            for df in frames:
-                if c in df.columns:
-                    if pd.api.types.is_numeric_dtype(df[c]) and df[c].notna().any():
-                        candidates.append(c)
-                        break
-        
+
+            # After normalize_dataframe, numeric columns are Float64 and
+            # all-NA columns are object — so is_numeric_dtype suffices.
+            if any(c in df.columns and pd.api.types.is_numeric_dtype(df[c]) for df in frames):
+                candidates.append(c)
+
         return candidates
 
     # Decide actual measure set: user-provided or inferred
@@ -887,14 +940,9 @@ def merge_row_by_row(
     acc: Dict[Tuple, Dict[str, object]] = {}
 
     for df in frames:
-        # Default method is 'replace' if not provided (should not happen after normalization)
-        if "method" not in df.columns:
-            df = df.copy()
-            df["method"] = "replace"
-
         for row_dict in df.to_dict(orient="records"):
             # Method is already validated and lowercased by normalize_dataframe
-            method = str(row_dict.get("method", "replace"))
+            method = row_dict["method"]
             # Build key tuple inline
             k = tuple(None if val is None or pd.isna(val) else val 
                      for val in (row_dict.get(kc) for kc in key_columns))
@@ -932,8 +980,8 @@ def merge_row_by_row(
 
 
 def filter_nonzero_numeric_rows(
-        df: pd.DataFrame, exclude: list[str] = None
-        ) -> pd.DataFrame:
+    df: pd.DataFrame, exclude: list[str] = None
+    ) -> pd.DataFrame:
     """
     Removes rows from the DataFrame where the sum of numeric columns is zero.
     Optionally excludes specific numeric columns from the summation.
@@ -950,3 +998,4 @@ def filter_nonzero_numeric_rows(
 
     numeric_cols = df.select_dtypes(include='number').columns.difference(exclude)
     return df[df[numeric_cols].sum(axis=1) != 0]
+
