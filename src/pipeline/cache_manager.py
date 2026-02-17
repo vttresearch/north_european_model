@@ -638,7 +638,6 @@ class CacheManager:
         source_pipeline_files = [
             Path("./src/pipeline/source_excel_data_pipeline.py"),
             Path("./src/data_loader.py"),
-            Path("./src/excel_exchange.py")
         ]
         if not full_rerun_reason:
             self.source_data_pipeline_code_updated = self._validate_source_code_changes(

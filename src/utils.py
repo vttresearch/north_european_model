@@ -229,9 +229,6 @@ def trim_df(df, round_precision=0):
         last_valid_pos = np.where(mask)[0][-1]
         df = df.iloc[first_valid_pos:last_valid_pos + 1]
 
-    # Convert dtypes (so that e.g. rounding to 0 decimals gives integers)
-    df = df.convert_dtypes()
-
     return df
 
 
@@ -241,7 +238,7 @@ def standardize_df_dtypes(
     convert_numeric: bool = False,
     fill_numeric_na: bool = False,
     treat_nan_string_as_na: bool = True,
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Standardize DataFrame column dtypes to a consistent set:
     - Empty columns (all NA) → object
@@ -413,7 +410,7 @@ def is_val_empty(
     logs: list[str],
     treat_zero_as_empty: bool = True,
     ident: str = "is_val_empty",
-) -> bool:
+    ) -> bool:
     """
     Return True if `val` is considered empty.
 

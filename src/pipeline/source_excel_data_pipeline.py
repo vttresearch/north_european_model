@@ -1,8 +1,7 @@
-# src/souce_excel_data_pipeline.py
+# src/source_excel_data_pipeline.py
 
 from pathlib import Path
 import src.data_loader as data_loader
-import src.excel_exchange as excel_exchange
 import src.utils as utils
 import pandas as pd
 
@@ -63,8 +62,9 @@ class SourceExcelDataPipeline:
         # unittypedata
         files = self.config['unittypedata_files']
         if len(files) > 0:
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'unittypedata', self.logs)
+            dfs = data_loader.read_input_excels(input_folder, files, 'unittypedata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'unittypedata', self.logs) for df in dfs]
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'unittypedata')
                    for df in dfs
                    ]
@@ -78,8 +78,9 @@ class SourceExcelDataPipeline:
         # fueldata
         files = self.config['fueldata_files']
         if len(files) > 0:
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'fueldata', self.logs)
+            dfs = data_loader.read_input_excels(input_folder, files, 'fueldata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'fueldata', self.logs) for df in dfs]
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'fueldata')
                    for df in dfs
                    ]
@@ -93,8 +94,9 @@ class SourceExcelDataPipeline:
         # emissiondata
         files = self.config['emissiondata_files']
         if len(files) > 0:        
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'emissiondata', self.logs)
+            dfs = data_loader.read_input_excels(input_folder, files, 'emissiondata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'emissiondata', self.logs) for df in dfs]
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'emissiondata')
                    for df in dfs
                    ]
@@ -113,10 +115,11 @@ class SourceExcelDataPipeline:
         # demanddata
         files = self.config['demanddata_files']
         if len(files) > 0:           
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'demanddata', self.logs)
+            dfs = data_loader.read_input_excels(input_folder, files, 'demanddata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logs) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'grid': exclude_grids}) for df in dfs]
-            dfs = [data_loader.build_node_column(df) for df in dfs]       
+            dfs = [data_loader.build_node_column(df, self.logs) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]            
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
                                    self.logs, 'demanddata')
@@ -133,10 +136,11 @@ class SourceExcelDataPipeline:
         # storagedata
         files = self.config['storagedata_files']
         if len(files) > 0:            
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'storagedata', self.logs)
+            dfs = data_loader.read_input_excels(input_folder, files, 'storagedata', self.logs)
             dfs = [data_loader.normalize_dataframe(df, 'storagedata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'storagedata', self.logs) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'storagedata', {'grid': exclude_grids}) for df in dfs]
-            dfs = [data_loader.build_node_column(df) for df in dfs]       
+            dfs = [data_loader.build_node_column(df, self.logs) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'storagedata', {'node': exclude_nodes}) for df in dfs]            
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
                                    self.logs, 'storagedata')
@@ -152,8 +156,9 @@ class SourceExcelDataPipeline:
         # unitdata
         files = self.config['unitdata_files']
         if len(files) > 0:           
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'unitdata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logs) for df in dfs]     
+            dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logs)
+            dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logs) for df in dfs]     
             dfs = [data_loader.build_unittype_unit_column(df, self.df_unittypedata, self.logs) for df in dfs]           
             dfs = [data_loader.build_unit_grid_and_node_columns(df, self.df_unittypedata, self.logs) for df in dfs]            
             dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logs=self.logs) for d in dfs]     
@@ -172,10 +177,11 @@ class SourceExcelDataPipeline:
         # transferdata
         files = self.config['transferdata_files']
         if len(files) > 0:         
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'transferdata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logs) for df in dfs]       
+            dfs = data_loader.read_input_excels(input_folder, files, 'transferdata', self.logs)
+            dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logs) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'transferdata', self.logs) for df in dfs]       
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'grid': exclude_grids}) for df in dfs]        
-            dfs = [data_loader.build_from_to_columns(df) for df in dfs]               
+            dfs = [data_loader.build_from_to_columns(df, self.logs) for df in dfs]               
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]  
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]  
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from': self.country_codes}, 
@@ -197,9 +203,8 @@ class SourceExcelDataPipeline:
         # userconstraintdata
         files = self.config['userconstraintdata_files']
         if len(files) > 0:         
-            dfs = excel_exchange.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
-            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs, check_underscore_values = False) 
-                    for df in dfs]    
+            dfs = data_loader.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
+            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs) for df in dfs]    
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
                                    self.logs, 'userconstraintdata')
                    for df in dfs

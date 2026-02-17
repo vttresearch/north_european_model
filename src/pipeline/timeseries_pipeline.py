@@ -460,7 +460,7 @@ class TimeseriesPipeline:
                 # Get structured result
                 result = runner.run()
     
-                # Process outputs - much cleaner!
+                # Process outputs
                 self.secondary_results[result.processor_name] = result.secondary_result
     
                 for dom, vals in result.ts_domains.items():
