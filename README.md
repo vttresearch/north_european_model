@@ -20,6 +20,7 @@ This readme has the following main sections
 * Pauli Hiltunen - District heating data, testing
 * Eric Harrison - Data sets, testing
 * Justinas Jasiunas - H2 heavy scenario, testing
+* Touko Kumpulainen - District heating data, testing
 
 
 ## License
