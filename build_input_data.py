@@ -1,3 +1,4 @@
+import shutil
 import time
 from pathlib import Path
 import src.config_reader as config_reader
@@ -208,7 +209,17 @@ def main(input_folder: Path, config_file: Path):
         # Copying GAMS files for a new run or changed topology
         if cache_manager.full_rerun:
             utils.log_status("Copying GAMS files to input folder.", log_messages, level="run")
-            utils.copy_gams_files(input_folder, output_folder, log_messages)
+            gams_src_folder = input_folder / "GAMS_files"
+            if not gams_src_folder.exists():
+                utils.log_status(f"GAMS source folder not found: {gams_src_folder}", log_messages, level="warn")
+            else:
+                copied_any = False
+                for file in gams_src_folder.glob("*.*"):
+                    shutil.copy(file, output_folder / file.name)
+                    utils.log_status(f"Copied {file.name} to {output_folder}", log_messages, level="info")
+                    copied_any = True
+                if not copied_any:
+                    utils.log_status(f"No GAMS files found to copy in {gams_src_folder}", log_messages, level="warn")
 
         # Flagging the run successful and writing the flag status
         status_dict = {"workflow_run_successfully": True}

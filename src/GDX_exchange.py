@@ -1,7 +1,7 @@
 # src/GDX_exchange.py
 
 from typing import Any, Dict, Optional, Sequence, List
-from src.utils import log_status, standardize_df_dtypes
+from src.utils import log_status
 import pandas as pd
 import numpy as np
 import os
@@ -20,7 +20,7 @@ def write_BB_gdx(
     output_file: str,
     logs: List[str],
     **kwargs: Any
-) -> None:
+    ) -> None:
     """
     Write a DataFrame to a GDX file using gams.transfer.
 
@@ -82,7 +82,7 @@ def write_BB_gdx_annual(
     output_folder: str,
     logs: List[str],
     **kwargs: Any
-) -> None:
+    ) -> None:
     """
     Split a multi-year timeseries DataFrame by year and write each year to a separate GDX file.
 
@@ -196,7 +196,7 @@ def prepare_BB_df(
     start_date: str,
     country_codes: List[str],
     **kwargs: Any
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Assumes wide format hourly input DataFrame where value column titles are node names
         
@@ -314,7 +314,7 @@ def calculate_average_year_df(
     input_df: pd.DataFrame,
     round_precision: int = 0,
     **kwargs: Any,
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Assumes long format input_df with columns bb_parameter_dimensions and 'time' and 'value'
         * 'time' is datetime format presentation of time, e.g 2000-01-01 00:00:00
@@ -478,7 +478,7 @@ def split_timeseries_to_annual_gdx_frames(
     max_hours: int = 8760,
     nan_to_zero: bool = True,
     inf_to_zero: bool = True,
-) -> Dict[int, pd.DataFrame]:
+    ) -> Dict[int, pd.DataFrame]:
     """
     Split a multi-year timeseries DF into annual DF chunks and remap 't' labels per year.
 
@@ -584,7 +584,7 @@ def update_import_timeseries_inc(
     output_folder: str,
     file_suffix: Optional[str] = None,
     **kwargs: Any
-) -> None:
+    ) -> None:
     """
     Updates the import_timeseries.inc file by generating a GAMS code block that imports
     parameter data from GDX files. The function looks for matching GDX files in the output folder

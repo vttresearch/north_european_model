@@ -218,8 +218,8 @@ def normalize_dataframe(
     # 5) Treat empty strings and blank markers as NA
     df_out = df_out.replace({"": pd.NA})
 
-    # 6) dtype conversions (empty→object, numeric strings→Float64, fill numeric NA with 0)
-    df_out = utils.standardize_df_dtypes(df_out, convert_numeric=True, fill_numeric_na=True)
+    # 6) dtype conversions (empty→object, numeric strings→Float64)
+    df_out = utils.standardize_df_dtypes(df_out)
     numeric_cols = list(df_out.select_dtypes(include=["Float64"]).columns)
 
     # 7) Drop '_output1' suffix from **numeric** column names (avoid collisions)
@@ -725,7 +725,6 @@ def apply_unit_nodes_blacklist(
     return apply_blacklist(df, df_name, filters, logs=logs, log_warning=False)
 
 
-
 def merge_row_by_row(
     dfs: Iterable[pd.DataFrame],
     logs: List[str],
@@ -976,7 +975,6 @@ def merge_row_by_row(
     merged = utils.standardize_df_dtypes(merged)
 
     return merged
-
 
 
 def filter_nonzero_numeric_rows(
