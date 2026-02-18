@@ -311,6 +311,74 @@ class BuildInputExcel:
         return p_gnu_io
 
 
+    def drop_redundant_units(self, p_gnu_io, p_unit):
+        """
+        Drops units that have no capacity and no investment parameters.
+
+        A unit is dropped when both conditions are true:
+            1. All capacity values are zero/NaN for every (grid, node, unit) row in p_gnu_io
+            2. Investment parameters are zero/NaN: invCosts in p_gnu_io and maxUnitCount in p_unit
+
+        Parameters
+        ----------
+        p_gnu_io : DataFrame
+            Unit input/output table with fake MultiIndex (row 0 = header).
+        p_unit : DataFrame
+            Unit parameter table with fake MultiIndex (row 0 = header).
+
+        Returns
+        -------
+        tuple of (DataFrame, DataFrame)
+            Filtered p_gnu_io and p_unit with redundant units removed.
+        """
+        if p_gnu_io.empty or p_unit.empty:
+            return p_gnu_io, p_unit
+
+        gnu_flat = self.drop_fake_MultiIndex(p_gnu_io).copy()
+        unit_flat = self.drop_fake_MultiIndex(p_unit).copy()
+
+        units_to_drop = []
+
+        for unit in gnu_flat['unit'].unique():
+            unit_rows = gnu_flat[gnu_flat['unit'] == unit]
+
+            # Condition 1: all capacity values are zero or NaN
+            has_capacity = False
+            if 'capacity' in unit_rows.columns:
+                has_capacity = unit_rows['capacity'].notna().any() and (unit_rows['capacity'] != 0).any()
+            if has_capacity:
+                continue
+
+            # Condition 2: invCosts zero/NaN in p_gnu_io AND maxUnitCount zero/NaN in p_unit
+            has_inv_costs = False
+            if 'invCosts' in unit_rows.columns:
+                has_inv_costs = unit_rows['invCosts'].notna().any() and (unit_rows['invCosts'] != 0).any()
+            if has_inv_costs:
+                continue
+
+            has_max_unit_count = False
+            unit_row = unit_flat[unit_flat['unit'] == unit]
+            if not unit_row.empty and 'maxUnitCount' in unit_row.columns:
+                val = unit_row['maxUnitCount'].iloc[0]
+                has_max_unit_count = pd.notna(val) and val != 0
+            if has_max_unit_count:
+                continue
+
+            units_to_drop.append(unit)
+
+        if units_to_drop:
+            for unit in units_to_drop:
+                utils.log_status(f"Dropping unit '{unit}': zero capacity and no investment parameters.",
+                                 self.builder_logs, level="skip")
+            gnu_flat = gnu_flat[~gnu_flat['unit'].isin(units_to_drop)]
+            unit_flat = unit_flat[~unit_flat['unit'].isin(units_to_drop)]
+
+            p_gnu_io = self.create_fake_MultiIndex(gnu_flat, ['grid', 'node', 'unit', 'input_output'])
+            p_unit = self.create_fake_MultiIndex(unit_flat, ['unit'])
+
+        return p_gnu_io, p_unit
+
+
 # ------------------------------------------------------
 # Functions create p_gnn, p_gn
 # ------------------------------------------------------
@@ -982,7 +1050,8 @@ class BuildInputExcel:
                         rows.append(row_dict)
                 
             # Additional check for storage nodes
-            if gn_row.get('energyStoredPerUnitOfState', 0) == 1:
+            isStorage = gn_row.get('energyStoredPerUnitOfState', 0)
+            if not utils.is_val_empty(isStorage) and (isStorage == 1 or isStorage is True):
                 grid = gn_row['grid']
                 node = gn_row['node']
                 # Ensure all storage nodes have at least an 'Eps' downward limit
@@ -1051,7 +1120,8 @@ class BuildInputExcel:
         storage_gn = []
         if 'energyStoredPerUnitOfState' in p_gn_flat.columns:
             for _, row in p_gn_flat.iterrows():
-                if row.get('energyStoredPerUnitOfState') == 1 or row.get('energyStoredPerUnitOfState') is True:
+                isStorage = row.get('energyStoredPerUnitOfState', 0)
+                if not utils.is_val_empty(isStorage) and (isStorage == 1 or isStorage is True):
                     storage_gn.append((row['grid'], row['node']))
 
         # Add 'boundStart' column to p_gn, initializing with 0
@@ -1873,13 +1943,18 @@ class BuildInputExcel:
         p_unit = self.create_p_unit(self.df_unittypedata, unitUnittype, self.df_unitdata)
         # remove zeroes
         p_unit = p_unit.mask(p_unit == 0)
+
+        # Remove units without capacity or investment parameters
+        p_gnu_io, p_unit = self.drop_redundant_units(p_gnu_io, p_unit)
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
+        
+        # Calculate missing input or output capacities in p_gnu_io
+        p_gnu_io = self.fill_capacities(p_gnu_io, p_unit)
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
+
+        # Create remaining unit related tables
         flowUnit = self.create_flowUnit(self.df_unittypedata, unitUnittype)
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unittypedata, unitUnittype)
-
-        if not p_gnu_io.empty:
-            # Calculate missing capacities from p_gnu_io
-            p_gnu_io = self.fill_capacities(p_gnu_io, p_unit)
-            p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
 
         # p_gnn
         if not self.df_transferdata.empty:
