@@ -2,7 +2,6 @@
 
 import sys
 import pandas as pd
-import numpy as np
 import shutil
 from pathlib import Path
 import argparse
@@ -154,7 +153,6 @@ def parse_sys_args():
         return (input_folder, config_file)
     
 
-
 def check_dependencies():
     """
     Verifies required dependencies.
@@ -214,58 +212,19 @@ def check_dependencies():
         raise RuntimeError(msg)
 
 
-
-def trim_df(df, round_precision=0):
-    # round to round_precision 
-    df = df.round(round_precision)
-
-    # drop empty columns
-    df = df.loc[:, df.sum() != 0]
-
-    # Remove leading and trailing rows that are fully empty/NaN.
-    mask = ~df.isna().all(axis=1).to_numpy()
-    if mask.any():
-        first_valid_pos = np.where(mask)[0][0]
-        last_valid_pos = np.where(mask)[0][-1]
-        df = df.iloc[first_valid_pos:last_valid_pos + 1]
-
-    return df
-
-
-def standardize_df_dtypes(
-    df: pd.DataFrame,
-    *,
-    convert_numeric: bool = False,
-    fill_numeric_na: bool = False,
-    treat_nan_string_as_na: bool = True,
-    ) -> pd.DataFrame:
+def standardize_df_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """
     Standardize DataFrame column dtypes to a consistent set:
+    - Replace 'NaN' strings with pd.NA
+    - Attempt to convert object columns containing numeric strings to numeric
     - Empty columns (all NA) → object
     - Numeric columns → Float64
     - Everything else → object
-    
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame to standardize
-    convert_numeric : bool, default False
-        If True, attempt to convert object columns to numeric using pd.to_numeric()
-        before standardizing. This is useful when object columns contain numeric strings.
-    fill_numeric_na : bool, default False
-        If True, fill NA values in Float64 columns with 0 after conversion.
-    treat_nan_string_as_na : bool, default True
-        If True, replace string 'NaN' (case-insensitive) with pd.NA before processing.
-        This allows numeric conversion to work properly on columns containing 'NaN' strings.
-        
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with standardized dtypes
-        
+
+    NA values are preserved
+
     Examples
     --------
-    >>> # Basic standardization
     >>> df = pd.DataFrame({'a': [1, 2], 'b': ['x', 'y'], 'c': [None, None]})
     >>> df = standardize_df_dtypes(df)
     >>> df.dtypes
@@ -273,53 +232,59 @@ def standardize_df_dtypes(
     b     object
     c     object
     dtype object
-    
-    # Handle 'NaN' strings when treat_nan_string_as_na = True, 
-       - ['NaN', '2'] becomes Float64 with [NA, 2.0]
-       - ['x', 'NaN'] becomes object with ['x', NA]
+
+    # 'NaN' strings are treated as NA:
+    #   ['NaN', '2'] becomes Float64 with [NA, 2.0]
+    #   ['x', 'NaN'] becomes object with ['x', NA]
     """
     df = df.copy()
-    
+
     # First pass: replace 'NaN' strings with pd.NA and identify empty columns
     for col in df.columns:
-        # Replace 'NaN' strings with pd.NA if requested
-        if treat_nan_string_as_na and df[col].dtype == 'object':
+        if df[col].dtype == 'object':
             df[col] = df[col].apply(
                 lambda x: pd.NA if isinstance(x, str) and x.strip().lower() == 'nan' else x
             )
-        
-        # Check if column is empty using the existing is_col_empty function
-        if is_col_empty(df[col], treat_nan_as_empty=True):
+        if is_col_empty(df[col]):
             df[col] = df[col].astype("object")
-    
-    # Second pass: try to convert object columns to numeric if requested
-    if convert_numeric:
-        for col in df.columns:
-            if df[col].dtype == 'object' and not df[col].isna().all():
-                converted = pd.to_numeric(df[col], errors="coerce")
-                # Only convert if no new NAs were introduced
-                if converted.isna().sum() == df[col].isna().sum():
-                    df[col] = converted
-    
+
+    # Second pass: try to convert object columns to numeric
+    for col in df.columns:
+        if df[col].dtype == 'object' and not df[col].isna().all():
+            converted = pd.to_numeric(df[col], errors="coerce")
+            # Only convert if no new NAs were introduced
+            if converted.isna().sum() == df[col].isna().sum():
+                df[col] = converted
+
     # Third pass: standardize dtypes
     for col in df.columns:
-        # Empty columns → object
         if df[col].isna().all():
             df[col] = df[col].astype("object")
-        # Numeric columns → Float64
         elif pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype("Float64")
-        # Everything else → object
         else:
             df[col] = df[col].astype("object")
-    
-    # Fourth pass: fill NAs in Float64 columns if requested
-    if fill_numeric_na:
-        Float64_cols = df.select_dtypes(include=['Float64']).columns
-        df[Float64_cols] = df[Float64_cols].fillna(0)
-    
+
+    # Fourth pass: replace numpy NaN with pd.NA in object columns
+    # Float64 columns already use pd.NA natively, but object columns
+    # can still contain float('nan').
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].fillna(pd.NA)
+
     return df
 
+
+def fill_numeric_na(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill NA values with 0 in numeric (Float64) columns only.
+
+    This avoids the FutureWarning from filling NA on mixed-dtype DataFrames.
+    """
+    df = df.copy()
+    float_cols = df.select_dtypes(include=['Float64']).columns
+    df[float_cols] = df[float_cols].fillna(0)
+    return df
 
 
 def collect_domains(df, possible_domains: list[str]) -> dict[str, list]:
@@ -379,134 +344,38 @@ def collect_domain_pairs(df, domain_pairs: list[list[str]]) -> dict[str, list[tu
     return result
 
 
-def copy_gams_files(input_folder: Path, output_folder: Path, logs: list[str]) -> list[str]:
+def is_val_empty(val) -> bool:
     """
-    Copy GAMS template files from src_files/GAMS_files/ to the given output_folder.
+    Return True if `val` is None or NaN-like (pd.NA, np.nan, etc.).
 
-    Args:
-        input_folder (Path): Base input folder (should contain src_files/GAMS_files).
-        output_folder (Path): Output folder where GAMS files should be copied.
-        logs (list[str]): a list of log string mutated if needed
+    Upstream normalization (normalize_dataframe + standardize_df_dtypes) guarantees
+    that values reaching this function are only None, pd.NA/np.nan, float, or str
+    — with whitespace already stripped and empty strings converted to pd.NA.
     """
-    gams_src_folder = input_folder / "GAMS_files"
-
-    if not gams_src_folder.exists():
-        log_status(f"GAMS source folder not found: {gams_src_folder}", logs, level="warn")
-        return
-
-    copied_any = False
-    for file in gams_src_folder.glob("*.*"):
-        dest = output_folder / file.name
-        shutil.copy(file, dest)
-        log_status(f"Copied {file.name} to {output_folder}", logs, level="info")
-        copied_any = True
-
-    if not copied_any:
-        log_status(f"No GAMS files found to copy in {gams_src_folder}", logs, level="warn")
-
-
-def is_val_empty(
-    val,
-    logs: list[str],
-    treat_zero_as_empty: bool = True,
-    ident: str = "is_val_empty",
-    ) -> bool:
-    """
-    Return True if `val` is considered empty.
-
-    Empties:
-      - None
-      - NaN-like scalars via pd.isna(val) (np.nan, pd.NA, pd.NaT, numpy scalar NaNs, Decimal('NaN'))
-      - Empty or whitespace-only string (robust to zero-width/NBSP)
-      - Empty bytes-like (bytes/bytearray/memoryview with len == 0)
-      - Empty pandas objects (Series/DataFrame/Index) via `.empty`
-      - Array-like with `.size == 0` (e.g., numpy arrays)
-      - *Optionally* numeric zero scalars when `treat_zero_as_empty=True`
-
-    Not empty by design:
-      - Booleans (False is meaningful and never empty)
-      - Numeric non-zero scalars
-
-    Notes:
-      - `treat_zero_as_empty` applies only to **scalar numerics**, not arrays/Series.
-      - Any unexpected error is logged loudly via `log_status(..., level="error")`.
-    """
-    import numbers
-
+    if val is None:
+        return True
     try:
-        # 1) None
-        if val is None:
-            return True
-
-        # 2) Strings (normalize tricky whitespace)
-        if isinstance(val, str):
-            s = val.replace("\u200b", "").replace("\ufeff", "").replace("\u00a0", " ")
-            return s.strip() == ""
-
-        # 3) Booleans always not empty
-        if isinstance(val, bool):
-            return False
-
-        # 4) Numeric scalars (incl. numpy numbers, Decimal, etc.) 
-        if isinstance(val, numbers.Number):
-            if pd.isna(val):
-                return True
-            if treat_zero_as_empty and val == 0:
-                return True
-            return False
-
-        # 5) Pandas containers
-        if isinstance(val, (pd.Series, pd.DataFrame, pd.Index)):
-            return val.empty
-
-        # 6) Array-likes: empty if size == 0 (numpy arrays, etc.)
-        if hasattr(val, "size"):
-            return int(val.size) == 0
-
-        # 7) Generic __len__ fallback
-        if hasattr(val, "__len__"):
-            return len(val) == 0
-
-        # 8) Final NaN-like catch for other scalar types (e.g., pd.Timestamp(pd.NaT))
-        if pd.isna(val):
-            return True
-
-        # Default: not empty
-        return False
-
-    except BaseException as e:
-        # Loud logging on anything unexpected (no swallowing)
-        log_status(
-            f"[{ident}] ERROR while checking value {val!r} (type={type(val).__name__}): {e}",
-            logs,
-            level="error",
-        )
-        # Fail-safe: treat as NOT empty so we don't drop data silently
+        return pd.isna(val)
+    except (ValueError, TypeError):
         return False
 
 
-
-def is_col_empty(s: pd.Series, treat_nan_as_empty: bool = True) -> bool:
+def is_col_empty(s: pd.Series) -> bool:
     """
     Determine whether a pandas Series should be considered "empty."
+    NaN values are always treated as empty.
 
     Rules:
     ------
     - Boolean columns: considered empty only if all values are NaN.
       (All-False is NOT empty.)
-    - Numeric columns (excluding bool):
-        * With treat_nan_as_empty=True: NaNs treated as 0, so "all zero or NaN" means empty.
-        * With treat_nan_as_empty=False: only strictly "all zero" counts as empty.
-    - Non-numeric columns:
-        * With treat_nan_as_empty=True: NaN or "" (empty/whitespace-only string) counts as empty.
-        * With treat_nan_as_empty=False: only "" counts as empty.
+    - Numeric columns (excluding bool): NaNs treated as 0, so "all zero or NaN" means empty.
+    - Non-numeric columns: NaN or "" (empty/whitespace-only string) counts as empty.
 
     Parameters
     ----------
     s : pd.Series
         The column (Series) to test.
-    treat_nan_as_empty : bool, default=True
-        Whether NaN values should be treated as equivalent to empty.
 
     Returns
     -------
@@ -518,20 +387,14 @@ def is_col_empty(s: pd.Series, treat_nan_as_empty: bool = True) -> bool:
 
     # Booleans: usually don't drop just because all False; only NaNs count as empty
     if is_bool_dtype(s):
-        return s.isna().all() if treat_nan_as_empty else False
+        return s.isna().all()
 
-    # Numeric (excluding bool): empty if all zeros (and optionally NaN→0)
+    # Numeric (excluding bool): empty if all zeros or NaN
     if is_numeric_dtype(s) and not is_bool_dtype(s):
-        s_cmp = s.fillna(0) if treat_nan_as_empty else s
-        return (s_cmp == 0).all()
+        return (s.fillna(0) == 0).all()
 
-    # Non-numeric: empty if all are "" (optionally allow NaN)
-    if treat_nan_as_empty:
-        na_mask = s.isna()
-    else:
-        na_mask = pd.Series(False, index=s.index)
-
+    # Non-numeric: empty if all are NaN or whitespace-only strings
+    na_mask = s.isna()
     # Safe elementwise test; no vectorized == on arbitrary objects
     empty_str_mask = s.map(lambda v: isinstance(v, str) and v.strip() == "")
-    # Combine the two masks (NaN OR empty string), and check if all entries satisfy
     return (na_mask | empty_str_mask).all()

@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 import importlib.util
+import numpy as np
 import pandas as pd
 import src.hash_utils as hash_utils
 import src.utils as utils
@@ -182,10 +183,14 @@ class ProcessorRunner:
 
 
         # --- Convert results to BB format and write them ---
-        # Trim + convert to BB
-        trimmed_result = utils.trim_df(main_result, rounding_precision)
+        # drop empty columns, convert dTypes, and round
+        main_result = main_result.loc[:, ~main_result.apply(utils.is_col_empty)]
+        main_result = utils.fill_numeric_na(utils.standardize_df_dtypes(main_result))
+        main_result = main_result.round(rounding_precision)
+
+        # Convert to BB format
         main_result_bb = GDX_exchange.prepare_BB_df(
-            trimmed_result, start_date, country_codes, **bb_conversion_kwargs
+            main_result, start_date, country_codes, **bb_conversion_kwargs
         )
 
         # Write trimmed results (wide format) to CSV if requested
@@ -196,7 +201,7 @@ class ProcessorRunner:
                 csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
 
             csv_path = os.path.join(self.output_folder, csv_file)
-            trimmed_result.to_csv(csv_path)
+            main_result.to_csv(csv_path)
             utils.log_status(f"Summary CSV written to '{csv_path}'", log_messages, level="info")
 
         # Write results (BB format) to annual GDX files
