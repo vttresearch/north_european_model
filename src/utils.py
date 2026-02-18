@@ -111,7 +111,7 @@ def log_status(message: str,
 
     log.append(formatted)
 
-    if level in ("warn", "error"):
+    if level in ("warn", "error", "skip"):
         _WARNING_LOG.append(formatted)
 
     if print_to_screen:
