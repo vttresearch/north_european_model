@@ -704,7 +704,9 @@ class CacheManager:
         self._validate_input_files(self.config, self.input_file_folder, self.logs)
     
         # Validate timeseries specs (checks for changes in granular, updates cache)
-        self._validate_timeseries(self.config, prev_config, self.full_rerun, self.demand_files_changed)
+        # Skip if no previous config exists — full rerun already marked all timeseries for rerun
+        if prev_config:
+            self._validate_timeseries(self.config, prev_config, self.full_rerun, self.demand_files_changed)
     
         # Check processor code changes (saves processor hashes for next run)
         self._validate_processor_code_changes(self.config, self.logs)
