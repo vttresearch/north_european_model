@@ -7,44 +7,45 @@ from pathlib import Path
 import argparse
 import time
 from pandas.api.types import is_numeric_dtype, is_bool_dtype
-from typing import Optional
 
 
-# --- module-level globals (defaults) ---
+# TODO: These module-level globals are a temporary half-measure. The intended next step
+# is to move them into IterationLogger as instance attributes and make log_status() and elapsed_time() 
+# methods of IterationLogger. That will require updating all sub-pipeline call sites
+# (data_loader, GDX_exchange, processors, pipelines) to accept and use a logger instance
+# instead of a plain list, eliminating the remaining global state entirely. This is a significant 
+# refactoring as log_status is called more than 100 times throughout the code. After that the 
+# IterationLogger can move out from the utils.py home.
 _PRINT_ALL_ELAPSED_TIMES: bool = False
 _START_TIME: float = time.time()
 _WARNING_LOG: list[str] = []
 
-def init_logging(*, print_all_elapsed_times: Optional[bool] = None,
-                 start_time: Optional[float] = None) -> None:
+class IterationLogger:
+    """Encapsulates per-iteration log state.
+
+    Creating an instance resets all per-iteration globals (_WARNING_LOG, _START_TIME,
+    _PRINT_ALL_ELAPSED_TIMES) that log_status() uses internally.
     """
-    Initialize module-wide logging switches without touching every call site.
-    Call once at startup (after config is loaded).
-    """
-    global _PRINT_ALL_ELAPSED_TIMES, _START_TIME, _WARNING_LOG
-    if print_all_elapsed_times is not None:
+
+    def __init__(self, *, print_all_elapsed_times: bool) -> None:
+        global _WARNING_LOG, _START_TIME, _PRINT_ALL_ELAPSED_TIMES
         _PRINT_ALL_ELAPSED_TIMES = bool(print_all_elapsed_times)
-    if start_time is not None:
-        _START_TIME = float(start_time)
-    _WARNING_LOG = []
+        _WARNING_LOG = []
+        _START_TIME = time.time()
+        self.messages: list[str] = []
 
+    def log(self, message: str, level: str = "none", **kwargs) -> None:
+        """Delegate to log_status, writing into this iteration's message list."""
+        log_status(message, self.messages, level=level, **kwargs)
 
+    def extend(self, more_messages: list[str]) -> None:
+        """Append messages returned by a sub-pipeline into this iteration's log."""
+        self.messages.extend(more_messages)
 
-def get_warning_log() -> list[str]:
-    """Return a copy of all warning/error messages collected since init_logging."""
-    return list(_WARNING_LOG)
-
-
-def reset_warning_log() -> None:
-    """Clear accumulated warnings/errors. Call between loop iterations."""
-    global _WARNING_LOG
-    _WARNING_LOG = []
-
-
-def reset_start_time() -> None:
-    """Reset the elapsed-time clock. Call between loop iterations."""
-    global _START_TIME
-    _START_TIME = time.time()
+    @property
+    def warnings(self) -> list[str]:
+        """Return a copy of all warn/error/skip messages accumulated this iteration."""
+        return list(_WARNING_LOG)
 
 
 def elapsed_time(start_time):
