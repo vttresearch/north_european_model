@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Any, Optional
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -10,7 +11,11 @@ from src.pipeline.bb_excel_context import BBExcelBuildContext
 
 
 class BuildInputExcel:
-    def __init__(self, context: BBExcelBuildContext) -> None:
+    def __init__(
+        self, 
+        context: BBExcelBuildContext
+        ) -> None:
+
         self.context = context
         self.input_folder = context.input_folder
         self.output_folder = context.output_folder
@@ -72,7 +77,11 @@ class BuildInputExcel:
 # Functions create and modify p_gnu_io 
 # ------------------------------------------------------
 
-    def create_p_gnu_io(self, df_unittypedata, df_unitdata):
+    def create_p_gnu_io(
+        self, 
+        df_unittypedata: pd.DataFrame, 
+        df_unitdata: pd.DataFrame
+        ) -> pd.DataFrame:
         """
         Creates a DataFrame representing unit input/output connections with parameters.
 
@@ -233,7 +242,11 @@ class BuildInputExcel:
         return p_gnu_io
 
 
-    def fill_capacities(self, p_gnu_io, p_unit):
+    def fill_capacities(
+        self, 
+        p_gnu_io: pd.DataFrame, 
+        p_unit: pd.DataFrame
+        ) -> pd.DataFrame:
         """
         Fills missing capacity values of units with a set of rules. 
         Currently calculates missing input capacity, if 
@@ -311,7 +324,11 @@ class BuildInputExcel:
         return p_gnu_io
 
 
-    def drop_redundant_units(self, p_gnu_io, p_unit):
+    def drop_redundant_units(
+        self, 
+        p_gnu_io: pd.DataFrame, 
+        p_unit: pd.DataFrame
+        ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Drops units that have no capacity and no investment parameters.
 
@@ -383,7 +400,10 @@ class BuildInputExcel:
 # Functions create p_gnn, p_gn
 # ------------------------------------------------------
 
-    def create_p_gnn(self, df_transferdata: pd.DataFrame) -> pd.DataFrame:
+    def create_p_gnn(
+        self, 
+        df_transferdata: pd.DataFrame
+        ) -> pd.DataFrame:
         """
         Build p_gnn by looping over 'dimensions' and 'param_gnn'.
         Special cases:
@@ -479,9 +499,15 @@ class BuildInputExcel:
         return p_gnn
 
 
-    def create_p_gn(self, p_gnu_io_flat, df_fueldata, 
-                    df_demanddata, df_storagedata, 
-                    ts_storage_limits, ts_domain_pairs):
+    def create_p_gn(
+        self, 
+        p_gnu_io_flat: pd.DataFrame, 
+        df_fueldata: pd.DataFrame,
+        df_demanddata: pd.DataFrame, 
+        df_storagedata: pd.DataFrame,
+        ts_storage_limits: dict[str, pd.DataFrame], 
+        ts_domain_pairs: dict[str, list]
+        ) -> pd.DataFrame:
         """
         Creates a new DataFrame p_gn with specified dimension and parameter columns
 
@@ -698,7 +724,10 @@ class BuildInputExcel:
 # unitUnittype, flowUnit, p_unit, effLevelGroupUnit
 # ------------------------------------------------------
 
-    def create_unitUnittype(self, p_gnu_io_flat):
+    def create_unitUnittype(
+        self, 
+        p_gnu_io_flat: pd.DataFrame
+        ) -> pd.DataFrame:
         # return empty dataframe if no input data
         if p_gnu_io_flat.empty:
             return pd.DataFrame()
@@ -713,7 +742,11 @@ class BuildInputExcel:
         return unitUnittype
     
 
-    def create_flowUnit(self, df_unittypedata, unitUnittype):
+    def create_flowUnit(
+        self, 
+        df_unittypedata: pd.DataFrame, 
+        unitUnittype: pd.DataFrame
+        ) -> pd.DataFrame:
         # return empty dataframe if no input data
         if unitUnittype.empty:
             return pd.DataFrame()
@@ -894,7 +927,11 @@ class BuildInputExcel:
         return p_unit
     
 
-    def create_effLevelGroupUnit(self, df_unittypedata, unitUnittype):
+    def create_effLevelGroupUnit(
+        self, 
+        df_unittypedata: pd.DataFrame, 
+        unitUnittype: pd.DataFrame
+        ) -> pd.DataFrame:
         # List to accumulate new rows
         rows = []
 
@@ -939,7 +976,12 @@ class BuildInputExcel:
 # p_gnBoundaryPropertiesForStates, ts_priceChange, p_userconstraint
 # ------------------------------------------------------
 
-    def create_p_gnBoundaryPropertiesForStates(self, p_gn_flat, df_storagedata, ts_storage_limits):
+    def create_p_gnBoundaryPropertiesForStates(
+        self, 
+        p_gn_flat: pd.DataFrame, 
+        df_storagedata: pd.DataFrame, 
+        ts_storage_limits: dict[str, pd.DataFrame]
+        ) -> pd.DataFrame:
         """
         Creates a DataFrame that defines boundary properties for nodes in an energy grid system.
 
@@ -1084,7 +1126,12 @@ class BuildInputExcel:
         return p_gnBoundaryPropertiesForStates
 
 
-    def add_storage_starts(self, p_gn, p_gnBoundaryPropertiesForStates, p_gnu_io_flat, ts_storage_limits):
+    def add_storage_starts(
+        self, p_gn: pd.DataFrame, 
+        p_gnBoundaryPropertiesForStates: pd.DataFrame, 
+        p_gnu_io_flat: pd.DataFrame, 
+        ts_storage_limits: dict[str, pd.DataFrame]
+        ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Adds storage start values to nodes with energy storage capabilities. 
         Converts p_gn and p_gnBoundaryPropertiesForStates to flat versions by removing the fake multi-index.
@@ -1208,7 +1255,11 @@ class BuildInputExcel:
         return (p_gn, p_gnBoundaryPropertiesForStates)
 
 
-    def create_ts_priceChange(self, p_gn_flat, df_fueldata):
+    def create_ts_priceChange(
+        self, 
+        p_gn_flat: pd.DataFrame, 
+        df_fueldata: pd.DataFrame
+        ) -> pd.DataFrame:
         # return empty dataframe if no price nodes (empty p_gn) or no price data (empty df_fueldata)
         if p_gn_flat.empty or df_fueldata.empty:
             return pd.DataFrame()
@@ -1356,7 +1407,11 @@ class BuildInputExcel:
 # p_nEmission, ts_emissionPriceChange, 
 # ------------------------------------------------------
 
-    def create_p_nEmission(self, p_gn_flat, df_fueldata):
+    def create_p_nEmission(
+        self, 
+        p_gn_flat: pd.DataFrame, 
+        df_fueldata: pd.DataFrame
+        ) -> pd.DataFrame:
         """
         Create p_nEmission['node', 'emission', 'value'] emission factors (tEmission / MWh) for each node.
 
@@ -1417,7 +1472,10 @@ class BuildInputExcel:
         return p_nEmission
 
 
-    def create_ts_emissionPriceChange(self, df_emissiondata):
+    def create_ts_emissionPriceChange(
+        self, 
+        df_emissiondata: pd.DataFrame
+        ) -> pd.DataFrame:
         """
         Create ts_emissionPriceChange ['emission', 'group', 't', 'value'] DataFrame
         
@@ -1462,13 +1520,15 @@ class BuildInputExcel:
         return ts_emissionPriceChange
 
 
-    def create_gnGroup(self,
-                   p_nEmission: pd.DataFrame,
-                   ts_emissionPriceChange: pd.DataFrame,
-                   p_gnu_io_flat: pd.DataFrame,
-                   unitUnittype: pd.DataFrame,
-                   df_unittypedata: pd.DataFrame,
-                   input_dfs=[]) -> pd.DataFrame:
+    def create_gnGroup(
+        self,
+        p_nEmission: pd.DataFrame,
+        ts_emissionPriceChange: pd.DataFrame,
+        p_gnu_io_flat: pd.DataFrame,
+        unitUnittype: pd.DataFrame,
+        df_unittypedata: pd.DataFrame,
+        input_dfs: list[pd.DataFrame] = []
+        ) -> pd.DataFrame:
         """
         Build gnGroup['grid','node','group'] by matching:
           p_nEmission(node, emission)
@@ -1548,7 +1608,11 @@ class BuildInputExcel:
 # Function to compile domains 
 # ------------------------------------------------------
 
-    def compile_domain(self, dfs, domain):
+    def compile_domain(
+        self, 
+        dfs: list[pd.DataFrame], 
+        domain: str
+        ) -> pd.DataFrame:
         """   
         Compiles unique domain values from a specified column across multiple DataFrames.
 
@@ -1600,7 +1664,11 @@ class BuildInputExcel:
 # ------------------------------------------------------
 
 
-    def create_fake_MultiIndex(self, df, dimensions):
+    def create_fake_MultiIndex(
+        self, 
+        df: pd.DataFrame, 
+        dimensions: list[str]
+        ) -> pd.DataFrame:
         """
         Creates a fake MultiIndex by:
         1. Taking an existing DataFrame with single-layer column names
@@ -1644,7 +1712,9 @@ class BuildInputExcel:
         return df_output
     
 
-    def drop_fake_MultiIndex(self, df):
+    def drop_fake_MultiIndex(
+        self, df: pd.DataFrame
+        ) -> pd.DataFrame:
         # Create a copy of the original DataFrame
         df_flat = df.copy()
 
@@ -1654,7 +1724,12 @@ class BuildInputExcel:
         return df_flat
 
 
-    def remove_empty_columns(self, df: pd.DataFrame, cols_to_keep=None, treat_nan_as_empty=True):
+    def remove_empty_columns(
+        self, 
+        df: pd.DataFrame, 
+        cols_to_keep: Optional[list[str]] = None, 
+        treat_nan_as_empty: bool = True
+        ) -> pd.DataFrame:
         cols_to_keep = set(cols_to_keep or [])
 
         empty_cols_mask = df.apply(utils.is_col_empty, axis=0)
@@ -1667,7 +1742,14 @@ class BuildInputExcel:
         return df.loc[:, ~empty_cols_mask]
 
 
-    def get_param_value(self, param, put, cap_row, tech_row, def_value):
+    def get_param_value(
+        self, 
+        param: str, 
+        put: str,
+        cap_row: Any, 
+        tech_row: Any, 
+        def_value: Any
+        ) -> Any:
         """
         Determine parameter value with fallback logic (ALL lookups case-insensitive).
 
@@ -1762,7 +1844,7 @@ class BuildInputExcel:
 # Post-processing
 # ------------------------------------------------------
 
-    def add_index_sheet(self):
+    def add_index_sheet(self) -> None:
         """
         Adds Index sheet to the excel
             * loads preconstructed 'indexSheet.xlsx'
@@ -1809,7 +1891,7 @@ class BuildInputExcel:
         wb.save(self.output_file)
 
 
-    def adjust_excel(self):
+    def adjust_excel(self) -> None:
         """
         For each sheet in the Excel file
             * Adjust each column's width.
@@ -1909,7 +1991,7 @@ class BuildInputExcel:
 # ------------------------------------------------------
 # Main entry point for the script
 # ------------------------------------------------------
-    def run(self):
+    def run(self) -> tuple[list, bool]:
 
         # Check if the Excel file is locked (e.g. open in Excel) before proceeding
         if os.path.exists(self.output_file):
