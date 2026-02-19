@@ -699,7 +699,7 @@ class BuildInputExcel:
 # ------------------------------------------------------
 
     def create_unitUnittype(self, p_gnu_io_flat):
-        # skip processing and return empty dataframe if no input data
+        # return empty dataframe if no input data
         if p_gnu_io_flat.empty:
             return pd.DataFrame()
 
@@ -714,7 +714,7 @@ class BuildInputExcel:
     
 
     def create_flowUnit(self, df_unittypedata, unitUnittype):
-        # skip processing and return empty dataframe if no input data
+        # return empty dataframe if no input data
         if unitUnittype.empty:
             return pd.DataFrame()
 
@@ -1209,11 +1209,11 @@ class BuildInputExcel:
 
 
     def create_ts_priceChange(self, p_gn_flat, df_fueldata):
-        # skip processing if no price nodes (empty p_gn) or no price data (empty df_fueldata)
+        # return empty dataframe if no price nodes (empty p_gn) or no price data (empty df_fueldata)
         if p_gn_flat.empty or df_fueldata.empty:
             return pd.DataFrame()
 
-        # Identify the price column in df_fueldata (case-insensitive), skip processing if not found
+        # Identify the price column in df_fueldata (case-insensitive), return empty dataframe if not found
         price_col = next((col for col in df_fueldata.columns if col.lower() == 'price'), None)
         if price_col is None:
             return pd.DataFrame()
@@ -1365,11 +1365,11 @@ class BuildInputExcel:
         df_fueldata : pandas DataFrame with column 'grid' and optional columns 'emission_XX' 
             where XX is emission name (e.g., CO2, CH4).
         """
-        # skip processing if no fuel nodes (empty p_gn) or no emission data (empty df_fueldata)
+        # Return empty dataframe if no fuel nodes (empty p_gn) or no emission data (empty df_fueldata)
         if p_gn_flat.empty or df_fueldata.empty:
             return pd.DataFrame()
 
-        # Extract emission names from column names. Skip processing if no emissions.
+        # Extract emission names from column names. Return empty dataframe if no emissions.
         emission_cols = [col for col in df_fueldata.columns if col.startswith('emission_')]
         if emission_cols is None:
             return pd.DataFrame()
@@ -1424,7 +1424,7 @@ class BuildInputExcel:
         Parameters: 
             df_emissiondata : pandas DataFrame with columns 'emission', 'group', and optional 'price'.
         """
-        # skip processing if no emission data (empty df_emissiondata)
+        # Return empty dataframe if no emission data (empty df_emissiondata)
         if df_emissiondata.empty:
             return pd.DataFrame()
         
@@ -1768,8 +1768,9 @@ class BuildInputExcel:
             * loads preconstructed 'indexSheet.xlsx'
             * picks rows where Symbol is in the sheet names
         """
-        # skip processing if input folder is not defined
+        # warn if input folder is not defined - missing Index sheet will prevent data loading to Backbone
         if self.input_folder == "":
+            utils.log_status("Input folder is not defined - Index sheet was not added. This will prevent data loading to Backbone.", self.builder_logs, level="warn")
             return
 
         # Construct full path to the index sheet file
@@ -1928,7 +1929,7 @@ class BuildInputExcel:
 
         else:
             utils.log_status(f"Missing unit data or unittype data, skipping p_gnu_io and derivatives.'", 
-                       self.builder_logs, level="info")
+                       self.builder_logs, level="skip")
             p_gnu_io = pd.DataFrame() 
         if not p_gnu_io.empty:
             # remove zeroes
@@ -1960,7 +1961,7 @@ class BuildInputExcel:
         if not self.df_transferdata.empty:
             p_gnn = self.create_p_gnn(self.df_transferdata)
         else:
-            utils.log_status(f"Missing transfer data, skipping p_gnn and derivatives.'", self.builder_logs, level="info")
+            utils.log_status(f"Missing transfer data, skipping p_gnn and derivatives.'", self.builder_logs, level="skip")
             p_gnn = pd.DataFrame()
         if not p_gnn.empty:
             # Create flat version for easier use in other functions
