@@ -222,6 +222,7 @@ class ProcessorRunner:
 
             # Write CSV if requested
             if write_csv_files:
+                utils.log_status("Writing average year csv file...", log_messages)
                 if process_only_single_year:
                     avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year.csv"
                 else:
@@ -229,7 +230,6 @@ class ProcessorRunner:
 
                 avg_csv_path = os.path.join(self.output_folder, avg_csv)
                 avg_df.to_csv(avg_csv_path)
-                utils.log_status(f"Average year CSV written to '{avg_csv_path}'", log_messages, level="info")
 
             # Write average year GDX file
             utils.log_status("Writing average year GDX file...", log_messages)
@@ -243,8 +243,6 @@ class ProcessorRunner:
             GDX_exchange.update_import_timeseries_inc(
                 self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs
             )
-
-            utils.log_status(f"Average year GDX written to '{self.output_folder}'", log_messages, level="info")
 
         # --- Post-processing activities ---
         # Save secondary result to cache
