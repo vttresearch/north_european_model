@@ -272,29 +272,53 @@ class VRE_PECD(BaseProcessor):
                 elif len(matching_columns) == 1:
                     mapping[country_code] = matching_columns[0]
                 else:
-                    # Try 2-letter prefix matching
-                    prefix2 = country_code[:2]
-                    matching_columns = [col for col in df.columns if col.startswith(prefix2)]
-                    
+                    # Try 3-letter prefix matching
+                    prefix3 = country_code[:3]
+                    matching_columns = [col for col in df.columns if col.startswith(prefix3)]
+
                     if len(matching_columns) > 1:
-                        # Multiple matches found - select the one with highest sum
                         best_col = None
                         best_sum = -np.inf
                         sums = {}
-                        
+
                         for col in matching_columns:
                             col_sum = df[col].sum()
                             sums[col] = col_sum
                             if col_sum > best_sum:
                                 best_sum = col_sum
                                 best_col = col
-                        
+
                         if best_col is not None:
                             mapping[country_code] = best_col
                             self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
-                            
+
                     elif len(matching_columns) == 1:
                         mapping[country_code] = matching_columns[0]
+
+                    else:
+                        # Try 2-letter prefix matching
+                        prefix2 = country_code[:2]
+                        matching_columns = [col for col in df.columns if col.startswith(prefix2)]
+
+                        if len(matching_columns) > 1:
+                            # Multiple matches found - select the one with highest sum
+                            best_col = None
+                            best_sum = -np.inf
+                            sums = {}
+
+                            for col in matching_columns:
+                                col_sum = df[col].sum()
+                                sums[col] = col_sum
+                                if col_sum > best_sum:
+                                    best_sum = col_sum
+                                    best_col = col
+
+                            if best_col is not None:
+                                mapping[country_code] = best_col
+                                self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+
+                        elif len(matching_columns) == 1:
+                            mapping[country_code] = matching_columns[0]
                         
         return mapping
 
