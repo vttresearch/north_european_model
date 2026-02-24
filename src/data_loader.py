@@ -146,7 +146,7 @@ def normalize_dataframe(
     3) Remove leading and trailing whitespace from string columns.
     4) 'method' column: ensures existence; trims/lower-cases values; unknown methods
        are warned and coerced to 'replace' against `allowed_methods`.
-    5) Missing/empties: treat empty strings and "-" as NA.
+    5) Missing/empties: treat empty strings as NA.
     6) DType conversions via ``utils.standardize_df_dtypes``:
        - Convert empty/NaN columns to Object dtype
        - Convert numeric string columns to Float64
@@ -215,7 +215,7 @@ def normalize_dataframe(
         method = method.where(~method.isin(unknown_vals), "replace")
     df_out["method"] = method
 
-    # 5) Treat empty strings and blank markers as NA
+    # 5) Treat empty strings as NA
     df_out = df_out.replace({"": pd.NA})
 
     # 6) dtype conversions (empty→object, numeric strings→Float64)

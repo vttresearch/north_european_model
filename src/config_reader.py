@@ -59,6 +59,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'scenarios': ast.literal_eval(inputdata.get('scenarios')),
         'scenario_years': ast.literal_eval(inputdata.get('scenario_years')),
         'scenario_alternatives': ast.literal_eval(inputdata.get('scenario_alternatives', '[""]')),
+        'scenario_alternatives2': ast.literal_eval(inputdata.get('scenario_alternatives2', '[""]')),
+        'scenario_alternatives3': ast.literal_eval(inputdata.get('scenario_alternatives3', '[""]')),
+        'scenario_alternatives4': ast.literal_eval(inputdata.get('scenario_alternatives4', '[""]')),
 
         # Climate years
         'start_date': inputdata.get('start_date'),
@@ -83,7 +86,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'timeseries_specs': ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
     }
 
-    # If user has given scenario_alternatives = [], replace the value with [""]
-    if not config['scenario_alternatives']: config['scenario_alternatives'] = [""] 
+    # If user has given scenario_alternatives* = [], replace the value with [""]
+    for key in ('scenario_alternatives', 'scenario_alternatives2', 'scenario_alternatives3', 'scenario_alternatives4'):
+        if not config[key]:
+            config[key] = [""]
 
     return config

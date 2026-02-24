@@ -1,4 +1,69 @@
 # src/source_excel_data_pipeline.py
+"""
+Source Excel Data Pipeline
+==========================
+
+Purpose
+-------
+SourceExcelDataPipeline is the first and only stage of the pipeline that is aware of
+the scenario context. It reads source Excel files, filters them to the current
+(scenario, year, scenario_alternative) combination, merges them row-by-row, and
+exposes one normalized DataFrame per data category. Downstream stages (time series
+processing, BuildInputExcel) receive scenario-neutral data and do not need to repeat
+scenario filtering.
+
+Scenario and alternative handling
+----------------------------------
+build_input_data.py drives execution by iterating over the Cartesian product of
+(scenarios x scenario_years x scenario_alternatives x scenario_alternatives2 x
+scenario_alternatives3 x scenario_alternatives4). For each combination a new
+pipeline instance is created and run(). Alternative axes that are unused in a config
+file default to [""], which contributes no filtering and no folder-name segment.
+
+Within each data category the scenario filtering works in two steps:
+
+1. apply_whitelist() retains only rows whose 'scenario' column matches either the
+   current scenario, any of the active scenario_alternatives (if provided), or the
+   catch-all value 'all'. The 'year' column is similarly filtered to the target year
+   or the catch-all value 1. This means a single source Excel file can contain rows
+   for multiple scenarios and years; only the relevant rows survive.
+
+2. merge_row_by_row() processes the surviving rows in file load order. Each row
+   carries a 'method' value (replace / replace-partial / add / multiply / remove /
+   ...) that controls how it interacts with previously seen rows for the same key.
+   Because rows are handled in the order of appearance, base-scenario data can be
+   overwritten or supplemented in further input data files, and alternative-axis rows
+   can override or supplement base values without duplicating the full dataset.
+
+Output DataFrames
+-----------------
+After run() the following attributes are populated (empty DataFrame if no source
+files are configured):
+
+  df_unittypedata        generator type parameters       key: generator_id
+  df_fueldata            fuel/carrier cost parameters    key: grid
+  df_emissiondata        emission factors                key: emission
+  df_demanddata          demand parameters               key: country, grid, node
+  df_storagedata         storage parameters              key: country, grid, node
+  df_unitdata            unit capacity parameters        key: country, generator_id, unit_name_prefix
+  df_transferdata        interconnector parameters       key: from, from_suffix, to, to_suffix, grid
+  df_userconstraintdata  custom constraint parameters    key: group, dimensions, parameter
+
+Data conventions (all output DataFrames)
+-----------------------------------------
+- Column names: lowercase, whitespace-stripped.
+- String values in key and categorical columns: lowercase, whitespace-stripped.
+- Numeric columns: pandas Float64 (nullable).
+- Missing values: pd.NA (empty strings are converted during normalize_dataframe).
+- Metadata columns (_source_file, _source_sheet, method): dropped by merge_row_by_row.
+- Scenario and year columns: retained in most output DataFrames. Downstream stages can
+  drop them; they carry no further information because filtering has already been
+  applied. Exception: df_userconstraintdata drops 'scenario', 'year', and 'country'
+  before merging because its key structure makes them redundant.
+- Topology columns (node, from_node, to_node): derived from component columns (country,
+  grid, suffix) by data_loader helpers during run(); the component columns are also
+  retained.
+"""
 
 from pathlib import Path
 import src.data_loader as data_loader
@@ -12,9 +77,13 @@ class SourceExcelDataPipeline:
     InputDataPipeline handles reading, merging, filtering, and validating all input Excel files.
     """
 
-    def __init__(self, config: dict, input_folder: Path, 
-                 scenario: str, scenario_year: int, 
-                 scenario_alternative: str = None, country_codes: list = None):
+    def __init__(self, config: dict, input_folder: Path,
+                 scenario: str, scenario_year: int,
+                 scenario_alternative: str = None,
+                 scenario_alternative2: str = None,
+                 scenario_alternative3: str = None,
+                 scenario_alternative4: str = None,
+                 country_codes: list = None):
         """
         Initialize InputDataPipeline.
 
@@ -23,7 +92,10 @@ class SourceExcelDataPipeline:
             input_folder (Path): Base input folder containing src_files/data_files.
             scenario (str): Selected scenario.
             scenario_year (int): Selected scenario year.
-            scenario_alternative (str, optional): Selected scenario alternative.
+            scenario_alternative (str, optional): Selected scenario alternative (1st axis).
+            scenario_alternative2 (str, optional): Selected scenario alternative (2nd axis).
+            scenario_alternative3 (str, optional): Selected scenario alternative (3rd axis).
+            scenario_alternative4 (str, optional): Selected scenario alternative (4th axis).
             country_codes (list, optional): List of country codes.
         """
         self.config = config
@@ -33,6 +105,9 @@ class SourceExcelDataPipeline:
         self.scenario = scenario
         self.scenario_year = scenario_year
         self.scenario_alternative = scenario_alternative
+        self.scenario_alternative2 = scenario_alternative2
+        self.scenario_alternative3 = scenario_alternative3
+        self.scenario_alternative4 = scenario_alternative4
         self.country_codes = country_codes
 
         self.df_demanddata = pd.DataFrame()
@@ -53,10 +128,12 @@ class SourceExcelDataPipeline:
         """
         input_folder = self.data_folder
 
-        # Make a combination of scenario and alternative
+        # Build scenario whitelist: base scenario plus any non-empty alternatives
         scen_and_alt = [self.scenario]
-        if self.scenario_alternative:
-            scen_and_alt.append(self.scenario_alternative)
+        for alt in (self.scenario_alternative, self.scenario_alternative2,
+                    self.scenario_alternative3, self.scenario_alternative4):
+            if alt:
+                scen_and_alt.append(alt)
 
         # --- global datasets ---
         # unittypedata

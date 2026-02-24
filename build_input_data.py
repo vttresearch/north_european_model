@@ -42,25 +42,35 @@ def main(input_folder: Path, config_file: Path):
     scenarios = config['scenarios']
     scenario_years = config['scenario_years']
     scenario_alternatives = config['scenario_alternatives']
+    scenario_alternatives2 = config['scenario_alternatives2']
+    scenario_alternatives3 = config['scenario_alternatives3']
+    scenario_alternatives4 = config['scenario_alternatives4']
 
     # Reference folder for copying input-data-independent timeseries between iterations
     reference_ts_folder = None
 
-    for scenario, year, alternative in product(scenarios, scenario_years, scenario_alternatives):
+    for scenario, year, alt1, alt2, alt3, alt4 in product(
+        scenarios, scenario_years,
+        scenario_alternatives, scenario_alternatives2,
+        scenario_alternatives3, scenario_alternatives4
+    ):
 
         # --- 2.1. Preparations ---
         # Create per-iteration logger: resets warning log and elapsed-time clock
         logger = utils.IterationLogger(print_all_elapsed_times=config['print_all_elapsed_times'])
         iteration_start_time = time.time()
 
-        # Printing the (scenario, year, alternative) combination and storing them to scenario_tags
+        # Collect non-empty alternatives for this combination
+        active_alts = [a for a in [alt1, alt2, alt3, alt4] if a]
 
-        if alternative != "":
-            logger.log(f"{scenario}, {year}, {alternative}", section_start_length=70, add_empty_line_before=True)
-            scen_tags = [scenario, str(year), alternative]
+        # Printing the (scenario, year, alternatives) combination and storing them to scenario_tags
+        if active_alts:
+            logger.log(f"{scenario}, {year}, {', '.join(active_alts)}", section_start_length=70, add_empty_line_before=True)
         else:
             logger.log(f"{scenario}, {year}", section_start_length=70, add_empty_line_before=True)
-            scen_tags = [scenario, str(year), ""]
+        # Each active alternative is stored as a separate element; build_input_excel.py
+        # uses the list length to determine which alternative columns to write.
+        scen_tags = [scenario, str(year)] + active_alts
 
         # Print date and time
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -68,10 +78,7 @@ def main(input_folder: Path, config_file: Path):
 
         # Build output folder_name, check existence
         output_folder_prefix = config['output_folder_prefix']
-        if alternative:
-            folder_name = f"{output_folder_prefix}_{scenario}_{year}_{alternative}"
-        else:
-            folder_name = f"{output_folder_prefix}_{scenario}_{year}"
+        folder_name = "_".join([output_folder_prefix, scenario, str(year)] + active_alts)
         output_folder = Path("") / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
         logger.log(f"Using output folder: {output_folder}", level="info")
@@ -107,7 +114,10 @@ def main(input_folder: Path, config_file: Path):
             input_folder=input_folder,
             scenario=scenario,
             scenario_year=year,
-            scenario_alternative=alternative,
+            scenario_alternative=alt1,
+            scenario_alternative2=alt2,
+            scenario_alternative3=alt3,
+            scenario_alternative4=alt4,
             country_codes=config['country_codes']
         )
 

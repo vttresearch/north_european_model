@@ -2116,7 +2116,11 @@ class BuildInputExcel:
         restype = pd.DataFrame()
 
         # scenario tags to an excel sheet
-        scen_tags_df = pd.DataFrame([self.scen_tags], columns=['scenario', 'year', 'alternative'])
+        # Alternative columns are added only when present; column names follow the
+        # pattern alternative, alternative2, alternative3, alternative4.
+        _alt_col_names = ['alternative', 'alternative2', 'alternative3', 'alternative4']
+        _n_alts = len(self.scen_tags) - 2
+        scen_tags_df = pd.DataFrame([self.scen_tags], columns=['scenario', 'year'] + _alt_col_names[:_n_alts])
 
         # Write DataFrames to different sheets of the merged Excel file
         with pd.ExcelWriter(self.output_file) as writer:
