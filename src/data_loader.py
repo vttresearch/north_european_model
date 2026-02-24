@@ -68,10 +68,7 @@ def read_input_excels(
         # Match sheets by prefix (case-insensitive)
         matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
         if not matched:
-            utils.log_status(
-                f"No sheets starting with '{sheet_name_prefix}' in '{file_name}'.",
-                logs, level="warn"
-            )
+            # Warning about missing data sheet already logged in cache manager.
             continue
 
         for sheet in matched:
@@ -551,13 +548,35 @@ def build_unittype_unit_column(
     # Note: build_unit_grid_and_node_columns assumes that this is warned here
     missing_mask = df['unittype'].isna()
     if missing_mask.any():
+        source_cols = [c for c in ('_source_file', '_source_sheet', 'file', 'sheet', 'source_file', 'source_sheet') if c in df.columns]
         for generator_id in df.loc[missing_mask, 'generator_id'].unique():
-            utils.log_status(
-                f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
-                "in any of the unittypedata files, check spelling.",
-                logs,
-                level="warn"
-            )
+            if pd.isna(generator_id):
+                row_mask = missing_mask & df['generator_id'].isna()
+            else:
+                row_mask = missing_mask & (df['generator_id'] == generator_id)
+            source_hint = ""
+            if source_cols:
+                parts = []
+                for col in source_cols:
+                    vals = df.loc[row_mask, col].dropna().astype(str).unique()
+                    if len(vals) > 0:
+                        parts.append(f"{col}={', '.join(vals)}")
+                if parts:
+                    source_hint = f" (source: {'; '.join(parts)})"
+            if pd.isna(generator_id):
+                utils.log_status(
+                    f"unitdata has {row_mask.sum()} row(s) with missing (NA) generator_ID{source_hint}. "
+                    "These rows cannot be matched to unittypedata.",
+                    logs,
+                    level="warn"
+                )
+            else:
+                utils.log_status(
+                    f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
+                    f"in any of the unittypedata files, check spelling.{source_hint}",
+                    logs,
+                    level="warn"
+                )
 
     # Fallback: Fill in missing unittype with original generator_id
     df['unittype'] = df['unittype'].fillna(df['generator_id'])

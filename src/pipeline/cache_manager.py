@@ -297,7 +297,7 @@ class CacheManager:
 
                     if not sheet_hashes:
                         utils.log_status(
-                            f"No sheets with prefix '{sheet_prefix}' found in {file_path}", 
+                            f"No '{sheet_prefix}' sheets found in {file_path}", 
                             log, level="warn"
                         )
 

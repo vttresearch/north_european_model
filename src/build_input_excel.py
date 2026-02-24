@@ -1530,16 +1530,54 @@ class BuildInputExcel:
         input_dfs: list[pd.DataFrame] = []
         ) -> pd.DataFrame:
         """
-        Build gnGroup['grid','node','group'] by matching:
-          p_nEmission(node, emission)
-            -> ts_emissionPriceChange(emission -> group)
-            -> p_gnu_io_flat(node -> grid, unit)
-            -> unitUnittype(unit -> unittype)
-            -> df_unittypedata(unittype has any emission_group* == group)
+        Build gnGroup['grid', 'node', 'group'] from two sources.
 
+        Source 1 — emission-based lookup (five-step join):
+          1. p_nEmission(node, emission)
+          2. ts_emissionPriceChange(emission -> group)  [case-insensitive match]
+          3. p_gnu_io_flat(node -> grid, unit)
+          4. unitUnittype(unit -> unittype)
+          5. df_unittypedata: unittype row must have at least one emission_group*
+             column whose value equals the group from step 2.
+          A (grid, node, group) row is added for every combination that passes
+          all five steps.
+
+        Source 2 — direct rows from input_dfs:
+          Any DataFrame in input_dfs that contains 'grid', 'node', and 'group'
+          columns contributes its rows directly, without any emission lookup.
+
+        Warnings are logged when:
+          - p_nEmission is empty (no emission nodes defined).
+          - ts_emissionPriceChange is empty (no emission price data loaded).
+          - Some emission types in p_nEmission have no matching entry in
+            ts_emissionPriceChange (logged with the unmatched names).
+          - df_unittypedata has no emission_group* columns at all.
+
+        Duplicates across both sources are dropped before returning.
         """
         # Initialize an empty list to store rows
         rows_list = []
+
+        # Guard: warn if inputs are empty or their emission sets do not overlap
+        if p_nEmission.empty:
+            self.logger.warning(
+                "p_nEmission is empty — gnGroup from emissions will be empty."
+            )
+        elif ts_emissionPriceChange.empty:
+            self.logger.warning(
+                "ts_emissionPriceChange is empty — no emission groups can be resolved; "
+                "gnGroup from emissions will be empty."
+            )
+        else:
+            p_emissions = set(p_nEmission['emission'].str.lower())
+            ts_emissions = set(ts_emissionPriceChange['emission'].str.lower())
+            unmatched = p_emissions - ts_emissions
+            if unmatched:
+                self.logger.warning(
+                    f"Emissions in p_nEmission with no matching group in "
+                    f"ts_emissionPriceChange: {sorted(unmatched)}. "
+                    f"These will produce no gnGroup entries."
+                )
 
         # Step 1: Process emissions data
         for _, node_emission in p_nEmission.iterrows():
@@ -1578,8 +1616,14 @@ class BuildInputExcel:
                     if not unittype_rows.empty:
                         unittype_row = unittype_rows.iloc[0]
 
-                        # Find if emission exists in any emission_group column
+                        # Find if emission exists in any emission_group column 
                         emission_group_cols = [col for col in df_unittypedata.columns if col.startswith('emission_group')]
+                        if not emission_group_cols:
+                            self.logger.warning(
+                                "df_unittypedata has no 'emission_group*' columns and thus,"
+                                "None of the units are producing any emissions. Check that the unittype" 
+                                "source file(s) includes emission_group column(s)."
+                            )
                         for col in emission_group_cols:
                             if col in unittype_row and unittype_row[col] == group:
                                 # Create row and add to rows_list
