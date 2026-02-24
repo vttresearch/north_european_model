@@ -1203,10 +1203,11 @@ class BuildInputExcel:
                         # Use the subset dataframe and get the first row if there are multiple matches
                         capacity = subset_p_gnu_io['capacity'].iloc[0]
                         upper_limit = subset_p_gnu_io['upperLimitCapacityRatio'].iloc[0]
-                        start_value = capacity * upper_limit                      
+                        if pd.notna(capacity):
+                            start_value = capacity * upper_limit                      
 
             # Only proceed with adding/updating p_gn and boundary properties if we have a valid start_value
-            if start_value != 0:
+            if pd.notna(start_value) and start_value != 0:
                 # Set boundStart to 1 for storage nodes
                 p_gn_flat.loc[(p_gn_flat['grid'] == grid) & (p_gn_flat['node'] == node), 'boundStart'] = 1
 
