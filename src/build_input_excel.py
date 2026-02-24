@@ -1625,7 +1625,7 @@ class BuildInputExcel:
                                 "source file(s) includes emission_group column(s)."
                             )
                         for col in emission_group_cols:
-                            if col in unittype_row and unittype_row[col] == group:
+                            if col in unittype_row and pd.notna(unittype_row[col]) and unittype_row[col] == group:
                                 # Create row and add to rows_list
                                 row = {'grid': grid, 'node': node, 'group': group}
                                 rows_list.append(row)
