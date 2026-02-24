@@ -78,7 +78,7 @@ def main(input_folder: Path, config_file: Path):
 
         # Build output folder_name, check existence
         output_folder_prefix = config['output_folder_prefix']
-        folder_name = "_".join([output_folder_prefix, scenario, str(year)] + active_alts)
+        folder_name = "_".join(part.replace(" ", "") for part in [output_folder_prefix, scenario, str(year)] + active_alts)
         output_folder = Path("") / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
         logger.log(f"Using output folder: {output_folder}", level="info")
