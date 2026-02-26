@@ -80,16 +80,16 @@ class VRE_PECD(BaseProcessor):
 
         # Check if the folder exists
         if not os.path.isdir(self.csv_folder):
-            self.log(f"The folder {self.csv_folder} does not exist.", level="warn")
+            self.logger.log_status(f"The folder {self.csv_folder} does not exist.", level="warn")
             return pd.DataFrame()
 
         # Check that the folder contains at least one CSV file
         csv_files = glob.glob(os.path.join(self.csv_folder, "*.csv"))
         if not csv_files:
-            self.log(f"No CSV files found in {self.csv_folder}.", level="warn")
+            self.logger.log_status(f"No CSV files found in {self.csv_folder}.", level="warn")
             return pd.DataFrame()
 
-        self.log(f"Processing input data in {self.csv_folder}...")
+        self.logger.log_status(f"Processing input data in {self.csv_folder}...")
        
         # Extract and compile data using the split methods
         summary_df = self._read_and_compile_input_CSVs(
@@ -98,7 +98,7 @@ class VRE_PECD(BaseProcessor):
 
         # Apply logit-normal scaling if scaling_factor differs from 1
         if self.scaling_factor != 1:
-            self.log(f"Applying logit scaling with factor {self.scaling_factor}...")
+            self.logger.log_status(f"Applying logit scaling with factor {self.scaling_factor}...")
             for col in summary_df.columns:
                 summary_df[col] = self._apply_logit_scaling(summary_df[col], self.scaling_factor)
 
@@ -111,7 +111,7 @@ class VRE_PECD(BaseProcessor):
         # Secondary result is None for this processor
         self.secondary_result = None
 
-        self.log("Time series built.")
+        self.logger.log_status("Time series built.", level="info")
 
         return summary_df
     
@@ -267,7 +267,7 @@ class VRE_PECD(BaseProcessor):
                     
                     if best_col is not None:
                         mapping[country_code] = best_col
-                        self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+                        self.logger.log_status(f"   {country_code}: Using '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
                         
                 elif len(matching_columns) == 1:
                     mapping[country_code] = matching_columns[0]
@@ -290,7 +290,7 @@ class VRE_PECD(BaseProcessor):
 
                         if best_col is not None:
                             mapping[country_code] = best_col
-                            self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+                            self.logger.log_status(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
 
                     elif len(matching_columns) == 1:
                         mapping[country_code] = matching_columns[0]
@@ -315,7 +315,7 @@ class VRE_PECD(BaseProcessor):
 
                             if best_col is not None:
                                 mapping[country_code] = best_col
-                                self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+                                self.logger.log_status(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
 
                         elif len(matching_columns) == 1:
                             mapping[country_code] = matching_columns[0]
@@ -349,11 +349,11 @@ class VRE_PECD(BaseProcessor):
         try:
             df_csv = pd.read_csv(file, skiprows=header_row)
         except Exception as e:
-            self.log(f"Error reading file {file}: {e}", level="warn")
+            self.logger.log_status(f"Error reading file {file}: {e}", level="warn")
             return None
 
         if 'Date' not in df_csv.columns:
-            self.log(f"File {file} does not have a 'Date' column. Skipping the file.", level="warn")
+            self.logger.log_status(f"File {file} does not have a 'Date' column. Skipping the file.", level="warn")
             return None
 
         df_csv['Date'] = pd.to_datetime(df_csv['Date'])
@@ -395,10 +395,10 @@ class VRE_PECD(BaseProcessor):
         # Filter CSV files based on date from their filenames
         filtered_files = self._filter_csv_files(csv_folder, start_date, end_date)
         csv_files = glob.glob(os.path.join(csv_folder, "*.csv"))
-        self.log(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...")
+        self.logger.log_status(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...")
 
         if not filtered_files:
-            self.log(f"No valid CSV files found in '{csv_folder}' after date filtering.", level="warn")
+            self.logger.log_status(f"No valid CSV files found in '{csv_folder}' after date filtering.", level="warn")
             return df_csv_summary
 
         # Process country code mapping using the first valid CSV file
@@ -413,18 +413,18 @@ class VRE_PECD(BaseProcessor):
         try:
             df_first = pd.read_csv(first_file, skiprows=header_row)
         except Exception as e:
-            self.log(f"Error reading the first file {first_file} for mapping: {e}", level="warn")
+            self.logger.log_status(f"Error reading the first file {first_file} for mapping: {e}", level="warn")
             return df_csv_summary
 
         if 'Date' not in df_first.columns:
-            self.log(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", level="warn")
+            self.logger.log_status(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", level="warn")
             return df_csv_summary
 
         # Pass the DataFrame instead of just columns for sum-based selection
         country_code_mapping = self._process_country_code_mapping(df_first, country_codes)
 
         if not country_code_mapping:
-            self.log(f"No country code mappings found in '{csv_folder}'. Check CSV column headers vs. country_codes.", level="warn")
+            self.logger.log_status(f"No country code mappings found in '{csv_folder}'. Check CSV column headers vs. country_codes.", level="warn")
 
         # Process each filtered CSV file and update the master DataFrame
         for file in filtered_files:

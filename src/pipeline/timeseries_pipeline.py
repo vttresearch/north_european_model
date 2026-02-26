@@ -10,7 +10,6 @@ import pandas as pd
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_processor import ProcessorRunner
-from src.utils import log_status
 from src.utils import collect_domains, collect_domain_pairs
 from src.GDX_exchange import write_BB_gdx, update_import_timeseries_inc
 import src.json_exchange as json_exchange
@@ -21,16 +20,16 @@ class TimeseriesRunResult:
     secondary_results: dict
     ts_domains: dict[str, list]
     ts_domain_pairs: dict[str, list[tuple]]
-    logs: list[str]
 
 class TimeseriesPipeline:
     """
     Orchestrates the execution of timeseries processors based on configuration.
     """
-    
+
     def __init__(self, config: dict, input_folder: Path, output_folder: Path,
                  cache_manager: CacheManager, source_excel_data_pipeline: SourceExcelDataPipeline,
-                 reference_ts_folder: Path = None, scenario_year: int = None):
+                 reference_ts_folder: Path = None, scenario_year: int = None,
+                 logger=None):
         self.config = config
         self.input_folder = input_folder
         self.output_folder = output_folder
@@ -39,12 +38,12 @@ class TimeseriesPipeline:
         self.reference_ts_folder = reference_ts_folder
         self.scenario_year = scenario_year
         self.secondary_results = {}
-        self.logs = []
+        self.logger = logger
         self.df_annual_demands = source_excel_data_pipeline.df_demanddata
 
 
 
-    def _load_all_processor_specs(self) -> tuple[list[dict], list[str]]:
+    def _load_all_processor_specs(self) -> list[dict]:
         """
         Load and validate all timeseries processor specifications from the configuration.
 
@@ -54,19 +53,16 @@ class TimeseriesPipeline:
           - ``bb_parameter_dimensions``
 
         If any of these fields are missing, the spec is skipped with a warning.
-        
+
         Processors whose ``demand_grid`` is in the configured ``exclude_grids`` list
         are also skipped.
 
         Returns
         -------
-        tuple[list[dict], list[str]]
-            A tuple containing:
-              * list of enriched processor specifications
-              * list of log messages generated during spec validation
+        list[dict]
+            List of enriched processor specifications.
         """
         specs: list[dict] = []
-        specs_logs: list[str] = []
         timeseries_specs: dict = self.config["timeseries_specs"]
         exclude_grids: list[str] = self.config["exclude_grids"]
         processors_base = Path("src/processors")
@@ -77,16 +73,20 @@ class TimeseriesPipeline:
             bb_parameter_dimensions: list | None = spec.get("bb_parameter_dimensions")
 
             if not processor_name or not bb_parameter or not bb_parameter_dimensions:
-                log_status(f"Timeseries spec '{human_name}' is incomplete (missing processor_name, bb_parameter, or bb_parameter_dimensions). Skipping.",
-                           specs_logs, level="warn")
+                self.logger.log_status(
+                    f"Timeseries spec '{human_name}' is incomplete (missing processor_name, bb_parameter, or bb_parameter_dimensions). Skipping.",
+                    level="warn"
+                )
                 continue
 
             demand_grid: str | None = spec.get("demand_grid")
             if demand_grid and demand_grid in exclude_grids:
-                log_status(f"Skipping {processor_name} due to excluded demand grid: {demand_grid}", 
-                           specs_logs, level="warn")
+                self.logger.log_status(
+                    f"Skipping {processor_name} due to excluded demand grid: {demand_grid}",
+                    level="warn"
+                )
                 continue
-            
+
             processor_file = processors_base / f"{processor_name}.py"
 
             enriched_spec: dict = {
@@ -97,7 +97,7 @@ class TimeseriesPipeline:
             }
             specs.append(enriched_spec)
 
-        return specs, specs_logs
+        return specs
 
 
     def _create_other_demands(
@@ -114,7 +114,7 @@ class TimeseriesPipeline:
           - ``node``  : node identifier (copied from input)
           - ``f``     : fixed to 'f00'
           - ``t``     : hourly time index from 't000001' to 't008760'
-          - ``value`` : hourly demand in MWh (negative), computed as  
+          - ``value`` : hourly demand in MWh (negative), computed as
                         (TWh/year * 1e6 / 8760), rounded to two decimals
 
         Notes
@@ -147,9 +147,8 @@ class TimeseriesPipeline:
         missing_cols = required_cols - set(df_annual_demands.columns)
 
         if missing_cols:
-            log_status(
+            self.logger.log_status(
                 f"[TimeseriesPipeline] Cannot create other demands – missing required columns: {missing_cols}",
-                self.logs,
                 level="warn",
             )
             return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
@@ -171,9 +170,8 @@ class TimeseriesPipeline:
                 # Calculate hourly value (negative demand in MWh)
                 hourly_value = round(row["twh/year"] * 1e6 / 8760 * -1, 2)
             except Exception as e:
-                log_status(
+                self.logger.log_status(
                     f"[TimeseriesPipeline] Failed to calculate hourly demand for row {row.to_dict()}: {e}",
-                    self.logs,
                     level="warn",
                 )
                 continue
@@ -193,20 +191,20 @@ class TimeseriesPipeline:
             return pd.concat(rows, ignore_index=True)
 
         return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
- 
+
     def _get_unprocessed_demand_grids(self) -> set[str]:
         """
         Identify demand grids that aren't covered by explicit processors.
-        
+
         Returns:
             Set of lowercased grid names that need default timeseries generation
         """
         # Get all demand grids from annual demands
-        if (self.df_annual_demands is None 
-            or self.df_annual_demands.empty 
+        if (self.df_annual_demands is None
+            or self.df_annual_demands.empty
             or "grid" not in self.df_annual_demands):
             return set()
-        
+
         all_demand_grids = set(
             self.df_annual_demands["grid"]
             .dropna()
@@ -214,7 +212,7 @@ class TimeseriesPipeline:
             .str.lower()
             .unique()
         )
-        
+
         # Get grids processed by explicit processors
         timeseries_specs = self.config["timeseries_specs"]
 
@@ -223,7 +221,7 @@ class TimeseriesPipeline:
             demand_grid = spec.get("demand_grid", "").lower()
             if demand_grid:
                 processed_grids.add(demand_grid)
-        
+
         return all_demand_grids - processed_grids
 
 
@@ -232,7 +230,7 @@ class TimeseriesPipeline:
         Copy GDX files and cache data for a single input-data-independent processor
         from the reference folder instead of re-running it.
 
-        Returns a dict with keys: secondary_result, ts_domains, ts_domain_pairs, log_messages
+        Returns a dict with keys: secondary_result, ts_domains, ts_domain_pairs
         """
         spec = processor_spec["spec"]
         processor_name = processor_spec["name"]
@@ -240,18 +238,17 @@ class TimeseriesPipeline:
         bb_parameter = spec.get("bb_parameter")
         gdx_name_suffix = spec.get("gdx_name_suffix", "")
 
-        copy_logs = []
-        log_status(f"{human_name}", copy_logs, section_start_length=45)
+        self.logger.log_status(f"{human_name}", section_start_length=45)
 
         ref_folder = Path(self.reference_ts_folder)
 
         # Safety check: reference folder must exist
         if not ref_folder.exists():
-            log_status(
+            self.logger.log_status(
                 f"Reference folder {ref_folder} does not exist. Cannot copy.",
-                copy_logs, level="warn"
+                level="warn"
             )
-            return {"secondary_result": None, "ts_domains": {}, "ts_domain_pairs": {}, "log_messages": copy_logs}
+            return {"secondary_result": None, "ts_domains": {}, "ts_domain_pairs": {}}
 
         # 1. Copy GDX files
         fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
@@ -265,9 +262,9 @@ class TimeseriesPipeline:
             copied_count += 1
 
         if copied_count:
-            log_status(f"Copied {copied_count} GDX file(s) from reference folder", copy_logs, level="info")
+            self.logger.log_status(f"Copied {copied_count} GDX file(s) from reference folder", level="info")
         else:
-            log_status(f"No GDX files found matching {fname_base}*.gdx in reference folder", copy_logs, level="warn")
+            self.logger.log_status(f"No GDX files found matching {fname_base}*.gdx in reference folder", level="warn")
 
         # 2. Update import_timeseries.inc for this processor
         bb_kwargs = {"bb_parameter": bb_parameter, "gdx_name_suffix": gdx_name_suffix}
@@ -285,7 +282,7 @@ class TimeseriesPipeline:
                 dest_pkl = self.cache_manager.secondary_results_folder / f"{processor_name}.pkl"
                 dest_pkl.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ref_pkl, dest_pkl)
-                log_status(f"Copied secondary result: {processor_name}.pkl", copy_logs, level="info")
+                self.logger.log_status(f"Copied secondary result: {processor_name}.pkl", level="info")
                 with open(ref_pkl, "rb") as f:
                     pkl_data = pickle.load(f)
                 secondary_result = pkl_data.get(secondary_output_name)
@@ -307,7 +304,7 @@ class TimeseriesPipeline:
                 else:
                     ts_domain_pairs[key] = vals
         else:
-            log_status(f"No domain cache found at {ref_domain_file}", copy_logs, level="warn")
+            self.logger.log_status(f"No domain cache found at {ref_domain_file}", level="warn")
 
         # 5. Copy processor hash from reference for cache consistency
         ref_hash_file = ref_folder / "cache" / "processor_hashes.json"
@@ -329,7 +326,6 @@ class TimeseriesPipeline:
             "secondary_result": secondary_result,
             "ts_domains": ts_domains,
             "ts_domain_pairs": ts_domain_pairs,
-            "log_messages": copy_logs
         }
 
 
@@ -351,7 +347,7 @@ class TimeseriesPipeline:
            - For each processor to rerun:
              * Execute it with :class:`ProcessorRunner`.
              * Collect secondary results, timeseries domains,
-               domain pairs, and logs.
+               and domain pairs.
              * Normalize outputs to avoid type inconsistencies.
 
         4. Process other demands
@@ -372,14 +368,12 @@ class TimeseriesPipeline:
         -------
         TimeseriesRunResult
             Dataclass containing:
-              * ``secondary_results`` : dict  
+              * ``secondary_results`` : dict
                 Secondary outputs from processors or cache.
-              * ``ts_domains`` : dict[str, list]  
+              * ``ts_domains`` : dict[str, list]
                 Mapping of domain → sorted list of values.
-              * ``ts_domain_pairs`` : dict[str, list[tuple]]  
+              * ``ts_domain_pairs`` : dict[str, list[tuple]]
                 Mapping of domain-pair → sorted list of tuples.
-              * ``logs`` : list[str]  
-                Aggregated log messages from the entire run.
         """
         # --- 1. Initialization ---
         # If full rerun, remove import_timeseries.inc
@@ -388,17 +382,15 @@ class TimeseriesPipeline:
             p.unlink(missing_ok=True)
 
         # --- 2. Determine processors to run ---
-        log_status(
+        self.logger.log_status(
             "Checking the status of timeseries processors",
-            self.logs,
-            level="run",
+            level="none",
             add_empty_line_before=True
         )
 
         # Build set of processors to run
         processors_to_rerun = set()
-        self.processors, specs_logs = self._load_all_processor_specs()
-        self.logs.extend(specs_logs)
+        self.processors = self._load_all_processor_specs()
 
         # Get processors marked for rerun by cache manager
         # (includes config changes, code changes, and full rerun flag)
@@ -423,20 +415,18 @@ class TimeseriesPipeline:
                     processors_to_rerun.discard(human_name)
 
         # Log what will run and what will be copied
-        log_status(
-            f"{len(processors_to_rerun)} timeseries processor(s) need to be run: "
+        self.logger.log_status(
+            f"Need to run {len(processors_to_rerun)} timeseries processor(s): "
             f"{', '.join(sorted(processors_to_rerun)) if processors_to_rerun else 'none'}",
-            self.logs,
             level="info"
         )
         if processors_to_copy:
-            log_status(
+            self.logger.log_status(
                 f"{len(processors_to_copy)} processor(s) will be copied from reference folder: "
                 f"{', '.join(sorted(processors_to_copy))}",
-                self.logs,
                 level="info"
             )
-            
+
         # --- 3. Run selected processors ---
         all_ts_domains = {}
         all_ts_domain_pairs = {}
@@ -453,30 +443,29 @@ class TimeseriesPipeline:
                     output_folder=self.output_folder,
                     source_excel_data_pipeline=self.source_excel_data_pipeline,
                     cache_manager=self.cache_manager,
-                    scenario_year=self.scenario_year
+                    scenario_year=self.scenario_year,
+                    logger=self.logger
                 )
-                log_status(f"Running: {processor['name']}", self.logs, level="run", add_empty_line_before=True)
+                self.logger.log_status(f"Running: {processor['name']}", level="run", add_empty_line_before=True)
 
                 # Get structured result
                 result = runner.run()
-    
+
                 # Process outputs
                 self.secondary_results[result.processor_name] = result.secondary_result
-    
+
                 for dom, vals in result.ts_domains.items():
                     all_ts_domains.setdefault(dom, set()).update(vals)
-    
+
                 for pair_key, tuples in result.ts_domain_pairs.items():
                     all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
-    
-                self.logs.extend(result.log_messages)
 
         # --- 3b. Copy input-data-independent processors from reference folder ---
         if processors_to_copy:
             copy_iter = (p for p in self.processors if p['human_name'] in processors_to_copy)
 
             for processor in copy_iter:
-                log_status(f"Copying: {processor['name']}", self.logs, level="run", add_empty_line_before=True)
+                self.logger.log_status(f"Copying: {processor['name']}", level="run", add_empty_line_before=True)
 
                 copy_result = self._copy_processor_from_reference(processor)
 
@@ -488,18 +477,16 @@ class TimeseriesPipeline:
                 for pair_key, tuples in copy_result["ts_domain_pairs"].items():
                     all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
 
-                self.logs.extend(copy_result["log_messages"])
-
 
         # --- 4. Process Other Demands ---
-        log_status(f"Remaining timeseries actions", self.logs, section_start_length=45, add_empty_line_before=True)
-            
+        self.logger.log_status(f"Remaining timeseries actions", level="run", section_start_length=45, add_empty_line_before=True)
+
         unprocessed_grids = self._get_unprocessed_demand_grids()
 
         if unprocessed_grids:
-            log_status("Processing other demands", self.logs, level="run")
+            self.logger.log_status("Processing other demands", level="none")
             for grid in sorted(unprocessed_grids):
-                log_status(f" .. {grid}", self.logs, level="None")
+                self.logger.log_status(f" .. {grid}", level="none")
 
             # Create timeseries for other demands
             df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
@@ -519,7 +506,7 @@ class TimeseriesPipeline:
 
             # Write gdx file, update GAMS import instructions
             output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
-            write_BB_gdx(df_other_demands, str(output_file_other), self.logs,
+            write_BB_gdx(df_other_demands, str(output_file_other), self.logger,
                          bb_parameter="ts_influx",
                          bb_parameter_dimensions=["grid", "node", "f", "t"])
             update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
@@ -531,13 +518,13 @@ class TimeseriesPipeline:
         self.cache_manager.merge_dict_to_cache(all_ts_domains, "all_ts_domains.json")
         all_ts_domains = self.cache_manager.load_dict_from_cache("all_ts_domains.json")
 
-        self.cache_manager.merge_dict_to_cache(all_ts_domain_pairs, "all_ts_domain_pairs.json")        
+        self.cache_manager.merge_dict_to_cache(all_ts_domain_pairs, "all_ts_domain_pairs.json")
         all_ts_domain_pairs = self.cache_manager.load_dict_from_cache("all_ts_domain_pairs.json")
 
         # Load all secondary results (from both current run and cache)
         # If we're rebuilding BB Excel, we need ALL secondary results, not just from this run
         if self.cache_manager.rebuild_bb_excel:
-            log_status("Loading all secondary results from cache.", self.logs, level="run")
+            self.logger.log_status("Loading all secondary results from cache.", level="none")
             all_secondary_results = self.cache_manager.load_all_secondary_results()
             # Merge with results from current run (current run takes precedence)
             all_secondary_results.update(self.secondary_results)
@@ -548,6 +535,4 @@ class TimeseriesPipeline:
             secondary_results=self.secondary_results,
             ts_domains={k: sorted(v) for k, v in all_ts_domains.items()},
             ts_domain_pairs={k: sorted(v) for k, v in all_ts_domain_pairs.items()},
-            logs=self.logs
         )
-

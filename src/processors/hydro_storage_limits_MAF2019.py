@@ -162,7 +162,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
                 skiprows=12
             )
         except Exception as e:
-            self.log(f"Error reading Norway input Excel: {e}", level="warn")
+            self.logger.log_status(f"Error reading Norway input Excel: {e}", level="warn")
             return None
         
         # Fill weekly data for the reference year
@@ -194,11 +194,11 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         """
         # --- Read and prepare the input data
         # Read the levels CSV file
-        self.log("Reading input files...")
+        self.logger.log_status("Reading input files...")
         try:
             df_levels = pd.read_csv(self.levels_file)
         except Exception as e:
-            self.log(f"Error reading hydro storage levels CSV '{self.levels_file}': {e}", level="warn")
+            self.logger.log_status(f"Error reading hydro storage levels CSV '{self.levels_file}': {e}", level="warn")
             return pd.DataFrame()
 
         # Convert columns to numeric (data from any year will work since they're identical)
@@ -209,7 +209,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         try:
             df_capacities = pd.read_csv(self.capacities_file)
         except Exception as e:
-            self.log(f"Error reading hydro capacities CSV '{self.capacities_file}': {e}", level="warn")
+            self.logger.log_status(f"Error reading hydro capacities CSV '{self.capacities_file}': {e}", level="warn")
             return pd.DataFrame()
         df_capacities = df_capacities.set_index(["zone", "type", "variable"])
 
@@ -223,7 +223,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         summary_df = pd.DataFrame(index=idx)
 
         # --- build country level df
-        self.log("Building country level timeseries...")
+        self.logger.log_status("Building country level timeseries...")
         
         # Process each country
         for country in self.country_codes:
@@ -288,7 +288,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         # Store secondary result
         self.secondary_result = ts_hydro_storage_limits
 
-        self.log("Hydro storage limit time series built.")
+        self.logger.log_status("Hydro storage limit time series built.", level="info")
 
 
         # Return the main result DataFrame

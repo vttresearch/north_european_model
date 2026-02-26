@@ -210,7 +210,7 @@ class hydro_inflow_MAF2019(BaseProcessor):
         pd.DataFrame
             Combined DataFrame with reservoir and run-of-river inflow timeseries.
         """
-        self.log("Reading input files...")
+        self.logger.log_status("Reading input files...")
         
         # Read the weekly CSV file and filter by year.
         weekly_df = pd.read_csv(self.file_weekly)
@@ -224,10 +224,10 @@ class hydro_inflow_MAF2019(BaseProcessor):
         daily_df["year"] = pd.to_numeric(daily_df["year"])
         daily_df["Day"] = pd.to_numeric(daily_df["Day"])
 
-        self.log("Processing reservoir inflows for all countries...")
+        self.logger.log_status("Processing reservoir inflows for all countries...")
         reservoir_all = self._process_reservoir_inflows(weekly_df)
 
-        self.log("Processing run-of-river inflows for all countries...")
+        self.logger.log_status("Processing run-of-river inflows for all countries...")
         ror_all = self._process_ror_inflows(daily_df)
 
         # Combine the two DataFrames (they share the same hourly index).
@@ -236,6 +236,6 @@ class hydro_inflow_MAF2019(BaseProcessor):
         # Set secondary result if needed (None in this case)
         self.secondary_result = None
 
-        self.log("Inflow time series built.", level="info")
+        self.logger.log_status("Inflow time series built.", level="info")
 
         return summary_df

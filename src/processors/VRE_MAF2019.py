@@ -56,13 +56,13 @@ class VRE_MAF2019(BaseProcessor):
         """
         # Check the input file exists
         file_path = os.path.join(self.input_folder, self.input_file)
-        self.log(f"Reading cf data from '{file_path}'..")
+        self.logger.log_status(f"Reading cf data from '{file_path}'..")
         
         if not os.path.isfile(file_path):
-            self.log(f"Input file '{file_path}' not found, skipping VRE_MAF2019 time series.", level="warn")
+            self.logger.log_status(f"Input file '{file_path}' not found, skipping VRE_MAF2019 time series.", level="warn")
             return pd.DataFrame()
         
-        self.log("Processing the input file..")
+        self.logger.log_status("Processing the input file..")
         
         # Extract and transform data
         df_pivot = self._transform_input_data(file_path, self.country_codes)

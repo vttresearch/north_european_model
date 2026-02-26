@@ -13,7 +13,7 @@ def read_input_excels(
     input_folder: Union[Path, str],
     files: Sequence[str],
     sheet_name_prefix: str,
-    logs: List[str],
+    logger,
     *,
     drop_note_columns: bool = True,
     add_source_cols: bool = True,
@@ -37,8 +37,8 @@ def read_input_excels(
         Filenames (relative to `input_folder`) to scan.
     sheet_name_prefix : str
         Case-insensitive prefix used to select sheets within each workbook.
-    logs : List[str]
-        Log accumulator passed to `log_status`.
+    logger : IterationLogger
+        Logger instance for status messages.
     drop_note_columns : bool, default True
         If True, drop any column named 'note' (any casing).
     add_source_cols : bool, default True
@@ -52,9 +52,9 @@ def read_input_excels(
     dataframes: List[pd.DataFrame] = []
     input_folder = str(input_folder)
 
-    utils.log_status(
+    logger.log_status(
         f"Reading Excel files for '{sheet_name_prefix}': {len(files)} file(s) ...",
-        logs, level=None
+        level="none"
     )
 
     for file_name in files:
@@ -62,7 +62,7 @@ def read_input_excels(
         try:
             xls = pd.ExcelFile(file_path)
         except Exception as e:
-            utils.log_status(f"Unable to open {file_path}: {e}", logs, level="warn")
+            logger.log_status(f"Unable to open {file_path}: {e}", level="warn")
             continue
 
         # Match sheets by prefix (case-insensitive)
@@ -75,9 +75,9 @@ def read_input_excels(
             try:
                 df = pd.read_excel(xls, sheet_name=sheet, header=0)
             except Exception as e:
-                utils.log_status(
+                logger.log_status(
                     f"Failed reading sheet '{sheet}' in '{file_name}': {e}",
-                    logs, level="warn"
+                    level="warn"
                 )
                 continue
 
@@ -115,10 +115,7 @@ def read_input_excels(
             dataframes.append(df)
 
     if not dataframes:
-        utils.log_status(
-            f"No dataframes loaded for prefix '{sheet_name_prefix}' from files: {list(files)}.",
-            logs, level="warn"
-        )
+        # Already warned about missing sheets in cache manager 
         return []
 
     return dataframes
@@ -127,7 +124,7 @@ def read_input_excels(
 def normalize_dataframe(
     df: pd.DataFrame,
     df_identifier: str,
-    logs: List[str],
+    logger,
     *,
     allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
     lowercase_col_values: Sequence[str] = ("scenario", "generator_id", "method"),
@@ -159,8 +156,8 @@ def normalize_dataframe(
         Fallback identifier for logging. If a DataFrame contains any of
         `['_source_file','_source_sheet','file','sheet','source_file','source_sheet']`,
         a per-DataFrame identifier is derived from their uniform values.
-    logs : list[str]
-        Log sink passed to `utils.log_status(...)`. Messages (warn/info) are appended there.
+    logger : IterationLogger
+        Logger instance for status messages.
     allowed_methods : list[str]
         Allowed values for the 'method' column (case-insensitive). Unknown values default to 'replace'.
     lowercase_col_values : Sequence[str], default ("scenario","generator_id","method")
@@ -205,9 +202,9 @@ def normalize_dataframe(
     method = method.fillna("replace")
     unknown_vals = sorted(set(method.unique()) - allowed_set - {"replace"})
     if unknown_vals:
-        utils.log_status(
+        logger.log_status(
             f"[{ident}] Unknown method(s) {unknown_vals} encountered; defaulting to 'replace'.",
-            logs, level="warn"
+            level="warn"
         )
         method = method.where(~method.isin(unknown_vals), "replace")
     df_out["method"] = method
@@ -232,9 +229,9 @@ def normalize_dataframe(
 
     if collisions:
         pairs = ", ".join(f"{old} -> {new}" for old, new in collisions.items())
-        utils.log_status(
+        logger.log_status(
             f"[{ident}] Skipped renaming due to existing column name(s): {pairs}.",
-            logs, level="warn"
+            level="warn"
         )
 
     if to_rename:
@@ -246,7 +243,7 @@ def normalize_dataframe(
 def drop_underscore_values(
     df: pd.DataFrame,
     df_identifier: str,
-    logs: List[str],
+    logger,
     ) -> pd.DataFrame:
     """
     Detect and drop rows containing underscores in string column values.
@@ -261,8 +258,8 @@ def drop_underscore_values(
         Normalized DataFrame to check.
     df_identifier : str
         Identifier used in log messages.
-    logs : list[str]
-        Log accumulator for warnings.
+    logger : IterationLogger
+        Logger instance for status messages.
 
     Returns
     -------
@@ -289,15 +286,15 @@ def drop_underscore_values(
     if bad_mask.any():
         total_bad = int(bad_mask.sum())
         example_str = "; ".join(f"{col}: {vals}" for col, vals in list(examples_per_col.items())[:4])
-        utils.log_status(
+        logger.log_status(
             f"[{df_identifier}] Underscores detected in {total_bad} row(s) across columns "
             f"[{', '.join(examples_per_col.keys())}]. Examples -> {example_str}",
-            logs, level="warn"
+            level="warn"
         )
         df = df.loc[~bad_mask].copy()
-        utils.log_status(
+        logger.log_status(
             f"[{df_identifier}] Dropped {total_bad} row(s) containing underscores.",
-            logs, level="warn"
+            level="warn"
         )
 
     return df
@@ -305,7 +302,7 @@ def drop_underscore_values(
 
 def build_node_column(
     df: pd.DataFrame,
-    logs: List[str] = None,
+    logger=None,
     ) -> pd.DataFrame:
     """
     Add a 'node' column to the DataFrame by concatenating country and grid identifiers.
@@ -315,8 +312,8 @@ def build_node_column(
     df : pandas.DataFrame
         DataFrame containing at minimum 'country' and 'grid' columns.
         Optional 'node_suffix' column can be included for more specific node naming.
-    logs : list[str], optional
-        Log accumulator for warnings.
+    logger : IterationLogger, optional
+        Logger instance for status messages.
 
     Notes:
     ------
@@ -329,7 +326,8 @@ def build_node_column(
     required_columns = ["country", "grid"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        utils.log_status(f"build_node_column: DataFrame is missing required columns: {', '.join(missing_columns)}", logs, level="warn")
+        if logger is not None:
+            logger.log_status(f"build_node_column: DataFrame is missing required columns: {', '.join(missing_columns)}", level="warn")
         return pd.DataFrame()
 
     # Create node column with optional suffix if available
@@ -350,7 +348,7 @@ def build_node_column(
 def build_unit_grid_and_node_columns(
     df_unitdata: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
-    logs: list[str] = None,
+    logger=None,
     *,
     country_col: str = "country",
     generator_id_col: str = "generator_id",
@@ -374,8 +372,8 @@ def build_unit_grid_and_node_columns(
     df_unittypedata : pd.DataFrame
         Must include [generator_id_col] and any subset of 'grid_<put>' columns.
         If multiple rows per generator_id exist, the first is used.
-    logs : list[str], optional
-        Log accumulator for warnings.
+    logger : IterationLogger, optional
+        Logger instance for status messages.
     country_col : str
         Column name in df_unitdata used for country.
     generator_id_col : str
@@ -388,16 +386,19 @@ def build_unit_grid_and_node_columns(
     """
     out = df_unitdata.copy()
 
+    if df_unitdata.empty or df_unittypedata.empty:
+        return out
+
     # Determine which grid_input1...6, grid_output1...6 are used in the unittype data
     candidate_puts = [f"input{i}" for i in range(1, 6)] + [f"output{i}" for i in range(1, 6)]
     puts = [p for p in candidate_puts if f"grid_{p}" in df_unittypedata.columns]
     if not puts:
-        utils.log_status(
-            (f"unittypedata table does not have any column named grid_input1...6 or grid_output1...6. "
-             "Check the files and names in the config file."),
-            logs,
-            level="warn",
-        )
+        if logger is not None:
+            logger.log_status(
+                (f"unittypedata table does not have any column named grid_input1...6 or grid_output1...6. "
+                 "Check the files and names in the config file."),
+                level="warn",
+            )
         return out
 
     # Build a compact lookup: first tech row per generator_id
@@ -449,7 +450,7 @@ def build_unit_grid_and_node_columns(
 
 def build_from_to_columns(
     df: pd.DataFrame,
-    logs: List[str] = None,
+    logger=None,
     ) -> pd.DataFrame:
     """
     Constructs 'from_node' and 'to_node' columns using 'from', 'to', 'grid', and optional suffixes.
@@ -458,8 +459,8 @@ def build_from_to_columns(
     -----------
     df : pandas.DataFrame
         DataFrame containing 'from', 'to', 'grid', and optionally 'from_suffix', 'to_suffix'.
-    logs : list[str], optional
-        Log accumulator for warnings.
+    logger : IterationLogger, optional
+        Logger instance for status messages.
 
     Returns:
     --------
@@ -472,7 +473,8 @@ def build_from_to_columns(
     required_columns = ['from', 'to', 'grid']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        utils.log_status(f"build_from_to_columns: DataFrame is missing required columns: {', '.join(missing_columns)}", logs, level="warn")
+        if logger is not None:
+            logger.log_status(f"build_from_to_columns: DataFrame is missing required columns: {', '.join(missing_columns)}", level="warn")
         return pd.DataFrame()
 
 
@@ -495,7 +497,7 @@ def build_from_to_columns(
 def build_unittype_unit_column(
     df: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
-    logs: list[str] = None
+    logger=None
     ) -> pd.DataFrame:
     """
     Add 'unittype' and 'unit' columns to DataFrame based on generator mappings.
@@ -507,9 +509,9 @@ def build_unittype_unit_column(
         Optional 'unit_name_prefix' column can be included for more specific unit naming.
     df_unittypedata : pandas.DataFrame
         Reference DataFrame mapping 'generator_id' to 'unittype' values
-    logs : list[str], optional
-        Log accumulator for warnings.
-    
+    logger : IterationLogger, optional
+        Logger instance for status messages.
+
     Returns:
     --------
     pandas.DataFrame
@@ -531,11 +533,12 @@ def build_unittype_unit_column(
     required_columns = ["country", "generator_id"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        utils.log_status(
-            f"build_unittype_unit_column: DataFrame is missing required columns: {', '.join(missing_columns)}. "
-            "Check all unitdata_files and remove_files.",
-            logs, level="warn"
-        )
+        if logger is not None:
+            logger.log_status(
+                f"build_unittype_unit_column: DataFrame is missing required columns: {', '.join(missing_columns)}. "
+                "Check all unitdata_files and remove_files.",
+                level="warn"
+            )
         return pd.DataFrame()
 
     # Create a mapping from generator_id (lowercase) to unittype for efficient lookup
@@ -547,7 +550,7 @@ def build_unittype_unit_column(
     # Identify generator_ids without match
     # Note: build_unit_grid_and_node_columns assumes that this is warned here
     missing_mask = df['unittype'].isna()
-    if missing_mask.any():
+    if missing_mask.any() and logger is not None:
         source_cols = [c for c in ('_source_file', '_source_sheet', 'file', 'sheet', 'source_file', 'source_sheet') if c in df.columns]
         for generator_id in df.loc[missing_mask, 'generator_id'].unique():
             if pd.isna(generator_id):
@@ -564,17 +567,15 @@ def build_unittype_unit_column(
                 if parts:
                     source_hint = f" (source: {'; '.join(parts)})"
             if pd.isna(generator_id):
-                utils.log_status(
+                logger.log_status(
                     f"unitdata has {row_mask.sum()} row(s) with missing (NA) generator_ID{source_hint}. "
                     "These rows cannot be matched to unittypedata.",
-                    logs,
                     level="warn"
                 )
             else:
-                utils.log_status(
+                logger.log_status(
                     f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
                     f"in any of the unittypedata files, check spelling.{source_hint}",
-                    logs,
                     level="warn"
                 )
 
@@ -603,7 +604,7 @@ def build_unittype_unit_column(
 def apply_whitelist(
     df: pd.DataFrame,
     filters: Optional[Dict[str, Union[str, int, List[Union[str, int]]]]],
-    logs: List[str],
+    logger,
     df_identifier: str,
     ) -> pd.DataFrame:
     """
@@ -629,7 +630,7 @@ def apply_whitelist(
     # Apply each filter with AND semantics
     for col, val in filters.items():
         if col not in df_out.columns:
-            utils.log_status(f"[{df_identifier}] Whitelist skipped: missing column '{col}'.", logs, level="warn")
+            logger.log_status(f"[{df_identifier}] Whitelist skipped: missing column '{col}'.", level="warn")
             continue
 
         vals = val if isinstance(val, list) else [val]
@@ -664,7 +665,7 @@ def apply_blacklist(
     df_input: pd.DataFrame,
     df_name: str,
     filters: Dict[str, Union[str, int, List[Union[str, int]]]],
-    logs: list[str] = None,
+    logger=None,
     *,
     log_warning: bool = True
     ) -> pd.DataFrame:
@@ -679,14 +680,14 @@ def apply_blacklist(
         Name of the DataFrame (used for error reporting)
     filters : dict
         Dictionary of {column_name: blacklisted_values} pairs
-    logs : list[str], optional
-        Log accumulator for warnings.
-    
+    logger : IterationLogger, optional
+        Logger instance for status messages.
+
     Returns:
     --------
     pandas.DataFrame
         Filtered DataFrame with rows containing blacklisted values removed
-    
+
     Notes:
     ------
     - String comparisons are case-insensitive
@@ -698,12 +699,12 @@ def apply_blacklist(
     # Create a copy to avoid modifying the original DataFrame
     df_filtered = df_input.copy()
 
-    # Apply each blacklist filter condition 
+    # Apply each blacklist filter condition
     for col, val in filters.items():
         if col not in df_filtered.columns:
-            if log_warning:
-                utils.log_status(f"Missing column in {df_name}: {col!r}", logs, level="warn")
-            continue  
+            if log_warning and logger is not None:
+                logger.log_status(f"Missing column in {df_name}: {col!r}", level="warn")
+            continue
 
         # Ensure val is a list for consistent processing
         if not isinstance(val, list):
@@ -726,27 +727,27 @@ def apply_unit_grids_blacklist(
     df: pd.DataFrame,
     exclude_grids: List[str],
     df_name: str = "unitdata",
-    logs: list[str] = None
+    logger=None
     ) -> pd.DataFrame:
     filters = {**{f"grid_input{i}":  exclude_grids for i in range(1, 6)},
                **{f"grid_output{i}": exclude_grids for i in range(1, 6)}}
-    return apply_blacklist(df, df_name, filters, logs=logs, log_warning=False)
+    return apply_blacklist(df, df_name, filters, logger=logger, log_warning=False)
 
 
 def apply_unit_nodes_blacklist(
     df: pd.DataFrame,
     exclude_nodes: List[str],
     df_name: str = "unitdata",
-    logs: list[str] = None
+    logger=None
     ) -> pd.DataFrame:
     filters = {**{f"node_input{i}":  exclude_nodes for i in range(1, 6)},
                **{f"node_output{i}": exclude_nodes for i in range(1, 6)}}
-    return apply_blacklist(df, df_name, filters, logs=logs, log_warning=False)
+    return apply_blacklist(df, df_name, filters, logger=logger, log_warning=False)
 
 
 def merge_row_by_row(
     dfs: Iterable[pd.DataFrame],
-    logs: List[str],
+    logger,
     *,
     key_columns: Sequence[str],
     measure_cols: Sequence[str] = (),
@@ -773,14 +774,14 @@ def merge_row_by_row(
 
     - 'add'              : Sum into measures with special missing rules:
                            * (missing + missing) → NaN
-                           * single missing value is treated as 0.0 
+                           * single missing value is treated as 0.0
                              e.g. (missing + 0.0) or (0.0 + missing) → 0.0
                            Only affects measure columns present in the second DataFrame
                            (absent → treated as missing → apply the above rules).
                            On first occurrence, use incoming values directly (initialize).
 
     - 'add-non-negative' : Same as 'add', but clamp results to ≥ 0. On first occurrence,
-                           initialize measures with max(0, incoming).                       
+                           initialize measures with max(0, incoming).
 
     - 'multiply'         : Multiply measures with special missing rules:
                            * (missing x missing) → NaN
@@ -804,7 +805,6 @@ def merge_row_by_row(
     # --- Input filtering & column union ---------------------------------------
     frames = [df for df in dfs if df is not None and not getattr(df, "empty", True)]
     if not frames:
-        utils.log_status(f"[merge_row_by_row] No data provided for key_columns={list(key_columns)}. Returning empty DataFrame.", logs, level="warn")
         return pd.DataFrame()
 
     # Build a union of columns preserving first-seen order across frames.
@@ -849,14 +849,14 @@ def merge_row_by_row(
         present_measures = [c for c in measure_cols if c in cols_union]
         missing = [c for c in measure_cols if c not in cols_union]
         if missing:
-            utils.log_status(f"[merge_row_by_row] Some measure_cols not found: {missing}", logs, level="warn")
+            logger.log_status(f"[merge_row_by_row] Some measure_cols not found: {missing}", level="warn")
 
     # --- Key validation -------------------------------------------------------
     key_columns = list(key_columns)
     missing = [k for k in key_columns if k not in cols_union]
     if missing:
-        utils.log_status(f"[merge_row_by_row] Some key_columns not found and will be created as <NA>: {missing}", 
-                   logs, level="warn")
+        logger.log_status(f"[merge_row_by_row] Some key_columns not found and will be created as <NA>: {missing}",
+                          level="warn")
 
     # Ensure all frames have all key columns (filled with <NA>)
     new_frames = []
@@ -877,7 +877,7 @@ def merge_row_by_row(
             new_rec = {c: row_dict.get(c) for c in cols_union}
             new_rec["method"] = method
             return new_rec
-        
+
         if partial:
             # Overwrite only provided non-missing values
             for c in cols_union:
@@ -909,15 +909,15 @@ def merge_row_by_row(
                         new_rec[mc] = 0.0
             new_rec["method"] = method
             return new_rec
-        
+
         # Subsequent occurrence: add to existing
         for mc in present_measures:
             prev_val = existing.get(mc)
             cur_val = row_dict.get(mc)
-            
+
             prev_missing = prev_val is None or pd.isna(prev_val)
             cur_missing = cur_val is None or pd.isna(cur_val)
-    
+
             if prev_missing and cur_missing:
                 existing[mc] = pd.NA
             else:
@@ -934,12 +934,12 @@ def merge_row_by_row(
             new_rec = {c: row_dict.get(c) for c in cols_union}
             new_rec["method"] = method
             return new_rec
-        
+
         # Subsequent occurrence: multiply with existing
         for mc in present_measures:
             prev_val = existing.get(mc)
             cur_val = row_dict.get(mc)
-            
+
             prev_missing = prev_val is None or pd.isna(prev_val)
             cur_missing = cur_val is None or pd.isna(cur_val)
 
@@ -962,7 +962,7 @@ def merge_row_by_row(
             # Method is already validated and lowercased by normalize_dataframe
             method = row_dict["method"]
             # Build key tuple inline
-            k = tuple(None if val is None or pd.isna(val) else val 
+            k = tuple(None if val is None or pd.isna(val) else val
                      for val in (row_dict.get(kc) for kc in key_columns))
             existing = acc.get(k)
 
@@ -1015,4 +1015,3 @@ def filter_nonzero_numeric_rows(
 
     numeric_cols = df.select_dtypes(include='number').columns.difference(exclude)
     return df[df[numeric_cols].sum(axis=1) != 0]
-

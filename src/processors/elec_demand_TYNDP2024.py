@@ -108,7 +108,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
             raise FileNotFoundError(f"Excel file not found: {self.input_file}")
         
         if not parquet_path.exists():
-            self.log("Parquet cache not found, will create from Excel file.", level="info")
+            self.logger.log_status("Parquet cache not found, will create from Excel file.", level="none")
             return True
         
         # Compare modification times
@@ -116,10 +116,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
         parquet_mtime = parquet_path.stat().st_mtime
         
         if parquet_mtime > excel_mtime:
-            self.log("Using parquet cache.", level="info")
+            self.logger.log_status("Using parquet cache.", level="none")
             return False
         else:
-            self.log("Excel file is newer than parquet cache, will rebuild cache.", level="info")
+            self.logger.log_status("Excel file is newer than parquet cache, will rebuild cache.", level="none")
             return True
 
     def read_excel_to_parquet(self) -> None:
@@ -148,7 +148,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         to debug and fix this issue, because it does not impact currently needed countries or the next
         possible expansion set.
         """
-        self.log(f"Reading full Excel file: '{self.input_file}' ...", level="info")
+        self.logger.log_status(f"Reading full Excel file: '{self.input_file}' ...", level="none")
         
         try:
             xl = pd.ExcelFile(self.input_file)
@@ -209,17 +209,17 @@ class elec_demand_TYNDP2024(BaseProcessor):
                 melted_list.append(df_melted)
                 
             except Exception as e:
-                self.log(f"Skipping sheet '{sheet_name}' in '{self.input_file}': {e}", level="warn")
+                self.logger.log_status(f"Skipping sheet '{sheet_name}' in '{self.input_file}': {e}", level="warn")
                 continue
 
         if not melted_list:
             raise ValueError("No valid data sheets found in Excel file")
 
         # Combine the melted DataFrames and pivot
-        self.log("Combining data from all sheets...", level="info")
+        self.logger.log_status("Combining data from all sheets...", level="none")
         combined_df = pd.concat(melted_list, ignore_index=True)
         
-        self.log("Pivoting to wide format...", level="info")
+        self.logger.log_status("Pivoting to wide format...", level="none")
         pivot_df = combined_df.pivot_table(
             index=['year', 'month', 'day', 'hour'], 
             columns='country', 
@@ -228,7 +228,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         ).reset_index()
         
         # Save to parquet
-        self.log(f"Saving parquet cache to: '{self.parquet_file}'...", level="info")
+        self.logger.log_status(f"Saving parquet cache to: '{self.parquet_file}'...", level="none")
         pivot_df.to_parquet(self.parquet_file, index=False, engine='pyarrow', compression='snappy')
 
 
@@ -245,7 +245,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
             Wide-format DataFrame with columns ['year', 'month', 'day', 'hour', ...requested countries]
             Contains ALL available years from the parquet file
         """
-        self.log(f"Loading parquet cache: '{self.parquet_file}'...", level="info")
+        self.logger.log_status(f"Loading parquet cache: '{self.parquet_file}'...", level="none")
         
         try:
             # Load the full parquet file
@@ -260,13 +260,13 @@ class elec_demand_TYNDP2024(BaseProcessor):
             missing_countries = [c for c in self.country_codes if c not in available_countries]
             
             if missing_countries:
-                self.log(f"Countries not found in cache: {missing_countries}", level="warn")
+                self.logger.log_status(f"Countries not found in cache: {missing_countries}", level="warn")
             
             # Select only the columns we need
             columns_to_keep = index_cols + countries_to_load
             df_filtered = df_full[columns_to_keep].copy()
             
-            self.log(
+            self.logger.log_status(
                 f"Loaded {len(countries_to_load)} countries from parquet cache "
                 f"({len(df_filtered)} total rows).", 
                 level="info"
@@ -308,7 +308,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         year_mask = (df_wide['year'] >= self.startyear) & (df_wide['year'] <= self.endyear)
         df_wide = df_wide[year_mask].copy()
         
-        self.log(
+        self.logger.log_status(
             f"Filtered to years {self.startyear}-{self.endyear}: {len(df_wide)} rows.",
             level="info"
         )
@@ -416,7 +416,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         # Check for duplicate timestamps before reindexing
         if not input_df.index.is_unique:
             n_dupes = input_df.index.duplicated().sum()
-            self.log(f"Found {n_dupes} duplicate timestamps in elec demand profiles, keeping first occurrence", level="warn")
+            self.logger.log_status(f"Found {n_dupes} duplicate timestamps in elec demand profiles, keeping first occurrence", level="warn")
             input_df = input_df[~input_df.index.duplicated(keep='first')]
         
         # Create a full hourly index for the defined date range
@@ -517,7 +517,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
             ]
             
             if country_demand.empty:
-                self.log(
+                self.logger.log_status(
                     f"No demand data for {country}, skipping.",
                     level="warn"
                 )
@@ -577,21 +577,21 @@ class elec_demand_TYNDP2024(BaseProcessor):
         possible expansion set.
         """
         # Get the raw hourly profiles (uses parquet cache if available)
-        self.log(f"Reading electricity demand profiles...")
+        self.logger.log_status(f"Reading electricity demand profiles...")
         df_out = self.get_values_from_excel()
 
-        self.log("Processing datetime index, handling leap days, etc...")
+        self.logger.log_status("Processing datetime index, handling leap days, etc...")
         df_out = self.process_datetime_index(df_out)
 
-        self.log("Normalizing demand profiles...")
+        self.logger.log_status("Normalizing demand profiles...")
         df_out = self.normalize_profiles(df_out)
 
-        self.log("Building demand time series...")
+        self.logger.log_status("Building demand time series...")
         df_out = self.build_demands(df_out, self.df_annual_demands)
 
         # Set secondary result (none for this processor)
         self.secondary_result = None
 
-        self.log("Demand time series built.", level="info")
+        self.logger.log_status("Demand time series built.", level="info")
 
         return df_out

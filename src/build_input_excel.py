@@ -12,8 +12,9 @@ from src.pipeline.bb_excel_context import BBExcelBuildContext
 
 class BuildInputExcel:
     def __init__(
-        self, 
-        context: BBExcelBuildContext
+        self,
+        context: BBExcelBuildContext,
+        logger=None
         ) -> None:
 
         self.context = context
@@ -62,8 +63,7 @@ class BuildInputExcel:
             for item in sublist
         ]
         
-        # initiate empty log 
-        self.builder_logs = []
+        self.logger = logger
 
         # Define the merged output file
         self.output_file = os.path.join(self.output_folder, 'inputData.xlsx')
@@ -87,6 +87,8 @@ class BuildInputExcel:
 
         This method processes unit data and their type specifications to build a relationship
         table between grids, nodes and units, with associated parameters.
+
+        Removes zeroes
 
         Parameters:
         -----------
@@ -115,6 +117,9 @@ class BuildInputExcel:
             - Skip connections with undefined generator_id
 
         """
+        if df_unittypedata.empty or df_unitdata.empty:
+            return pd.DataFrame()
+
         # dimension and parameter columns
         dimensions = ['grid', 'node', 'unit', 'input_output']
         # Define param_gnu as a dictionary {param: def_value}
@@ -171,8 +176,8 @@ class BuildInputExcel:
             # Find the technical specifications for this generator type
             tech_matches = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id]
             if tech_matches.empty:
-                utils.log_status(f"Missing tech data for generator_id: '{generator_id}', unit: '{unit}', not writing the p_gnu_io data. "
-                            "Check spelling and files.'", self.builder_logs, level="warn")
+                self.logger.log_status(f"Missing tech data for generator_id: '{generator_id}', unit: '{unit}', not writing the p_gnu_io data. "
+                            "Check spelling and files.'", level="warn")
                 continue
             tech_row = tech_matches.iloc[0]
 
@@ -189,12 +194,12 @@ class BuildInputExcel:
 
                 # skip if the columns do not exist in unitdata
                 if grid_col not in cap_row:
-                    utils.log_status(f"Missing grid {grid_col} from unit {unit}, not writing the data. "
-                               "Check spelling and files.'", self.builder_logs, level="warn")
+                    self.logger.log_status(f"Missing grid {grid_col} from unit {unit}, not writing the data. "
+                               "Check spelling and files.'", level="warn")
                     continue
                 if node_col not in cap_row:
-                    utils.log_status(f"Missing node {node_col} from unit {unit}, not writing the data. "
-                               "Check spelling and files.'", self.builder_logs, level="warn")
+                    self.logger.log_status(f"Missing node {node_col} from unit {unit}, not writing the data. "
+                               "Check spelling and files.'", level="warn")
                     continue
 
                 # get values from unitdata
@@ -235,6 +240,9 @@ class BuildInputExcel:
         p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
+
+        # Remove zeroes
+        p_gnu_io = p_gnu_io.mask(p_gnu_io == 0)
 
         # create fake MultiIndex
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io, dimensions)
@@ -385,8 +393,8 @@ class BuildInputExcel:
 
         if units_to_drop:
             for unit in units_to_drop:
-                utils.log_status(f"Dropping unit '{unit}': zero capacity and no investment parameters.",
-                                 self.builder_logs, level="skip")
+                self.logger.log_status(f"Dropping unit '{unit}': zero capacity and no investment parameters.",
+                                 level="skip")
             gnu_flat = gnu_flat[~gnu_flat['unit'].isin(units_to_drop)]
             unit_flat = unit_flat[~unit_flat['unit'].isin(units_to_drop)]
 
@@ -511,8 +519,9 @@ class BuildInputExcel:
         """
         Creates a new DataFrame p_gn with specified dimension and parameter columns
 
-          Collects (grid, node) pairs from df_storagedata, p_gnn, and p_gnu
-          classifies each gn based on a range of tests
+        Collects (grid, node) pairs from df_storagedata, p_gnn, and p_gnu
+        
+        classifies each gn based on a range of tests
             - if node has any fuel data in df_fueldata -> price node
             - if node is not price node -> balance node
             - classifying node as a storage nodes if it passes any of the following three tests
@@ -520,6 +529,8 @@ class BuildInputExcel:
                 2. if node is in ts_storage_limits
                 3. if 'upperLimitCapacityRatio' is defined to any (grid, node) -> storage node
                 4. if gn is in p_gnu with both 'input' and 'output' roles and grid does not appear in df_demanddata
+
+        Removes zeroes
         """      
         # dimension and parameter columns
         dimensions = ['grid', 'node']
@@ -621,10 +632,10 @@ class BuildInputExcel:
             energyStoredPerUnitOfState = node_storage_data['energyStoredPerUnitOfState'].iloc[0] if 'energyStoredPerUnitOfState' in node_storage_data.columns else None
 
             if usePrice == 1 and nodeBalance == 1:
-                utils.log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'nodeBalance'=1, check the data.", self.builder_logs, level="warn")    
+                self.logger.log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'nodeBalance'=1, check the data.", level="warn")
 
             if usePrice == 1 and energyStoredPerUnitOfState == 1:
-                utils.log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'energyStoredPerUnitOfState'=1, check the data.", self.builder_logs, level="warn")    
+                self.logger.log_status(f"Storage data for (grid, node):({grid}, {node}) has 'usePrice'=1 and 'energyStoredPerUnitOfState'=1, check the data.", level="warn")    
 
             # --- Check if price node ---
 
@@ -712,6 +723,9 @@ class BuildInputExcel:
         p_gn.sort_values(by=['grid', 'node'], 
                             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
                             inplace=True)
+
+        # Remove zeroes
+        p_gn = p_gn.mask(p_gn == 0) 
 
         # Create the fake multi-index
         p_gn = self.create_fake_MultiIndex(p_gn, dimensions)
@@ -866,18 +880,18 @@ class BuildInputExcel:
             # Case-insensitive matching for unittype.
             tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == unittype.lower()]
             if tech_matches.empty:
-                utils.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}'. "
-                            "Not writing the p_unit data, check spelling and files.'", 
-                            self.builder_logs, level="warn")
-                continue            
+                self.logger.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}'. "
+                            "Not writing the p_unit data, check spelling and files.'",
+                            level="warn")
+                continue
             tech_row = tech_matches.iloc[0]
 
             # Case-insensitive matching for unit.
             unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == unit.lower()]
             if unit_matches.empty:
-                utils.log_status(f"No unit data found unit: '{unit}'. "
-                            "Not writing the p_unit data, check spelling and files.'", 
-                            self.builder_logs, level="warn")
+                self.logger.log_status(f"No unit data found unit: '{unit}'. "
+                            "Not writing the p_unit data, check spelling and files.'",
+                            level="warn")
                 continue  
             unit_row = unit_matches.iloc[0]
 
@@ -943,8 +957,8 @@ class BuildInputExcel:
             # Retrieve the matching row from df_unittypedata where 'unittype' equals the unittype value
             tech_matches = df_unittypedata[df_unittypedata['unittype'] == unittype]
             if tech_matches.empty:
-                utils.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}', not writing the effLevelGroupUnit data. "
-                            "Check spelling and files.'", self.builder_logs, level="warn")
+                self.logger.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}', not writing the effLevelGroupUnit data. "
+                            "Check spelling and files.'", level="warn")
                 continue            
             tech_row = tech_matches.iloc[0]
 
@@ -1008,6 +1022,9 @@ class BuildInputExcel:
             Fake multi-index is a compromise between many aspects, see create_fake_MultiIndex()
             Defines boundary constraints for nodes in the energy system.
         """ 
+        if p_gn_flat.empty:
+            return pd.DataFrame()
+
         # Define the dimensions and parameters for the fake-multi-indexed output DataFrame
         dimensions = ['grid', 'node', 'param_gnBoundaryTypes']
 
@@ -1038,7 +1055,8 @@ class BuildInputExcel:
         # Process each node in the system that requires balance constraints
         for _, gn_row in p_gn_flat.iterrows():
             # Only process nodes with balance requirements (nodeBalance = 1)
-            if gn_row.get('nodeBalance', 0) == 1:
+            nodeBalance = gn_row.get('nodeBalance', 0)
+            if not utils.is_val_empty(nodeBalance) and nodeBalance == 1:
                 grid = gn_row['grid']
                 node = gn_row['node']
 
@@ -1146,6 +1164,9 @@ class BuildInputExcel:
         Returns:
             tuple: (p_gn, p_gnBoundaryPropertiesForStates) with updated values
         """
+        if p_gn.empty or p_gnBoundaryPropertiesForStates.empty:
+            return(p_gn, p_gnBoundaryPropertiesForStates)
+        
         # Create a lookup dictionary to quickly find average values for node-boundary type combinations
         # Format: {(node, param_gnBoundaryTypes): average_value}
         ts_node_boundaryTypes = {}
@@ -1194,7 +1215,7 @@ class BuildInputExcel:
                         start_value = constant_values.iloc[0]
 
             # 3) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
-            if start_value == 0:
+            if start_value == 0 and not p_gnu_io_flat.empty:
                 subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & 
                                                 (p_gnu_io_flat['node'] == node) & 
                                                 (p_gnu_io_flat['upperLimitCapacityRatio'] > 0)
@@ -1207,7 +1228,7 @@ class BuildInputExcel:
                             start_value = capacity * upper_limit                      
 
             # Only proceed with adding/updating p_gn and boundary properties if we have a valid start_value
-            if pd.notna(start_value) and start_value != 0:
+            if pd.notna(start_value) and start_value >= 0:
                 # Set boundStart to 1 for storage nodes
                 p_gn_flat.loc[(p_gn_flat['grid'] == grid) & (p_gn_flat['node'] == node), 'boundStart'] = 1
 
@@ -1301,7 +1322,6 @@ class BuildInputExcel:
         uc_data: pd.DataFrame,
         p_gnu_io_flat: pd.DataFrame,
         mingen_nodes: list[str],
-        logs: list[str]
         ) -> pd.DataFrame:
         """
         Creates the parameter DataFrame `p_userConstraint` defining user constraints.
@@ -1325,9 +1345,6 @@ class BuildInputExcel:
         mingen_nodes : list[str]
             List of node names for which minimum-generation user constraints
             should be created.
-        logs:
-            An accumulating log event list
-
         Returns
         -------
         pd.DataFrame
@@ -1349,8 +1366,8 @@ class BuildInputExcel:
 
             missing = [c for c in expected_cols if c not in uc_data_renamed.columns]
             if missing:
-                utils.log_status(f"uc_data missing required columns (after case-insensitive matching): {missing}", 
-                           logs, level="info")
+                self.logger.log_status(f"uc_data missing required columns (after case-insensitive matching): {missing}",
+                           level="warn")
 
             uc_data_aligned = uc_data_renamed[expected_cols]
 
@@ -1559,27 +1576,6 @@ class BuildInputExcel:
         # Initialize an empty list to store rows
         rows_list = []
 
-        # Guard: warn if inputs are empty or their emission sets do not overlap
-        if p_nEmission.empty:
-            self.logger.warning(
-                "p_nEmission is empty — gnGroup from emissions will be empty."
-            )
-        elif ts_emissionPriceChange.empty:
-            self.logger.warning(
-                "ts_emissionPriceChange is empty — no emission groups can be resolved; "
-                "gnGroup from emissions will be empty."
-            )
-        else:
-            p_emissions = set(p_nEmission['emission'].str.lower())
-            ts_emissions = set(ts_emissionPriceChange['emission'].str.lower())
-            unmatched = p_emissions - ts_emissions
-            if unmatched:
-                self.logger.warning(
-                    f"Emissions in p_nEmission with no matching group in "
-                    f"ts_emissionPriceChange: {sorted(unmatched)}. "
-                    f"These will produce no gnGroup entries."
-                )
-
         # Step 1: Process emissions data
         for _, node_emission in p_nEmission.iterrows():
             node = node_emission['node']
@@ -1620,10 +1616,11 @@ class BuildInputExcel:
                         # Find if emission exists in any emission_group column 
                         emission_group_cols = [col for col in df_unittypedata.columns if col.startswith('emission_group')]
                         if not emission_group_cols:
-                            self.logger.warning(
+                            self.logger.log_status(
                                 "df_unittypedata has no 'emission_group*' columns and thus,"
-                                "None of the units are producing any emissions. Check that the unittype" 
-                                "source file(s) includes emission_group column(s)."
+                                "None of the units are producing any emissions. Check that the unittype"
+                                "source file(s) includes emission_group column(s).",
+                                level="warn"
                             )
                         for col in emission_group_cols:
                             if col in unittype_row and pd.notna(unittype_row[col]) and unittype_row[col] == group:
@@ -1760,6 +1757,10 @@ class BuildInputExcel:
     def drop_fake_MultiIndex(
         self, df: pd.DataFrame
         ) -> pd.DataFrame:
+        # early exit if empty input
+        if df.empty:
+            return df
+
         # Create a copy of the original DataFrame
         df_flat = df.copy()
 
@@ -1775,8 +1776,12 @@ class BuildInputExcel:
         cols_to_keep: Optional[list[str]] = None, 
         treat_nan_as_empty: bool = True
         ) -> pd.DataFrame:
-        cols_to_keep = set(cols_to_keep or [])
 
+        # early exit if empty input
+        if df.empty:
+            return df
+
+        cols_to_keep = set(cols_to_keep or [])
         empty_cols_mask = df.apply(utils.is_col_empty, axis=0)
 
         # Keep protected columns even if empty
@@ -1897,7 +1902,7 @@ class BuildInputExcel:
         """
         # warn if input folder is not defined - missing Index sheet will prevent data loading to Backbone
         if self.input_folder == "":
-            utils.log_status("Input folder is not defined - Index sheet was not added. This will prevent data loading to Backbone.", self.builder_logs, level="warn")
+            self.logger.log_status("Input folder is not defined - Index sheet was not added. This will prevent data loading to Backbone.", level="warn")
             return
 
         # Construct full path to the index sheet file
@@ -1907,7 +1912,7 @@ class BuildInputExcel:
         try:
             df_index = pd.read_excel(index_path, header=0)
         except Exception:
-            utils.log_status(f"'{index_path}' not found, index sheet was not added to the BB input Excel.", self.builder_logs, level="warn")
+            self.logger.log_status(f"'{index_path}' not found, index sheet was not added to the BB input Excel.", level="warn")
             return
 
         # Load the output Excel workbook which already has multiple sheets
@@ -2036,7 +2041,9 @@ class BuildInputExcel:
 # ------------------------------------------------------
 # Main entry point for the script
 # ------------------------------------------------------
-    def run(self) -> tuple[list, bool]:
+    def run(self) -> None:
+
+        # --- Pre-checks ---
 
         # Check if the Excel file is locked (e.g. open in Excel) before proceeding
         if os.path.exists(self.output_file):
@@ -2044,27 +2051,19 @@ class BuildInputExcel:
                 with open(self.output_file, 'a'):
                     pass
             except OSError:
-                utils.log_status(
+                self.logger.log_status(
                     f"The Backbone input excel file '{self.output_file}' is currently open. Please close it and rerun the code.",
-                    self.builder_logs, level="warn"
+                    level="warn"
                 )
-                return self.builder_logs, self.bb_excel_succesfully_built
+                return
+
+        # --- Create input data tables to DataFrames ---
 
         # Create p_gnu_io
-        if not self.df_unittypedata.empty and not self.df_unitdata.empty:
-            p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
+        p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
 
-        else:
-            utils.log_status(f"Missing unit data or unittype data, skipping p_gnu_io and derivatives.'", 
-                       self.builder_logs, level="skip")
-            p_gnu_io = pd.DataFrame() 
-        if not p_gnu_io.empty:
-            # remove zeroes
-            p_gnu_io = p_gnu_io.mask(p_gnu_io == 0)
-            # Create flat version for easier use in other functions
-            p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
-        else:
-            p_gnu_io_flat = pd.DataFrame()
+        # Create flat version for easier use in other functions
+        p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
 
         # unittype based input tables
         unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
@@ -2085,27 +2084,17 @@ class BuildInputExcel:
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unittypedata, unitUnittype)
 
         # p_gnn
-        if not self.df_transferdata.empty:
-            p_gnn = self.create_p_gnn(self.df_transferdata)
-        else:
-            utils.log_status(f"Missing transfer data, skipping p_gnn and derivatives.'", self.builder_logs, level="skip")
-            p_gnn = pd.DataFrame()
-        if not p_gnn.empty:
-            # Create flat version for easier use in other functions
-            p_gnn_flat = self.drop_fake_MultiIndex(p_gnn)
-        else:
-            p_gnn_flat = pd.DataFrame()
+        p_gnn = self.create_p_gnn(self.df_transferdata)
+
+        # Create flat version for easier use in other functions
+        p_gnn_flat = self.drop_fake_MultiIndex(p_gnn)
 
         # p_gn
         p_gn = self.create_p_gn(p_gnu_io_flat, self.df_fueldata, self.df_demanddata, 
                                 self.df_storagedata, self.ts_storage_limits, self.ts_domain_pairs)
-        if not p_gn.empty:
-            # remove zeroes
-            p_gn = p_gn.mask(p_gn == 0)            
-            # Create flat version for easier use in other functions
-            p_gn_flat = self.drop_fake_MultiIndex(p_gn)
-        else:
-            p_gn_flat = pd.DataFrame()
+                  
+        # Create flat version for easier use in other functions
+        p_gn_flat = self.drop_fake_MultiIndex(p_gn)
 
         # node based input tables
         p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat, 
@@ -2115,9 +2104,8 @@ class BuildInputExcel:
         p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.mask(p_gnBoundaryPropertiesForStates == 0)        
         ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_fueldata)
         p_userconstraint = self.create_p_userconstraint(self.df_userconstraintdata,
-                                                        p_gnu_io_flat, 
-                                                        self.mingen_nodes,
-                                                        self.builder_logs)
+                                                        p_gnu_io_flat,
+                                                        self.mingen_nodes)
 
         # add storage start levels to p_gn and p_gnBoundaryPropertiesForStates
         (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, 
@@ -2167,6 +2155,8 @@ class BuildInputExcel:
         _n_alts = len(self.scen_tags) - 2
         scen_tags_df = pd.DataFrame([self.scen_tags], columns=['scenario', 'year'] + _alt_col_names[:_n_alts])
 
+        # --- Write DataFrames to excel ---
+
         # Write DataFrames to different sheets of the merged Excel file
         with pd.ExcelWriter(self.output_file) as writer:
             # scenario tags
@@ -2205,9 +2195,11 @@ class BuildInputExcel:
             emission.to_excel(writer, sheet_name='emission', index=False)                                   
             restype.to_excel(writer, sheet_name='restype', index=False)    
 
+        # --- Finishing touches ---
+
         # Apply the adjustments on the Excel file
         self.add_index_sheet()
         self.adjust_excel()
 
-        utils.log_status(f"Input excel for Backbone written to '{self.output_file}'", self.builder_logs, level="info")
+        self.logger.log_status(f"Input excel for Backbone written to '{self.output_file}'", level="info")
         self.bb_excel_succesfully_built = True

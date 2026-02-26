@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import src.hash_utils as hash_utils
 import src.json_exchange as json_exchange
-import src.utils as utils
 import pickle
 from datetime import datetime
 import shutil
@@ -45,12 +44,13 @@ class CacheManager:
             or self.rebuild_bb_excel
         )
 
-    def __init__(self, input_folder: Path, output_folder: Path, config: dict):
+    def __init__(self, input_folder: Path, output_folder: Path, config: dict, logger):
         """
         Initialize the CacheManager.
 
         Args:
             output_folder (Path): The root folder where cache directory will be created.
+            logger: IterationLogger instance for status messages.
         """
         self.cache_folder = output_folder / "cache"
         self.cache_folder.mkdir(parents=True, exist_ok=True)
@@ -62,6 +62,7 @@ class CacheManager:
 
         self.input_file_folder = Path(input_folder) / "data_files"
         self.config = config
+        self.logger = logger
 
         # source code related rerun switches
         self.overall_code_files_updated = False
@@ -80,23 +81,21 @@ class CacheManager:
         self.rerun_all_ts = False
         self.rebuild_bb_excel = False
 
-        # Initialize logs
-        self.logs = []
 
 
     def _clean_cache_for_full_rerun(self):
         """
-        To ensure a completely clean slate and avoid any compatibility issues
-        with old file formats:
-            
-        Clean all cache content to prepare for a full rerun.
-        Removes the entire cache folder and recreates it with the necessary structure.
+        Delete the cache subfolder (output_folder/cache/) and recreate its directory structure.
+
+        This ensures a clean slate before a full rerun and avoids compatibility issues
+        with stale hash files or cached results from a previous run.
+
+        Note: only the cache/ subfolder is affected. Root-level output files
+        (inputData.xlsx, GAMS files, logs, etc.) are cleaned separately in build_input_data.py.
         """
-        # Remove the entire cache folder
         if self.cache_folder.exists():
             shutil.rmtree(self.cache_folder, ignore_errors=True)
-        
-        # Recreate the cache directory structure
+
         self.cache_folder.mkdir(parents=True, exist_ok=True)
         self.secondary_results_folder.mkdir(parents=True, exist_ok=True)
   
@@ -153,7 +152,7 @@ class CacheManager:
         return changed
 
 
-    def _validate_processor_code_changes(self, config: dict, log: list[str]):
+    def _validate_processor_code_changes(self, config: dict):
         """
         Check if any timeseries processor code has changed since the last run.
         Updates self.timeseries_changed for processors with code changes.
@@ -163,7 +162,6 @@ class CacheManager:
 
         Args:
             config (dict): Configuration dictionary containing timeseries_specs
-            log (list[str]): Log messages list to append status updates
         """
         timeseries_specs = config["timeseries_specs"]
         if not timeseries_specs:
@@ -187,13 +185,12 @@ class CacheManager:
             # Compute current hash
             processor_file = processors_base / f"{processor_name}.py"
             if not processor_file.exists():
-                utils.log_status(
+                self.logger.log_status(
                     f"Warning: Processor file not found: {processor_file}",
-                    log,
                     level="warn"
                 )
                 continue
-            
+
             current_hash = hash_utils.compute_file_hash(processor_file)
             previous_hash = processor_hashes.get(processor_name)
 
@@ -201,46 +198,43 @@ class CacheManager:
             if previous_hash != current_hash:
                 self.timeseries_changed[human_name] = True
                 changed_processors.append(human_name)
-                utils.log_status(
+                self.logger.log_status(
                     f"Processor '{human_name}' code has changed, marking for rerun.",
-                    log,
                     level="info"
                 )
 
         # Summary log if any processors changed
         if changed_processors and not self.full_rerun:
-            utils.log_status(
+            self.logger.log_status(
                 f"Processor code changes detected: {', '.join(changed_processors)}",
-                log,
-                level="run"
+                level="info"
             )
 
 
-    def _validate_input_files(self, config: dict, input_folder: Path, log: list[str]) -> None:
+    def _validate_input_files(self, config: dict, input_folder: Path) -> None:
         """
         Validates input Excel files by comparing sheet-level hashes against previous run.
-        
+
         This method performs category-based validation where only sheets with relevant
         prefixes are checked (e.g., sheets starting with 'fuel' for fueldata_files).
         If any sheet has been added, removed, or modified, the corresponding category
         is flagged as changed.
-        
+
         Args:
             config (dict): Parsed configuration dictionary containing file lists for
                 each category (e.g., 'demanddata_files', 'fueldata_files').
             input_folder (Path): Root folder containing all input Excel files referenced
                 in the config.
-            log (list[str]): Log list for status messages.
-        
+
         Sets:
             self.demand_files_changed (bool): True if any demand data files changed.
             self.other_input_files_changed (bool): True if any non-demand data files changed.
-        
+
         Side Effects:
             - Loads previous hashes from self.input_data_hash_file
             - Saves current hashes to self.input_data_hash_file
             - Logs status messages for missing files, changes detected, and errors
-        
+
         Note:
             If no previous hash file exists, all files are treated as new/changed.
             If self.full_rerun is already True, changes are still logged but won't
@@ -250,12 +244,12 @@ class CacheManager:
         try:
             prev_input_hashes = json_exchange.load_json(self.input_data_hash_file)
         except FileNotFoundError:
-            utils.log_status("No previous hash file found, treating all files as new.", 
-                            log, level="info")
+            self.logger.log_status("No previous hash file found, treating all files as new.",
+                                   level="info")
             prev_input_hashes = {}
         except Exception as e:
-            utils.log_status(f"Error loading hash file: {e}. Treating all files as changed.", 
-                            log, level="warning")
+            self.logger.log_status(f"Error loading hash file: {e}. Treating all files as changed.",
+                                   level="warn")
             prev_input_hashes = {}
 
         # Map categories to their sheet prefixes (following read_input_excels logic)
@@ -280,15 +274,14 @@ class CacheManager:
             # Compute sheet-level hashes for each file
             for f in current_files:
                 if f == '':
-                    utils.log_status(f"Empty file name in config category '{category}', check config file.",
-                                   log, level="error")
+                    self.logger.log_status(f"Empty file name in config category '{category}', check config file.",
+                                           level="error")
                     continue
-                
+
                 file_path = input_folder / f
 
                 if not file_path.exists():
-                    utils.log_status(f"File does not exist: {file_path}", 
-                                   log, level="error")
+                    self.logger.log_status(f"File does not exist: {file_path}", level="error")
                     continue
 
                 try:
@@ -296,41 +289,40 @@ class CacheManager:
                     sheet_hashes = hash_utils.compute_excel_sheets_hash(file_path, sheet_prefix)
 
                     if not sheet_hashes:
-                        utils.log_status(
-                            f"No '{sheet_prefix}' sheets found in {file_path}", 
-                            log, level="warn"
+                        self.logger.log_status(
+                            f"Did not find '{sheet_prefix}data' sheets from {file_path}",
+                            level="warn"
                         )
 
                     current_hashes[f] = sheet_hashes
 
                 except PermissionError:
-                    utils.log_status(f"Permission denied reading file: {file_path}", 
-                                   log, level="error")
+                    self.logger.log_status(f"Permission denied reading file: {file_path}",
+                                           level="error")
                     continue
                 except Exception as e:
-                    utils.log_status(f"Error computing hash for {file_path}: {e}", 
-                                   log, level="error")
+                    self.logger.log_status(f"Error computing hash for {file_path}: {e}",
+                                           level="error")
                     continue
 
             # Compare with previous hashes at sheet level
             prev_hashes = prev_input_hashes.get(category, {})
-            changed = self._compare_sheet_hashes(current_hashes, prev_hashes, category, log)
+            changed = self._compare_sheet_hashes(current_hashes, prev_hashes, category)
 
             category_status[category] = changed
             all_hashes_to_save[category] = current_hashes
 
             if changed and not self.full_rerun:
-                utils.log_status(
-                    f"Input data changed in category '{category}', rerunning necessary steps.", 
-                    log, level="run"
+                self.logger.log_status(
+                    f"Input data changed in category '{category}', rerunning necessary steps.",
+                    level="run"
                 )
 
         # Save all current hashes
         try:
             json_exchange.save_json(self.input_data_hash_file, all_hashes_to_save)
         except Exception as e:
-            utils.log_status(f"Warning: Could not save hash file: {e}", 
-                            log, level="warning")
+            self.logger.log_status(f"Warning: Could not save hash file: {e}", level="warn")
 
         # Check flags used in the main logic
         self.demand_files_changed = category_status.get('demanddata_files', False)
@@ -339,7 +331,7 @@ class CacheManager:
         )
 
 
-    def _compare_sheet_hashes(self, current: dict, previous: dict, category: str, log: list[str]) -> bool:
+    def _compare_sheet_hashes(self, current: dict, previous: dict, category: str) -> bool:
         """
         Compare current and previous sheet-level hashes to detect changes.
 
@@ -347,7 +339,6 @@ class CacheManager:
             current: {filename: {sheetname: hash}}
             previous: {filename: {sheetname: hash}}
             category: Category name for logging
-            log: Log list
 
         Returns:
             bool: True if any sheet changed, was added, or was removed
@@ -362,9 +353,9 @@ class CacheManager:
 
             # Check if sheet lists differ
             if set(curr_sheets.keys()) != set(prev_sheets.keys()):
-                utils.log_status(
+                self.logger.log_status(
                     f"Sheet structure changed in '{filename}' for category '{category}'",
-                    log, level="info"
+                    level="info"
                 )
                 return True
 
@@ -372,9 +363,9 @@ class CacheManager:
             for sheet_name, curr_hash in curr_sheets.items():
                 prev_hash = prev_sheets.get(sheet_name)
                 if curr_hash != prev_hash:
-                    utils.log_status(
+                    self.logger.log_status(
                         f"Sheet '{sheet_name}' changed in '{filename}' for category '{category}'",
-                        log, level="info"
+                        level="info"
                     )
                     return True
 
@@ -567,7 +558,7 @@ class CacheManager:
         return secondary_results
     
 
-    def run(self) -> list[str]:
+    def run(self) -> None:
         """
         Determine what needs to be rerun based on changes since last execution.
     
@@ -675,11 +666,11 @@ class CacheManager:
         if full_rerun_reason:
             # Full rerun is needed
             self.full_rerun = True
-            utils.log_status(full_rerun_reason, self.logs, level="run", add_empty_line_before=True)
-    
-            # Clean cache to ensure fresh start
+            self.logger.log_status(full_rerun_reason, level="run", add_empty_line_before=True)
+
+            # Clean the cache subfolder to ensure a fresh start
             self._clean_cache_for_full_rerun()
-            utils.log_status(f"Cleared cache files.", self.logs, level="done")
+            self.logger.log_status("Cleared cache subfolder (output_folder/cache/).", level="info")
 
             # Mark all timeseries for rerun
             timeseries_specs = self.config["timeseries_specs"]
@@ -698,23 +689,23 @@ class CacheManager:
         # These are fast and ensure all caches are up to date for next run
         # ========================================================================
     
-        utils.log_status("Updating cache content", self.logs, level="run", add_empty_line_before=True)
+        self.logger.log_status("Updating cache content", level="none")
 
         # Validate input files at sheet level (saves hashes for next run)
-        self._validate_input_files(self.config, self.input_file_folder, self.logs)
-    
+        self._validate_input_files(self.config, self.input_file_folder)
+
         # Validate timeseries specs (checks for changes in granular, updates cache)
         # Skip if no previous config exists — full rerun already marked all timeseries for rerun
         if prev_config:
             self._validate_timeseries(self.config, prev_config, self.full_rerun, self.demand_files_changed)
-    
+
         # Check processor code changes (saves processor hashes for next run)
-        self._validate_processor_code_changes(self.config, self.logs)
-    
+        self._validate_processor_code_changes(self.config)
+
         # Load flags for granular checks
         general_flags = self.load_dict_from_cache("general_flags.json")
         bb_excel_succesfully_built = general_flags.get("bb_excel_succesfully_built", False)
-    
+
         # Check BB excel pipeline code (doesn't trigger full rerun, just rebuild)
         bb_pipeline_files = [
             Path("./src/pipeline/bb_excel_context.py"),
@@ -723,11 +714,11 @@ class CacheManager:
         self.bb_excel_pipeline_code_updated = self._validate_source_code_changes(
             bb_pipeline_files, "bb_excel_pipeline_hashes.json"
         )
-    
+
         # Log BB excel pipeline code update (only if not already in full rerun)
         if self.bb_excel_pipeline_code_updated and not self.full_rerun:
-            utils.log_status("BB input excel pipeline code updated, generating new input excel for Backbone.", 
-                           self.logs, level="run")
+            self.logger.log_status("BB input excel pipeline code updated, generating new input excel for Backbone.",
+                                   level="run")
     
         # Determine if source excels should be re-imported
         # Include self.full_rerun to preserve the True value set in Phase 2
@@ -768,5 +759,3 @@ class CacheManager:
         # This will be set to True at the very end of the workflow if successful
         status_dict = {"workflow_run_successfully": False}
         self.merge_dict_to_cache(status_dict, "general_flags.json")
-    
-        return self.logs

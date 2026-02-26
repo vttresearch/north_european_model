@@ -26,13 +26,14 @@ src/
   GDX_exchange.py            GDX read/write helpers
   json_exchange.py           JSON read/write helpers
   hash_utils.py              File hashing for cache invalidation
-  utils.py                   Shared utilities, logging, CLI argument parsing
+  utils.py                   Shared utilities, CLI argument parsing
   pipeline/
+    cache_manager.py                Tracks which pipeline steps need re-running
+    logger.py                       collects log messages
     source_excel_data_pipeline.py   Reads and merges source Excel files
+    bb_excel_context.py             Context object passed to BuildInputExcel
     timeseries_pipeline.py          Orchestrates time series processing
     timeseries_processor.py         Runs individual processor classes
-    bb_excel_context.py             Context object passed to BuildInputExcel
-    cache_manager.py                Tracks which pipeline steps need re-running
   processors/                individual processors and an abstract class of processors 
 
 src_files/
@@ -48,6 +49,7 @@ src_files/
 1. User runs python build_input_data.py <input_folder> <config.ini>
 2. Config is parsed (`config_reader.py`) defining scenarios, years, country codes, file lists, and time series specs
 3. For each (scenario, year, alternative) combination:
+   - **Logger** -- `logger` collects log messages from the run and is passed to all pipelines 
    - **Cache check** -- `CacheManager` determines which steps need re-running
    - **Source Excel phase** -- `SourceExcelDataPipeline` reads and merges data Excel files
    - **Time series phase** -- `TimeseriesPipeline` runs each processor defined in `timeseries_specs`
@@ -59,15 +61,6 @@ src_files/
 
 The workflow tries to keep up certain standards and shared assumptions. At the moment we have following:
 - ./src/config_reader.py ensures that all config files parameters exist and have valid default assumptions.
-
-## Config files (.ini)
-
-Config files define a scenario run. Key sections in `[inputdata]`:
-- `scenarios`, `scenario_years`, `scenario_alternatives` -- what to build
-- `country_codes` -- which countries to include (e.g. `['FI00', 'SE01', ...]`)
-- `exclude_grids`, `exclude_nodes` -- topology filtering
-- `*_files` lists -- which Excel source files to use for each data category
-- `timeseries_specs` -- dictionary defining which processor classes to run, their parameters, input files, and output GDX names
 
 ## Conventions
 

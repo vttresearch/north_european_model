@@ -196,18 +196,18 @@ class DH_demand_fromTemperature(BaseProcessor):
         ]
 
         # Get the raw hourly profiles
-        self.log(f"Constructing heat demand profiles from '{self.input_file}'...")
+        self.logger.log_status(f"Constructing heat demand profiles from '{self.input_file}'...")
         out_df = self.get_temperature_profile(processed_countries)
 
-        self.log("Normalizing demand profiles...")
+        self.logger.log_status("Normalizing demand profiles...")
         out_df = self.normalize_profiles(out_df, processed_countries)
 
-        self.log("Building demand time series...")
+        self.logger.log_status("Building demand time series...")
         out_df = self.build_demands(out_df, self.df_annual_demands, processed_countries)
 
         # Set secondary result if needed
         self.secondary_result = None
 
-        self.log("Demand time series built.", level="info")
+        self.logger.log_status("Demand time series built.", level="info")
 
         return(out_df)

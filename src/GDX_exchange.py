@@ -1,7 +1,6 @@
 # src/GDX_exchange.py
 
 from typing import Any, Dict, Optional, Sequence, List
-from src.utils import log_status
 import pandas as pd
 import numpy as np
 import os
@@ -18,7 +17,7 @@ from tqdm import tqdm
 def write_BB_gdx(
     df: Optional[pd.DataFrame],
     output_file: str,
-    logs: List[str],
+    logger,
     **kwargs: Any
     ) -> None:
     """
@@ -27,7 +26,7 @@ def write_BB_gdx(
     Parameters:
         df: DataFrame with columns matching bb_parameter_dimensions + 'value'
         output_file: Path to output GDX file
-        logs: List for logging messages
+        logger: IterationLogger instance for status messages
         **kwargs: Must include:
             - bb_parameter: str -> GDX parameter name
             - bb_parameter_dimensions: Sequence[str] -> dimension columns (optional, inferred if missing)
@@ -36,14 +35,14 @@ def write_BB_gdx(
         None: Writes content to output_file
     """
     if df is None or len(df) == 0:
-        log_status(f"Skipping writing GDX '{output_file}': No data to write", logs, level="warn")
+        logger.log_status(f"Skipping writing GDX '{output_file}': No data to write", level="warn")
         return
 
     bb_parameter: Optional[str] = kwargs.get("bb_parameter")
     dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
 
     if not bb_parameter:
-        log_status(f"Missing required kwarg 'bb_parameter' from '{output_file}'", logs, level="warn")
+        logger.log_status(f"Missing required kwarg 'bb_parameter' from '{output_file}'", level="warn")
         return
 
     # Infer dimensions if not provided
@@ -54,7 +53,7 @@ def write_BB_gdx(
     final_cols = list(dims) + ["value"]
     missing = [c for c in final_cols if c not in df.columns]
     if missing:
-        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
+        logger.log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", level="warn")
         return
 
     # Select only required columns
@@ -80,7 +79,7 @@ def write_BB_gdx(
 def write_BB_gdx_annual(
     df: Optional[pd.DataFrame],
     output_folder: str,
-    logs: List[str],
+    logger,
     **kwargs: Any
     ) -> None:
     """
@@ -90,11 +89,11 @@ def write_BB_gdx_annual(
       1. Splits the DataFrame by year using split_timeseries_to_annual_gdx_frames()
       2. Remaps 't' indices to t000001..t008760 for each year
       3. Writes each year to a separate GDX file (or single file if only one year)
-    
+
     Parameters:
         df: Multi-year DataFrame with columns matching bb_parameter_dimensions + helper columns
         output_folder: Directory where GDX files will be written
-        logs: List for logging messages
+        logger: IterationLogger instance for status messages
         **kwargs: Must include:
             - bb_parameter: str -> GDX parameter name
             - bb_parameter_dimensions: Sequence[str] -> dimension columns
@@ -107,7 +106,7 @@ def write_BB_gdx_annual(
     """
     # --- initialization and checks ---
     if df is None or len(df) == 0:
-        log_status(f"Skipping annual GDX writing for '{kwargs.get('bb_parameter', '?')}_{kwargs.get('gdx_name_suffix', '?')}': no data to write.", logs, level="warn")
+        logger.log_status(f"Skipping annual GDX writing for '{kwargs.get('bb_parameter', '?')}_{kwargs.get('gdx_name_suffix', '?')}': no data to write.", level="warn")
         return
 
     bb_parameter: Optional[str] = kwargs.get("bb_parameter")
@@ -115,18 +114,18 @@ def write_BB_gdx_annual(
     gdx_name_suffix: Optional[str] = kwargs.get("gdx_name_suffix", "")
 
     if not bb_parameter:
-        log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing (gdx_name_suffix='{gdx_name_suffix}').", logs, level="warn")
+        logger.log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing (gdx_name_suffix='{gdx_name_suffix}').", level="warn")
         return
-    
+
     # If dims not provided, infer all columns except 'value' as dimensions, preserving order.
-    if not dims or len(dims) == 0:       
+    if not dims or len(dims) == 0:
         dims = [c for c in df.columns if c != "value"]
 
     # Validate columns
     missing = [c for c in list(dims) + ["value"] if c not in df.columns]
     if missing:
-        log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", logs, level="warn")
-        return 
+        logger.log_status(f"DataFrame missing required columns: {missing} for annual GDX writing.", level="warn")
+        return
 
     # Final columns of the written dataframe
     final_cols = list(dims) + ["value"]
@@ -134,11 +133,11 @@ def write_BB_gdx_annual(
     # --- Split to annual dfs ---
     # Split into annual frames
     annual_dfs = split_timeseries_to_annual_gdx_frames(
-        df, logs, bb_parameter_dimensions=dims
+        df, logger, bb_parameter_dimensions=dims
     )
-    
+
     if not annual_dfs:
-        log_status(f"No annual data available to write for '{bb_parameter}_{gdx_name_suffix}'.", logs, level="warn")
+        logger.log_status(f"No annual data available to write for '{bb_parameter}_{gdx_name_suffix}'.", level="warn")
         return
     
     # pick key characteristics
@@ -470,7 +469,7 @@ def calculate_average_year_df(
 
 def split_timeseries_to_annual_gdx_frames(
     df: Optional[pd.DataFrame],
-    logs: List[str],
+    logger,
     *,
     bb_parameter_dimensions: Sequence[str],
     time_col: str = "time",
@@ -492,7 +491,7 @@ def split_timeseries_to_annual_gdx_frames(
         dict[year -> DataFrame with columns bb_parameter_dimensions + ['value']]
     """
     if df is None or len(df) == 0:
-        log_status(f"[split_timeseries_to_annual_gdx_frames] No data to split (empty df), dims={list(bb_parameter_dimensions)}.", logs, level="error")
+        logger.log_status(f"[split_timeseries_to_annual_gdx_frames] No data to split (empty df), dims={list(bb_parameter_dimensions)}.", level="error")
         return {}
 
     dims = list(bb_parameter_dimensions)
@@ -500,7 +499,7 @@ def split_timeseries_to_annual_gdx_frames(
     required_cols = set(dims_no_t) | {time_col, year_col, "value"}
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        log_status(f"[split_timeseries_to_annual_gdx_frames] Missing required columns {missing} (dims={list(bb_parameter_dimensions)}).", logs, level="error")
+        logger.log_status(f"[split_timeseries_to_annual_gdx_frames] Missing required columns {missing} (dims={list(bb_parameter_dimensions)}).", level="error")
         return {}
 
     # Work copy without 't' (rebuild it below)
@@ -518,7 +517,7 @@ def split_timeseries_to_annual_gdx_frames(
         
         n_bad = mask.sum()
         if n_bad:
-            log_status(f"Converted {n_bad} NaN/inf values to 0.0 during annual split.", logs, level="info")
+            logger.log_status(f"Converted {n_bad} NaN/inf values to 0.0 during annual split.", level="info")
             work.loc[mask, "value"] = 0.0
 
     # Grouping excludes f and t
@@ -571,7 +570,7 @@ def split_timeseries_to_annual_gdx_frames(
         out[int(yr)] = frame
     
     if not out:
-        log_status(f"[split_timeseries_to_annual_gdx_frames] No annual frames produced after remap/filter (dims={list(bb_parameter_dimensions)}).", logs, level="warn")
+        logger.log_status(f"[split_timeseries_to_annual_gdx_frames] No annual frames produced after remap/filter (dims={list(bb_parameter_dimensions)}).", level="warn")
 
     return out
 

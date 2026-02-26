@@ -149,7 +149,7 @@ class hydro_mingen_limits_MAF2019(BaseProcessor):
                 skiprows=12
             )
         except Exception as e:
-            self.log(f"Error reading file {filename}: {e}", level="warn")
+            self.logger.log_status(f"Error reading file {filename}: {e}", level="warn")
             return None
 
         # Convert Excel column headers (which represent years) from floats to ints.
@@ -192,14 +192,14 @@ class hydro_mingen_limits_MAF2019(BaseProcessor):
         Returns:
             pd.DataFrame: Summary DataFrame with hydro minimum generation limits
         """
-        self.log("Reading input data...")
+        self.logger.log_status("Reading input data...")
         
         # Read the global CSV input file.
         inputfile = os.path.join(self.input_folder, self.input_csv)
         try:
             global_df = pd.read_csv(inputfile)
         except Exception as e:
-            self.log(f"Error reading hydro mingen input CSV '{inputfile}': {e}", level="warn")
+            self.logger.log_status(f"Error reading hydro mingen input CSV '{inputfile}': {e}", level="warn")
             # Return empty DataFrame if input fails
             return pd.DataFrame()
 
@@ -210,7 +210,7 @@ class hydro_mingen_limits_MAF2019(BaseProcessor):
 
         # Prepare the summary DataFrame 
         summary_df = pd.DataFrame()
-        self.log("Processing country level limits...")
+        self.logger.log_status("Processing country level limits...")
 
         # Process each country.
         for country in self.country_codes:
@@ -239,7 +239,7 @@ class hydro_mingen_limits_MAF2019(BaseProcessor):
         hydro_mingen_nodes = summary_df.columns.tolist()
         self.secondary_result = hydro_mingen_nodes
 
-        self.log("Hydro mingen time series built.")
+        self.logger.log_status("Hydro mingen time series built.", level="info")
 
         # Return the main result DataFrame
         return summary_df

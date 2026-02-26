@@ -67,7 +67,6 @@ Data conventions (all output DataFrames)
 
 from pathlib import Path
 import src.data_loader as data_loader
-import src.utils as utils
 import pandas as pd
 
 
@@ -83,7 +82,8 @@ class SourceExcelDataPipeline:
                  scenario_alternative2: str = None,
                  scenario_alternative3: str = None,
                  scenario_alternative4: str = None,
-                 country_codes: list = None):
+                 country_codes: list = None,
+                 logger=None):
         """
         Initialize InputDataPipeline.
 
@@ -109,6 +109,7 @@ class SourceExcelDataPipeline:
         self.scenario_alternative3 = scenario_alternative3
         self.scenario_alternative4 = scenario_alternative4
         self.country_codes = country_codes
+        self.logger = logger
 
         self.df_demanddata = pd.DataFrame()
         self.df_transferdata = pd.DataFrame()
@@ -118,9 +119,7 @@ class SourceExcelDataPipeline:
         self.df_storagedata = pd.DataFrame()
         self.df_fueldata = pd.DataFrame()
         self.df_emissiondata = pd.DataFrame()
-        self.df_userconstraintdata = pd.DataFrame()        
-
-        self.logs = []
+        self.df_userconstraintdata = pd.DataFrame()
 
     def run(self):
         """
@@ -139,51 +138,51 @@ class SourceExcelDataPipeline:
         # unittypedata
         files = self.config['unittypedata_files']
         if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'unittypedata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'unittypedata', self.logs) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'unittypedata')
+            dfs = data_loader.read_input_excels(input_folder, files, 'unittypedata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'unittypedata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logger, 'unittypedata')
                    for df in dfs
                    ]
-            self.df_unittypedata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['generator_id'])
+            self.df_unittypedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['generator_id'])
         else:
-            utils.log_status(
-                f"No Excel files for 'unittypedata_files' defined in the config file",
-                self.logs, level="info"
+            self.logger.log_status(
+                "No Excel files for 'unittypedata_files' defined in the config file",
+                level="info"
             )
 
         # fueldata
         files = self.config['fueldata_files']
         if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'fueldata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'fueldata', self.logs) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'fueldata')
+            dfs = data_loader.read_input_excels(input_folder, files, 'fueldata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'fueldata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logger, 'fueldata')
                    for df in dfs
                    ]
-            self.df_fueldata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['grid'])
+            self.df_fueldata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['grid'])
         else:
-            utils.log_status(
-                f"No Excel files for 'fueldata_files' defined in the config file",
-                self.logs, level="info"
-            )                      
+            self.logger.log_status(
+                "No Excel files for 'fueldata_files' defined in the config file",
+                level="info"
+            )
 
         # emissiondata
         files = self.config['emissiondata_files']
-        if len(files) > 0:        
-            dfs = data_loader.read_input_excels(input_folder, files, 'emissiondata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'emissiondata', self.logs) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logs, 'emissiondata')
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'emissiondata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'emissiondata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logger, 'emissiondata')
                    for df in dfs
                    ]
-            self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['emission'])
+            self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['emission'])
         else:
-            utils.log_status(
-                f"No Excel files for 'emissiondata_files' defined in the config file",
-                self.logs, level="info"
-            )                   
- 
+            self.logger.log_status(
+                "No Excel files for 'emissiondata_files' defined in the config file",
+                level="info"
+            )
+
 
         # --- country-level datasets ---
         exclude_grids = self.config['exclude_grids']
@@ -191,110 +190,110 @@ class SourceExcelDataPipeline:
 
         # demanddata
         files = self.config['demanddata_files']
-        if len(files) > 0:           
-            dfs = data_loader.read_input_excels(input_folder, files, 'demanddata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logs) for df in dfs]
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'demanddata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'grid': exclude_grids}) for df in dfs]
-            dfs = [data_loader.build_node_column(df, self.logs) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]            
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
-                                   self.logs, 'demanddata')
+            dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+                                   self.logger, 'demanddata')
                    for df in dfs
                    ]
-            self.df_demanddata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['country', 'grid', 'node'])
+            self.df_demanddata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
             self.df_demanddata = data_loader.filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])
         else:
-            utils.log_status(
-                f"No Excel files for 'demanddata_files' defined in the config file",
-                self.logs, level="info"
-            )                
+            self.logger.log_status(
+                "No Excel files for 'demanddata_files' defined in the config file",
+                level="info"
+            )
 
         # storagedata
         files = self.config['storagedata_files']
-        if len(files) > 0:            
-            dfs = data_loader.read_input_excels(input_folder, files, 'storagedata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'storagedata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'storagedata', self.logs) for df in dfs]
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'storagedata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'storagedata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'storagedata', self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'storagedata', {'grid': exclude_grids}) for df in dfs]
-            dfs = [data_loader.build_node_column(df, self.logs) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'storagedata', {'node': exclude_nodes}) for df in dfs]            
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
-                                   self.logs, 'storagedata')
+            dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'storagedata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+                                   self.logger, 'storagedata')
                    for df in dfs
                    ]
-            self.df_storagedata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['country', 'grid', 'node'])
+            self.df_storagedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
         else:
-            utils.log_status(
-                f"No Excel files for 'storagedata_files' defined in the config file",
-                self.logs, level="info"
-            )        
+            self.logger.log_status(
+                "No Excel files for 'storagedata_files' defined in the config file",
+                level="info"
+            )
 
         # unitdata
         files = self.config['unitdata_files']
-        if len(files) > 0:           
-            dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logs) for df in dfs]     
-            dfs = [data_loader.build_unittype_unit_column(df, self.df_unittypedata, self.logs) for df in dfs]           
-            dfs = [data_loader.build_unit_grid_and_node_columns(df, self.df_unittypedata, self.logs) for df in dfs]            
-            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logs=self.logs) for d in dfs]     
-            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes, df_name="unitdata", logs=self.logs) for d in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
-                                   self.logs, 'unitdata')
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logger) for df in dfs]
+            dfs = [data_loader.build_unittype_unit_column(df, self.df_unittypedata, self.logger) for df in dfs]
+            dfs = [data_loader.build_unit_grid_and_node_columns(df, self.df_unittypedata, self.logger) for df in dfs]
+            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logger=self.logger) for d in dfs]
+            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes, df_name="unitdata", logger=self.logger) for d in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+                                   self.logger, 'unitdata')
                    for df in dfs
                    ]
-            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['country', 'generator_id', 'unit_name_prefix'])
+            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'generator_id', 'unit_name_prefix'])
         else:
-            utils.log_status(
-                f"No Excel files for 'unitdata_files' defined in the config file",
-                self.logs, level="info"
-            )                    
-         
+            self.logger.log_status(
+                "No Excel files for 'unitdata_files' defined in the config file",
+                level="info"
+            )
+
         # transferdata
         files = self.config['transferdata_files']
-        if len(files) > 0:         
-            dfs = data_loader.read_input_excels(input_folder, files, 'transferdata', self.logs)
-            dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logs) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'transferdata', self.logs) for df in dfs]       
-            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'grid': exclude_grids}) for df in dfs]        
-            dfs = [data_loader.build_from_to_columns(df, self.logs) for df in dfs]               
-            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]  
-            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]  
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from': self.country_codes}, 
-                                   self.logs, 'transferdata')
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'transferdata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'transferdata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from': self.country_codes},
+                                   self.logger, 'transferdata')
                    for df in dfs
                    ]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'to': self.country_codes}, 
-                                   self.logs, 'transferdata')
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'to': self.country_codes},
+                                   self.logger, 'transferdata')
                    for df in dfs
-                   ]     
-            self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logs, key_columns=['from', 'from_suffix', 'to', 'to_suffix', 'grid'])
+                   ]
+            self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['from', 'from_suffix', 'to', 'to_suffix', 'grid'])
         else:
-            utils.log_status(
-                f"No Excel files for 'transferdata_files' defined in the config file",
-                self.logs, level="info"
+            self.logger.log_status(
+                "No Excel files for 'transferdata_files' defined in the config file",
+                level="info"
             )
 
         # --- custom datasets ---
         # userconstraintdata
         files = self.config['userconstraintdata_files']
-        if len(files) > 0:         
-            dfs = data_loader.read_input_excels(input_folder, files, 'userconstraintdata', self.logs,)
-            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logs) for df in dfs]    
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes}, 
-                                   self.logs, 'userconstraintdata')
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'userconstraintdata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+                                   self.logger, 'userconstraintdata')
                    for df in dfs
-                   ]   
+                   ]
             dfs = [df.drop(columns=['scenario', 'year', 'country']) for df in dfs]
             self.df_userconstraintdata = data_loader.merge_row_by_row(
-                                            dfs, self.logs, 
+                                            dfs, self.logger,
                                             key_columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter']
                                          )
         else:
-            utils.log_status(
-                f"No Excel files for 'userconstraintdata_files' defined in the config file",
-                self.logs, level="info"
-            )      
+            self.logger.log_status(
+                "No Excel files for 'userconstraintdata_files' defined in the config file",
+                level="info"
+            )
 
 
