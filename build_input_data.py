@@ -244,7 +244,7 @@ def main(input_folder: Path, config_file: Path):
 
         # Define log path
         log_path = output_folder / "summary.log"
-        logger.log_status(f"Writing the log to {log_path}", level="run", add_empty_line_before=True)
+        logger.log_status(f"Writing the log to {log_path}", level="none", add_empty_line_before=True)
 
         # If previous log exist, add its contents to a "Previous logs" section
         if log_path.exists():

@@ -654,12 +654,6 @@ def merge_unittypedata_into_unitdata(
     ]
 
     if not type_cols:
-        if logger is not None:
-            logger.log_status(
-                "merge_unittypedata_into_unitdata: no technical parameter columns "
-                "to transfer from df_unittypedata.",
-                level="warn",
-            )
         return df_unitdata
 
     # One row per generator_id (first wins)
@@ -685,13 +679,6 @@ def merge_unittypedata_into_unitdata(
             cells_filled += int(na_mask.sum())
             merged.loc[na_mask, orig_col] = merged.loc[na_mask, type_col]
         merged.drop(columns=[type_col], inplace=True)
-
-    if logger is not None and cells_filled > 0:
-        logger.log_status(
-            f"merge_unittypedata_into_unitdata: filled {cells_filled} NA cell(s) "
-            "in df_unitdata with type-level defaults from df_unittypedata.",
-            level="none",
-        )
 
     return merged
 

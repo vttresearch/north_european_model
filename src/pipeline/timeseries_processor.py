@@ -154,7 +154,7 @@ class ProcessorRunner:
         the processor code as "seen" at this version. This prevents unnecessary
         reruns when the processor hasn't changed.
 
-        Note: This is separate from CacheManager._validate_processor_code_changes()
+        Note: This is separate from CacheManager._detect_processor_code_changes()
         which only READS hashes to determine what needs to run. The update happens
         here to ensure we only mark processors as "up-to-date" after they've
         actually executed successfully.
