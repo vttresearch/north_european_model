@@ -1647,63 +1647,44 @@ class BuildInputExcel:
 
 
 # ------------------------------------------------------
-# Function to compile domains 
-# ------------------------------------------------------
-
-    def compile_domain(
-        self, 
-        dfs: list[pd.DataFrame], 
-        domain: str
-        ) -> pd.DataFrame:
-        """   
-        Compiles unique domain values from a specified column across multiple DataFrames.
-
-        Note: case-insensitive 
-        
-        Parameters:
-        -----------
-        dfs : list of pandas.DataFrame
-            List of DataFrames from which to extract domain values.
-        domain : str
-            The column name representing the domain to compile.
-        """
-        # Initialize an empty list to collect domain values
-        all_domains = []
-
-        # Iterate over each DataFrame in the list
-        for df in dfs:
-            if domain in df.columns:
-                # Extend the list with values from the specified domain column
-                all_domains.extend(df[domain].dropna().tolist())
-
-        # return empty df, if no domains found
-        if not all_domains:
-            return pd.DataFrame()
-
-        else:
-            # Convert to lowercase for comparison, but keep original case for the first occurrence
-            domain_mapping = {}
-            for d in all_domains:
-                if d is not None and isinstance(d, str):
-                    lower_d = d.lower()
-                    if lower_d not in domain_mapping:
-                        domain_mapping[lower_d] = d
-
-            # Use values from the mapping (first occurrence of each case-insensitive unique domain)
-            unique_domains = list(domain_mapping.values())
-
-            # Create a new DataFrame where each unique domain has a corresponding 'yes'
-            compiled_df = pd.DataFrame({domain: unique_domains})
-
-            # Sort the DataFrame alphabetically by the domain column in a case-insensitive manner
-            compiled_df = compiled_df.sort_values(by=domain, key=lambda x: x.str.lower()).reset_index(drop=True)
-
-            return compiled_df
-
-
-# ------------------------------------------------------
 # Utility functions
 # ------------------------------------------------------
+
+    def compile_domain_df(
+        self, 
+        values: list, 
+        domain: str
+        ) -> pd.DataFrame:
+        """
+        Produce the final single-column domain DataFrame ready to write to the Backbone input Excel.
+
+        Deduplicates case-insensitively (first occurrence wins) and sorts alphabetically.
+        This is the last step before output -- call this once all sources have been gathered
+        into a flat list.
+
+        Parameters:
+        - values: list of domain values (strings) collected from all sources
+        - domain: name for the output column
+
+        Returns:
+        - pd.DataFrame with one column named `domain`, or empty DataFrame if no values
+        """
+        if not values:
+            return pd.DataFrame()
+
+        domain_mapping = {}
+        for d in values:
+            if isinstance(d, str):
+                lower_d = d.lower()
+                if lower_d not in domain_mapping:
+                    domain_mapping[lower_d] = d
+
+        if not domain_mapping:
+            return pd.DataFrame()
+
+        result = pd.DataFrame({domain: list(domain_mapping.values())})
+        result = result.sort_values(by=domain, key=lambda x: x.str.lower()).reset_index(drop=True)
+        return result
 
 
     def create_fake_MultiIndex(
@@ -2057,7 +2038,7 @@ class BuildInputExcel:
                 )
                 return
 
-        # --- Create input data tables to DataFrames ---
+        # --- Convert input data tables to DataFrames ---
 
         # Create p_gnu_io
         p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
@@ -2120,40 +2101,67 @@ class BuildInputExcel:
         gnGroup = self.create_gnGroup(p_nEmission, ts_emissionPriceChange, p_gnu_io_flat, unitUnittype, 
                                       self.df_unittypedata)
 
-        # Compile domains
-        ts_grids = pd.DataFrame()
+
+        # --- Compile domains ---
+
+        # grid
+        grid_vals = []
+        for df in [p_gnu_io_flat, p_gnn_flat, p_gn_flat]:
+            if 'grid' in df.columns:
+                grid_vals.extend(df['grid'].dropna().tolist())
         if self.ts_domains is not None and 'grid' in self.ts_domains:
-            ts_grids = pd.DataFrame(self.ts_domains['grid'], columns=['grid'])
-        grid = self.compile_domain([p_gnu_io_flat, p_gnn_flat, p_gn_flat, ts_grids], 'grid')
+            grid_vals.extend(self.ts_domains['grid'])
+        grid = self.compile_domain_df(grid_vals, 'grid')
 
-        ts_nodes = pd.DataFrame()
+        # node
+        node_vals = []
+        for df in [p_gnu_io_flat, p_gn_flat]:
+            if 'node' in df.columns:
+                node_vals.extend(df['node'].dropna().tolist())
+        for col in ['from_node', 'to_node']:
+            if col in p_gnn_flat.columns:
+                node_vals.extend(p_gnn_flat[col].dropna().tolist())
         if self.ts_domains is not None and 'node' in self.ts_domains:
-            ts_nodes = pd.DataFrame(self.ts_domains['node'], columns=['node'])    
-        # The current code cannot compile domains from p_gnn because it has columns from_node, to_node, 
-        # but the same nodes should be available in other tables
-        node = self.compile_domain([p_gnu_io_flat, p_gn_flat, ts_nodes], 'node')  
+            node_vals.extend(self.ts_domains['node'])
+        node = self.compile_domain_df(node_vals, 'node')
 
-        ts_flows = pd.DataFrame()
+        # flow
+        flow_vals = flowUnit['flow'].dropna().tolist() if 'flow' in flowUnit.columns else []
         if self.ts_domains is not None and 'flow' in self.ts_domains:
-                ts_flows = pd.DataFrame(self.ts_domains['flow'], columns=['flow'])  
-        flow = self.compile_domain([flowUnit, ts_flows], 'flow')
+            flow_vals.extend(self.ts_domains['flow'])
+        flow = self.compile_domain_df(flow_vals, 'flow')
 
-        ts_groups = pd.DataFrame()
+        # group
+        group_vals = []
+        for df in [p_userconstraint, ts_emissionPriceChange, gnGroup]:
+            if 'group' in df.columns:
+                group_vals.extend(df['group'].dropna().tolist())
         if self.ts_domains is not None and 'group' in self.ts_domains:
-            ts_groups = pd.DataFrame(self.ts_domains['group'], columns=['group'])  
-        group = self.compile_domain([p_userconstraint, ts_emissionPriceChange, gnGroup, ts_groups], 'group')
+            group_vals.extend(self.ts_domains['group'])
+        group = self.compile_domain_df(group_vals, 'group')
 
-        unit = self.compile_domain([unitUnittype], 'unit')
-        unittype = self.compile_domain([unitUnittype], 'unittype')
-        emission = self.compile_domain([ts_emissionPriceChange, p_nEmission], 'emission')
+        # unit, unittype
+        unit = self.compile_domain_df(unitUnittype['unit'].dropna().tolist(), 'unit')
+        unittype = self.compile_domain_df(unitUnittype['unittype'].dropna().tolist(), 'unittype')
+
+        # emission
+        emission_vals = []
+        for df in [ts_emissionPriceChange, p_nEmission]:
+            if 'emission' in df.columns:
+                emission_vals.extend(df['emission'].dropna().tolist())
+        emission = self.compile_domain_df(emission_vals, 'emission')
+
+        # restype
         restype = pd.DataFrame()
 
-        # scenario tags to an excel sheet
+        # --- scenario tags to an excel sheet ---
+
         # Alternative columns are added only when present; column names follow the
         # pattern alternative, alternative2, alternative3, alternative4.
         _alt_col_names = ['alternative', 'alternative2', 'alternative3', 'alternative4']
         _n_alts = len(self.scen_tags) - 2
         scen_tags_df = pd.DataFrame([self.scen_tags], columns=['scenario', 'year'] + _alt_col_names[:_n_alts])
+
 
         # --- Write DataFrames to excel ---
 

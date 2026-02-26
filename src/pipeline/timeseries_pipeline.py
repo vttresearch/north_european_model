@@ -10,7 +10,7 @@ import pandas as pd
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_processor import ProcessorRunner
-from src.utils import collect_domains, collect_domain_pairs
+import src.utils as utils 
 from src.GDX_exchange import write_BB_gdx, update_import_timeseries_inc
 import src.json_exchange as json_exchange
 
@@ -492,8 +492,8 @@ class TimeseriesPipeline:
             df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
             # Collect domain info
-            other_domains = collect_domains(df_other_demands, ['grid', 'node'])
-            other_domain_pairs = collect_domain_pairs(df_other_demands, [['grid', 'node']])
+            other_domains = utils.collect_domains_for_cache(df_other_demands, ['grid', 'node'])
+            other_domain_pairs = utils.collect_domain_pairs_for_cache(df_other_demands, [['grid', 'node']])
 
             for dom, vals in other_domains.items():
                 all_ts_domains.setdefault(dom, set()).update(vals)

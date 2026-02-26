@@ -246,8 +246,8 @@ class ProcessorRunner:
         # Collect domains and domain pairs
         domains = ['grid', 'node', 'flow', 'group']
         domain_pairs = [['grid', 'node'], ['flow', 'node']]
-        local_ts_domains = utils.collect_domains(main_result_bb, domains)
-        local_ts_domain_pairs = utils.collect_domain_pairs(main_result_bb, domain_pairs)
+        local_ts_domains = utils.collect_domains_for_cache(main_result_bb, domains)
+        local_ts_domain_pairs = utils.collect_domain_pairs_for_cache(main_result_bb, domain_pairs)
 
         # Save per-processor domain data for copy optimization
         domain_cache_data = {

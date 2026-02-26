@@ -79,9 +79,14 @@ def fill_numeric_na(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def collect_domains(df, possible_domains: list[str]) -> dict[str, list]:
+def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
     """
-    Collect unique values for each domain column in the given list.
+    Collect domain values from a processor result for JSON caching and cross-processor accumulation.
+
+    Produces a dict that serializes directly to JSON and can be merged across processors. 
+    
+    Final compilation and normalization of domain names happens downstream when the Excel output 
+    is assembled.
 
     Parameters:
     - df: pandas.DataFrame containing possible domain columns
@@ -101,10 +106,14 @@ def collect_domains(df, possible_domains: list[str]) -> dict[str, list]:
     return result
 
 
-def collect_domain_pairs(df, domain_pairs: list[list[str]]) -> dict[str, list[tuple]]:
+def collect_domain_pairs_for_cache(df, domain_pairs: list[list[str]]) -> dict[str, list[tuple]]:
     """
-    Extract unique domain value pairs from the DataFrame for each domain pair,
-    and return a dictionary of pair_key -> list of (value1, value2) tuples.
+    Collect domain value pairs from a processor result for JSON caching and cross-processor accumulation.
+
+    Produces a dict that serializes directly to JSON and can be merged across processors. 
+    
+    Possible domain pairs is additional information needed in addition to domains, to avoid
+    generating input excel data for non-existent domain pairs.
 
     Parameters:
     - df: pandas.DataFrame containing the domain columns
