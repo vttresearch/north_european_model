@@ -26,6 +26,10 @@ or ``ProcessorRunner`` will not be able to normalize the data reliably:
   ``'NaN'`` is also handled.  Do **not** use sentinel values such as ``-9999``
   to represent missing data.
 
+If ``main_result`` is not a ``pd.DataFrame``, or is empty, ``ProcessorRunner``
+logs a warning and continues with an empty DataFrame -- no GDX is written for
+that processor.
+
 Normalization applied by ProcessorRunner (before BB conversion)
 ---------------------------------------------------------------
 After ``run_processor()`` returns, ``ProcessorRunner`` applies the same
@@ -230,7 +234,18 @@ class ProcessorRunner:
         module_spec.loader.exec_module(module)
 
         if not hasattr(module, processor_name):
-            raise AttributeError(f"Processor module {processor_name} is missing class {processor_name}.")
+            self.logger.log_status(
+                f"Processor module '{processor_name}' is missing a class named '{processor_name}'. "
+                f"No GDX output will be written.",
+                level="warn",
+            )
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunnerResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
 
         ProcessorClass = getattr(module, processor_name)
 
@@ -288,8 +303,22 @@ class ProcessorRunner:
         }
 
         # Instantiate and run processor
-        processor_instance = ProcessorClass(**processor_kwargs)
-        processor_result = processor_instance.run_processor()
+        try:
+            processor_instance = ProcessorClass(**processor_kwargs)
+            processor_result = processor_instance.run_processor()
+        except Exception as e:
+            self.logger.log_status(
+                f"Processor '{processor_name}' raised an exception during execution: {e}. "
+                f"No GDX output will be written.",
+                level="warn",
+            )
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunnerResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
 
         # Extract results from ProcessorResult dataclass
         main_result = processor_result.main_result
@@ -297,11 +326,14 @@ class ProcessorRunner:
 
         # Guard: processors must return a DataFrame (see module docstring)
         if not isinstance(main_result, pd.DataFrame):
-            raise TypeError(
+            self.logger.log_status(
                 f"Processor '{processor_name}' returned main_result of type "
                 f"'{type(main_result).__name__}', expected pd.DataFrame.  "
-                f"Check that run_processor() returns a ProcessorResult."
+                f"Check that run_processor() returns a ProcessorResult.  "
+                f"No GDX output will be written.",
+                level="warn",
             )
+            main_result = pd.DataFrame()
         if main_result.empty:
             self.logger.log_status(
                 f"Processor '{processor_name}' returned an empty DataFrame.  "
@@ -315,61 +347,74 @@ class ProcessorRunner:
         main_result = utils.fill_numeric_na(utils.standardize_df_dtypes(main_result))
         main_result = main_result.round(rounding_precision)
 
-        # Convert to BB format
-        main_result_bb = GDX_exchange.prepare_BB_df(
-            main_result, start_date, country_codes, **bb_conversion_kwargs
-        )
+        main_result_bb = pd.DataFrame()
+        try:
+            # Convert to BB format
+            main_result_bb = GDX_exchange.prepare_BB_df(
+                main_result, start_date, country_codes, **bb_conversion_kwargs
+            )
 
-        # Write trimmed results (wide format) to CSV if requested
-        if write_csv_files:
-            if process_only_single_year:
-                csv_file = f"{bb_parameter}_{gdx_name_suffix}.csv"
-            else:
-                csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
+            # Write trimmed results (wide format) to CSV if requested
+            if write_csv_files:
+                if process_only_single_year:
+                    csv_file = f"{bb_parameter}_{gdx_name_suffix}.csv"
+                else:
+                    csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
 
-            csv_path = os.path.join(self.output_folder, csv_file)
-            main_result.to_csv(csv_path)
-            self.logger.log_status(f"Summary CSV written to '{csv_path}'", level="info")
+                csv_path = os.path.join(self.output_folder, csv_file)
+                main_result.to_csv(csv_path)
+                self.logger.log_status(f"Summary CSV written to '{csv_path}'", level="info")
 
-        # Write results (BB format) to annual GDX files
-        self.logger.log_status("Preparing annual GDX files...")
-        GDX_exchange.write_BB_gdx_annual(main_result_bb, self.output_folder, self.logger, **bb_conversion_kwargs)
-        GDX_exchange.update_import_timeseries_inc(self.output_folder, **bb_conversion_kwargs)
+            # Write results (BB format) to annual GDX files
+            self.logger.log_status("Preparing annual GDX files...")
+            GDX_exchange.write_BB_gdx_annual(main_result_bb, self.output_folder, self.logger, **bb_conversion_kwargs)
+            GDX_exchange.update_import_timeseries_inc(self.output_folder, **bb_conversion_kwargs)
 
+        except Exception as e:
+            self.logger.log_status(
+                f"Processor '{processor_name}': BB conversion or GDX writing failed: {e}",
+                level="warn",
+            )
 
         # --- Average year processing ---
         if spec.get("calculate_average_year", False):
-            self.logger.log_status("Calculating average year GDX file...")
-            # Calculate average year
-            avg_df = GDX_exchange.calculate_average_year_df(
-                main_result_bb,
-                round_precision=rounding_precision,
-                **bb_conversion_kwargs
-            )
+            try:
+                self.logger.log_status("Calculating average year GDX file...")
+                avg_df = GDX_exchange.calculate_average_year_df(
+                    main_result_bb,
+                    round_precision=rounding_precision,
+                    **bb_conversion_kwargs
+                )
 
-            # Write CSV if requested
-            if write_csv_files:
-                self.logger.log_status("Writing average year csv file...")
-                if process_only_single_year:
-                    avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year.csv"
-                else:
-                    avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year_from_{start_date.year}-{end_date.year}.csv"
+                # Write CSV if requested
+                if write_csv_files:
+                    self.logger.log_status("Writing average year csv file...")
+                    if process_only_single_year:
+                        avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year.csv"
+                    else:
+                        avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year_from_{start_date.year}-{end_date.year}.csv"
 
-                avg_csv_path = os.path.join(self.output_folder, avg_csv)
-                avg_df.to_csv(avg_csv_path)
+                    avg_csv_path = os.path.join(self.output_folder, avg_csv)
+                    avg_df.to_csv(avg_csv_path)
 
-            # Write average year GDX file
-            self.logger.log_status("Writing average year GDX file...")
-            forecast_gdx_path = os.path.join(
-                self.output_folder,
-                f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
-            )
-            GDX_exchange.write_BB_gdx(avg_df, forecast_gdx_path, self.logger, **bb_conversion_kwargs)
+                # Write average year GDX file
+                self.logger.log_status("Writing average year GDX file...")
+                forecast_gdx_path = os.path.join(
+                    self.output_folder,
+                    f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
+                )
+                GDX_exchange.write_BB_gdx(avg_df, forecast_gdx_path, self.logger, **bb_conversion_kwargs)
 
-            # Update import file
-            GDX_exchange.update_import_timeseries_inc(
-                self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs
-            )
+                # Update import file
+                GDX_exchange.update_import_timeseries_inc(
+                    self.output_folder, file_suffix="forecasts", **bb_conversion_kwargs
+                )
+
+            except Exception as e:
+                self.logger.log_status(
+                    f"Processor '{processor_name}': Average year calculation or GDX writing failed: {e}",
+                    level="warn",
+                )
 
         # --- Post-processing activities ---
         # Save secondary result to cache

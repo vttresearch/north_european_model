@@ -62,6 +62,15 @@ src_files/
 The workflow tries to keep up certain standards and shared assumptions. At the moment we have following:
 - ./src/config_reader.py ensures that all config files parameters exist and have valid default assumptions.
 
+## Error handling policy
+
+The pipeline distinguishes two phases based on whether the logger has been initialized:
+
+- **Before logger initialization** (config reading, argument parsing): raise exceptions and abort. There is no logger to report to and no meaningful partial run to continue.
+- **After logger initialization** (all pipeline phases): do not raise. Log a warning via `logger.log_status(message, level="warn")` and continue with a safe default (empty DataFrame, skipped output file, etc.). The goal is to finish the run and deliver a complete log so the user can diagnose all problems at once rather than fixing them one by one.
+
+`ProcessorRunner` in `timeseries_processor.py` enforces this for the timeseries phase: exceptions from processor `__init__`, `run_processor()`, and GDX writing are all caught and logged as warnings.
+
 ## Conventions
 
 - Follow local style in each file.
