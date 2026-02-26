@@ -79,6 +79,24 @@ def fill_numeric_na(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def fill_all_na(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill all NA values in a DataFrame:
+      - Numeric columns (Float64, int, etc.): fill with 0
+      - All other columns (object, string, …): fill with ''
+
+    Use this at pipeline boundaries to eliminate pd.NA from output DataFrames
+    so that downstream code can use simple value comparisons without NA guards.
+    """
+    df = df.copy()
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].fillna(0)
+        else:
+            df[col] = df[col].fillna("")
+    return df
+
+
 def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
     """
     Collect domain values from a processor result for JSON caching and cross-processor accumulation.

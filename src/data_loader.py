@@ -601,6 +601,101 @@ def build_unittype_unit_column(
     return df
 
 
+def merge_unittypedata_into_unitdata(
+    df_unitdata: pd.DataFrame,
+    df_unittypedata: pd.DataFrame,
+    logger=None,
+) -> pd.DataFrame:
+    """
+    Merge type-level technical parameters from df_unittypedata into df_unitdata.
+
+    df_unitdata values take priority: type-level values only fill cells that are
+    NA in df_unitdata.  Columns already handled by earlier enrichment steps and
+    meta/identity columns are excluded from the transfer.
+
+    Excluded from transfer
+    ----------------------
+    - 'generator_id'  — join key (already in df_unitdata)
+    - 'unittype'      — already added by build_unittype_unit_column
+    - 'grid_*'        — already added by build_unit_grid_and_node_columns
+    - 'node_*'        — already added by build_unit_grid_and_node_columns
+    - meta columns    — scenario, year, country, unit_name_prefix, method,
+                        _source_file, _source_sheet
+
+    Parameters
+    ----------
+    df_unitdata : pd.DataFrame
+        Unit-level data, already enriched with unittype, grid_*, and node_* columns.
+    df_unittypedata : pd.DataFrame
+        Generator-type-level data keyed by generator_id.
+    logger : IterationLogger, optional
+        Logger instance for status messages.
+
+    Returns
+    -------
+    pd.DataFrame
+        df_unitdata enriched with type-level parameter defaults wherever
+        df_unitdata had NA.
+    """
+    if df_unitdata.empty or df_unittypedata.empty:
+        return df_unitdata
+
+    _EXCLUDE = {
+        'generator_id', 'unittype',
+        'scenario', 'year', 'country', 'unit_name_prefix',
+        'method', '_source_file', '_source_sheet',
+    }
+
+    type_cols = [
+        col for col in df_unittypedata.columns
+        if col not in _EXCLUDE
+        and not col.startswith('grid_')
+        and not col.startswith('node_')
+    ]
+
+    if not type_cols:
+        if logger is not None:
+            logger.log_status(
+                "merge_unittypedata_into_unitdata: no technical parameter columns "
+                "to transfer from df_unittypedata.",
+                level="warn",
+            )
+        return df_unitdata
+
+    # One row per generator_id (first wins)
+    type_lookup = (
+        df_unittypedata[['generator_id'] + type_cols]
+        .drop_duplicates(subset=['generator_id'], keep='first')
+    )
+
+    # Left join; overlapping columns get a '_type' suffix on the type side
+    merged = df_unitdata.merge(
+        type_lookup,
+        on='generator_id',
+        how='left',
+        suffixes=('', '_type'),
+    )
+
+    # For each overlapping column: fill NA in the original with the type value
+    cells_filled = 0
+    for type_col in [c for c in merged.columns if c.endswith('_type')]:
+        orig_col = type_col[:-5]  # strip '_type' (5 chars)
+        if orig_col in merged.columns:
+            na_mask = merged[orig_col].isna()
+            cells_filled += int(na_mask.sum())
+            merged.loc[na_mask, orig_col] = merged.loc[na_mask, type_col]
+        merged.drop(columns=[type_col], inplace=True)
+
+    if logger is not None and cells_filled > 0:
+        logger.log_status(
+            f"merge_unittypedata_into_unitdata: filled {cells_filled} NA cell(s) "
+            "in df_unitdata with type-level defaults from df_unittypedata.",
+            level="none",
+        )
+
+    return merged
+
+
 def apply_whitelist(
     df: pd.DataFrame,
     filters: Optional[Dict[str, Union[str, int, List[Union[str, int]]]]],

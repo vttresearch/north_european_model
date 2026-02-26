@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Any, Optional
+from typing import Optional
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -11,6 +11,104 @@ from src.pipeline.bb_excel_context import BBExcelBuildContext
 
 
 class BuildInputExcel:
+
+    PARAM_GNU = [
+        'isActive',
+        'capacity',
+        'conversionCoeff',
+        'useInitialGeneration',
+        'initialGeneration',
+        'maxRampUp',
+        'maxRampDown',
+        'rampPenalty',
+        'rampUpPenalty',
+        'rampDownPenalty',
+        'rampUpCost',
+        'rampDownCost',
+        'upperLimitCapacityRatio',
+        'unitSize',
+        'invCosts',
+        'annuityFactor',
+        'invEnergyCost',
+        'fomCosts',
+        'vomCosts',
+        'inertia',
+        'unitSizeMVA',
+        'availabilityCapacityMargin',
+        'startCostCold',
+        'startCostWarm',
+        'startCostHot',
+        'startFuelConsCold',
+        'startFuelConsWarm',
+        'startFuelConsHot',
+        'shutdownCost',
+        'delay',
+        'cb',
+        'cv',
+    ]
+
+    PARAM_UNIT = [
+        'isActive',
+        'isSource',
+        'isSink',
+        'fixedFlow',
+        'availability',
+        'unitCount',
+        'useInitialOnlineStatus',
+        'initialOnlineStatus',
+        'startColdAfterXhours',
+        'startWarmAfterXhours',
+        'rampSpeedToMinLoad',
+        'rampSpeedFromMinLoad',
+        'minOperationHours',
+        'minShutdownHours',
+        'eff00',
+        'eff01',
+        'opFirstCross',
+        'op00',
+        'op01',
+        'useTimeseries',
+        'useTimeseriesAvailability',
+        'investMIP',
+        'maxUnitCount',
+        'minUnitCount',
+        'becomeAvailable',
+        'becomeUnavailable',
+    ]
+
+    PARAM_GNN = [
+        'transferCap',
+        'availability',
+        'variableTransCost',
+        'transferLoss',
+        'rampLimit',
+        'diffCoeff',
+        'diffLosses',
+        'transferCapInvLimit',
+        'investMIP',
+        'invCost',
+        'annuityFactor',
+    ]
+
+    PARAM_GN = [
+        'isActive',
+        'nodeBalance',
+        'usePrice',
+        'energyStoredPerUnitOfState',
+        'selfDischargeLoss',
+        'boundStart',
+        'boundStartOfSamples',
+        'boundStartAndEnd',
+        'boundStartToEnd',
+        'boundEnd',
+        'boundEndOfSamples',
+        'boundAll',
+        'boundSumOverInterval',
+        'capacityMargin',
+        'storageValueUseTimeSeries',
+        'influx',
+    ]
+
     def __init__(
         self,
         context: BBExcelBuildContext,
@@ -27,7 +125,6 @@ class BuildInputExcel:
         # From InputDataPipeline
         self.source_data = context.source_data
         # Global
-        self.df_unittypedata = self.source_data.df_unittypedata
         self.df_fueldata =     self.source_data.df_fueldata
         self.df_emissiondata = self.source_data.df_emissiondata
         # Country specific
@@ -78,113 +175,54 @@ class BuildInputExcel:
 # ------------------------------------------------------
 
     def create_p_gnu_io(
-        self, 
-        df_unittypedata: pd.DataFrame, 
+        self,
         df_unitdata: pd.DataFrame
         ) -> pd.DataFrame:
         """
         Creates a DataFrame representing unit input/output connections with parameters.
 
-        This method processes unit data and their type specifications to build a relationship
-        table between grids, nodes and units, with associated parameters.
+        This method processes the merged df_unitdata (which already contains type-level
+        defaults from merge_unittypedata_into_unitdata) to build a relationship table
+        between grids, nodes and units, with associated parameters.
 
-        Removes zeroes
+        Removes zeroes.
 
         Parameters:
         -----------
-        df_unittypedata : DataFrame
-            Contains technical specifications for different unittypes (indexed by generator_id)
-
         df_unitdata : DataFrame
-            Contains specific unit instances with capacities and country locations
-            Must include 'generator_id', and 'unit' columns
-            Must include grids (grid_input1, grid_output1, etc.)
-            Must include matching nodes (node_input1, node_output1, etc.)
+            Merged unit data. Must include 'generator_id' and 'unit' columns,
+            grid_input1/grid_output1/... columns, and node_input1/node_output1/...
+            columns (all added by build_unit_grid_and_node_columns).
+            Type-level parameter defaults are pre-merged via
+            merge_unittypedata_into_unitdata().
 
         Returns:
         --------
         DataFrame
             A multi-index DataFrame with dimensions (grid, node, unit, input_output)
             and parameter columns (capacity, conversionCoeff, vomCosts, etc.)
-
-        Process:
-        --------
-        For each unit in df_unitdata:
-            - Match with its technical specifications from df_unittypedata
-            - For each defined input/output connection:
-              - build base row
-              - Calculate parameter values, prioritizing unit-specific values over type defaults
-            - Skip connections with undefined generator_id
-
         """
-        if df_unittypedata.empty or df_unitdata.empty:
+        if df_unitdata.empty:
             return pd.DataFrame()
 
         # dimension and parameter columns
         dimensions = ['grid', 'node', 'unit', 'input_output']
-        # Define param_gnu as a dictionary {param: def_value}
-        param_gnu = [
-            'isActive',
-            'capacity',
-            'conversionCoeff',
-            'useInitialGeneration',
-            'initialGeneration',
-            'maxRampUp',
-            'maxRampDown',
-            'rampPenalty',
-            'rampUpPenalty',
-            'rampDownPenalty',
-            'rampUpCost',
-            'rampDownCost',
-            'upperLimitCapacityRatio',
-            'unitSize',
-            'invCosts',
-            'annuityFactor',
-            'invEnergyCost',
-            'fomCosts',
-            'vomCosts',
-            'inertia',
-            'unitSizeMVA',
-            'availabilityCapacityMargin',
-            'startCostCold',
-            'startCostWarm',
-            'startCostHot',
-            'startFuelConsCold',
-            'startFuelConsWarm',
-            'startFuelConsHot',
-            'shutdownCost',
-            'delay',
-            'cb',
-            'cv'
-        ]
+        param_gnu = self.PARAM_GNU
 
-        # Non-zero default values. Zero assumed for all others. 
-        defaults = {'isActive': 1,
-                    'conversionCoeff': 1
-                    }
-
-        # List to collect the new rows 
+        # List to collect the new rows
         rows = []
 
-        # Process each row in the capacities DataFrame.
+        # Process each row in the merged df_unitdata.
         for _, cap_row in df_unitdata.iterrows():
 
-            # Fetch generator_id and unit name
-            generator_id = cap_row['generator_id']
+            # Fetch unit name
             unit = cap_row['unit']
 
-            # Find the technical specifications for this generator type
-            tech_matches = df_unittypedata.loc[df_unittypedata['generator_id'] == generator_id]
-            if tech_matches.empty:
-                self.logger.log_status(f"Missing tech data for generator_id: '{generator_id}', unit: '{unit}', not writing the p_gnu_io data. "
-                            "Check spelling and files.'", level="warn")
-                continue
-            tech_row = tech_matches.iloc[0]
-
-            # Identify all defined input/output connections for this generator type (grid_input1, grid_output1, ...)
+            # Identify all defined input/output connections for this unit.
+            # grid_* columns were added to df_unitdata by build_unit_grid_and_node_columns.
             put_candidates = ['input1', 'input2', 'input3', 'input4', 'input5',
                               'output1', 'output2', 'output3', 'output4', 'output5']
-            available_puts = [put for put in put_candidates if f'grid_{put}' in tech_row.index]
+            available_puts = [put for put in put_candidates if f'grid_{put}' in cap_row.index]
 
             # Process each available input/output connection
             for put in available_puts:
@@ -210,7 +248,7 @@ class BuildInputExcel:
                 if pd.isna(grid) or grid in ("", "-"):
                     continue
 
-                # Construct base components needed for every row 
+                # Construct base components needed for every row
                 base_row = {
                     "grid": grid,
                     "node": node,
@@ -218,10 +256,11 @@ class BuildInputExcel:
                     "input_output": "input" if put.startswith("input") else "output",
                 }
 
-                # Add all other parameters using the get_param_value(..)
-                # Pass in default values for each param_gnu, use zero if default is not defined.
+                # Add all other parameters. _ensure_numeric_dtypes guarantees that
+                # all param_gnu columns use the '{param}_{put}' form and are Float64
+                # with no NA, so a direct Series lookup is sufficient.
                 additional_params = {
-                    param: self.get_param_value(param, put, cap_row, tech_row, defaults.get(param, 0))
+                    param: cap_row.get(f'{param.lower()}_{put}', 0)
                     for param in param_gnu
                 }
 
@@ -423,32 +462,12 @@ class BuildInputExcel:
             return pd.DataFrame()
 
         dimensions = ['grid', 'from_node', 'to_node']
-        param_gnn = [
-            'transferCap',
-            'availability',
-            'variableTransCost',
-            'transferLoss',
-            'rampLimit',
-            'diffCoeff',
-            'diffLosses',
-            'transferCapInvLimit',
-            'investMIP',
-            'invCost',
-            'annuityFactor',
-        ]
-
-        # Defaults; others default to 0
-        defaults = {
-            'availability': 1,
-        }
+        param_gnn = self.PARAM_GNN
 
         def get_or_default(row, param):
-            """Return row[param_lower[out_param]] unless NaN/missing → defaults[out_param] or 0."""
+            """Return row[param] (case-insensitive) or 0 if absent."""
             key = param.lower()
-            if key in row:
-                val = row.get(key)
-                return val if pd.notna(val) else defaults.get(param, 0)
-            return defaults.get(param, 0)
+            return row.get(key, 0)
 
         rows = []
         for _, row in df_transferdata.iterrows():
@@ -534,23 +553,7 @@ class BuildInputExcel:
         """      
         # dimension and parameter columns
         dimensions = ['grid', 'node']
-        param_gn = ['isActive',
-                    'nodeBalance', 
-                    'usePrice',
-                    'energyStoredPerUnitOfState',
-                    'selfDischargeLoss', 
-                    'boundStart',
-                    'boundStartOfSamples',     
-                    'boundStartAndEnd',        
-                    'boundStartToEnd',         
-                    'boundEnd',                
-                    'boundEndOfSamples',       
-                    'boundAll',                
-                    'boundSumOverInterval',    
-                    'capacityMargin',          
-                    'storageValueUseTimeSeries', 
-                    'influx'
-                    ]
+        param_gn = self.PARAM_GN
         
         # List to collect the new rows 
         rows = []
@@ -662,7 +665,8 @@ class BuildInputExcel:
             if not usePrice and existing_lower and not node_storage_data.empty:
                 for low in existing_lower:
                     real_col = storage_colmap[low]
-                    if (node_storage_data[real_col] > 0).any():
+                    numeric_col = pd.to_numeric(node_storage_data[real_col], errors='coerce')
+                    if (numeric_col > 0).any():
                         energyStoredPerUnitOfState = 1
                         break
 
@@ -739,168 +743,108 @@ class BuildInputExcel:
 # ------------------------------------------------------
 
     def create_unitUnittype(
-        self, 
-        p_gnu_io_flat: pd.DataFrame
+        self,
+        df_unitdata: pd.DataFrame,
+        active_units  # array-like of unit names
         ) -> pd.DataFrame:
         # return empty dataframe if no input data
-        if p_gnu_io_flat.empty:
-            return pd.DataFrame()
+        if df_unitdata.empty:
+            return pd.DataFrame(columns=['unit', 'unittype'])
+        if 'unittype' not in df_unitdata.columns:
+            return pd.DataFrame(columns=['unit', 'unittype'])
 
-        # Get unique unit names from the 'unit' column of p_gnu
-        unique_units = p_gnu_io_flat['unit'].unique()
-        # Create the DataFrame using a list comprehension, taking the last part as the unittype
-        unitUnittype = pd.DataFrame(
-            [{'unit': unit, 'unittype': unit.split('_')[-1]} for unit in unique_units],
-            columns=['unit', 'unittype']
+        # Get unit-unittype pairs directly from df_unitdata for active units
+        unitUnittype = (
+            df_unitdata.loc[df_unitdata['unit'].isin(active_units), ['unit', 'unittype']]
+            .dropna(subset=['unit', 'unittype'])
+            .drop_duplicates(subset=['unit'])
+            .reset_index(drop=True)
         )
         return unitUnittype
     
 
     def create_flowUnit(
-        self, 
-        df_unittypedata: pd.DataFrame, 
+        self,
+        df_unitdata: pd.DataFrame,
         unitUnittype: pd.DataFrame
         ) -> pd.DataFrame:
         # return empty dataframe if no input data
         if unitUnittype.empty:
             return pd.DataFrame()
 
-        # Filter rows in df_unittypedata that have a non-null 'flow' value
-        if 'flow' in df_unittypedata.columns:
-            flowtechs = df_unittypedata[df_unittypedata['flow'].notnull()].copy()
-            # Merge unitUnittype with flowtechs based on matching 'unittype' and 'unittype'
-            merged = pd.merge(unitUnittype, flowtechs, left_on='unittype', right_on='unittype', how='inner')
-            # Create the final DataFrame with only 'flow' and 'unit' columns
-            flowUnit = merged[['flow', 'unit']]
-            return flowUnit
-        else:
+        # 'flow' is now directly in the merged df_unitdata.
+        if 'flow' not in df_unitdata.columns:
             return pd.DataFrame(columns=['flow', 'unit'])
+
+        # Keep only active units (those that made it through create_p_gnu_io)
+        active_units = unitUnittype[['unit']]
+        merged = active_units.merge(df_unitdata[['unit', 'flow']], on='unit', how='inner')
+        # Exclude rows without a flow value ('' after fill_all_na, or explicit non-empty)
+        flowUnit = merged[merged['flow'].notna() & (merged['flow'] != '')][['flow', 'unit']]
+        return flowUnit
 
 
     def create_p_unit(
         self,
-        df_unittypedata: pd.DataFrame,
         unitUnittype: pd.DataFrame,
         df_unitdata: pd.DataFrame
         ) -> pd.DataFrame:
         """
         Create the `p_unit` DataFrame for Backbone model input.
 
-        This method constructs a parameter table for each unit defined in
-        `unitUnittype`, combining information from both `df_unitdata`
-        (unit-specific parameters) and `df_unittypedata` (unittype-level defaults).
-        Parameter values are read in the following priority order:
-            1. From df_unitdata (specific to the unit)
-            2. From df_unittypedata (shared for all units of the same unittype)
-            3. From the defaults dictionary (if missing or empty)
+        Constructs a parameter table for each unit in `unitUnittype` using the
+        merged df_unitdata, which already incorporates type-level defaults via
+        merge_unittypedata_into_unitdata().  No separate df_unittypedata lookup
+        is needed.
 
-        The method handles case-insensitive matching for both `unit` and `unittype`
-        names, fills missing numeric values with zeros, and enforces consistency
-        between certain operational parameters.
+        Parameter values follow this priority (resolved before this method runs):
+            1. df_unitdata unit-specific values
+            2. Type-level defaults (merged into df_unitdata in the pipeline)
+            3. Non-zero parameter defaults (applied in the pipeline)
+            4. 0 / def_value fallback in get_param_value
 
-        Specifically, the following constraint is applied:
+        Enforces the Backbone constraint:
             minShutdownHours <= startWarmAfterXhours <= startColdAfterXhours
 
         Parameters
         ----------
-        df_unittypedata : pd.DataFrame
-            DataFrame containing technology-level (unittype) default parameters.
-            Must include column 'unittype'.
         unitUnittype : pd.DataFrame
             DataFrame linking individual units to their unittype.
             Must include columns ['unit', 'unittype'].
         df_unitdata : pd.DataFrame
-            DataFrame containing unit-level parameter values.
+            Merged unit data (unit-specific + type defaults).
             Must include column 'unit'.
 
         Returns
         -------
         pd.DataFrame
-            Finalized `p_unit` DataFrame with:
-            - One row per unit in `unitUnittype`
-            - Columns:
-                ['unit'] + parameter list
-            - NaN values replaced with zeros
-            - Sorted case-insensitively by 'unit'
-            - MultiIndex applied via `create_fake_MultiIndex`
-
-        Notes
-        -----
-        - If a `unit` or `unittype` is missing from the input DataFrames,
-          a warning is logged, and that row is skipped.
+            Finalized `p_unit` DataFrame — one row per unit, sorted by unit name,
+            with a fake MultiIndex applied.
         """
         # Dimension column names.
         dimensions = ['unit']
 
-        # parameter_unit names
-        param_unit = [
-            'isActive',  
-            'isSource',
-            'isSink',
-            'fixedFlow',
-            'availability',
-            'unitCount',
-            'useInitialOnlineStatus',
-            'initialOnlineStatus',
-            'startColdAfterXhours',
-            'startWarmAfterXhours',
-            'rampSpeedToMinLoad',
-            'rampSpeedFromMinLoad',
-            'minOperationHours',
-            'minShutdownHours',
-            'eff00',
-            'eff01',
-            'opFirstCross',
-            'op00',
-            'op01',
-            'useTimeseries',
-            'useTimeseriesAvailability',
-            'investMIP',
-            'maxUnitCount',
-            'minUnitCount',
-            'becomeAvailable',
-            'becomeUnavailable'
-        ]
-        # Default values. Otherwise assuming zero.
-        defaults = {
-            'isActive': 1,
-            'availability': 1,
-            'eff00': 1,
-            'op00': 1
-        }
-
+        param_unit = self.PARAM_UNIT
         # List to collect new rows.
         rows = []
 
         # Process each row in unitUnittype.
         for _, u_row in unitUnittype.iterrows():
             unit = str(u_row['unit'])
-            unittype = str(u_row['unittype'])
 
-            # Case-insensitive matching for unittype.
-            tech_matches = df_unittypedata[df_unittypedata['unittype'].str.lower() == unittype.lower()]
-            if tech_matches.empty:
-                self.logger.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}'. "
+            # Case-insensitive matching for unit in the merged df_unitdata.
+            unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == unit.lower()]
+            if unit_matches.empty:
+                self.logger.log_status(f"No unit data found for unit: '{unit}'. "
                             "Not writing the p_unit data, check spelling and files.'",
                             level="warn")
                 continue
-            tech_row = tech_matches.iloc[0]
-
-            # Case-insensitive matching for unit.
-            unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == unit.lower()]
-            if unit_matches.empty:
-                self.logger.log_status(f"No unit data found unit: '{unit}'. "
-                            "Not writing the p_unit data, check spelling and files.'",
-                            level="warn")
-                continue  
             unit_row = unit_matches.iloc[0]
 
-            # Pre-fetch minShutdownHours using its default value from the dictionary.
-            # using get_param_value for 'output1' to prioritize following order: unit data, unittype data, defaul 
-            min_shutdown = self.get_param_value('minShutdownHours', 'output1', 
-                                                unit_row, tech_row, 
-                                                defaults.get('minShutdownHours', 0)
-                                                )
+            # Pre-fetch minShutdownHours.
+            # _ensure_numeric_dtypes guarantees param_unit columns are Float64 with no
+            # NA and lowercase names, so a direct Series lookup is sufficient.
+            min_shutdown = unit_row.get('minshutdownhours', 0)
 
             # Start building the row data with the unit column.
             row = {'unit': unit}
@@ -910,16 +854,11 @@ class BuildInputExcel:
                 # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
                 # In Backbone, Units must have minShutdownHours <= startWarmAfterXhours <= startColdAfterXhours
                 if param == 'startColdAfterXhours':
-                    startColdAfterXhours = self.get_param_value(param, 'output1', 
-                                                                unit_row, tech_row, 
-                                                                defaults.get(param, 0))
+                    startColdAfterXhours = unit_row.get(param.lower(), 0)
                     row[param] = max(min_shutdown, startColdAfterXhours)
                     continue
 
-                # using get_param_value for 'output1' to prioritize following order: unit data, unittype data, defaul 
-                row[param] = self.get_param_value(param, 'output1', 
-                                                  unit_row, tech_row, 
-                                                  defaults.get(param, 0))
+                row[param] = unit_row.get(param.lower(), 0)
 
             rows.append(row)
 
@@ -942,8 +881,8 @@ class BuildInputExcel:
     
 
     def create_effLevelGroupUnit(
-        self, 
-        df_unittypedata: pd.DataFrame, 
+        self,
+        df_unitdata: pd.DataFrame,
         unitUnittype: pd.DataFrame
         ) -> pd.DataFrame:
         # List to accumulate new rows
@@ -952,28 +891,27 @@ class BuildInputExcel:
         # Iterate over each row in unitUnittype
         for _, u_row in unitUnittype.iterrows():
             unit = u_row['unit']
-            unittype = u_row['unittype']
 
-            # Retrieve the matching row from df_unittypedata where 'unittype' equals the unittype value
-            tech_matches = df_unittypedata[df_unittypedata['unittype'] == unittype]
-            if tech_matches.empty:
-                self.logger.log_status(f"No matching tech row found for unittype: '{unittype}', unit: '{unit}', not writing the effLevelGroupUnit data. "
-                            "Check spelling and files.'", level="warn")
-                continue            
-            tech_row = tech_matches.iloc[0]
+            # Look up the unit row in the merged df_unitdata.
+            unit_matches = df_unitdata[df_unitdata['unit'].str.lower() == str(unit).lower()]
+            if unit_matches.empty:
+                continue
+            unit_row = unit_matches.iloc[0]
 
-            # LP/MIP value
-            lp_mip = tech_row['LP/MIP'] if 'minOperationHours' in tech_row.index else None
+            # LP/MIP value (column name lowercased after normalize_dataframe).
+            lp_mip = unit_row.get('lp/mip', '') if 'lp/mip' in unit_row.index else ''
+            if not isinstance(lp_mip, str):
+                lp_mip = ''
 
             if lp_mip in ['LP', 'MIP']:
                 # effLevel1 = MIP/LP
                 rows.append({
-                    'effLevel': f'level{i}',
+                    'effLevel': 'level1',
                     'effSelector': f'directOn{lp_mip}',
                     'unit': unit
                 })
                 # effLevel2-3 = LP
-                for i in range(2,4):
+                for i in range(2, 4):
                     rows.append({
                         'effLevel': f'level{i}',
                         'effSelector': 'directOnLP',
@@ -982,7 +920,7 @@ class BuildInputExcel:
 
         # Create a new DataFrame from the list of rows with the desired columns
         effLevelGroupUnit = pd.DataFrame(rows, columns=['effLevel', 'effSelector', 'unit'])
-        return effLevelGroupUnit                                                                                                                     
+        return effLevelGroupUnit
 
 
 # ------------------------------------------------------
@@ -1543,8 +1481,7 @@ class BuildInputExcel:
         p_nEmission: pd.DataFrame,
         ts_emissionPriceChange: pd.DataFrame,
         p_gnu_io_flat: pd.DataFrame,
-        unitUnittype: pd.DataFrame,
-        df_unittypedata: pd.DataFrame,
+        df_unitdata: pd.DataFrame,
         input_dfs: list[pd.DataFrame] = []
         ) -> pd.DataFrame:
         """
@@ -1555,7 +1492,7 @@ class BuildInputExcel:
           2. ts_emissionPriceChange(emission -> group)  [case-insensitive match]
           3. p_gnu_io_flat(node -> grid, unit)
           4. unitUnittype(unit -> unittype)
-          5. df_unittypedata: unittype row must have at least one emission_group*
+          5. df_unitdata: unit row must have at least one emission_group*
              column whose value equals the group from step 2.
           A (grid, node, group) row is added for every combination that passes
           all five steps.
@@ -1569,7 +1506,7 @@ class BuildInputExcel:
           - ts_emissionPriceChange is empty (no emission price data loaded).
           - Some emission types in p_nEmission have no matching entry in
             ts_emissionPriceChange (logged with the unmatched names).
-          - df_unittypedata has no emission_group* columns at all.
+          - df_unitdata has no emission_group* columns at all.
 
         Duplicates across both sources are dropped before returning.
         """
@@ -1601,32 +1538,26 @@ class BuildInputExcel:
                 grid = grid_node_unit['grid']
                 unit = grid_node_unit['unit']
 
-                # Find matching unit_unittype tuple
-                matching_unit_type = unitUnittype[unitUnittype['unit'] == unit]
+                # Look up the unit row in the merged df_unitdata.
+                unit_matches = df_unitdata[df_unitdata['unit'] == unit]
+                if unit_matches.empty:
+                    continue
+                unit_row = unit_matches.iloc[0]
 
-                if not matching_unit_type.empty:
-                    unittype = matching_unit_type['unittype'].iloc[0]
-
-                    # Find correct unittype_row
-                    unittype_rows = df_unittypedata[df_unittypedata['unittype'] == unittype]
-
-                    if not unittype_rows.empty:
-                        unittype_row = unittype_rows.iloc[0]
-
-                        # Find if emission exists in any emission_group column 
-                        emission_group_cols = [col for col in df_unittypedata.columns if col.startswith('emission_group')]
-                        if not emission_group_cols:
-                            self.logger.log_status(
-                                "df_unittypedata has no 'emission_group*' columns and thus,"
-                                "None of the units are producing any emissions. Check that the unittype"
-                                "source file(s) includes emission_group column(s).",
-                                level="warn"
-                            )
-                        for col in emission_group_cols:
-                            if col in unittype_row and pd.notna(unittype_row[col]) and unittype_row[col] == group:
-                                # Create row and add to rows_list
-                                row = {'grid': grid, 'node': node, 'group': group}
-                                rows_list.append(row)
+                # Find if emission exists in any emission_group column.
+                emission_group_cols = [col for col in df_unitdata.columns if col.startswith('emission_group')]
+                if not emission_group_cols:
+                    self.logger.log_status(
+                        "df_unitdata has no 'emission_group*' columns and thus,"
+                        "None of the units are producing any emissions. Check that the unittype"
+                        "source file(s) includes emission_group column(s).",
+                        level="warn"
+                    )
+                for col in emission_group_cols:
+                    if col in unit_row.index and unit_row[col] == group:
+                        # Create row and add to rows_list
+                        row = {'grid': grid, 'node': node, 'group': group}
+                        rows_list.append(row)
 
         # Step 2: Process input DataFrames
         for df in input_dfs:
@@ -1771,104 +1702,6 @@ class BuildInputExcel:
             empty_cols_mask.loc[keep] = False
 
         return df.loc[:, ~empty_cols_mask]
-
-
-    def get_param_value(
-        self, 
-        param: str, 
-        put: str,
-        cap_row: Any, 
-        tech_row: Any, 
-        def_value: Any
-        ) -> Any:
-        """
-        Determine parameter value with fallback logic (ALL lookups case-insensitive).
-
-        Priority:
-          1) cap_row connection-specific (e.g., "<param>_<put>")
-          2) cap_row base (only when put == 'output1')
-          3) tech_row connection-specific
-          4) tech_row base (only when put == 'output1')
-          5) def_value
-
-        Notes:
-          - All key comparisons are done case-insensitively.
-          - If both candidates in a tier are empty, that tier yields None (not 0),
-            so we only fall back to def_value when both sources are empty.
-        """
-        def _iter_items(row_like):
-            if row_like is None:
-                return []
-            # Try dict-like first
-            if hasattr(row_like, "items"):
-                try:
-                    return list(row_like.items())
-                except Exception:
-                    pass
-            # Try pandas Series-like (index + values)
-            if hasattr(row_like, "index"):
-                try:
-                    return list(zip(row_like.index, list(row_like)))
-                except Exception:
-                    pass
-            # Last resort: try to coerce to dict
-            try:
-                return list(dict(row_like).items())
-            except Exception:
-                return []
-
-        def _to_ci_map(row_like):
-            """Map lowercased, stripped keys -> value. First occurrence wins."""
-            ci = {}
-            for k, v in _iter_items(row_like):
-                kl = str(k).strip().lower()
-                if kl not in ci:
-                    ci[kl] = v
-            return ci
-
-        cap_ci = _to_ci_map(cap_row)
-        tech_ci = _to_ci_map(tech_row)
-
-        p = str(param).strip().lower()
-        put_l = str(put).strip().lower()
-        key_conn = f"{p}_{put_l}"
-        key_base = p  # considered only when put == 'output1'
-
-        def _combine(v1, v2):
-            """
-            Combine two candidates (connection-specific and base) for a tier:
-            - If both empty -> return None (signals 'tier empty')
-            - Else treat empties as 0 and add; if addition fails, prefer first non-empty
-            """
-            a_empty = utils.is_val_empty(v1)
-            b_empty = utils.is_val_empty(v2)
-            if a_empty and b_empty:
-                return None
-
-            a_val = 0 if a_empty else v1
-            b_val = 0 if b_empty else v2
-            try:
-                return a_val + b_val
-            except Exception:
-                # Fallback: return whichever is non-empty
-                return a_val if not a_empty else b_val
-
-        # --- Tier 1 & 2: cap_row ---
-        cap_conn = cap_ci.get(key_conn, None)
-        cap_base = cap_ci.get(key_base, None) if put_l == "output1" else None
-        primary = _combine(cap_conn, cap_base)
-        if not utils.is_val_empty(primary):
-            return primary
-
-        # --- Tier 3 & 4: tech_row ---
-        tech_conn = tech_ci.get(key_conn, None)
-        tech_base = tech_ci.get(key_base, None) if put_l == "output1" else None
-        secondary = _combine(tech_conn, tech_base)
-        if not utils.is_val_empty(secondary):
-            return secondary
-
-        # --- Tier 5: default ---
-        return def_value
 
 
 # ------------------------------------------------------
@@ -2019,9 +1852,117 @@ class BuildInputExcel:
         wb.save(self.output_file)
 
 
+
+# ------------------------------------------------------
+# Pre checks
+# ------------------------------------------------------
+
+    def _normalize_unitdata_columns(self) -> None:
+        """
+        Restore the _output1 suffix on unsuffixed param_gnu columns in df_unitdata.
+
+        normalize_dataframe (pipeline step 7) strips _output1 from numeric columns,
+        so a bare column like 'capacity' implicitly represents output1.  This method
+        makes that relationship explicit so downstream lookups can use the uniform
+        '{param}_{put}' form (e.g. 'capacity_output1') for all connections.
+
+        Params also in PARAM_UNIT (currently only 'isActive') are shared between
+        create_p_gnu_io (needs '{param}_output1') and create_p_unit (needs base form).
+        Those get a '{col}_output1' copy while the base column is kept.
+        """
+        _gnu  = {p.lower() for p in self.PARAM_GNU}
+        _unit = {p.lower() for p in self.PARAM_UNIT}
+        _valid_put_suffixes = {
+            f'_{d}{i}' for d in ('input', 'output') for i in range(1, 6)
+        }
+        _gnu_only   = _gnu - _unit
+        _gnu_shared = _gnu & _unit
+
+        df = self.df_unitdata.copy()
+        rename_map = {}
+        copy_cols  = {}
+        for col in list(df.columns):
+            col_l = col.lower()
+            if any(col_l.endswith(s) for s in _valid_put_suffixes):
+                continue  # already has a connection suffix
+            if col_l in _gnu_only:
+                output1_name = f'{col}_output1'
+                if output1_name not in df.columns:
+                    rename_map[col] = output1_name
+            elif col_l in _gnu_shared:
+                output1_name = f'{col}_output1'
+                if output1_name not in df.columns:
+                    copy_cols[output1_name] = df[col].copy()
+        df = df.rename(columns=rename_map)
+        for new_col, series in copy_cols.items():
+            df[new_col] = series
+        self.df_unitdata = df
+
+    def _ensure_numeric_dtypes(self) -> None:
+        """
+        Cast all known parameter columns to Float64 and fill NA -> 0.
+
+        Operates on df_unitdata, df_transferdata, df_storagedata, df_demanddata.
+        Unknown columns (grid_*, node_*, emission_group*, flow, lp/mip, …) are left
+        untouched.  param_unit columns with a connection suffix trigger a warning and
+        are left untouched (ignored downstream).
+
+        Must be called after _normalize_unitdata_columns() so that param_gnu columns
+        already carry explicit connection suffixes.
+        """
+        _gnu  = {p.lower() for p in self.PARAM_GNU}
+        _unit = {p.lower() for p in self.PARAM_UNIT}
+        _valid_put_suffixes = {
+            f'_{d}{i}' for d in ('input', 'output') for i in range(1, 6)
+        }
+
+        # --- df_unitdata: PARAM_GNU + PARAM_UNIT ---
+        df = self.df_unitdata.copy()
+        for col in df.columns:
+            col_l = col.lower()
+            base, put = col_l, None
+            for suffix in _valid_put_suffixes:
+                if col_l.endswith(suffix):
+                    base = col_l[:-len(suffix)]
+                    put = suffix[1:]
+                    break
+            if base in _gnu:
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+            elif base in _unit:
+                if put is not None:
+                    self.logger.log_status(
+                        f"Unit data column '{col}': '{base}' is a unit-level parameter "
+                        f"(param_unit) and cannot be connection-specific. "
+                        f"The '_{put}' suffix is not valid here — column will be ignored.",
+                        level="warn"
+                    )
+                else:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+        self.df_unitdata = df
+
+        # --- df_transferdata: PARAM_GNN ---
+        _gnn = {p.lower() for p in self.PARAM_GNN}
+        df = self.df_transferdata.copy()
+        for col in df.columns:
+            if col.lower() in _gnn:
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+        self.df_transferdata = df
+
+        # --- df_storagedata + df_demanddata: PARAM_GN ---
+        _gn = {p.lower() for p in self.PARAM_GN}
+        for attr in ('df_storagedata', 'df_demanddata'):
+            df = getattr(self, attr).copy()
+            for col in df.columns:
+                if col.lower() in _gn:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+            setattr(self, attr, df)
+
+
+
 # ------------------------------------------------------
 # Main entry point for the script
 # ------------------------------------------------------
+
     def run(self) -> None:
 
         # --- Pre-checks ---
@@ -2038,17 +1979,32 @@ class BuildInputExcel:
                 )
                 return
 
+        # Restore explicit _output1 suffix on unsuffixed param_gnu columns in df_unitdata.
+        self._normalize_unitdata_columns()
+        # Enforce Float64 on all known numeric columns; warn on invalid column patterns.
+        self._ensure_numeric_dtypes()
+
         # --- Convert input data tables to DataFrames ---
 
         # Create p_gnu_io
-        p_gnu_io = self.create_p_gnu_io(self.df_unittypedata, self.df_unitdata)     
+        p_gnu_io = self.create_p_gnu_io(self.df_unitdata)
 
         # Create flat version for easier use in other functions
         p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
 
-        # unittype based input tables
-        unitUnittype = self.create_unitUnittype(p_gnu_io_flat)
-        p_unit = self.create_p_unit(self.df_unittypedata, unitUnittype, self.df_unitdata)
+        # unit, unittype domain tables - derived from df_unitdata
+        active_units = p_gnu_io_flat['unit'].dropna().unique()
+        unit = self.compile_domain_df(active_units.tolist(), 'unit')
+        unittype_vals = (
+            self.df_unitdata
+            .loc[self.df_unitdata['unit'].isin(active_units), 'unittype']
+            .dropna().unique().tolist()
+        )
+        unittype = self.compile_domain_df(unittype_vals, 'unittype')
+
+        # unitUnittype - unit-unittype pairs from df_unitdata for active units
+        unitUnittype = self.create_unitUnittype(self.df_unitdata, active_units)
+        p_unit = self.create_p_unit(unitUnittype, self.df_unitdata)
         # remove zeroes
         p_unit = p_unit.mask(p_unit == 0)
 
@@ -2061,8 +2017,8 @@ class BuildInputExcel:
         p_gnu_io_flat = self.drop_fake_MultiIndex(p_gnu_io)
 
         # Create remaining unit related tables
-        flowUnit = self.create_flowUnit(self.df_unittypedata, unitUnittype)
-        effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unittypedata, unitUnittype)
+        flowUnit = self.create_flowUnit(self.df_unitdata, unitUnittype)
+        effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unitdata, unitUnittype)
 
         # p_gnn
         p_gnn = self.create_p_gnn(self.df_transferdata)
@@ -2098,11 +2054,11 @@ class BuildInputExcel:
         ts_emissionPriceChange = self.create_ts_emissionPriceChange(self.df_emissiondata)
 
         # group sets
-        gnGroup = self.create_gnGroup(p_nEmission, ts_emissionPriceChange, p_gnu_io_flat, unitUnittype, 
-                                      self.df_unittypedata)
+        gnGroup = self.create_gnGroup(p_nEmission, ts_emissionPriceChange, p_gnu_io_flat,
+                                      self.df_unitdata)
 
 
-        # --- Compile domains ---
+        # --- Compile remaining domains ---
 
         # grid
         grid_vals = []
@@ -2139,10 +2095,6 @@ class BuildInputExcel:
         if self.ts_domains is not None and 'group' in self.ts_domains:
             group_vals.extend(self.ts_domains['group'])
         group = self.compile_domain_df(group_vals, 'group')
-
-        # unit, unittype
-        unit = self.compile_domain_df(unitUnittype['unit'].dropna().tolist(), 'unit')
-        unittype = self.compile_domain_df(unitUnittype['unittype'].dropna().tolist(), 'unittype')
 
         # emission
         emission_vals = []
