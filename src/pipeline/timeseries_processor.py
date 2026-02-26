@@ -1,4 +1,50 @@
 # src/pipeline/timeseries_processor.py
+"""
+Timeseries processor runner -- dynamic loading and execution of individual processors.
+
+Purpose
+-------
+This module provides the glue between the orchestrating ``TimeseriesPipeline``
+and the individual processor classes that live in ``src/processors/``.
+``ProcessorRunner`` dynamically loads a processor by name, injects a standard
+set of kwargs, calls ``run_processor()``, normalizes the returned DataFrame,
+converts it to Backbone long format, and writes GDX output files.
+
+Data interface -- processor contract
+-------------------------------------
+Every processor class must implement ``run_processor()`` and return a
+:class:`ProcessorResult` whose ``main_result`` is a **wide-format**
+``pd.DataFrame``.  The layout varies by processor (e.g. dates as row index,
+node/country codes as columns), but the following dtype contract must hold
+or ``ProcessorRunner`` will not be able to normalize the data reliably:
+
+- Numeric data must be representable as ``Float64`` (pandas nullable float).
+  Plain Python ``float``, ``int``, and NumPy numeric dtypes are all accepted;
+  ``ProcessorRunner`` casts them during normalization.
+- String / categorical columns must be ``object`` dtype.
+- Missing values should be ``pd.NA``, ``np.nan``, or ``None``; string
+  ``'NaN'`` is also handled.  Do **not** use sentinel values such as ``-9999``
+  to represent missing data.
+
+Normalization applied by ProcessorRunner (before BB conversion)
+---------------------------------------------------------------
+After ``run_processor()`` returns, ``ProcessorRunner`` applies the same
+normalization pipeline that ``SourceExcelDataPipeline`` applies to Excel
+source data, so downstream code can make the same assumptions about both:
+
+1. **Drop empty columns** -- columns where all values are NA or zero
+   (numeric) / blank (string) are removed via ``utils.is_col_empty``.
+2. **Standardize dtypes** -- ``utils.standardize_df_dtypes`` converts numeric
+   columns to ``Float64`` and preserves ``pd.NA`` for missing values.
+3. **Fill numeric NA** -- ``utils.fill_numeric_na`` replaces remaining
+   ``pd.NA`` in ``Float64`` columns with ``0``.
+4. **Round** -- values are rounded to ``rounding_precision`` (default 0)
+   from the processor spec.
+
+Processors must not rely on this normalization for correctness; they should
+return clean data.  The normalization is a safety net and a compatibility
+layer, not a substitute for proper output.
+"""
 
 import os
 from dataclasses import dataclass, field
@@ -17,7 +63,21 @@ from typing import Optional, Any
 
 @dataclass
 class ProcessorResult:
-    """Results from a single processor execution."""
+    """
+    Results returned by a processor's ``run_processor()`` method.
+
+    Attributes
+    ----------
+    main_result : pd.DataFrame
+        Wide-format DataFrame in the processor's own output convention,
+        before any BB-format conversion or GDX writing.  Column layout
+        varies by processor (e.g. dates as index, countries as columns).
+    secondary_result : Any or None
+        Optional secondary output produced alongside the main timeseries
+        (e.g. annual totals, scaling factors) for use in later pipeline
+        stages such as ``BuildInputExcel``.  ``None`` if the processor
+        does not produce a secondary output.
+    """
     main_result: pd.DataFrame
     secondary_result: Optional[Any] = None
 
@@ -43,7 +103,7 @@ class ProcessorRunnerResult:
         processed data (e.g., {'grid': {'FI', 'SE'}, 'node': {...}})
     ts_domain_pairs : dict[str, set[tuple]]
         Mapping of domain pair keys to sets of tuples representing
-        relationships (e.g., {('grid', 'node'): {('FI', 'N1'), ...}})
+        relationships (e.g., {"grid,node": {("elec", "FI00_elec"), ...}})
     """
     processor_name: str
     secondary_result: Optional[Any]
@@ -53,6 +113,26 @@ class ProcessorRunnerResult:
 
 @dataclass
 class ProcessorRunner:
+    """
+    Executes a single timeseries processor and writes its outputs.
+
+    Dynamically loads the processor class from ``src/processors/`` (the module
+    file and the class inside it must share the same name), instantiates it with
+    a standardised set of kwargs derived from the config and the enriched
+    processor spec, and calls ``run_processor()``.
+
+    After the processor returns a :class:`ProcessorResult`, this class:
+
+    - Cleans and converts ``main_result`` to Backbone long format via
+      ``GDX_exchange.prepare_BB_df``.
+    - Writes one GDX file per calendar year (``write_BB_gdx_annual``) and
+      updates ``import_timeseries.inc``.
+    - Optionally computes an average-year GDX when ``calculate_average_year``
+      is set in the spec.
+    - Persists ``secondary_result`` and per-processor domain data to the cache.
+    - Records a hash of the processor file so the cache manager can detect
+      code changes on the next run.
+    """
     processor_spec: dict
     config: dict
     input_folder: Path
@@ -74,6 +154,9 @@ class ProcessorRunner:
         which only READS hashes to determine what needs to run. The update happens
         here to ensure we only mark processors as "up-to-date" after they've
         actually executed successfully.
+
+        The function is thin, but the purpose is hopefully easier to catch 
+        witht this docstring.
         """
         hash_value = hash_utils.compute_file_hash(processor_file)
         self.cache_manager.save_processor_hash(processor_name, hash_value)
@@ -81,7 +164,47 @@ class ProcessorRunner:
 
     def run(self) -> ProcessorRunnerResult:
         """
-        Run a single processor and return structured results.
+        Execute the processor and return all structured outputs.
+
+        Workflow
+        --------
+        1. Initialisation
+           - Extract common config values (dates, country codes, rounding).
+           - Dynamically load the processor module and class from
+             ``src/processors/{processor_name}.py``.
+
+        2. Demand data handling
+           - If the spec declares a ``demand_grid``, filter ``df_demanddata``
+             to that grid and pass it to the processor as ``df_annual_demands``.
+           - If no matching demand rows are found, log a warning and return an
+             empty :class:`ProcessorRunnerResult` (hash still updated).
+
+        3. Run and convert
+           - Instantiate the processor class and call ``run_processor()``.
+           - Drop empty columns, standardise dtypes, and round to
+             ``rounding_precision``.
+           - Convert to Backbone long format via ``GDX_exchange.prepare_BB_df``
+             (adds ``f`` and ``t`` columns, applies ``country_codes`` mapping).
+           - Write one GDX per calendar year and update ``import_timeseries.inc``.
+           - Optionally write a pre-conversion summary CSV (wide format).
+
+        4. Average-year processing (optional)
+           - If ``calculate_average_year`` is set in the spec, compute a
+             single-year average DataFrame and write it as a separate
+             ``_forecasts.gdx`` file, also registered in
+             ``import_timeseries.inc``.
+
+        5. Post-processing
+           - Save ``secondary_result`` to the cache if present.
+           - Collect domain values and domain pairs from the converted DataFrame
+             and save them to a per-processor JSON cache file.
+           - Update the processor file hash.
+
+        Returns
+        -------
+        ProcessorRunnerResult
+            Contains ``processor_name``, ``secondary_result``, ``ts_domains``,
+            and ``ts_domain_pairs`` for the executed processor.
         """
         # --- Initialization ---
         spec = self.processor_spec["spec"]
@@ -172,6 +295,19 @@ class ProcessorRunner:
         main_result = processor_result.main_result
         secondary_result = processor_result.secondary_result
 
+        # Guard: processors must return a DataFrame (see module docstring)
+        if not isinstance(main_result, pd.DataFrame):
+            raise TypeError(
+                f"Processor '{processor_name}' returned main_result of type "
+                f"'{type(main_result).__name__}', expected pd.DataFrame.  "
+                f"Check that run_processor() returns a ProcessorResult."
+            )
+        if main_result.empty:
+            self.logger.log_status(
+                f"Processor '{processor_name}' returned an empty DataFrame.  "
+                f"No GDX output will be written.",
+                level="warn",
+            )
 
         # --- Convert results to BB format and write them ---
         # drop empty columns, convert dTypes, and round

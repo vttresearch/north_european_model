@@ -1,4 +1,70 @@
 # src/timeseries_pipeline.py
+"""
+Timeseries pipeline -- orchestration of timeseries processor execution.
+
+Purpose
+-------
+This module drives the timeseries phase of the build pipeline.
+``TimeseriesPipeline.run()`` decides which processors need to execute (based on
+cache state), runs or copies them, handles demand grids that have no explicit
+processor, and writes all GDX outputs and GAMS include directives required by
+Backbone.
+
+Data conventions
+----------------
+Timeseries DataFrames passed between processors share a common column schema:
+
+    domain(s)  -- one or more Backbone domain columns (str)
+    f     -- forecast branch (str, typically 'f00')
+    t     -- hourly time step label (str, 't000001' .. 't008760')
+    value -- quantity in MWh (negative for demand, positive for supply/influx)
+
+Each processor's output DataFrame may carry different subsets of the Backbone
+dimension columns ``['grid', 'node', 'flow', 'group']`` depending on the
+parameter it populates.  Domain tracking therefore collects only the columns
+that are present in each result:
+
+    ts_domains      : {column_name: set-of-values}
+                      e.g. {"grid": {"electricity", "heat"}, "node": {"FI_el"}}
+
+    ts_domain_pairs : {compound_key: set-of-tuples}
+                      pairs collected from ``['grid','node']`` and
+                      ``['flow','node']`` when both columns exist
+                      e.g. {"grid,node": {("electricity", "FI_el"), ...}}
+
+These dicts are accumulated across all processors and merged into shared cache
+files (``all_ts_domains.json``, ``all_ts_domain_pairs.json``).  Final
+normalization and use of domain names happens downstream in ``BuildInputExcel``.
+
+Secondary results are processor-specific DataFrames or scalars stored under the
+processor's Python module name (e.g. ``{"ElecDemandProcessor": <df>}``).  They
+are persisted to pickle files in the cache folder so later pipeline phases can
+consume them without re-running the processor.
+
+GDX output files are named ``{bb_parameter}_{gdx_name_suffix}.gdx``
+(suffix omitted when empty).  For each GDX a matching ``$gdxin`` directive is
+appended to ``import_timeseries.inc`` in the output folder.
+
+Output
+------
+For every executed processor the pipeline writes to ``output_folder``:
+
+- One or more ``.gdx`` files containing Backbone-parameter timeseries.
+- Updated ``import_timeseries.inc`` -- GAMS include file that registers each
+  GDX for import.
+- Optional ``*.csv`` files when ``write_csv_files`` is enabled in config.
+- ``Other_demands_1h_MWh.csv`` / ``ts_influx_other_demands.gdx`` for demand
+  grids not covered by an explicit processor.
+
+The ``run()`` method returns a ``TimeseriesRunResult`` dataclass with:
+
+- ``secondary_results`` -- dict of processor-name -> secondary output (loaded
+  from cache when rebuilding BB Excel so all processors contribute even if they
+  did not run this session).
+- ``ts_domains`` -- merged domain dict with sorted lists, ready for downstream
+  use in ``BuildInputExcel``.
+- ``ts_domain_pairs`` -- merged domain-pair dict with sorted tuple lists.
+"""
 
 from pathlib import Path
 from dataclasses import dataclass
@@ -194,10 +260,19 @@ class TimeseriesPipeline:
 
     def _get_unprocessed_demand_grids(self) -> set[str]:
         """
-        Identify demand grids that aren't covered by explicit processors.
+        Identify demand grids that are not covered by any explicit processor.
 
-        Returns:
-            Set of lowercased grid names that need default timeseries generation
+        Compares all grids present in ``df_annual_demands`` against the
+        ``demand_grid`` fields declared in ``timeseries_specs``.  Grids in
+        ``exclude_grids`` are not filtered here; they are excluded upstream in
+        ``_load_all_processor_specs``.
+
+        Returns
+        -------
+        set[str]
+            Lowercased grid names present in demand data but not claimed by any
+            processor spec.  Empty set if ``df_annual_demands`` is absent or has
+            no ``grid`` column.
         """
         # Get all demand grids from annual demands
         if (self.df_annual_demands is None
@@ -227,10 +302,36 @@ class TimeseriesPipeline:
 
     def _copy_processor_from_reference(self, processor_spec: dict) -> dict:
         """
-        Copy GDX files and cache data for a single input-data-independent processor
-        from the reference folder instead of re-running it.
+        Copy outputs of an input-data-independent processor from a reference folder.
 
-        Returns a dict with keys: secondary_result, ts_domains, ts_domain_pairs
+        Used when a processor is marked ``is_input_data_dependent: false`` in the
+        config and a ``reference_ts_folder`` is configured.  Instead of re-running
+        the processor, its pre-built artifacts are reused:
+
+        1. GDX files matching ``{bb_parameter}_{gdx_name_suffix}*.gdx`` are copied
+           to ``output_folder`` and registered in ``import_timeseries.inc``.
+        2. If ``calculate_average_year`` is set, the ``forecasts`` entry is also
+           registered in ``import_timeseries.inc``.
+        3. If the spec declares a ``secondary_output_name``, the corresponding
+           pickle is copied to the current cache and its content is loaded.
+        4. Per-processor domain cache (``processor_domains_{name}.json``) is read
+           from the reference cache and re-saved to the current cache.
+        5. The processor's hash is copied from the reference cache so the local
+           cache manager treats it as up-to-date.
+
+        Parameters
+        ----------
+        processor_spec : dict
+            Enriched processor specification as produced by
+            ``_load_all_processor_specs``.
+
+        Returns
+        -------
+        dict
+            Keys:
+              * ``secondary_result`` -- loaded secondary output or ``None``.
+              * ``ts_domains`` -- domain dict read from the reference cache.
+              * ``ts_domain_pairs`` -- domain-pair dict read from the reference cache.
         """
         spec = processor_spec["spec"]
         processor_name = processor_spec["name"]
@@ -348,7 +449,10 @@ class TimeseriesPipeline:
              * Execute it with :class:`ProcessorRunner`.
              * Collect secondary results, timeseries domains,
                and domain pairs.
-             * Normalize outputs to avoid type inconsistencies.
+           - For processors marked ``is_input_data_dependent: false`` and a
+             ``reference_ts_folder`` is set, copy GDX files and cache data
+             from the reference folder via
+             :meth:`_copy_processor_from_reference` instead of re-running.
 
         4. Process other demands
            - Identify demand grids present in ``df_annual_demands`` but not
