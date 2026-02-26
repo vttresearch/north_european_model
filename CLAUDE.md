@@ -26,7 +26,7 @@ src/
   GDX_exchange.py            GDX read/write helpers
   json_exchange.py           JSON read/write helpers
   hash_utils.py              File hashing for cache invalidation
-  utils.py                   Shared utilities, CLI argument parsing
+  utils.py                   Shared utilities
   pipeline/
     cache_manager.py                Tracks which pipeline steps need re-running
     logger.py                       collects log messages

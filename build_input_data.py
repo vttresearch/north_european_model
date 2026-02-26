@@ -1,16 +1,18 @@
+import sys
 import shutil
 import time
+import argparse
 from pathlib import Path
+from datetime import datetime
+from itertools import product
+
 import src.config_reader as config_reader
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.logger import IterationLogger
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_pipeline import TimeseriesPipeline, TimeseriesRunResult
 from src.pipeline.bb_excel_context import BBExcelBuildContext
-import src.utils as utils
-from itertools import product
 from src.build_input_excel import BuildInputExcel
-from datetime import datetime
 
 
 def main(input_folder: Path, config_file: Path):
@@ -19,7 +21,7 @@ def main(input_folder: Path, config_file: Path):
     start_time = time.time()
 
     # Check versions and other dependencies
-    utils.check_dependencies()
+    _check_dependencies()
 
     # Guarantee that input_folder is Path, check it exists
     input_folder = Path(input_folder)
@@ -261,8 +263,107 @@ def main(input_folder: Path, config_file: Path):
             log_file.write("\n".join(logger.messages))
 
 
+
+
+
+def _parse_sys_args():
+    # Instructions in case of mispelled input cmd
+    USAGE_MSG = (
+        "Usage: python build_input_data.py <input_folder> <config_file>,\n"
+        "       e.g. python build_input_data.py src_files config_test.ini"
+    )
+        
+    # detect legacy key=val syntax
+    if any("=" in arg for arg in sys.argv[1:]):
+        print(USAGE_MSG)
+        sys.exit(1)
+    else:
+        # strict positional: both required
+        parser = argparse.ArgumentParser(
+            usage=USAGE_MSG,
+            description="NorthEuropeanBackbone Input Builder"
+        )
+        parser.add_argument(
+            "input_folder",
+            type=str,
+            help="Input folder (e.g. src_files)"
+        )
+        parser.add_argument(
+            "config_file",
+            type=str,
+            help="Config file name (relative to input_folder)"
+        )
+        # argparse will print our USAGE_MSG if args are missing
+        args = parser.parse_args()
+        input_folder = Path(args.input_folder)
+        config_file  = Path(input_folder, args.config_file)
+
+        return (input_folder, config_file)
+    
+
+def _check_dependencies():
+    """
+    Verifies required dependencies.
+        - Python >= 3.12
+        - pandas >= 2.2
+        - pyarrow
+        - tqdm
+        - gams.transfer importable
+        - gams executable accessible in PATH
+
+    Raises RuntimeError if any requirement is not met.
+    """
+    import importlib
+
+    errors = []
+
+    # Check Python version
+    py_major, py_minor = sys.version_info[:2]
+    if (py_major, py_minor) < (3, 12):
+        errors.append(f"Python {py_major}.{py_minor} detected (requires ≥3.12), see readme.md how to install/update the environment.")
+
+    # Check pandas version
+    try:
+        import pandas as pd
+        pd_major, pd_minor = map(int, pd.__version__.split('.')[:2])
+        if (pd_major, pd_minor) < (2, 2):
+            errors.append(f"pandas {pd_major}.{pd_minor} detected (requires ≥2.2)")
+    except ImportError:
+        errors.append("pandas not installed, see readme.md how to install/update the environment.")  
+
+    # Check pyarrow availability
+    try:
+        importlib.import_module("pyarrow")
+    except ImportError:
+        errors.append("pyarrow not installed, see readme.md how to install/update the environment.")
+
+    # Check tqdm availability
+    try:
+        importlib.import_module("tqdm")
+    except ImportError:
+        errors.append("tqdm not installed, see readme.md how to install/update the environment.")
+
+    # Check gams.transfer importability
+    try:
+        importlib.import_module("gams.transfer")
+    except ImportError:
+        errors.append("gams.transfer not importable (GAMS Python API missing), see readme.md how to install/update the environment.")
+
+    # Check gams executable availability in PATH
+    gams_exec = shutil.which("gams") or shutil.which("gams.exe")
+    if gams_exec is None:
+        errors.append("GAMS not found in PATH")
+
+    # Final decision
+    if errors:
+        msg = "Dependency check failed:\n  - " + "\n  - ".join(errors)
+        raise RuntimeError(msg)
+
+
+
+
 if __name__ == "__main__":
     # Parse CLI arguments
-    input_folder, config_file = utils.parse_sys_args()
+    input_folder, config_file = _parse_sys_args()
     print(f"\nLaunching pipelines defined in: {config_file}")
     main(input_folder, config_file)
