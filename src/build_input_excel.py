@@ -1,6 +1,5 @@
 import os
 import re
-from typing import Optional
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -273,7 +272,8 @@ class BuildInputExcel:
         p_gnu_io = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gnu_io))
 
         #  Remove empty columns except mandatory 'capacity' column
-        p_gnu_io = self.remove_empty_columns(p_gnu_io, cols_to_keep=['capacity'])
+        p_gnu_io = p_gnu_io.drop(columns=[col for col in p_gnu_io.columns
+                                          if utils.is_col_empty(p_gnu_io[col]) and col != 'capacity'])
 
         # Sort by unit, input_output, node in a case-insensitive manner.
         p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
@@ -717,11 +717,9 @@ class BuildInputExcel:
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
         p_gn = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gn))
-        p_gn = self.remove_empty_columns(p_gn, cols_to_keep=['grid', 
-                                                             'node', 
-                                                             'usePrice', 
-                                                             'nodeBalance', 
-                                                             'energyStoredPerUnitOfState'])
+        protected_gn = {'grid', 'node', 'usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'}
+        p_gn = p_gn.drop(columns=[col for col in p_gn.columns
+                                   if utils.is_col_empty(p_gn[col]) and col not in protected_gn])
         
         # Sort by grid, node in a case-insensitive manner.
         p_gn.sort_values(by=['grid', 'node'], 
@@ -1680,28 +1678,6 @@ class BuildInputExcel:
         df_flat = df_flat.drop(df_flat.index[0]).reset_index(drop=True)
 
         return df_flat
-
-
-    def remove_empty_columns(
-        self, 
-        df: pd.DataFrame, 
-        cols_to_keep: Optional[list[str]] = None, 
-        treat_nan_as_empty: bool = True
-        ) -> pd.DataFrame:
-
-        # early exit if empty input
-        if df.empty:
-            return df
-
-        cols_to_keep = set(cols_to_keep or [])
-        empty_cols_mask = df.apply(utils.is_col_empty, axis=0)
-
-        # Keep protected columns even if empty
-        keep = list(cols_to_keep & set(df.columns))
-        if keep:
-            empty_cols_mask.loc[keep] = False
-
-        return df.loc[:, ~empty_cols_mask]
 
 
 # ------------------------------------------------------
