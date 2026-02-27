@@ -683,6 +683,37 @@ def merge_unittypedata_into_unitdata(
     return merged
 
 
+def expand_all_country(
+    df: pd.DataFrame,
+    country_codes: list,
+    ) -> pd.DataFrame:
+    """
+    Expand rows with country='all' into one row per entry in country_codes.
+
+    Rows whose 'country' column (case-insensitive) equals 'all' are replaced by
+    one copy per entry in country_codes, with 'country' set to that code.
+    All other rows are unchanged. If the DataFrame has no 'country' column, it
+    is returned as-is.
+
+    Call this before apply_blacklist so that the expanded rows are subject to
+    the same grid/node exclusion rules as explicitly country-coded rows.
+    """
+    if df.empty or 'country' not in df.columns:
+        return df
+
+    mask_all = df['country'].astype(str).str.lower() == 'all'
+    if not mask_all.any():
+        return df
+
+    rows_other = df[~mask_all]
+    all_rows = df[mask_all]
+    expanded_parts = [all_rows.assign(country=code) for code in country_codes]
+    expanded_df = pd.concat(expanded_parts, ignore_index=True)
+    result = pd.concat([rows_other, expanded_df], ignore_index=True)
+    # Restore original dtypes: concat misassigns types when one partition has all-NA values
+    return result.astype(df.dtypes.to_dict())
+
+
 def apply_whitelist(
     df: pd.DataFrame,
     filters: Optional[Dict[str, Union[str, int, List[Union[str, int]]]]],

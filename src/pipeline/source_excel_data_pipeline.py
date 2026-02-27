@@ -72,7 +72,7 @@ Output DataFrames
 After run() the following attributes are populated (empty DataFrame if no source
 files are configured):
 
-  df_fueldata            fuel/carrier cost parameters    key: grid
+  df_fueldata            fuel/carrier cost parameters    key: country, grid, node
   df_emissiondata        emission factors                key: emission
   df_demanddata          demand parameters               key: country, grid, node
   df_storagedata         storage parameters              key: country, grid, node
@@ -175,22 +175,6 @@ class SourceExcelDataPipeline:
                 level="info"
             )
 
-        # fueldata
-        files = self.config['fueldata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'fueldata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'fueldata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logger, 'fueldata')
-                   for df in dfs
-                   ]
-            self.df_fueldata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['grid'])
-        else:
-            self.logger.log_status(
-                "No Excel files for 'fueldata_files' defined in the config file",
-                level="info"
-            )
-
         # emissiondata
         files = self.config['emissiondata_files']
         if len(files) > 0:
@@ -212,12 +196,34 @@ class SourceExcelDataPipeline:
         exclude_grids = self.config['exclude_grids']
         exclude_nodes = self.config['exclude_nodes']
 
+        # fueldata
+        files = self.config['fueldata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'fueldata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'fueldata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'fueldata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'fueldata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+                                   self.logger, 'fueldata')
+                   for df in dfs
+                   ]
+            self.df_fueldata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
+        else:
+            self.logger.log_status(
+                "No Excel files for 'fueldata_files' defined in the config file",
+                level="info"
+            )
+
         # demanddata
         files = self.config['demanddata_files']
         if len(files) > 0:
             dfs = data_loader.read_input_excels(input_folder, files, 'demanddata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]
@@ -239,6 +245,7 @@ class SourceExcelDataPipeline:
             dfs = data_loader.read_input_excels(input_folder, files, 'storagedata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'storagedata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'storagedata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'storagedata', {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'storagedata', {'node': exclude_nodes}) for df in dfs]
@@ -259,6 +266,7 @@ class SourceExcelDataPipeline:
             dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             dfs = [data_loader.build_unittype_unit_column(df, self._df_unittypedata, self.logger) for df in dfs]
             dfs = [data_loader.build_unit_grid_and_node_columns(df, self._df_unittypedata, self.logger) for df in dfs]
             dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logger=self.logger) for d in dfs]

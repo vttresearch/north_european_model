@@ -146,9 +146,9 @@ class BuildInputExcel:
         # From InputDataPipeline
         self.source_data = context.source_data
         # Global
-        self.df_fueldata =     self.source_data.df_fueldata
         self.df_emissiondata = self.source_data.df_emissiondata
         # Country specific
+        self.df_fueldata =     self.source_data.df_fueldata
         self.df_transferdata = self.source_data.df_transferdata
         self.df_unitdata =     self.source_data.df_unitdata
         self.df_storagedata =  self.source_data.df_storagedata
@@ -637,9 +637,9 @@ class BuildInputExcel:
 
             # --- Check if price node ---
 
-            # usePrice if any fuel record for this grid
+            # usePrice if any fuel record for this node
             if not usePrice and not df_fueldata.empty:
-                usePrice = not df_fueldata[df_fueldata['grid'] == grid].empty
+                usePrice = not df_fueldata[(df_fueldata['grid'] == grid) & (df_fueldata['node'] == node)].empty
                 usePrice = 1 if usePrice else 0
 
             # --- Check if balance node ---
@@ -1228,11 +1228,10 @@ class BuildInputExcel:
         rows = []
         # Loop through each row in p_gn using the columns: grid, node, and usePrice
         for _, row in p_gn_flat.iterrows():
-            grid_value = row['grid']
             node_value = row['node']
 
-            # Retrieve the node_price from df_fueldata where the grid value matches.
-            matching_rows = df_fueldata[df_fueldata['grid'] == grid_value]
+            # Retrieve the node_price from df_fueldata where the node value matches.
+            matching_rows = df_fueldata[df_fueldata['node'] == node_value]
             if not matching_rows.empty:
                 node_price = matching_rows.iloc[0][price_col]
 
@@ -1240,7 +1239,7 @@ class BuildInputExcel:
                 row_dict = {
                     'node': node_value,
                     't': 't000001',
-                    'value': node_price                    
+                    'value': node_price
                 }
                 rows.append(row_dict)
 
@@ -1383,40 +1382,21 @@ class BuildInputExcel:
         else:
             emissions = [col.replace('emission_', '') for col in emission_cols]
 
-        # Create grid_emission DataFrame with (grid, emission) combinations
-        grid_emission_data = []
-        for grid in df_fueldata['grid'].unique():
-            grid_row = df_fueldata[df_fueldata['grid'] == grid].iloc[0]
-            for col, emission in zip(emission_cols, emissions):
-                if col in grid_row:
-                    value = grid_row[col]
-                    if pd.notna(value) and value > 0:
-                        grid_emission_data.append({
-                            'grid': grid,
-                            'emission': emission,
-                            'value': value
-                        })
-
-        grid_emission = pd.DataFrame(grid_emission_data)
-
-        # Filter grid_node to only include grids that are in grid_emission
-        valid_grids = grid_emission['grid'].unique()
-        grid_node = p_gn_flat[p_gn_flat['grid'].isin(valid_grids)][['grid', 'node']]
-
-        # Create p_nEmission by joining grid_node with grid_emission
+        # Build p_nEmission directly from df_fueldata, matched to p_gn_flat nodes
+        valid_nodes = set(p_gn_flat['node'].dropna().unique())
         p_nEmission_data = []
-        for _, row in grid_node.iterrows():
-            for emission in emissions:
-                grid_emission_row = grid_emission[(grid_emission['grid'] == row['grid']) & 
-                                                 (grid_emission['emission'] == emission)]
-                if not grid_emission_row.empty:
-                    value = grid_emission_row.iloc[0]['value']
-                    if pd.notna(value) and value > 0:
-                        p_nEmission_data.append({
-                            'node': row['node'],
-                            'emission': emission,
-                            'value': value
-                        })
+        for _, fuel_row in df_fueldata.iterrows():
+            node = fuel_row.get('node')
+            if pd.isna(node) or node not in valid_nodes:
+                continue
+            for col, emission in zip(emission_cols, emissions):
+                value = fuel_row.get(col)
+                if pd.notna(value) and value > 0:
+                    p_nEmission_data.append({
+                        'node': node,
+                        'emission': emission,
+                        'value': value
+                    })
 
         p_nEmission = pd.DataFrame(p_nEmission_data)
         p_nEmission = utils.fill_numeric_na(utils.standardize_df_dtypes(p_nEmission))
