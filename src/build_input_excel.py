@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Optional
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -107,6 +108,27 @@ class BuildInputExcel:
         'storageValueUseTimeSeries',
         'influx',
     ]
+
+    # Default values for parameters that must not fall back to zero.
+    # Applied per-connection in create_p_gnu_io so that every input/output
+    # connection (not just _output1) receives the correct non-zero default.
+    PARAM_GNU_DEFAULTS = {
+        'isActive':        1,
+        'conversionCoeff': 1,
+    }
+
+    # Applied per-unit in create_p_unit.
+    PARAM_UNIT_DEFAULTS = {
+        'isActive':    1,
+        'availability': 1,
+        'eff00':        1,
+        'op00':         1,
+    }
+
+    # Applied per-transfer-row in _ensure_numeric_dtypes.
+    PARAM_GNN_DEFAULTS = {
+        'availability': 1,
+    }
 
     def __init__(
         self,
@@ -258,8 +280,13 @@ class BuildInputExcel:
                 # Add all other parameters. _ensure_numeric_dtypes guarantees that
                 # all param_gnu columns use the '{param}_{put}' form and are Float64
                 # with no NA, so a direct Series lookup is sufficient.
+                # _ensure_numeric_dtypes prefills also default values for the columns 
+                # present in data, but this section has a fall back to 
+                # PARAM_GNU_DEFAULTS (then 0) even when a column was never 
+                # present in any input file.
                 additional_params = {
-                    param: cap_row.get(f'{param.lower()}_{put}', 0)
+                    param: cap_row.get(f'{param.lower()}_{put}',
+                                       self.PARAM_GNU_DEFAULTS.get(param, 0))
                     for param in param_gnu
                 }
 
@@ -448,15 +475,14 @@ class BuildInputExcel:
 # ------------------------------------------------------
 
     def create_p_gnn(
-        self, 
+        self,
         df_transferdata: pd.DataFrame
         ) -> pd.DataFrame:
         """
-        Build p_gnn by looping over 'dimensions' and 'param_gnn'.
-        Special cases:
-          - transferCap: from export/import capacity depending on direction
-          - rampLimit: forward = row['ramplimit'] (default 0),
-                       reverse = scaled by (export/import) if both > 0
+        Build p_gnn from df_transferdata where each row defines one directional link.
+        Required columns: 'grid', 'from_node', 'to_node'.
+        All PARAM_GNN columns are read directly by case-insensitive name matching.
+        Rows with missing domain values are skipped.
         """
         if df_transferdata.empty:
             return pd.DataFrame()
@@ -464,63 +490,32 @@ class BuildInputExcel:
         dimensions = ['grid', 'from_node', 'to_node']
         param_gnn = self.PARAM_GNN
 
-        def get_or_default(row, param):
-            """Return row[param] (case-insensitive) or 0 if absent."""
-            key = param.lower()
-            return row.get(key, 0)
+        col_map = {c.lower(): c for c in df_transferdata.columns}
 
         rows = []
         for _, row in df_transferdata.iterrows():
-            # domains
-            grid      = row.get('grid')
-            from_node = row.get('from_node')
-            to_node   = row.get('to_node')
-            # specific values
-            export_cap = get_or_default(row, 'export_capacity')
-            import_cap = get_or_default(row, 'import_capacity')
-            ramp_base = get_or_default(row, 'ramplimit')
+            if not (pd.notna(row.get('grid')) and pd.notna(row.get('from_node')) and pd.notna(row.get('to_node'))):
+                continue
+            out = {
+                'grid':      row['grid'],
+                'from_node': row['from_node'],
+                'to_node':   row['to_node'],
+            }
+            for p in param_gnn:
+                actual = col_map.get(p.lower())
+                out[p] = row[actual] if actual else 0
+            rows.append(out)
 
-            if not (pd.notna(grid) and pd.notna(from_node) and pd.notna(to_node)):
-                continue  # skip incomplete defs
-
-            def build_row(dir_from, dir_to, cap_value, is_reverse: bool):
-                out = {
-                    'grid': grid,
-                    'from_node': dir_from,
-                    'to_node': dir_to,
-                    'transferCap': cap_value,
-                }
-                for p in param_gnn:
-                    if p == 'transferCap':
-                        continue
-                    if p == 'rampLimit':
-                        if not is_reverse:
-                            out[p] = ramp_base or 0
-                        else:
-                            out[p] = (ramp_base * (export_cap / import_cap)) if (import_cap and export_cap) else 0
-                    else:
-                        out[p] = get_or_default(row, p)
-                return out
-
-            # left-to-right (export)
-            rows.append(build_row(from_node, to_node, export_cap, is_reverse=False))
-
-            # right-to-left (import)
-            rows.append(build_row(to_node, from_node, import_cap, is_reverse=True))
-
-        # construct p_gnn
         final_cols = dimensions + param_gnn
         p_gnn = pd.DataFrame(rows, columns=final_cols)
         p_gnn = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gnn))
 
-        # sort by grid, from_node, to_node
         p_gnn.sort_values(
             by=['grid', 'from_node', 'to_node'],
             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
             inplace=True
         )
 
-        # add fake multi-index
         p_gnn = self.create_fake_MultiIndex(p_gnn, dimensions)
 
         return p_gnn
@@ -848,15 +843,18 @@ class BuildInputExcel:
             row = {'unit': unit}
 
             # Loop through the parameters defined in param_unit.
+            # Fall back to PARAM_UNIT_DEFAULTS (then 0) so that non-zero defaults
+            # are applied even when a column was never present in any input file.
             for param in param_unit:
                 # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
                 # In Backbone, Units must have minShutdownHours <= startWarmAfterXhours <= startColdAfterXhours
                 if param == 'startColdAfterXhours':
-                    startColdAfterXhours = unit_row.get(param.lower(), 0)
+                    startColdAfterXhours = unit_row.get(param.lower(),
+                                                         self.PARAM_UNIT_DEFAULTS.get(param, 0))
                     row[param] = max(min_shutdown, startColdAfterXhours)
                     continue
 
-                row[param] = unit_row.get(param.lower(), 0)
+                row[param] = unit_row.get(param.lower(), self.PARAM_UNIT_DEFAULTS.get(param, 0))
 
             rows.append(row)
 
@@ -1876,7 +1874,9 @@ class BuildInputExcel:
 
     def _ensure_numeric_dtypes(self) -> None:
         """
-        Cast all known parameter columns to Float64 and fill NA -> 0.
+        Cast all known parameter columns to Float64 and fill NA with the
+        appropriate default (from PARAM_GNU_DEFAULTS / PARAM_UNIT_DEFAULTS,
+        falling back to 0 for params not listed there).
 
         Operates on df_unitdata, df_transferdata, df_storagedata, df_demanddata.
         Unknown columns (grid_*, node_*, emission_group*, flow, lp/mip, …) are left
@@ -1891,6 +1891,10 @@ class BuildInputExcel:
         _valid_put_suffixes = {
             f'_{d}{i}' for d in ('input', 'output') for i in range(1, 6)
         }
+        # Lowercase-keyed default dicts so the fillna lookup works against the
+        # already-lowercased 'base' variable without a case-insensitive search.
+        _gnu_defaults  = {p.lower(): v for p, v in self.PARAM_GNU_DEFAULTS.items()}
+        _unit_defaults = {p.lower(): v for p, v in self.PARAM_UNIT_DEFAULTS.items()}
 
         # --- df_unitdata: PARAM_GNU + PARAM_UNIT ---
         df = self.df_unitdata.copy()
@@ -1903,7 +1907,8 @@ class BuildInputExcel:
                     put = suffix[1:]
                     break
             if base in _gnu:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+                fill_val = _gnu_defaults.get(base, 0)
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
             elif base in _unit:
                 if put is not None:
                     self.logger.log_status(
@@ -1913,15 +1918,23 @@ class BuildInputExcel:
                         level="warn"
                     )
                 else:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+                    fill_val = _unit_defaults.get(base, 0)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
         self.df_unitdata = df
 
         # --- df_transferdata: PARAM_GNN ---
         _gnn = {p.lower() for p in self.PARAM_GNN}
+        _gnn_defaults = {p.lower(): v for p, v in self.PARAM_GNN_DEFAULTS.items()}
         df = self.df_transferdata.copy()
+        # Insert columns that have non-zero defaults but are absent from source data.
+        _existing_lower = {c.lower() for c in df.columns}
+        for p, val in self.PARAM_GNN_DEFAULTS.items():
+            if p.lower() not in _existing_lower:
+                df[p] = pd.array([val] * len(df), dtype='Float64')
         for col in df.columns:
             if col.lower() in _gnn:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(0)
+                fill_val = _gnn_defaults.get(col.lower(), 0)
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
         self.df_transferdata = df
 
         # --- df_storagedata + df_demanddata: PARAM_GN ---

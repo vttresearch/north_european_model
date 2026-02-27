@@ -453,12 +453,12 @@ def build_from_to_columns(
     logger=None,
     ) -> pd.DataFrame:
     """
-    Constructs 'from_node' and 'to_node' columns using 'from', 'to', 'grid', and optional suffixes.
+    Constructs 'from_node' and 'to_node' columns using 'from_country', 'to_country', 'grid', and optional suffixes.
 
     Parameters:
     -----------
     df : pandas.DataFrame
-        DataFrame containing 'from', 'to', 'grid', and optionally 'from_suffix', 'to_suffix'.
+        DataFrame containing 'from_country', 'to_country', 'grid', and optionally 'from_suffix', 'to_suffix'.
     logger : IterationLogger, optional
         Logger instance for status messages.
 
@@ -470,7 +470,7 @@ def build_from_to_columns(
     """
     if df.empty: return df
 
-    required_columns = ['from', 'to', 'grid']
+    required_columns = ['from_country', 'to_country', 'grid']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         if logger is not None:
@@ -488,8 +488,8 @@ def build_from_to_columns(
             df[suffix_col] = df[suffix_col].fillna('').astype(str)
 
     # Build from_node and to_node with optional suffixes
-    df['from_node'] = df['from'] + '_' + df['grid'] + df['from_suffix'].apply(lambda x: f'_{x}' if x else '')
-    df['to_node']   = df['to']   + '_' + df['grid'] + df['to_suffix'].apply(lambda x: f'_{x}' if x else '')
+    df['from_node'] = df['from_country'] + '_' + df['grid'] + df['from_suffix'].apply(lambda x: f'_{x}' if x else '')
+    df['to_node']   = df['to_country']   + '_' + df['grid'] + df['to_suffix'].apply(lambda x: f'_{x}' if x else '')
 
     return df
 

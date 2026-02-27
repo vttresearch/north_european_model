@@ -45,17 +45,14 @@ All output DataFrames expose exactly three column dtypes:
 - object,  
 - string. 
 
-Functions ensure that pd.NA, NaN, None, NaT, or similar do not escape this class —
-fill_all_na() enforces clean values at the end of run() (0 for Float64, '' for
-object/string), so downstream code can compare values directly without NA guards.
-
+Each empty cell is converted to pd.NA as a sign of no data. Zero means data.
 
 Data conventions
 -----------------------------------------
 - Column names: lowercase, whitespace-stripped.
 - String values in key and categorical columns: lowercase, whitespace-stripped.
-- Numeric columns: 0 (no pd.NA — fill_all_na is applied at the end of run()).
-- String/object columns: '' (no pd.NA — fill_all_na is applied at the end of run()).
+- Numeric columns: pd.NA for missing values. Zero is meaningful data.
+- String/object columns: pd.NA for missing values. Empty string is not used.
 - Blacklists: apply_blacklist() is applied before apply_whitelist() for datasets that
   support exclude_grids and exclude_nodes (demanddata, storagedata, unitdata,
   transferdata). Rows whose grid/node matches an excluded value are dropped before any
@@ -68,10 +65,6 @@ Data conventions
 - Topology columns (node, from_node, to_node): derived from component columns (country,
   grid, suffix) by data_loader helpers during run(); the component columns are also
   retained.
-- Non-zero parameter defaults: after merging, certain parameters that must not default
-  to zero are set explicitly if still NA. For df_unitdata: isactive=1,
-  conversioncoeff=1, availability=1, eff00=1, op00=1. For df_transferdata:
-  availability=1. These fills run before fill_all_na so they are not overridden by it.
 
 
 Output DataFrames
@@ -88,7 +81,7 @@ files are configured):
                          from df_unittypedata are incorporated here via
                          merge_unittypedata_into_unitdata().  df_unittypedata is
                          NOT exposed as a public attribute after run().
-  df_transferdata        interconnector parameters       key: from, from_suffix, to, to_suffix, grid
+  df_transferdata        interconnector parameters       key: from_country, from_suffix, to_country, to_suffix, grid
   df_userconstraintdata  custom constraint parameters    key: group, 1st dimension,
                          2nd dimension, 3rd dimension, 4th dimension, param_userconstraint
 
@@ -283,23 +276,6 @@ class SourceExcelDataPipeline:
                 self.df_unitdata, self._df_unittypedata, self.logger
             )
 
-            # Ensure non-zero parameter defaults are present in every unit row.
-            # Creates the column if absent (column never appeared in any input file),
-            # otherwise fills only NA cells. Must run BEFORE fill_all_na so these
-            # parameters are not zeroed out.
-            _UNIT_PARAM_DEFAULTS = {
-                'isactive':        1,
-                'conversioncoeff': 1,
-                'availability':    1,
-                'eff00':           1,
-                'op00':            1,
-            }
-            for col, val in _UNIT_PARAM_DEFAULTS.items():
-                if col not in self.df_unitdata.columns:
-                    self.df_unitdata[col] = val
-                else:
-                    self.df_unitdata[col] = self.df_unitdata[col].fillna(val)
-
         else:
             self.logger.log_status(
                 "No Excel files for 'unitdata_files' defined in the config file",
@@ -316,26 +292,31 @@ class SourceExcelDataPipeline:
             dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from_country': self.country_codes},
                                    self.logger, 'transferdata')
                    for df in dfs
                    ]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'to': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'to_country': self.country_codes},
                                    self.logger, 'transferdata')
                    for df in dfs
                    ]
-            self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['from', 'from_suffix', 'to', 'to_suffix', 'grid'])
+            self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['from_country', 'from_suffix', 'to_country', 'to_suffix', 'grid'])
 
-            # Ensure non-zero parameter defaults are present in every transfer row.
-            # Must run before fill_all_na so these parameters are not zeroed out.
-            _TRANSFER_PARAM_DEFAULTS = {
-                'availability': 1
-            }
-            for col, val in _TRANSFER_PARAM_DEFAULTS.items():
-                if col not in self.df_transferdata.columns:
-                    self.df_transferdata[col] = val
-                else:
-                    self.df_transferdata[col] = self.df_transferdata[col].fillna(val)
+            # Deprecation check: old bidirectional format used export_capacity / import_capacity
+            # per row; the new format uses one row per direction with transferCap instead.
+            # Remove this check once all source Excel files have been updated.
+            _deprecated_cols = [c for c in self.df_transferdata.columns
+                                 if c in ('export_capacity', 'import_capacity')]
+            if _deprecated_cols:
+                self.logger.log_status(
+                    f"transferdata contains deprecated column(s) {_deprecated_cols}. "
+                    "The old bidirectional format (one row with export_capacity + import_capacity) "
+                    "is no longer supported. Replace each bidirectional row with two directional rows "
+                    "using 'transferCap' as the capacity column. ",
+                    level="warn",
+                    add_empty_line_before=True,
+                    add_empty_line_after=True,
+                )
         else:
             self.logger.log_status(
                 "No Excel files for 'transferdata_files' defined in the config file",
@@ -363,14 +344,20 @@ class SourceExcelDataPipeline:
                 level="info"
             )
 
-        # Standardize all public output DataFrames: fill remaining NA values so that
-        # downstream code receives clean data with no pd.NA surprises.
-        # Numeric columns → 0, string/object columns → ''.
-        for _attr in [
-            'df_demanddata', 'df_transferdata', 'df_unitdata',
-            'df_storagedata', 'df_fueldata', 'df_emissiondata', 'df_userconstraintdata',
-        ]:
-            _df = getattr(self, _attr)
-            if not _df.empty:
-                setattr(self, _attr, utils.fill_all_na(_df))
+        # Convert all empty cells to pd.NA across every output DataFrame.
+        # Object columns may contain empty strings from normalization; replace them.
+        # Float64 NaN values are already represented as pd.NA by the nullable dtype.
+        for attr in ('df_fueldata', 'df_emissiondata', 'df_demanddata',
+                     'df_storagedata', 'df_unitdata', 'df_transferdata',
+                     'df_userconstraintdata'):
+            df = getattr(self, attr)
+            if not df.empty:
+                setattr(self, attr, self._replace_empty_with_na(df))
 
+    def _replace_empty_with_na(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Replace empty strings and bare NaN with pd.NA in all object/string columns."""
+        for col in df.columns:
+            if df[col].dtype == object or isinstance(df[col].dtype, pd.StringDtype):
+                df[col] = df[col].replace('', pd.NA)
+                df[col] = df[col].where(df[col].notna(), pd.NA)
+        return df

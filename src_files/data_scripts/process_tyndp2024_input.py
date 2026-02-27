@@ -153,9 +153,9 @@ gen_id_aggregations_loc = {
 def check_chosen_output(output_filename_path:str):
     if os.path.exists(output_filename_path):
         print(f'\nWARNING: {output_filename_path} already exists.')
-        user_answer = input('\n Do you want to overwrite it (write "yes" to proceed)?\n')
-        if user_answer != 'yes':
-            sys.exit('\nScript aborted to avoid overwriting output file.')
+        user_answer = input('\n Do you want to overwrite it (write "y" or "yes" to proceed)?\n')
+        if user_answer.strip().lower() not in ('y', 'yes'):
+            sys.exit('\nGot "no" answer, aborting to avoid overwriting output file.')
 
 
 # --- NATIVE DEMANDS ---
@@ -450,19 +450,45 @@ def process_ramp_limits(merged_cap, ramp_limits, year):
 
     # merge capacities with ramp limits
     merged_cap_ramp_limits = merged_cap.merge(ramp_limits, how='left', on=['from-to']).copy()
+    merged_cap_ramp_limits = merged_cap_ramp_limits.query(f'scenario == "National Trends" and Year == {year}')
 
-    # create the NE model transmission input data sheet
+    # Build one row per direction.
+    # rampLimit is expressed as a fraction of transferCap, so the reverse direction is scaled
+    # by the capacity ratio to preserve the same absolute ramp rate as the forward direction.
+    rows = []
+    for _, row in merged_cap_ramp_limits.iterrows():
+        exp_cap = row['ne_model_export']
+        imp_cap = row['ne_model_import']
+        ramp = row['max_ramp_rate'] if pd.notna(row['max_ramp_rate']) else 0
 
-    trans_ne_input = merged_cap_ramp_limits[['grid', 'scenario', 'Year', 'ne_model_export', 'ne_model_import', 'max_ramp_rate']].copy()
-    trans_ne_input = trans_ne_input.rename(columns={'ne_model_export':'export_capacity',
-                                                    'ne_model_import':'import_capacity',
-                                                    'max_ramp_rate':'rampLimit'})
-    trans_ne_input['vomCost'] = 1
-    trans_ne_input['losses'] = 0.01
-    add_from_to_columns(trans_ne_input)
-    trans_ne_input = trans_ne_input.query(f'scenario == "National Trends" and Year == {year}').reset_index()
-    
-    return trans_ne_input
+        # forward direction (from -> to)
+        rows.append({
+            'grid':               row['grid'],
+            'from_country':        row['from'],
+            'to_country':          row['to'],
+            'scenario':           row['scenario'],
+            'Year':               row['Year'],
+            'transferCap':        exp_cap,
+            'rampLimit':          round(ramp,6),
+            'variableTransCost':  1,
+            'transferLoss':       0.01,
+        })
+
+        # reverse direction (to -> from)
+        ramp_reverse = (ramp * exp_cap / imp_cap) if imp_cap else 0
+        rows.append({
+            'grid':               row['grid'],
+            'from_country':        row['to'],
+            'to_country':          row['from'],
+            'scenario':           row['scenario'],
+            'Year':               row['Year'],
+            'transferCap':        imp_cap,
+            'rampLimit':          round(ramp_reverse,6),
+            'variableTransCost':  1,
+            'transferLoss':       0.01,
+        })
+
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 # --- create a column of aggregated lines, for documentation ---
