@@ -469,7 +469,7 @@ def process_ramp_limits(merged_cap, ramp_limits, year):
             'scenario':           row['scenario'],
             'Year':               row['Year'],
             'transferCap':        exp_cap,
-            'rampLimit':          round(ramp,6),
+            'rampLimit':          0,
             'variableTransCost':  1,
             'transferLoss':       0.01,
         })
@@ -483,7 +483,7 @@ def process_ramp_limits(merged_cap, ramp_limits, year):
             'scenario':           row['scenario'],
             'Year':               row['Year'],
             'transferCap':        imp_cap,
-            'rampLimit':          round(ramp_reverse,6),
+            'rampLimit':          0,
             'variableTransCost':  1,
             'transferLoss':       0.01,
         })
