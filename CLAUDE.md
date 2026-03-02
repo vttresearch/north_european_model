@@ -79,9 +79,10 @@ After `normalize_dataframe`, numeric columns use pandas `Float64` dtype: missing
 
 By the time data reaches `BuildInputExcel`, the distinction between an empty cell and an explicit zero is no longer meaningful. Backbone treats an absent parameter and an explicit 0 identically for all parameters whose Backbone default is 0.
 
-`_ensure_numeric_dtypes()` enforces this at the class boundary: it casts all known numeric parameter columns to `Float64` and fills any remaining `pd.NA` with 0 (or the non-zero `PARAM_*_DEFAULTS` value for params like `isActive = 1`). After that call, every numeric param column contains only `0.0` or a positive float — never `pd.NA`.
-
-`utils.fill_numeric_na()` is called in each `create_*()` function as a safety net to ensure no stray `pd.NA` reaches the Excel writer.
+Numeric columns are handled in three steps:
+1. `_coerce_numeric_dtypes()` casts all known numeric parameter columns in the source DataFrames to `Float64`, coercing non-numeric values to `pd.NA`. It does not fill defaults.
+2. Each `create_*()` function applies non-zero defaults from `PARAM_*_DEFAULTS` (e.g. `isActive = 1`) to its own output DataFrame via `fillna`. Applying defaults here — rather than in `_coerce_numeric_dtypes()` — ensures they are enforced for all rows regardless of which data source contributed them (source DataFrames, time series, inferred unit/demand data, etc.).
+3. `utils.fill_numeric_na()` is called at the end of each `create_*()` to convert any remaining `pd.NA` to `0` before writing to Excel.
 
 ## Error handling policy
 

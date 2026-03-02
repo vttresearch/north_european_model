@@ -18,16 +18,19 @@ class BuildInputExcel:
     Numeric value conventions
     -------------------------
     0 = NA = None = "parameter not set" throughout this class.
-
-    _ensure_numeric_dtypes() casts all known numeric parameter columns to Float64
-    and fills NA with 0 (or the PARAM_*_DEFAULTS value for params that have a
-    non-zero default, e.g. isActive = 1).  Those values flow unchanged through
-    the create_*() functions and are written directly to the Backbone Excel output.
     Backbone treats an absent parameter and an explicit 0 identically for all
     parameters whose Backbone default is 0.
 
-    fill_numeric_na() is called in each create_*() function to ensure no pd.NA
-    remains in Float64 columns before writing to Excel.
+    Processing sequence for numeric columns:
+      1. _coerce_numeric_dtypes() — casts all known numeric parameter columns in the
+         source DataFrames to Float64, coercing non-numeric values to NA.
+      2. Each create_*() function — after building its output DataFrame, applies
+         non-zero defaults from PARAM_*_DEFAULTS (e.g. isActive = 1) via fillna.
+         Doing this in create_*() rather than in _coerce_numeric_dtypes() ensures
+         defaults are applied to all rows regardless of which data source contributed
+         them (source DataFrames, time series, inferred unit/demand data, etc.).
+      3. fill_numeric_na() — called at the end of each create_*() to convert any
+         remaining NA to 0 before writing to Excel.
 
     Local truthiness checks are used throughout (not val, val == 1) rather than
     any shared utility, because the 0 = NA equivalence is specific to this class.
@@ -98,6 +101,7 @@ class BuildInputExcel:
     ]
 
     PARAM_GNN = [
+        'isActive',
         'transferCap',
         'availability',
         'variableTransCost',
@@ -155,12 +159,13 @@ class BuildInputExcel:
         'op00':         1,
     }
 
-    # Applied per-transfer-row in _ensure_numeric_dtypes.
+    # Applied in create_p_gnn after building the output DataFrame.
     PARAM_GNN_DEFAULTS = {
+        'isActive':     1,
         'availability': 1,
     }
 
-    # Applied per-transfer-row in _ensure_numeric_dtypes.
+    # Applied in create_p_gn after building the output DataFrame.
     PARAM_GN_DEFAULTS = {
         'isActive': 1,
     }
@@ -309,16 +314,15 @@ class BuildInputExcel:
                     "input_output": "input" if put.startswith("input") else "output",
                 }
 
-                # Add all other parameters. _ensure_numeric_dtypes guarantees that
-                # all param_gnu columns are Float64 with 0 where the source had NA,
-                # so a direct Series lookup is safe — no NA handling needed here.
-                # Falls back to PARAM_GNU_DEFAULTS (then 0) for columns that were
-                # never present in any input file.
-                additional_params = {
-                    param: cap_row.get(f'{param.lower()}_{put}',
-                                       self.PARAM_GNU_DEFAULTS.get(param, 0))
-                    for param in param_gnu
-                }
+                # Add all other parameters. Use pd.NA as the sentinel for absent
+                # columns so that NA and "column missing" are treated the same way.
+                # Non-zero defaults (e.g. isActive=1, conversionCoeff=1) are applied
+                # explicitly; other NA values become 0 via fill_numeric_na below.
+                additional_params = {}
+                for param in param_gnu:
+                    raw = cap_row.get(f'{param.lower()}_{put}', pd.NA)
+                    default = self.PARAM_GNU_DEFAULTS.get(param, 0)
+                    additional_params[param] = default if pd.isna(raw) else raw
 
                 # Append base and additional parameters
                 rows.append({**base_row, **additional_params})
@@ -556,10 +560,10 @@ class BuildInputExcel:
         merge_unittypedata_into_unitdata().  No separate df_unittypedata lookup
         is needed.
 
-        Parameter values follow this priority (resolved before this method runs):
+        Parameter values follow this priority:
             1. df_unitdata unit-specific values
             2. Type-level defaults (merged into df_unitdata in the pipeline)
-            3. Non-zero parameter defaults from PARAM_UNIT_DEFAULTS (_ensure_numeric_dtypes)
+            3. Non-zero parameter defaults from PARAM_UNIT_DEFAULTS (applied inline)
             4. 0 fallback for params absent from all input files
 
         Enforces the Backbone constraint:
@@ -600,27 +604,28 @@ class BuildInputExcel:
                 continue
             unit_row = unit_matches.iloc[0]
 
-            # Pre-fetch minShutdownHours.
-            # _ensure_numeric_dtypes guarantees param_unit columns are Float64 with no
-            # NA and lowercase names, so a direct Series lookup is sufficient.
-            min_shutdown = unit_row.get('minshutdownhours', 0)
+            # Pre-fetch minShutdownHours (0 if absent or NA).
+            _msd_raw = unit_row.get('minshutdownhours', pd.NA)
+            min_shutdown = 0 if pd.isna(_msd_raw) else _msd_raw
 
             # Start building the row data with the unit column.
             row = {'unit': unit}
 
             # Loop through the parameters defined in param_unit.
-            # Fall back to PARAM_UNIT_DEFAULTS (then 0) so that non-zero defaults
-            # are applied even when a column was never present in any input file.
+            # Series.get() returns NA (not the specified default) when the key exists
+            # with a NA value, so NA is checked explicitly and mapped to the default.
             for param in param_unit:
-                # For startColdAfterXhours, compute the maximum of min_shutdown and the fetched value.
-                # In Backbone, Units must have minShutdownHours <= startWarmAfterXhours <= startColdAfterXhours
+                raw = unit_row.get(param.lower(), pd.NA)
+                default = self.PARAM_UNIT_DEFAULTS.get(param, 0)
+                value = default if pd.isna(raw) else raw
+
+                # In Backbone, units must have minShutdownHours <= startWarmAfterXhours
+                # <= startColdAfterXhours, so clamp startColdAfterXhours from below.
                 if param == 'startColdAfterXhours':
-                    startColdAfterXhours = unit_row.get(param.lower(),
-                                                         self.PARAM_UNIT_DEFAULTS.get(param, 0))
-                    row[param] = max(min_shutdown, startColdAfterXhours)
+                    row[param] = max(min_shutdown, value)
                     continue
 
-                row[param] = unit_row.get(param.lower(), self.PARAM_UNIT_DEFAULTS.get(param, 0))
+                row[param] = value
 
             rows.append(row)
 
@@ -719,11 +724,17 @@ class BuildInputExcel:
             }
             for p in param_gnn:
                 actual = col_map.get(p.lower())
-                out[p] = row[actual] if actual else 0
+                out[p] = row[actual] if actual else pd.NA
             rows.append(out)
 
         final_cols = dimensions + param_gnn
         p_gnn = pd.DataFrame(rows, columns=final_cols)
+        # Apply non-zero defaults (e.g. isActive=1, availability=1) before fill_numeric_na
+        # converts all remaining NA to 0.  Cast to Float64 first so that fillna does not
+        # trigger a FutureWarning about downcasting object-dtype arrays.
+        for p, default_val in self.PARAM_GNN_DEFAULTS.items():
+            if p in p_gnn.columns:
+                p_gnn[p] = p_gnn[p].astype('Float64').fillna(default_val)
         p_gnn = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gnn))
 
         p_gnn.sort_values(
@@ -794,7 +805,7 @@ class BuildInputExcel:
 
         Phase 1 — Node classification:
             Each node is classified as a price node (usePrice = 1) or balance node
-            (nodeBalance = 1), and optionally as a storage node
+            (nodeBalance = 1), and balance nodes optionally as a storage node
             (energyStoredPerUnitOfState = 1).  Explicit user values in df_nodedata
             are used as-is; missing values are deduced:
                 - usePrice: inferred if 'price' column is non-empty in df_nodedata
@@ -846,8 +857,7 @@ class BuildInputExcel:
             energyStoredPerUnitOfState = node_data['energystoredperunitofstate'].iloc[0] if 'energystoredperunitofstate' in node_data.columns and not node_data.empty else None
 
             # Normalize flags: 0 and NA mean "not set" (same as absent column).
-            # After _ensure_numeric_dtypes, absent-or-NA columns come back as 0;
-            # this collapses 0/None/NA into a single sentinel so all downstream
+            # Collapse 0/None/NA into a single None sentinel so all downstream
             # is None / not checks behave identically regardless of source.
             usePrice                   = 1 if pd.notna(usePrice)                   and usePrice                   == 1 else None
             nodeBalance                = 1 if pd.notna(nodeBalance)                and nodeBalance                == 1 else None
@@ -912,7 +922,7 @@ class BuildInputExcel:
             }
 
             # Add remaining param_gn (isActive + others) from nodedata.
-            # Skip zeros: after _ensure_numeric_dtypes, 0 means "not set" (same as absent).
+            # Skip zeros: 0 means "not set" (same as absent) in BuildInputExcel.
             if not node_data.empty:
                 for key in (k for k in param_gn if k not in row_dict):
                     low = key.lower()
@@ -926,6 +936,15 @@ class BuildInputExcel:
         # Build p_gn
         final_cols = dimensions + param_gn
         p_gn = pd.DataFrame(rows, columns=final_cols)
+
+        # Apply non-zero defaults (e.g. isActive=1) before fill_numeric_na converts
+        # all remaining NA to 0.  This covers nodes that have no df_nodedata entry.
+        # Cast to Float64 first so that fillna does not trigger a FutureWarning about
+        # downcasting object-dtype arrays.
+        for p, default_val in self.PARAM_GN_DEFAULTS.items():
+            if p in p_gn.columns:
+                p_gn[p] = p_gn[p].astype('Float64').fillna(default_val)
+                
         p_gn = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gn))
         protected_gn = {'grid', 'node', 'usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'}
         p_gn = p_gn.drop(columns=[col for col in p_gn.columns
@@ -1867,21 +1886,12 @@ class BuildInputExcel:
             df[new_col] = series
         self.df_unitdata = df
 
-    def _ensure_numeric_dtypes(self) -> None:
+    def _coerce_numeric_dtypes(self) -> None:
         """
-        For each dataframe, applies two steps to every known numeric parameter column:
-          1. Cast to Float64 (coercing non-numeric values to NA).
-          2. Fill remaining NA with the value from the relevant PARAM_*_DEFAULTS dict,
-             falling back to 0 for params not listed there.
-
-        For df_transferdata, df_nodedata, and df_demanddata, columns that appear in a
-        PARAM_*_DEFAULTS dict but are entirely absent from the source data are inserted
-        with the default value before the cast-and-fill loop.
-
-        For df_unitdata this insertion is skipped: param_gnu columns carry per-connection
-        suffixes (_output1, _input1, …) so the correct column names depend on context that
-        is not available here.  create_p_gnu_io and create_p_unit both carry their own
-        PARAM_*_DEFAULTS fallbacks for columns that are missing.
+        For each source DataFrame, casts every known numeric parameter column to Float64,
+        coercing non-numeric values to NA.  NA values are left as-is; each create_*()
+        function applies non-zero defaults (from PARAM_*_DEFAULTS) to its own output
+        table so that defaults are enforced regardless of which source contributed a row.
 
         Columns that are not in any PARAM_* list are left untouched.
         param_unit columns that carry a connection suffix trigger a warning and are left
@@ -1891,20 +1901,12 @@ class BuildInputExcel:
         already carry explicit connection suffixes.
         """
 
-        # Lowercase-keyed default dicts so the fillna lookup works against the
-        # already-lowercased column names without a case-insensitive search.
-        _gnu_defaults  = {p.lower(): v for p, v in self.PARAM_GNU_DEFAULTS.items()}
-        _unit_defaults = {p.lower(): v for p, v in self.PARAM_UNIT_DEFAULTS.items()}
-        _gnn_defaults  = {p.lower(): v for p, v in self.PARAM_GNN_DEFAULTS.items()}
-        _gn_defaults   = {p.lower(): v for p, v in self.PARAM_GN_DEFAULTS.items()}
-
         # --- 1) df_unitdata: PARAM_GNU + PARAM_UNIT ---
-        # Missing default columns are NOT inserted here; see docstring for why.
         _gnu  = {p.lower() for p in self.PARAM_GNU}
         _unit = {p.lower() for p in self.PARAM_UNIT}
         _valid_put_suffixes = {
             f'_{d}{i}' for d in ('input', 'output') for i in range(1, 6)
-        }        
+        }
         df = self.df_unitdata.copy()
         for col in df.columns:
             col_l = col.lower()
@@ -1915,8 +1917,7 @@ class BuildInputExcel:
                     put = suffix[1:]
                     break
             if base in _gnu:
-                fill_val = _gnu_defaults.get(base, 0)
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
             elif base in _unit:
                 if put is not None:
                     self.logger.log_status(
@@ -1926,22 +1927,15 @@ class BuildInputExcel:
                         level="warn"
                     )
                 else:
-                    fill_val = _unit_defaults.get(base, 0)
-                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
         self.df_unitdata = df
 
         # --- 2) df_transferdata: PARAM_GNN ---
         _gnn = {p.lower() for p in self.PARAM_GNN}
         df = self.df_transferdata.copy()
-        # Insert columns that have non-zero defaults but are absent from source data.
-        _existing_lower = {c.lower() for c in df.columns}
-        for p, val in self.PARAM_GNN_DEFAULTS.items():
-            if p.lower() not in _existing_lower:
-                df[p.lower()] = pd.array([val] * len(df), dtype='Float64')
         for col in df.columns:
             if col.lower() in _gnn:
-                fill_val = _gnn_defaults.get(col.lower(), 0)
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
         self.df_transferdata = df
 
         # --- 3) df_nodedata + df_demanddata: PARAM_GN + PARAM_GN_BOUNDARY_TYPES ---
@@ -1949,16 +1943,9 @@ class BuildInputExcel:
         _gn_boundary = {p.lower() for p in self.PARAM_GN_BOUNDARY_TYPES}
         for attr in ('df_nodedata', 'df_demanddata'):
             df = getattr(self, attr).copy()
-            # Insert columns that have non-zero defaults but are absent from source data.
-            _existing_lower = {c.lower() for c in df.columns}
-            for p, val in self.PARAM_GN_DEFAULTS.items():
-                if p.lower() not in _existing_lower:
-                    df[p.lower()] = pd.array([val] * len(df), dtype='Float64')
             for col in df.columns:
-                col_l = col.lower()
-                if col_l in _gn or col_l in _gn_boundary:
-                    fill_val = _gn_defaults.get(col_l, 0)
-                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64').fillna(fill_val)
+                if col.lower() in _gn or col.lower() in _gn_boundary:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
             setattr(self, attr, df)
 
 
@@ -1985,8 +1972,8 @@ class BuildInputExcel:
 
         # Restore explicit _output1 suffix on unsuffixed param_gnu columns in df_unitdata.
         self._normalize_unitdata_columns()
-        # Enforce Float64 on all known numeric columns; warn on invalid column patterns.
-        self._ensure_numeric_dtypes()
+        # Cast all known numeric columns to Float64; warn on invalid column patterns.
+        self._coerce_numeric_dtypes()
 
         # --- Convert unit derived input data tables to DataFrames ---
 
