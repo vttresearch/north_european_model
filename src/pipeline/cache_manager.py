@@ -221,7 +221,7 @@ class CacheManager:
         Detect which input Excel file categories have changed since the last run.
 
         Compares sheet-level hashes against the previous run for each category
-        (e.g. 'demanddata_files', 'fueldata_files'). Only sheets matching the
+        (e.g. 'demanddata_files', 'nodedata_files'). Only sheets matching the
         category's prefix are hashed, following the same logic as read_input_excels.
         Saves updated hashes for the next run regardless of whether changes were found.
 
@@ -247,12 +247,11 @@ class CacheManager:
         # Map categories to their sheet prefixes (following read_input_excels logic)
         category_to_prefix = {
             "unittypedata_files": "unittype",
-            "fueldata_files": "fuel",
+            "nodedata_files": "node",
             "emissiondata_files": "emission",
             "demanddata_files": "demand",
             "transferdata_files": "transfer",
             "unitdata_files": "unit",
-            "storagedata_files": "storage",
             "userconstraintdata_files": "userconstraint"
         }
 

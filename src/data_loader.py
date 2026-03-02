@@ -605,7 +605,7 @@ def merge_unittypedata_into_unitdata(
     df_unitdata: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
     logger=None,
-) -> pd.DataFrame:
+    ) -> pd.DataFrame:
     """
     Merge type-level technical parameters from df_unittypedata into df_unitdata.
 

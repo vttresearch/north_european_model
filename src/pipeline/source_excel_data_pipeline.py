@@ -54,7 +54,7 @@ Data conventions
 - Numeric columns: pd.NA for missing values. Zero is meaningful data.
 - String/object columns: pd.NA for missing values. Empty string is not used.
 - Blacklists: apply_blacklist() is applied before apply_whitelist() for datasets that
-  support exclude_grids and exclude_nodes (demanddata, storagedata, unitdata,
+  support exclude_grids and exclude_nodes (demanddata, nodedata, unitdata,
   transferdata). Rows whose grid/node matches an excluded value are dropped before any
   further scenario or country filtering takes place.
 - Metadata columns (_source_file, _source_sheet, method): dropped by merge_row_by_row.
@@ -72,10 +72,9 @@ Output DataFrames
 After run() the following attributes are populated (empty DataFrame if no source
 files are configured):
 
-  df_fueldata            fuel/carrier cost parameters    key: country, grid, node
+  df_nodedata            node parameters (fuel costs, emissions, storage)  key: country, grid, node
   df_emissiondata        emission factors                key: emission
   df_demanddata          demand parameters               key: country, grid, node
-  df_storagedata         storage parameters              key: country, grid, node
   df_unitdata            unit capacity parameters        key: country, generator_id, unit_name_prefix
                          NOTE: df_unitdata is the MERGED result — type-level defaults
                          from df_unittypedata are incorporated here via
@@ -140,8 +139,7 @@ class SourceExcelDataPipeline:
         self.df_transferdata = pd.DataFrame()
         self._df_unittypedata = pd.DataFrame()  # internal; merged into df_unitdata before run() ends
         self.df_unitdata = pd.DataFrame()
-        self.df_storagedata = pd.DataFrame()
-        self.df_fueldata = pd.DataFrame()
+        self.df_nodedata = pd.DataFrame()
         self.df_emissiondata = pd.DataFrame()
         self.df_userconstraintdata = pd.DataFrame()
 
@@ -196,24 +194,24 @@ class SourceExcelDataPipeline:
         exclude_grids = self.config['exclude_grids']
         exclude_nodes = self.config['exclude_nodes']
 
-        # fueldata
-        files = self.config['fueldata_files']
+        # nodedata
+        files = self.config['nodedata_files']
         if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'fueldata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'fueldata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'fueldata', self.logger) for df in dfs]
+            dfs = data_loader.read_input_excels(input_folder, files, 'nodedata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'nodedata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'nodedata', self.logger) for df in dfs]
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'fueldata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'nodedata', {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'fueldata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'nodedata', {'node': exclude_nodes}) for df in dfs]
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
-                                   self.logger, 'fueldata')
+                                   self.logger, 'nodedata')
                    for df in dfs
                    ]
-            self.df_fueldata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
+            self.df_nodedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
         else:
             self.logger.log_status(
-                "No Excel files for 'fueldata_files' defined in the config file",
+                "No Excel files for 'nodedata_files' defined in the config file",
                 level="info"
             )
 
@@ -236,27 +234,6 @@ class SourceExcelDataPipeline:
         else:
             self.logger.log_status(
                 "No Excel files for 'demanddata_files' defined in the config file",
-                level="info"
-            )
-
-        # storagedata
-        files = self.config['storagedata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'storagedata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'storagedata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'storagedata', self.logger) for df in dfs]
-            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'storagedata', {'grid': exclude_grids}) for df in dfs]
-            dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'storagedata', {'node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
-                                   self.logger, 'storagedata')
-                   for df in dfs
-                   ]
-            self.df_storagedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
-        else:
-            self.logger.log_status(
-                "No Excel files for 'storagedata_files' defined in the config file",
                 level="info"
             )
 
@@ -355,8 +332,8 @@ class SourceExcelDataPipeline:
         # Convert all empty cells to pd.NA across every output DataFrame.
         # Object columns may contain empty strings from normalization; replace them.
         # Float64 NaN values are already represented as pd.NA by the nullable dtype.
-        for attr in ('df_fueldata', 'df_emissiondata', 'df_demanddata',
-                     'df_storagedata', 'df_unitdata', 'df_transferdata',
+        for attr in ('df_nodedata', 'df_emissiondata', 'df_demanddata',
+                     'df_unitdata', 'df_transferdata',
                      'df_userconstraintdata'):
             df = getattr(self, attr)
             if not df.empty:

@@ -20,7 +20,7 @@ All `.cmd` files are user-specific run scripts -- skip them.
 build_input_data.py          Main entry point 
 
 src/
-  config_reader.py           Reads .ini config files into a dict
+  config_reader.py           Reads .ini config files into a dict. Ensures that all config parameters exist and have valid default assumptions.
   build_input_excel.py       Builds the final Backbone input Excel (BuildInputExcel class)
   data_loader.py             Data loading utilities
   GDX_exchange.py            GDX read/write helpers
@@ -57,10 +57,31 @@ src_files/
    - **Finalize** -- GAMS template files are copied to the output folder
 4. Output goes to `<output_folder_prefix>_<scenario>_<year>[_<alternative>]/`
 
-## Trusting previous pipelines
 
-The workflow tries to keep up certain standards and shared assumptions. At the moment we have following:
-- ./src/config_reader.py ensures that all config files parameters exist and have valid default assumptions.
+## Data conventions
+
+The two main pipeline stages use **different** NA/zero conventions. Mixing them up is a common source of bugs.
+
+### SourceExcelDataPipeline (`source_excel_data_pipeline.py`)
+
+**NA and 0 are distinct.**
+
+- `pd.NA` means "no data" — the cell was empty in the source Excel.
+- `0` means "explicitly set to zero" — the user wrote 0 in the cell.
+
+This distinction is necessary so that users can intentionally overwrite an inherited or default value with zero (via `method=replace`). A merge that collapses NA and 0 would make that impossible.
+
+After `normalize_dataframe`, numeric columns use pandas `Float64` dtype: missing cells become `pd.NA`, explicit zeros remain `0.0`. String/object columns use `pd.NA` for missing values; empty strings are not used.
+
+### BuildInputExcel (`build_input_excel.py`)
+
+**0 = NA = None = "parameter not set".**
+
+By the time data reaches `BuildInputExcel`, the distinction between an empty cell and an explicit zero is no longer meaningful. Backbone treats an absent parameter and an explicit 0 identically for all parameters whose Backbone default is 0.
+
+`_ensure_numeric_dtypes()` enforces this at the class boundary: it casts all known numeric parameter columns to `Float64` and fills any remaining `pd.NA` with 0 (or the non-zero `PARAM_*_DEFAULTS` value for params like `isActive = 1`). After that call, every numeric param column contains only `0.0` or a positive float — never `pd.NA`.
+
+`utils.fill_numeric_na()` is called in each `create_*()` function as a safety net to ensure no stray `pd.NA` reaches the Excel writer.
 
 ## Error handling policy
 

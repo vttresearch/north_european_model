@@ -74,12 +74,11 @@ def load_config(config_file: Path) -> Dict[str, Any]:
 
         # Data files
         'unittypedata_files': ast.literal_eval(inputdata.get('unittypedata_files', '[]')),
-        'fueldata_files': ast.literal_eval(inputdata.get('fueldata_files', '[]')),
+        'nodedata_files': ast.literal_eval(inputdata.get('nodedata_files', '[]')),
         'emissiondata_files': ast.literal_eval(inputdata.get('emissiondata_files', '[]')),
         'demanddata_files': ast.literal_eval(inputdata.get('demanddata_files', '[]')),
         'transferdata_files': ast.literal_eval(inputdata.get('transferdata_files', '[]')),
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
-        'storagedata_files': ast.literal_eval(inputdata.get('storagedata_files', '[]')),
         'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
         # Timeseries specs
@@ -90,5 +89,16 @@ def load_config(config_file: Path) -> Dict[str, Any]:
     for key in ('scenario_alternatives', 'scenario_alternatives2', 'scenario_alternatives3', 'scenario_alternatives4'):
         if not config[key]:
             config[key] = [""]
+
+    # Deprecation check: fueldata_files and storagedata_files were merged into nodedata_files.
+    # Raise early so the user sees a clear message before any pipeline work begins.
+    deprecated = [k for k in ('fueldata_files', 'storagedata_files') if inputdata.get(k) is not None]
+    if deprecated:
+        raise ValueError(
+            f"Config key(s) {deprecated} are no longer supported. "
+            "fueldata and storagedata have been merged into 'nodedata_files'. "
+            "Rename the Excel sheets from 'fueldata'/'storagedata' to 'nodedata' "
+            "and replace the two config entries with a single 'nodedata_files' list."
+        )
 
     return config

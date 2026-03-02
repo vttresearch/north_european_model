@@ -163,22 +163,6 @@ def collect_domain_pairs_for_cache(df, domain_pairs: list[list[str]]) -> dict[st
     return result
 
 
-def is_val_empty(val) -> bool:
-    """
-    Return True if `val` is None or NaN-like (pd.NA, np.nan, etc.).
-
-    Upstream normalization (normalize_dataframe + standardize_df_dtypes) guarantees
-    that values reaching this function are only None, pd.NA/np.nan, float, or str
-    — with whitespace already stripped and empty strings converted to pd.NA.
-    """
-    if val is None:
-        return True
-    try:
-        return pd.isna(val)
-    except (ValueError, TypeError):
-        return False
-
-
 def is_col_empty(s: pd.Series) -> bool:
     """
     Determine whether a pandas Series should be considered "empty."
