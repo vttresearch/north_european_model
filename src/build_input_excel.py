@@ -132,6 +132,7 @@ class BuildInputExcel:
         'capacityMargin',
         'storageValueUseTimeSeries',
         'influx',
+        'price',
     ]
 
     PARAM_GN_BOUNDARY_TYPES = [
@@ -1245,45 +1246,6 @@ class BuildInputExcel:
         return (p_gn, p_gnBoundaryPropertiesForStates)
 
 
-    def create_ts_priceChange(
-        self,
-        p_gn_flat: pd.DataFrame,
-        df_nodedata: pd.DataFrame
-        ) -> pd.DataFrame:
-        # return empty dataframe if no price nodes (empty p_gn) or no node data (empty df_nodedata)
-        if p_gn_flat.empty or df_nodedata.empty:
-            return pd.DataFrame()
-
-        # Identify the price column in df_nodedata (case-insensitive), return empty dataframe if not found
-        price_col = next((col for col in df_nodedata.columns if col.lower() == 'price'), None)
-        if price_col is None:
-            return pd.DataFrame()
-
-        rows = []
-        # Loop through each row in p_gn using the columns: grid, node, and usePrice
-        for _, row in p_gn_flat.iterrows():
-            node_value = row['node']
-
-            # Retrieve the node_price from df_nodedata where the node value matches.
-            matching_rows = df_nodedata[df_nodedata['node'] == node_value]
-            if not matching_rows.empty:
-                node_price = matching_rows.iloc[0][price_col]
-
-                # Create a dictionary for the new row
-                row_dict = {
-                    'node': node_value,
-                    't': 't000001',
-                    'value': node_price
-                }
-                rows.append(row_dict)
-
-        # Create the ts_priceChange DataFrame from the list of row dictionaries
-        ts_priceChange = pd.DataFrame(rows)
-        ts_priceChange = utils.fill_numeric_na(utils.standardize_df_dtypes(ts_priceChange))
-        
-        return ts_priceChange
-
-
     def create_p_nEmission(
         self,
         p_gn_flat: pd.DataFrame,
@@ -2048,7 +2010,6 @@ class BuildInputExcel:
         p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat,
                                                                                       self.df_nodedata,
                                                                                       self.ts_storage_limits)
-        ts_priceChange = self.create_ts_priceChange(p_gn_flat, self.df_nodedata)
         p_userconstraint = self.create_p_userconstraint(self.df_userconstraintdata,
                                                         p_gnu_io_flat,
                                                         self.mingen_nodes)
@@ -2115,7 +2076,6 @@ class BuildInputExcel:
             node.to_excel(writer, sheet_name='node', index=False) 
             p_gn.to_excel(writer, sheet_name='p_gn', index=False) 
             p_gnBoundaryPropertiesForStates.to_excel(writer, sheet_name='p_gnBoundaryPropertiesForStates', index=False)        
-            ts_priceChange.to_excel(writer, sheet_name='ts_priceChange', index=False)   
 
             # transfer input tables
             p_gnn.to_excel(writer, sheet_name='p_gnn', index=False)
