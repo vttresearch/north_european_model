@@ -225,7 +225,6 @@ class ProcessorRunner:
         rounding_precision = spec.get("rounding_precision", 0)
         bb_parameter = spec.get("bb_parameter")
         gdx_name_suffix = spec.get("gdx_name_suffix", "")
-        process_only_single_year = spec.get("process_only_single_year", False)
         write_csv_files = spec.get("write_csv_files", False)
 
         # Load processor module
@@ -356,11 +355,7 @@ class ProcessorRunner:
 
             # Write trimmed results (wide format) to CSV if requested
             if write_csv_files:
-                if process_only_single_year:
-                    csv_file = f"{bb_parameter}_{gdx_name_suffix}.csv"
-                else:
-                    csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
-
+                csv_file = f"{bb_parameter}_{gdx_name_suffix}_{start_date.year}-{end_date.year}.csv"
                 csv_path = os.path.join(self.output_folder, csv_file)
                 main_result.to_csv(csv_path)
                 self.logger.log_status(f"Summary CSV written to '{csv_path}'", level="info")
@@ -389,11 +384,7 @@ class ProcessorRunner:
                 # Write CSV if requested
                 if write_csv_files:
                     self.logger.log_status("Writing average year csv file...")
-                    if process_only_single_year:
-                        avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year.csv"
-                    else:
-                        avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year_from_{start_date.year}-{end_date.year}.csv"
-
+                    avg_csv = f"{bb_parameter}_{gdx_name_suffix}_average_year_from_{start_date.year}-{end_date.year}.csv"
                     avg_csv_path = os.path.join(self.output_folder, avg_csv)
                     avg_df.to_csv(avg_csv_path)
 

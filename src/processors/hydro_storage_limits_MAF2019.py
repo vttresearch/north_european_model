@@ -8,15 +8,22 @@ from src.processors.base_processor import BaseProcessor
 class hydro_storage_limits_MAF2019(BaseProcessor):
     """
     Class to process reservoir state limits data (reservoir, pump open cycle, pumped closed cycle)
-    for a single non-leap year (2015).
+    for a parametrized date range (start_date to end_date).
+
+    The weekly reservoir level CSV contains identical min/max values for every year.
+    A full multi-year timeseries is built by replicating the weekly pattern for each
+    calendar year in the range and interpolating to hourly resolution.
+    Large jumps at year boundaries are detected, logged, and smoothed.
 
     Parameters:
         input_folder (str): relative location of input files.
         country_codes (list): List of country codes.
+        start_date (str or datetime): Start of the timeseries range.
+        end_date (str or datetime): End of the timeseries range.
 
     Returns:
-        main_result (pd.DataFrame): A MultiIndex DataFrame with time series data for each node 
-                                     with datetime index from 2015-01-01 00:00:00 to 2015-12-31 23:00:00
+        main_result (pd.DataFrame): A MultiIndex DataFrame with time series data for each node
+                                     with datetime index from start_date to end_date.
                                      Columns named by country (e.g., AT00_reservoir, AT00_psOpen, CH00_reservoir)
         secondary_result (pd.DataFrame): A DataFrame listing valid (node, boundary type, average_value) combinations
     """
@@ -24,11 +31,13 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
     def __init__(self, **kwargs):
         # Initialize base class
         super().__init__(**kwargs)
-        
+
         # List of required parameters
         required_params = [
-            'input_folder', 
-            'country_codes'
+            'input_folder',
+            'country_codes',
+            'start_date',
+            'end_date',
         ]
 
         # Check if all required parameters are present
@@ -40,10 +49,9 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         self.input_folder = kwargs['input_folder']
         self.country_codes = kwargs['country_codes']
 
-        # Single non-leap year (2015)
-        self.reference_year = 2015
-        self.start_date = '2015-01-01 00:00:00'
-        self.end_date = '2015-12-31 23:00:00'
+        # Date range for the timeseries
+        self.start_date = pd.to_datetime(kwargs['start_date'])
+        self.end_date = pd.to_datetime(kwargs['end_date'])
 
         # Parameters for processing "reservoir" data.
         self.minvariable = 'downwardLimit'
@@ -61,34 +69,78 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         self.file_last = '_Hydro Inflow_SOR 20.xlsx'
         self.norway_codes = ['NOS0', 'NOM1', 'NON1']
 
+        # Tracks which (col, boundary_type) series had year-boundary jumps smoothed.
+        # Populated by _smooth_year_boundaries; summarised at the end of process().
+        self.smoothed_series: set = set()
+
         # Input file paths.
         self.levels_file = os.path.join(self.input_folder, 'PECD-hydro-weekly-reservoir-levels.csv')
         self.capacities_file = os.path.join(self.input_folder, 'PECD-hydro-capacities.csv')
 
-    def fill_weekly_data(self, lowerBound, upperBound, weekly_df,
-                         country, suffix, cap_key, lower_col, upper_col, df_capacities):
+    def _fill_weekly_data_for_year(self, lowerBound, upperBound, weekly_df,
+                                   year, country, suffix, cap_key, lower_col, upper_col, df_capacities):
         """
-        Loop through the weekly data (weekly_df) and fill in the
-        lower and upper bound DataFrames for the reference year (2015).
-        The capacity value is looked up from df_capacities using cap_key.
+        Fill weekly anchor timestamps in lowerBound/upperBound for a single calendar year.
+
+        Weeks are placed at Jan 4 noon + 7*i days for i=0..51 (matching the PECD convention).
+        Anchor points outside [start_date, end_date] are skipped. weekly_df must be indexed
+        0..N with one row per week; only the first 52 rows are used.
         """
-        # Use reference year 2015 for all calculations
-        fourthday = pd.Timestamp(self.reference_year, 1, 4) + pd.DateOffset(hours=12)
-        
-        for i in weekly_df.index:
+        fourthday = pd.Timestamp(year, 1, 4, 12)
+        cap_value = df_capacities.at[cap_key, 'value']
+        col = country + suffix
+
+        for i in range(min(52, len(weekly_df))):
             t = fourthday + pd.DateOffset(days=7 * i)
-            
-            # For weeks 0 to 51 (if within year bounds)
-            if t <= pd.Timestamp(self.end_date) and i < 52:
-                cap_value = df_capacities.at[cap_key, 'value']
-                lowerBound.at[t, country + suffix] = 1000 * weekly_df.at[i, lower_col] * cap_value
-                upperBound.at[t, country + suffix] = 1000 * weekly_df.at[i, upper_col] * cap_value
-            # For week 52 (if present), use the value at index 51
-            elif i == 52 and 51 in weekly_df.index:
-                t = pd.Timestamp(self.reference_year, 12, 28) + pd.DateOffset(hours=12)
-                cap_value = df_capacities.at[cap_key, 'value']
-                lowerBound.at[t, country + suffix] = 1000 * weekly_df.at[51, lower_col] * cap_value
-                upperBound.at[t, country + suffix] = 1000 * weekly_df.at[51, upper_col] * cap_value
+            if t > self.end_date:
+                break
+            if t < self.start_date:
+                continue
+            lowerBound.at[t, col] = 1000 * weekly_df.at[i, lower_col] * cap_value
+            upperBound.at[t, col] = 1000 * weekly_df.at[i, upper_col] * cap_value
+
+    def _smooth_year_boundaries(self, bound_df, col, boundary_type, typical_multiplier=3.0):
+        """
+        Detect and smooth large value jumps at year boundaries in a sparse weekly series.
+
+        For each year boundary in the date range, computes the jump between the last weekly
+        anchor of year Y and the first of year Y+1. If the jump exceeds typical_multiplier
+        times the typical mid-year week-to-week variation, logs an info message and linearly
+        blends the two boundary-week values toward each other.
+        """
+        if col not in bound_df.columns:
+            return
+        series = bound_df[col].dropna()
+        if len(series) < 4:
+            return
+
+        for year in range(self.start_date.year, self.end_date.year):
+            year_vals = series[series.index.year == year]
+            next_year_vals = series[series.index.year == year + 1]
+
+            if len(year_vals) < 3 or len(next_year_vals) < 2:
+                continue
+
+            val_prev = year_vals.iloc[-2]    # week 51 of year Y
+            val_last = year_vals.iloc[-1]    # week 52 of year Y
+            val_first = next_year_vals.iloc[0]   # week 1 of year Y+1
+            val_second = next_year_vals.iloc[1]  # week 2 of year Y+1
+
+            boundary_jump = abs(val_last - val_first)
+
+            # Typical week-to-week change from inner weeks (skip first and last 2)
+            inner = year_vals.iloc[2:-2]
+            if len(inner) < 2:
+                continue
+            typical_change = inner.diff().abs().mean()
+
+            if typical_change > 0 and boundary_jump > typical_multiplier * typical_change:
+                self.smoothed_series.add((col, boundary_type))
+                # Blend boundary weeks linearly from val_prev toward val_second
+                t_last = year_vals.index[-1]
+                t_first = next_year_vals.index[0]
+                bound_df.at[t_last, col] = val_prev + (val_second - val_prev) / 3
+                bound_df.at[t_first, col] = val_prev + 2 * (val_second - val_prev) / 3
 
     def merge_bounds(self, lowerBound, upperBound, minvariable, maxvariable):
         """
@@ -106,53 +158,56 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         return result_df
 
     def process_country(self, country, df_country, df_capacities,
-                        minvariable_header, maxvariable_header, 
-                        minvariable, maxvariable, 
-                        suffix_reservoir, suffix_open, suffix_closed):
+                        minvariable_header, maxvariable_header,
+                        minvariable, maxvariable,
+                        suffix_reservoir):
         """
-        Process the data for a single country (non-Norway) using the provided levels
-        and capacities DataFrames for the reference year (2015).
+        Process data for a single country (non-Norway) across the full date range.
+
+        The weekly pattern from the CSV is identical for all years; it is replicated
+        for each calendar year in [start_date.year, end_date.year].
         """
-        # Create an hourly datetime index for the reference year (2015)
         date_index = pd.date_range(self.start_date, self.end_date, freq='60 min')
         df_lowerBound = pd.DataFrame(index=date_index)
         df_upperBound = pd.DataFrame(index=date_index)
-        
+
         cap_key_reservoir = (country, 'Reservoir', 'Reservoir capacity (GWh)')
-        # If detailed level data is available and has no NaNs in the fourth column
         if not df_country.empty and not df_country.iloc[:, 3].isna().any():
             df_country = df_country.sort_values(by=['year', 'week']).reset_index(drop=True)
-            # Take data from any available year (they're all identical)
-            # Just use the first year's data
             available_years = df_country['year'].unique()
             if len(available_years) > 0:
-                df_year = df_country[df_country["year"] == available_years[0]].copy()
-                df_year = df_year.reset_index(drop=True)
-                self.fill_weekly_data(df_lowerBound, df_upperBound, df_year,
-                                      country, suffix_reservoir, cap_key_reservoir, 
-                                      minvariable_header, maxvariable_header, df_capacities)
+                # Weekly data is identical across years; use the first year's rows
+                df_week_data = df_country[df_country['year'] == available_years[0]].reset_index(drop=True)
+                col = country + suffix_reservoir
+                for year in range(self.start_date.year, self.end_date.year + 1):
+                    self._fill_weekly_data_for_year(
+                        df_lowerBound, df_upperBound, df_week_data,
+                        year, country, suffix_reservoir, cap_key_reservoir,
+                        minvariable_header, maxvariable_header, df_capacities
+                    )
+                self._smooth_year_boundaries(df_lowerBound, col, minvariable)
+                self._smooth_year_boundaries(df_upperBound, col, maxvariable)
 
-        # Interpolate to fill in missing hourly data
-        df_lowerBound.interpolate(inplace=True, limit=84, limit_direction='both')
-        df_upperBound.interpolate(inplace=True, limit=84, limit_direction='both')
-       
+        df_lowerBound.interpolate(inplace=True, limit_direction='both')
+        df_upperBound.interpolate(inplace=True, limit_direction='both')
+
         result_df = self.merge_bounds(df_lowerBound, df_upperBound, minvariable, maxvariable)
         return result_df
 
-    def process_norway_area(self, country, filename, 
+    def process_norway_area(self, country, filename,
                             df_capacities,
-                            minvariable_header_norway, maxvariable_header_norway, 
-                            minvariable, maxvariable, 
-                            suffix_open, suffix_closed):
+                            minvariable_header_norway, maxvariable_header_norway,
+                            minvariable, maxvariable,
+                            suffix_open):
         """
-        Process Norway-specific area data using an Excel input file for the reference year (2015).
+        Process Norway-specific area data using an Excel input file across the full date range.
+
+        The weekly pattern from the Excel is replicated for each calendar year.
         """
-        # Create an hourly datetime index for the reference year (2015)
         date_index = pd.date_range(self.start_date, self.end_date, freq='60 min')
         df_lowerBound = pd.DataFrame(index=date_index)
         df_upperBound = pd.DataFrame(index=date_index)
-        
-        # Read the Excel data
+
         try:
             df = pd.read_excel(
                 os.path.normpath(filename),
@@ -164,16 +219,21 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         except Exception as e:
             self.logger.log_status(f"Error reading Norway input Excel: {e}", level="warn")
             return None
-        
-        # Fill weekly data for the reference year
+
         cap_key_psOpen = (country, 'Pump Storage - Open Loop', 'Cumulated (upper or head) reservoir capacity (GWh)')
-        self.fill_weekly_data(df_lowerBound, df_upperBound, df,
-                              country, suffix_open, cap_key_psOpen,
-                              minvariable_header_norway, maxvariable_header_norway, df_capacities)
-        
-        df_lowerBound.interpolate(inplace=True, limit=84, limit_direction='both')
-        df_upperBound.interpolate(inplace=True, limit=84, limit_direction='both')
-               
+        col = country + suffix_open
+        for year in range(self.start_date.year, self.end_date.year + 1):
+            self._fill_weekly_data_for_year(
+                df_lowerBound, df_upperBound, df,
+                year, country, suffix_open, cap_key_psOpen,
+                minvariable_header_norway, maxvariable_header_norway, df_capacities
+            )
+        self._smooth_year_boundaries(df_lowerBound, col, minvariable)
+        self._smooth_year_boundaries(df_upperBound, col, maxvariable)
+
+        df_lowerBound.interpolate(inplace=True, limit_direction='both')
+        df_upperBound.interpolate(inplace=True, limit_direction='both')
+
         result_df = self.merge_bounds(df_lowerBound, df_upperBound, minvariable, maxvariable)
         return result_df
 
@@ -184,16 +244,17 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         This function performs the following steps:
         1. Reads and validates reservoir levels data from CSV files
         2. Reads capacity data for different zones and types
-        3. Creates a time-series framework for the reference year (2015)
-        4. Processes each country's data (with special handling for Norway)
-        5. Creates ts_hydro_storage_limits_df of valid (node, boundary type) combinations
+        3. Creates a time-series framework for the full date range
+        4. For each calendar year in the range, replicates the weekly pattern and
+           detects/smooths large jumps at year boundaries
+        5. Interpolates weekly anchor points to hourly resolution
+        6. Creates ts_hydro_storage_limits_df of valid (node, boundary type) combinations
 
         Returns:
             pd.DataFrame: A MultiIndex DataFrame with time series data for each node
-                         with datetime index for 2015
+                         with datetime index from start_date to end_date
         """
         # --- Read and prepare the input data
-        # Read the levels CSV file
         self.logger.log_status("Reading input files...")
         try:
             df_levels = pd.read_csv(self.levels_file)
@@ -201,11 +262,9 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
             self.logger.log_status(f"Error reading hydro storage levels CSV '{self.levels_file}': {e}", level="warn")
             return pd.DataFrame()
 
-        # Convert columns to numeric (data from any year will work since they're identical)
         df_levels["year"] = pd.to_numeric(df_levels["year"])
         df_levels["week"] = pd.to_numeric(df_levels["week"])
 
-        # Read the capacities CSV file
         try:
             df_capacities = pd.read_csv(self.capacities_file)
         except Exception as e:
@@ -213,8 +272,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
             return pd.DataFrame()
         df_capacities = df_capacities.set_index(["zone", "type", "variable"])
 
-        # Create a summary DataFrame with a MultiIndex (time, param_gnBoundaryTypes)
-        # for the reference year (2015)
+        # Create a summary DataFrame with a MultiIndex (time, param_gnBoundaryTypes) for the full date range
         idx = pd.MultiIndex.from_product(
             [pd.date_range(self.start_date, self.end_date, freq='60 min'),
              [self.minvariable, self.maxvariable]],
@@ -222,10 +280,11 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         )
         summary_df = pd.DataFrame(index=idx)
 
-        # --- build country level df
-        self.logger.log_status("Building country level timeseries...")
-        
-        # Process each country
+        # --- Build country level timeseries
+        self.logger.log_status(
+            f"Building country level timeseries ({self.start_date.year}-{self.end_date.year})..."
+        )
+
         for country in self.country_codes:
             if country in self.norway_codes:
                 # Special handling for Norway using Excel data
@@ -233,7 +292,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
                 result_df = self.process_norway_area(country, filename, df_capacities,
                                                      self.minvariable_header_norway, self.maxvariable_header_norway,
                                                      self.minvariable, self.maxvariable,
-                                                     self.suffix_open, self.suffix_closed)
+                                                     self.suffix_open)
             else:
                 # Standard processing for other countries
                 df_country = df_levels[df_levels["zone"] == country]
@@ -242,7 +301,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
                 result_df = self.process_country(country, df_country, df_capacities,
                                                  self.minvariable_header, self.maxvariable_header,
                                                  self.minvariable, self.maxvariable,
-                                                 self.suffix_reservoir, self.suffix_open, self.suffix_closed)
+                                                 self.suffix_reservoir)
 
             # Merge country results into summary dataframe
             if result_df is not None:
@@ -252,6 +311,13 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         # Remove columns with no data (sum equals zero)
         summary_df = summary_df.loc[:, summary_df.sum() > 0]
 
+        # Log a summary of any year-boundary smoothing that was applied
+        if self.smoothed_series:
+            series_list = ', '.join(f"{col} ({btype})" for col, btype in sorted(self.smoothed_series))
+            self.logger.log_status(
+                f"Smoothed year-to-year jumps in {len(self.smoothed_series)} series: {series_list}.",
+                level="info"
+            )
 
         # --- Create secondary results for nodes that have timeseries format limits
         # This is used when building the input excel to create correct info
@@ -261,35 +327,26 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         mask = summary_df > 0
 
         # Check which (node, boundary type) combinations have data
-        # Group by boundary type and check if sum > 0
         has_data = mask.groupby(level='param_gnBoundaryTypes').sum() > 0
 
         # Get all combinations with data and their average values
         combinations_with_data = []
         for boundary_type in summary_df.index.get_level_values('param_gnBoundaryTypes').unique():
-            # Filter to get only rows with this boundary type
             boundary_data = summary_df.xs(boundary_type, level='param_gnBoundaryTypes')
 
             for node in summary_df.columns:
                 if has_data.loc[boundary_type, node]:
-                    # Calculate average across time for this boundary type and node
-                    # Get only positive values for this node
                     positive_values = boundary_data[node][boundary_data[node] > 0]
                     avg_value = positive_values.mean() if len(positive_values) > 0 else 0
-
                     combinations_with_data.append((node, boundary_type, avg_value))
 
-        # Create a dataframe of all valid combinations with their averages
         ts_hydro_storage_limits = pd.DataFrame(
-            combinations_with_data, 
+            combinations_with_data,
             columns=['node', 'param_gnBoundaryTypes', 'average_value']
         )
 
-        # Store secondary result
         self.secondary_result = ts_hydro_storage_limits
 
         self.logger.log_status("Hydro storage limit time series built.", level="info")
 
-
-        # Return the main result DataFrame
         return summary_df
