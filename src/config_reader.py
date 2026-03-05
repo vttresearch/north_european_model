@@ -1,7 +1,126 @@
 import configparser
 import ast
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+
+
+def _parse_climate_data(value: str) -> Tuple[int, int]:
+    """
+    Parse the climate_data config value into (start_year, end_year).
+
+    Accepted formats:
+        "YYYY"        -- single climate year (start_year == end_year)
+        "YYYY-YYYY"   -- inclusive range of climate years
+
+    Returns:
+        (start_year, end_year) as integers.
+
+    Raises:
+        ValueError: if the format is invalid or the range is inverted.
+    """
+    value = value.strip()
+    if not re.fullmatch(r'\d{4}(-\d{4})?', value):
+        raise ValueError(
+            f"Invalid climate_data format '{value}'. "
+            "Expected 'YYYY' or 'YYYY-YYYY' (e.g. '2014' or '2014-2016')."
+        )
+    if '-' in value:
+        start_str, end_str = value.split('-')
+        start_year, end_year = int(start_str), int(end_str)
+    else:
+        start_year = end_year = int(value)
+
+    if not (1982 <= start_year <= 2016 and 1982 <= end_year <= 2016):
+        raise ValueError(
+            f"Climate years must, for now, be between 1982 and 2016; got '{value}'."
+        )
+    if start_year > end_year:
+        raise ValueError(
+            f"climate_data start year ({start_year}) must not be later than "
+            f"end year ({end_year})."
+        )
+    return start_year, end_year
+
+
+def _parse_bb_timeseries_start(value: str) -> str:
+    """
+    Validate and return a bb_timeseries_start value ('mm-dd').
+
+    Raises:
+        ValueError: if the format or month/day values are out of range.
+    """
+    value = value.strip()
+    if not re.fullmatch(r'\d{2}-\d{2}', value):
+        raise ValueError(
+            f"Invalid bb_timeseries_start format '{value}'. "
+            "Expected 'mm-dd' (e.g. '01-01' or '07-01')."
+        )
+    mm, dd = int(value[:2]), int(value[3:])
+    if not (1 <= mm <= 12):
+        raise ValueError(
+            f"bb_timeseries_start month {mm} is out of range (01-12)."
+        )
+    if not (1 <= dd <= 31):
+        raise ValueError(
+            f"bb_timeseries_start day {dd} is out of range (01-31)."
+        )
+    return value
+
+
+_TIMESERIES_SPEC_DEFAULTS = {
+    'demand_grid': '',
+    'custom_column_value': None,
+    'gdx_name_suffix': '',
+    'rounding_precision': 0,
+    'secondary_output_name': None,
+    'quantile_map': {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'},
+    'input_sub_folder': '',
+    'attached_grid': '',
+    'is_input_data_dependent': True,
+    'scaling_factor': 1,
+}
+
+_TIMESERIES_SPEC_MANDATORY = ('processor_name', 'bb_parameter', 'bb_parameter_dimensions')
+
+
+def _validate_timeseries_specs(specs: Any) -> Dict[str, Any]:
+    """
+    Validate timeseries_specs and inject defaults for optional fields.
+
+    Each entry must be a dict with the mandatory keys:
+        processor_name, bb_parameter, bb_parameter_dimensions
+
+    Missing optional keys are filled from _TIMESERIES_SPEC_DEFAULTS.
+
+    Returns:
+        The validated and completed specs dict.
+
+    Raises:
+        ValueError: if specs is not a dict, any entry is not a dict,
+                    or a mandatory field is missing.
+    """
+    if not isinstance(specs, dict):
+        raise ValueError(
+            f"timeseries_specs must be a dictionary; got {type(specs).__name__}."
+        )
+    for name, entry in specs.items():
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"timeseries_specs entry '{name}' must be a dictionary; "
+                f"got {type(entry).__name__}."
+            )
+        missing = [k for k in _TIMESERIES_SPEC_MANDATORY if k not in entry]
+        if missing:
+            raise ValueError(
+                f"timeseries_specs entry '{name}' is missing mandatory "
+                f"field(s): {', '.join(missing)}."
+            )
+        for key, default in _TIMESERIES_SPEC_DEFAULTS.items():
+            entry.setdefault(key, default)
+    return specs
+
 
 def load_config(config_file: Path) -> Dict[str, Any]:
     """
@@ -11,21 +130,20 @@ def load_config(config_file: Path) -> Dict[str, Any]:
     and requires the following fields within that section:
     - scenarios
     - scenario_years
-    - start_date
-    - end_date
+    - climate_data
     - country_codes
 
-    Other keys are optional and have empty default values.
+    Other keys are optional and have default values.
 
     Args:
         config_file (Path): Path to the .ini configuration file.
 
     Returns:
         Dict[str, Any]: Loaded and validated configuration dictionary.
-    
+
     Raises:
-        ValueError: 
-            - If the file type is unsupported, 
+        ValueError:
+            - If the file type is unsupported,
             - the [inputdata] section is missing,
             - any of the mandatory fields is missing.
     """
@@ -41,17 +159,56 @@ def load_config(config_file: Path) -> Dict[str, Any]:
     inputdata = parser['inputdata']
 
     # Check for missing mandatory fields
-    mandatory_fields = ['scenarios', 'scenario_years', 'start_date', 'end_date', 'country_codes']
+    mandatory_fields = ['scenarios', 'scenario_years', 'climate_data', 'country_codes']
     missing_fields = [field for field in mandatory_fields if field not in inputdata]
     if missing_fields:
         raise ValueError(f"Missing mandatory fields in [inputdata]: {', '.join(missing_fields)}")
 
-    # Build the config dictionary manually 
+    # Parse climate_data
+    start_year, end_year = _parse_climate_data(inputdata.get('climate_data'))
+
+    # Parse optional bb_timeseries_start (default: '01-01')
+    bb_ts_start_raw = inputdata.get('bb_timeseries_start', '01-01')
+    bb_timeseries_start = _parse_bb_timeseries_start(bb_ts_start_raw)
+
+    # Parse optional bb_timeseries_length (default: 365)
+    bb_ts_length_raw = inputdata.get('bb_timeseries_length', '365')
+    try:
+        bb_timeseries_length = int(bb_ts_length_raw)
+    except ValueError:
+        raise ValueError(
+            f"bb_timeseries_length must be a positive integer; got '{bb_ts_length_raw}'."
+        )
+    if not (1 <= bb_timeseries_length <= 365*35+9):
+        raise ValueError(
+            f"bb_timeseries_length must be between 1 and 365*35+9 = 12784"
+             "(1982-2016 has 26 regular years, 9 leap years); "
+             "got {bb_timeseries_length}."
+        )
+
+    # Validate that at least one climate year fits within the data range
+    mm, dd = int(bb_timeseries_start[:2]), int(bb_timeseries_start[3:])
+    data_end = datetime(end_year, 12, 31, 23)
+    valid_years = []
+    for yr in range(start_year, end_year + 1):
+        try:
+            window_last = datetime(yr, mm, dd) + timedelta(hours=bb_timeseries_length * 24 - 1)
+            if window_last <= data_end:
+                valid_years.append(yr)
+        except ValueError:
+            pass  # e.g. Feb 29 on a non-leap year -- skip silently
+    if not valid_years:
+        raise ValueError(
+            f"No climate year in {start_year}-{end_year} has a complete {bb_timeseries_length}-day window "
+            f"starting on {bb_timeseries_start} within the given data range. "
+            f"Reduce bb_timeseries_length or extend the climate_data range."
+        )
+
+    # Build the config dictionary manually
     # Insert correctly shaped default values in case of missing keys
     config: Dict[str, Any] = {
         # General settings
         'output_folder_prefix': inputdata.get('output_folder_prefix', 'output'),
-        'write_csv_files': inputdata.getboolean('write_csv_files', False),
         'force_full_rerun': inputdata.getboolean('force_full_rerun', False),
         'print_all_elapsed_times': inputdata.getboolean('print_all_elapsed_times', False),
 
@@ -64,10 +221,15 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'scenario_alternatives4': ast.literal_eval(inputdata.get('scenario_alternatives4', '[""]')),
 
         # Climate years
-        'start_date': inputdata.get('start_date'),
-        'end_date': inputdata.get('end_date'),
+        'climate_data': inputdata.get('climate_data').strip(),
+        'start_year': start_year,
+        'end_year': end_year,
 
-        # Topology        
+        # Timeseries window
+        'bb_timeseries_start': bb_timeseries_start,
+        'bb_timeseries_length': bb_timeseries_length,
+
+        # Topology
         'country_codes': ast.literal_eval(inputdata.get('country_codes')),
         'exclude_grids': ast.literal_eval(inputdata.get('exclude_grids', '[]')),
         'exclude_nodes': ast.literal_eval(inputdata.get('exclude_nodes', '[]')),
@@ -82,7 +244,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
         # Timeseries specs
-        'timeseries_specs': ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
+        'timeseries_specs': _validate_timeseries_specs(
+            ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
+        )
     }
 
     # If user has given scenario_alternatives* = [], replace the value with [""]

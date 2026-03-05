@@ -12,17 +12,14 @@ Backbone.
 
 Data conventions
 ----------------
-Timeseries DataFrames passed between processors share a common column schema:
+Processors main result follow a strict definition and is checked in ``timeseries_processor.py``
 
-    domain(s)  -- one or more Backbone domain columns (str)
-    f     -- forecast branch (str, typically 'f00')
-    t     -- hourly time step label (str, 't000001' .. 't008760')
-    value -- quantity in MWh (negative for demand, positive for supply/influx)
+Each processor's main result is a **long-format** 
+``pd.DataFrame`` with exactly the following columns:
 
-Each processor's output DataFrame may carry different subsets of the Backbone
-dimension columns ``['grid', 'node', 'flow', 'group']`` depending on the
-parameter it populates.  Domain tracking therefore collects only the columns
-that are present in each result:
+    bb_parameter_dimensions (excluding 't')  +  ['time', 'value']
+
+Domain tracking collects only the columns that are present in each main result:
 
     ts_domains      : {column_name: set-of-values}
                       e.g. {"grid": {"electricity", "heat"}, "node": {"FI_el"}}
@@ -52,8 +49,7 @@ For every executed processor the pipeline writes to ``output_folder``:
 - One or more ``.gdx`` files containing Backbone-parameter timeseries.
 - Updated ``import_timeseries.inc`` -- GAMS include file that registers each
   GDX for import.
-- Optional ``*.csv`` files when ``write_csv_files`` is enabled in config.
-- ``Other_demands_1h_MWh.csv`` / ``ts_influx_other_demands.gdx`` for demand
+- ``ts_influx_other_demands.gdx`` for demand
   grids not covered by an explicit processor.
 
 The ``run()`` method returns a ``TimeseriesRunResult`` dataclass with:
@@ -109,24 +105,29 @@ class TimeseriesPipeline:
 
 
 
-    def _load_all_processor_specs(self) -> list[dict]:
+    def _create_enriched_processor_specs(self) -> list[dict]:
         """
-        Load and validate all timeseries processor specifications from the configuration.
+        Build the list of enriched processor specs used throughout the pipeline.
 
-        Each processor spec is checked for required fields:
-          - ``processor_name``
-          - ``bb_parameter``
-          - ``bb_parameter_dimensions``
-
-        If any of these fields are missing, the spec is skipped with a warning.
+        Mandatory field validation and default value injection are handled upstream 
+        by ``config_reader.py``, so no field checks are needed here.
 
         Processors whose ``demand_grid`` is in the configured ``exclude_grids`` list
-        are also skipped.
+        are skipped.
 
         Returns
         -------
         list[dict]
-            List of enriched processor specifications.
+            Each item is a dict with keys:
+
+            ``human_name``
+                The key string from the config ``timeseries_specs`` dict.
+            ``name``
+                ``spec["processor_name"]``, used for logging and result tracking.
+            ``file``
+                Path to the processor ``.py`` file (str), relative to the working directory.
+            ``spec``
+                The validated processor spec dict as loaded from config.
         """
         specs: list[dict] = []
         timeseries_specs: dict = self.config["timeseries_specs"]
@@ -134,21 +135,11 @@ class TimeseriesPipeline:
         processors_base = Path("src/processors")
 
         for human_name, spec in timeseries_specs.items():
-            processor_name: str | None = spec.get("processor_name")
-            bb_parameter: str | None = spec.get("bb_parameter")
-            bb_parameter_dimensions: list | None = spec.get("bb_parameter_dimensions")
+            processor_name: str = spec["processor_name"]
 
-            if not processor_name or not bb_parameter or not bb_parameter_dimensions:
+            if spec["demand_grid"] and spec["demand_grid"] in exclude_grids:
                 self.logger.log_status(
-                    f"Timeseries spec '{human_name}' is incomplete (missing processor_name, bb_parameter, or bb_parameter_dimensions). Skipping.",
-                    level="warn"
-                )
-                continue
-
-            demand_grid: str | None = spec.get("demand_grid")
-            if demand_grid and demand_grid in exclude_grids:
-                self.logger.log_status(
-                    f"Skipping {processor_name} due to excluded demand grid: {demand_grid}",
+                    f"Skipping {processor_name} due to excluded demand grid: {spec['demand_grid']}",
                     level="warn"
                 )
                 continue
@@ -227,13 +218,14 @@ class TimeseriesPipeline:
         if df_filtered.empty:
             return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
 
-        # Create t-index for a full year (8760 hours)
-        t_index = [f"t{str(i).zfill(6)}" for i in range(1, 8760 + 1)]
+        bb_ts_length = self.config.get("bb_timeseries_length")
+        t_index = [f"t{str(i).zfill(6)}" for i in range(1, bb_ts_length * 24 + 1)]
 
         rows: list[pd.DataFrame] = []
         for _, row in df_filtered.iterrows():
             try:
-                # Calculate hourly value (negative demand in MWh)
+                # Calculate hourly value (negative demand in MWh).
+                # The rate is always based on 8760 hours/year regardless of bb_ts_length.
                 hourly_value = round(row["twh/year"] * 1e6 / 8760 * -1, 2)
             except Exception as e:
                 self.logger.log_status(
@@ -265,7 +257,7 @@ class TimeseriesPipeline:
         Compares all grids present in ``df_annual_demands`` against the
         ``demand_grid`` fields declared in ``timeseries_specs``.  Grids in
         ``exclude_grids`` are not filtered here; they are excluded upstream in
-        ``_load_all_processor_specs``.
+        ``_create_enriched_processor_specs``.
 
         Returns
         -------
@@ -310,8 +302,8 @@ class TimeseriesPipeline:
 
         1. GDX files matching ``{bb_parameter}_{gdx_name_suffix}*.gdx`` are copied
            to ``output_folder`` and registered in ``import_timeseries.inc``.
-        2. If ``calculate_average_year`` is set, the ``forecasts`` entry is also
-           registered in ``import_timeseries.inc``.
+        2. If the spec dimensions include forecast branches, the ``forecasts``
+           entry is also registered in ``import_timeseries.inc``.
         3. If the spec declares a ``secondary_output_name``, the corresponding
            pickle is copied to the current cache and its content is loaded.
         4. Per-processor domain cache (``processor_domains_{name}.json``) is read
@@ -323,7 +315,7 @@ class TimeseriesPipeline:
         ----------
         processor_spec : dict
             Enriched processor specification as produced by
-            ``_load_all_processor_specs``.
+            ``_create_enriched_processor_specs``.
 
         Returns
         -------
@@ -337,7 +329,7 @@ class TimeseriesPipeline:
         processor_name = processor_spec["name"]
         human_name = processor_spec["human_name"]
         bb_parameter = spec.get("bb_parameter")
-        gdx_name_suffix = spec.get("gdx_name_suffix", "")
+        gdx_name_suffix = spec.get("gdx_name_suffix")
 
         self.logger.log_status(f"{human_name}", section_start_length=45)
 
@@ -371,7 +363,8 @@ class TimeseriesPipeline:
         bb_kwargs = {"bb_parameter": bb_parameter, "gdx_name_suffix": gdx_name_suffix}
         update_import_timeseries_inc(self.output_folder, **bb_kwargs)
 
-        if spec.get("calculate_average_year", False):
+        dims = spec.get("bb_parameter_dimensions", [])
+        if "f" in dims and "t" in dims and any(d not in ("f", "t") for d in dims):
             update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **bb_kwargs)
 
         # 3. Copy secondary results (pickle files) if processor has secondary_output_name
@@ -487,14 +480,14 @@ class TimeseriesPipeline:
 
         # --- 2. Determine processors to run ---
         self.logger.log_status(
-            "Checking the status of timeseries processors",
+            "Checking the status of timeseries processors...",
             level="none",
             add_empty_line_before=True
         )
 
         # Build set of processors to run
         processors_to_rerun = set()
-        self.processors = self._load_all_processor_specs()
+        self.processors = self._create_enriched_processor_specs()
 
         # Get processors marked for rerun by cache manager
         # (includes config changes, code changes, and full rerun flag)
@@ -529,6 +522,30 @@ class TimeseriesPipeline:
                 f"{len(processors_to_copy)} processor(s) will be copied from reference folder: "
                 f"{', '.join(sorted(processors_to_copy))}",
                 level="info"
+            )
+
+        # Log once if any climate years are excluded due to a long timeseries window
+        start_year = self.config["start_year"]
+        end_year = self.config["end_year"]
+        bb_ts_start = self.config.get("bb_timeseries_start")
+        bb_ts_length = self.config.get("bb_timeseries_length")
+        data_end = pd.Timestamp(f"{end_year}-12-31 23:00")
+        self.logger.log_status(
+            f"Generating {bb_ts_length} days long timeseries data starting at {bb_ts_start} "
+            f"annually from {start_year} onwards...",
+            level="none"
+        )
+
+        excluded_years = [
+            yr for yr in range(start_year, end_year + 1)
+            if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(hours=bb_ts_length * 24 - 1) > data_end
+        ]
+        if excluded_years:
+            self.logger.log_status(
+                f"Not generating timeseries data starting from {excluded_years[0]} onwards, "
+                f"due to requested {bb_ts_length} day length of timeseries and the annual start "
+                f"day {bb_ts_start}. Otherwise the timeseries would exceed the end of {end_year}...",
+                level="none"
             )
 
         # --- 3. Run selected processors ---
@@ -604,9 +621,6 @@ class TimeseriesPipeline:
 
             for pair_key, tuples in other_domain_pairs.items():
                 all_ts_domain_pairs.setdefault(pair_key, set()).update(tuples)
-
-            if self.config["write_csv_files"]:
-                df_other_demands.to_csv(self.output_folder / "Other_demands_1h_MWh.csv")
 
             # Write gdx file, update GAMS import instructions
             output_file_other = self.output_folder / "ts_influx_other_demands.gdx"

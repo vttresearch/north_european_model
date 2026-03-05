@@ -12,16 +12,22 @@ class DH_demand_fromTemperature(BaseProcessor):
     """
 
     def __init__(self, **kwargs_processor):
+        """
+        Initialize the processor.
+
+        Required kwargs: input_folder, country_codes, start_year, end_year,
+        df_annual_demands, scenario_year.
+        """
         # Initialize base class
         super().__init__(**kwargs_processor)
 
         # List of required parameters
         required_params = [
-            'input_folder', 
-            'country_codes', 
-            'start_date', 
-            'end_date', 
-            'df_annual_demands', 
+            'input_folder',
+            'country_codes',
+            'start_year',
+            'end_year',
+            'df_annual_demands',
             'scenario_year'
         ]
 
@@ -32,22 +38,44 @@ class DH_demand_fromTemperature(BaseProcessor):
 
         # Unpack required parameters
         for param in required_params:
-            setattr(self, param, kwargs_processor.get(param))        
+            setattr(self, param, kwargs_processor.get(param))
+        self.demand_grid = kwargs_processor.get('demand_grid', '')
 
-        # Extract start and end years from the provided dates.
-        self.startyear = pd.to_datetime(self.start_date).year
-        self.endyear = pd.to_datetime(self.end_date).year
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # build input file path
+        # The current source file Temperature.csv has hourly data from 1980-01-01 to 2019-12-31
+        # data is for countries AT,BE,CH,DE,DK,EE,FI,FR,GB,LT,LV,NL,NO,PL,SE,ES
         self.input_file = os.path.join(self.input_folder, 'Temperature.csv')
 
 
     def get_temperature_profile(self, processed_countries):
         """
-        Reads temperature data from csv and converts that to heating profile for each country
-            - Calculates sliding 24h average from temperature
-            - heating profile = max(0, 17 - 24h_temp) for each hour
-            - requires mapping from countries in temperatures to country_codes
+        Read temperature data from CSV and compute an hourly heating profile for each country.
+
+        The CSV column for a country is derived from the first two letters of the country code
+        (e.g. 'FI00' -> 'FI', 'SE01' -> 'SE', 'NOS0' -> 'NO').
+
+        The 24-hour sliding average is computed over a window that starts 2 days before
+        self.start_date so that the first timesteps of the returned profile are not affected
+        by incomplete rolling windows. The returned DataFrame covers exactly
+        [self.start_date, self.end_date].
+
+        Heating profile formula: max(0, 17 - 24h_rolling_average_temperature).
+
+        Countries not present in the CSV receive NaN for all timesteps.
+
+        Parameters
+        ----------
+        processed_countries : list[str]
+            Country codes to process.
+
+        Returns
+        -------
+        pd.DataFrame
+            Hourly heating profiles indexed by timestamp, one column per country.
         """
 
         # Read temperatures from csv to dataframe
@@ -59,44 +87,24 @@ class DH_demand_fromTemperature(BaseProcessor):
         df_temperature['Time'] = pd.to_datetime(df_temperature['Time'])
         df_temperature = df_temperature.set_index('Time')
 
-        # Define mapping: internal country_code -> CSV country column
-        mapping = {
-            'AT00': 'AT',
-            'BE00': 'BE',
-            'CH00': 'CH',
-            'DE00': 'DE',
-            'DKW1': 'DK',
-            'DKE1': 'DK',
-            'EE00': 'EE',
-            'ES00': 'ES',
-            'FI00': 'FI',
-            'FR00': 'FR',
-            'UK00': 'UK',
-            'LT00': 'LT',
-            'LV00': 'LV',
-            'NL00': 'NL',
-            'NOS0': 'NO',
-            'NOM1': 'NO',
-            'NON1': 'NO',
-            'PL00': 'PL',
-            'SE01': 'SE',
-            'SE02': 'SE',
-            'SE03': 'SE',
-            'SE04': 'SE',
-            }
+        # Start 2 days before the requested period so the rolling window is fully
+        # populated at self.start_date. The climate year range (1982-2016) guarantees
+        # that two extra days are always available.
+        pre_start = pd.Timestamp(self.start_date) - pd.Timedelta(days=2)
+        df_temperature = df_temperature.loc[pre_start:self.end_date]
 
-        # Create a full datetime index to ensure no timesteps are missing.
+        # Create a full datetime index for the requested output range.
         full_index = pd.date_range(self.start_date, self.end_date, freq='60min')
         df_heating_profile = pd.DataFrame(index=full_index)
 
         # Calculate heating profile for each country.
         for country in processed_countries:
-            # Get the corresponding CSV column name using the mapping.
-            csv_country = mapping.get(country, None)
-            if csv_country and csv_country in df_temperature.columns:
-                # Calculate the sliding 24h average.
+            # Map country code to CSV column using the first two letters (e.g. 'FI00' -> 'FI').
+            csv_country = country[:2]
+            if csv_country in df_temperature.columns:
+                # Calculate the sliding 24h average over the extended window.
                 rolling_avg = df_temperature[csv_country].rolling(window=24, min_periods=24).mean()
-                # Reindex the rolling average to the full date range.
+                # Reindex to the requested output range (drops the pre-start warm-up rows).
                 rolling_avg_full = rolling_avg.reindex(full_index)
                 # Compute the heating profile: heating demand = max(0, 17 - rolling_avg)
                 heating_profile = (17 - rolling_avg_full).clip(lower=0)
@@ -110,8 +118,26 @@ class DH_demand_fromTemperature(BaseProcessor):
 
     def normalize_profiles(self, df_profiles, processed_countries):
         """
-        For each country, the profile is normalized so that the sum of the hourly values 
-        (over the years that have valid data) equals the number of valid years.
+        Normalize heating profiles so that each country's annual average sums to 1.
+
+        For each country the profile is scaled so that the total sum of hourly values
+        equals the number of years that contain at least one positive value.  This makes
+        the profile unit-neutral: multiplying by an annual demand figure in any energy
+        unit gives the correct hourly breakdown.
+
+        Countries whose column is absent or has no positive data are set to NaN.
+
+        Parameters
+        ----------
+        df_profiles : pd.DataFrame
+            Hourly heating profiles as returned by get_temperature_profile.
+        processed_countries : list[str]
+            Country codes to normalize.
+
+        Returns
+        -------
+        pd.DataFrame
+            Normalized profiles (in-place modification of df_profiles).
         """
         # --- Normalize country values ---
         for country in processed_countries:
@@ -141,6 +167,31 @@ class DH_demand_fromTemperature(BaseProcessor):
     
 
     def build_demands(self, df_profiles_norm, df_annual_demands, processed_countries):
+        """
+        Scale normalized heating profiles to absolute hourly demands.
+
+        For each demand row in df_annual_demands the hourly series is computed as:
+
+            demand(t) = A * profile(t) + B
+
+        where:
+            A = annual_demand * (1 - constant_share)   (temperature-driven part)
+            B = annual_demand * constant_share / 8760   (constant base load per hour)
+
+        Parameters
+        ----------
+        df_profiles_norm : pd.DataFrame
+            Normalized heating profiles from normalize_profiles, indexed by timestamp.
+        df_annual_demands : pd.DataFrame
+            Demand table with columns: country, node, twh/year, constant_share.
+        processed_countries : list[str]
+            Country codes to process.
+
+        Returns
+        -------
+        pd.DataFrame
+            Hourly demand time series in MWh, one column per node.
+        """
 
         # Create a new DataFrame to store the computed profiles.
         df_profiles_result = pd.DataFrame(index=df_profiles_norm.index)
@@ -187,7 +238,18 @@ class DH_demand_fromTemperature(BaseProcessor):
 
     def process(self) -> pd.DataFrame:
         """
-        Main processing logic - implements the abstract method from BaseProcessor.
+        Run the full district heating demand pipeline.
+
+        Steps:
+        1. Filter country_codes to those present in df_annual_demands.
+        2. get_temperature_profile  -- raw hourly heating profiles from temperature data.
+        3. normalize_profiles       -- scale profiles to unit annual sum.
+        4. build_demands            -- multiply by annual demand figures.
+
+        Returns
+        -------
+        pd.DataFrame
+            Hourly district heating demand in MWh, one column per node, indexed by timestamp.
         """
         # Filter countries
         countries_with_data = self.df_annual_demands['country'].unique()
@@ -210,4 +272,10 @@ class DH_demand_fromTemperature(BaseProcessor):
 
         self.logger.log_status("Demand time series built.", level="info")
 
-        return(out_df)
+        # Convert to long format: [grid, node, f, time, value]
+        result = out_df.reset_index(names='time')
+        result = result.melt(id_vars=['time'], var_name='node', value_name='value')
+        result['value'] = -result['value']
+        result['grid'] = self.demand_grid
+        result['f'] = 'f00'
+        return result[['grid', 'node', 'f', 'time', 'value']]

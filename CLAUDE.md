@@ -100,3 +100,4 @@ The pipeline distinguishes two phases based on whether the logger has been initi
 ## Don't
 
 - Access folders above the workspace root
+- Run Python scripts or any shell commands. Do not execute `python`, `py`, `pip`, or any other CLI tool. Read and edit files only.

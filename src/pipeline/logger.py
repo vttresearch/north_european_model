@@ -15,6 +15,7 @@ class IterationLogger:
         self.print_all_elapsed_times = bool(print_all_elapsed_times)
         self.messages: list[str] = []
         self._warning_log: list[str] = []
+        self._error_log: list[str] = []
         self.start_time: float = time.time()
 
     def elapsed_time(self, start_time: float = None) -> tuple[int, float]:
@@ -75,6 +76,8 @@ class IterationLogger:
 
         if level in ("warn", "error", "skip"):
             self._warning_log.append(formatted)
+        if level == "error":
+            self._error_log.append(formatted)
 
         if print_to_screen:
             print(formatted)
@@ -83,3 +86,8 @@ class IterationLogger:
     def warnings(self) -> list[str]:
         """Return a copy of all warn/error/skip messages accumulated this iteration."""
         return list(self._warning_log)
+
+    @property
+    def has_errors(self) -> bool:
+        """True if any error-level message has been logged this iteration."""
+        return bool(self._error_log)

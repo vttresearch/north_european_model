@@ -1,6 +1,5 @@
 # src/processors/VRE_PECD.py
 
-from datetime import datetime
 import re
 import os
 import glob
@@ -15,11 +14,10 @@ class VRE_PECD(BaseProcessor):
     and compile a time series DataFrame for a specified date range.
 
     Parameters:
-        input_folder (str): Relative location of input files.
-        input_file (str): Folder within input_folder containing the PECD CSV files.
+        input_folder (str): Path to the folder containing the PECD CSV files.
         country_codes (list): List of country codes to filter.
-        start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
-        end_date (str): End datetime (e.g., '2021-12-31 23:00:00').
+        start_year (int): First climate year to include (e.g., 1982).
+        end_year (int): Last climate year to include (e.g., 2016).
         attached_grid (str): Suffix to append to country codes in output columns.
         scaling_factor (float): Applies logit scaling for the timeseries, e.g. 0.8 reduces the annual average by 20%.
 
@@ -36,10 +34,9 @@ class VRE_PECD(BaseProcessor):
         # List of required parameters
         required_params = [
             'input_folder',
-            'input_file',
             'country_codes',
-            'start_date',
-            'end_date',
+            'start_year',
+            'end_year',
             'attached_grid'
         ]
 
@@ -53,13 +50,12 @@ class VRE_PECD(BaseProcessor):
             setattr(self, param, kwargs.get(param))
 
         # Optional parameters
-        self.scaling_factor = kwargs.get('scaling_factor', 1)
+        self.scaling_factor = kwargs.get('scaling_factor')
+        self.custom_column_value = kwargs.get('custom_column_value') or {}
 
-        # Ensure start_date and end_date are datetime objects
-        if not isinstance(self.start_date, datetime):
-            self.start_date = pd.to_datetime(self.start_date)
-        if not isinstance(self.end_date, datetime):
-            self.end_date = pd.to_datetime(self.end_date)
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
     def process(self) -> pd.DataFrame:
         """
@@ -75,8 +71,7 @@ class VRE_PECD(BaseProcessor):
             pd.DataFrame: DataFrame indexed by the full date range (from start_date to end_date, hourly)
                          containing columns only for the specified countries with capacity factor values.
         """
-        # Create the full path to the CSV folder
-        self.csv_folder = os.path.join(self.input_folder, self.input_file)
+        self.csv_folder = self.input_folder
 
         # Check if the folder exists
         if not os.path.isdir(self.csv_folder):
@@ -113,7 +108,12 @@ class VRE_PECD(BaseProcessor):
 
         self.logger.log_status("Time series built.", level="info")
 
-        return summary_df
+        # Convert to long format: [flow, node, f, time, value]
+        result = summary_df.reset_index(names='time')
+        result = result.melt(id_vars=['time'], var_name='node', value_name='value')
+        result['flow'] = self.custom_column_value.get('flow', '')
+        result['f'] = 'f00'
+        return result[['flow', 'node', 'f', 'time', 'value']]
     
     def _apply_logit_scaling(self, series, target_scaling, epsilon=1e-6):
         """

@@ -22,10 +22,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
         Relative location of input files containing TYNDP profiles
     country_codes : list[str]
         List of country codes to process (must match Excel sheet names)
-    start_date : str
-        Start datetime (e.g., '1982-01-01 00:00:00')
-    end_date : str
-        End datetime (e.g., '2021-01-01 00:00:00')
+    start_year : int
+        First climate year to include (e.g., 1982)
+    end_year : int
+        Last climate year to include (e.g., 2016)
     df_annual_demands : pd.DataFrame
         DataFrame containing annual demand targets with columns:
         ['country', 'node', 'twh/year', 'constant_share' (optional)]
@@ -51,11 +51,11 @@ class elec_demand_TYNDP2024(BaseProcessor):
         
         # Define required parameters
         required_params = [
-            'input_folder', 
-            'country_codes', 
-            'start_date', 
-            'end_date', 
-            'df_annual_demands', 
+            'input_folder',
+            'country_codes',
+            'start_year',
+            'end_year',
+            'df_annual_demands',
             'scenario_year'
         ]
 
@@ -67,14 +67,15 @@ class elec_demand_TYNDP2024(BaseProcessor):
         # Extract and store parameters
         self.input_folder = kwargs_processor['input_folder']
         self.country_codes = kwargs_processor['country_codes']
-        self.start_date = kwargs_processor['start_date']
-        self.end_date = kwargs_processor['end_date']
+        self.start_year = kwargs_processor['start_year']
+        self.end_year = kwargs_processor['end_year']
         self.df_annual_demands = kwargs_processor['df_annual_demands']
         self.scenario_year = kwargs_processor['scenario_year']
+        self.demand_grid = kwargs_processor.get('demand_grid', '')
 
-        # Extract start and end years
-        self.startyear = pd.to_datetime(self.start_date).year
-        self.endyear = pd.to_datetime(self.end_date).year
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # Choose the appropriate electricity profile file based on scenario_year
         if self.scenario_year <= 2035:
@@ -305,11 +306,11 @@ class elec_demand_TYNDP2024(BaseProcessor):
         df_wide = self.load_data_from_parquet()
         
         # Filter by year on the complete row structure to preserve the standardized 8760 hours per year structure
-        year_mask = (df_wide['year'] >= self.startyear) & (df_wide['year'] <= self.endyear)
+        year_mask = (df_wide['year'] >= self.start_year) & (df_wide['year'] <= self.end_year)
         df_wide = df_wide[year_mask].copy()
-        
+
         self.logger.log_status(
-            f"Filtered to years {self.startyear}-{self.endyear}: {len(df_wide)} rows.",
+            f"Filtered to years {self.start_year}-{self.end_year}: {len(df_wide)} rows.",
             level="info"
         )
 
@@ -594,4 +595,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
         self.logger.log_status("Demand time series built.", level="info")
 
-        return df_out
+        # Convert to long format: [grid, node, f, time, value]
+        result = df_out.reset_index(names='time')
+        result = result.melt(id_vars=['time'], var_name='node', value_name='value')
+        result['value'] = -result['value']
+        result['grid'] = self.demand_grid
+        result['f'] = 'f00'
+        return result[['grid', 'node', 'f', 'time', 'value']]

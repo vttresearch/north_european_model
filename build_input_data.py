@@ -1,4 +1,5 @@
 import sys
+import math
 import shutil
 import time
 import argparse
@@ -204,6 +205,14 @@ def main(input_folder: Path, config_file: Path):
 
         logger.log_status("Finalizing", level="run", section_start_length=55, add_empty_line_before=True)
 
+        bb_ts_length = config.get('bb_ts_length')    
+        if bb_ts_length != 365:
+            logger.log_status(
+                f"Modifying gams files to work with bb_ts_length = {bb_ts_length}...",
+                level="none"
+            )            
+
+
         # Copying GAMS files for a new run or changed topology
         if cache_manager.full_rerun:
             logger.log_status(f"Copying GAMS files to {output_folder}  ...", level="none")
@@ -213,14 +222,19 @@ def main(input_folder: Path, config_file: Path):
             else:
                 copied_any = False
                 for file in gams_src_folder.glob("*.*"):
-                    shutil.copy(file, output_folder / file.name)
+                    content = file.read_text(encoding="utf-8")
+                    content = _patch_gams_file_content(file.name, content, config)
+                    (output_folder / file.name).write_text(content, encoding="utf-8")
                     logger.log_status(f"Copied {file.name}", level="info")
                     copied_any = True
                 if not copied_any:
                     logger.log_status(f"No GAMS files found to copy in {gams_src_folder}", level="warn")
 
         # Flagging the run successful and writing the flag status
-        status_dict = {"workflow_run_successfully": True}
+        # workflow_run_successfully is False if any error-level message was logged
+        if logger.has_errors:
+            logger.log_status("Run completed with errors. workflow_run_successfully set to False.", level="warn")
+        status_dict = {"workflow_run_successfully": not logger.has_errors}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # Printing elapsed time (per iteration)
@@ -359,6 +373,32 @@ def _check_dependencies():
         msg = "Dependency check failed:\n  - " + "\n  - ".join(errors)
         raise RuntimeError(msg)
 
+
+
+
+def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
+    """Return content with config-derived substitutions for known GAMS template files."""
+    bb_ts_length = config.get("bb_timeseries_length", 365)
+
+    # Mirrors mSettings('schedule', 't_horizon') = 24*7*65 in scheduleInit.gms.
+    # Used to size the t-index upper bound in timeAndSamples.inc.
+    def_t_horizon = 24 * 7 * 65  # 10920
+
+    if filename == "scheduleInit.gms":
+        data_length = bb_ts_length * 24
+        content = content.replace(
+            "mSettings('schedule', 'dataLength') =  8760;",
+            f"mSettings('schedule', 'dataLength') =  {data_length};",
+        )
+
+    elif filename == "timeAndSamples.inc":
+        t_max = math.ceil((bb_ts_length * 24 + def_t_horizon) / 1000) * 1000
+        content = content.replace(
+            "t000000 * t020000",
+            f"t000000 * t{t_max:06d}",
+        )
+
+    return content
 
 
 

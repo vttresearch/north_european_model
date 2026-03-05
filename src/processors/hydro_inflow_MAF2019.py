@@ -14,8 +14,8 @@ class hydro_inflow_MAF2019(BaseProcessor):
     Parameters:
         input_folder (str): relative location of input files.
         country_codes (list): List of country codes.
-        start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
-        end_date (str): End datetime (e.g., '2021-01-01 00:00:00').
+        start_year (int): First climate year to include (e.g., 1982).
+        end_year (int): Last climate year to include (e.g., 2016).
     """
 
     def __init__(self, **kwargs_processor):
@@ -24,10 +24,10 @@ class hydro_inflow_MAF2019(BaseProcessor):
         
         # List of required parameters
         required_params = [
-            'input_folder', 
-            'country_codes', 
-            'start_date', 
-            'end_date', 
+            'input_folder',
+            'country_codes',
+            'start_year',
+            'end_year',
         ]
 
         # Check if all required parameters are present
@@ -38,12 +38,12 @@ class hydro_inflow_MAF2019(BaseProcessor):
         # Unpack parameters
         self.input_folder = kwargs_processor['input_folder']
         self.country_codes = kwargs_processor['country_codes']
-        self.start_date = kwargs_processor['start_date']
-        self.end_date = kwargs_processor['end_date']
+        self.start_year = kwargs_processor['start_year']
+        self.end_year = kwargs_processor['end_year']
 
-        # Extract start and end years from the provided dates.
-        self.startyear = pd.to_datetime(self.start_date).year
-        self.endyear = pd.to_datetime(self.end_date).year
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # Define folders and file paths.
         self.file_weekly = os.path.join(self.input_folder, 'PECD-hydro-weekly-inflows-corrected.csv')
@@ -214,13 +214,13 @@ class hydro_inflow_MAF2019(BaseProcessor):
         
         # Read the weekly CSV file and filter by year.
         weekly_df = pd.read_csv(self.file_weekly)
-        weekly_df = weekly_df[(weekly_df["year"] >= self.startyear) & (weekly_df["year"] <= self.endyear)]
+        weekly_df = weekly_df[(weekly_df["year"] >= self.start_year) & (weekly_df["year"] <= self.end_year)]
         weekly_df["year"] = pd.to_numeric(weekly_df["year"])
         weekly_df["week"] = pd.to_numeric(weekly_df["week"])
 
         # Read the daily CSV file and filter by year.
         daily_df = pd.read_csv(self.file_daily)
-        daily_df = daily_df[(daily_df["year"] >= self.startyear) & (daily_df["year"] <= self.endyear)]
+        daily_df = daily_df[(daily_df["year"] >= self.start_year) & (daily_df["year"] <= self.end_year)]
         daily_df["year"] = pd.to_numeric(daily_df["year"])
         daily_df["Day"] = pd.to_numeric(daily_df["Day"])
 
@@ -238,4 +238,9 @@ class hydro_inflow_MAF2019(BaseProcessor):
 
         self.logger.log_status("Inflow time series built.", level="info")
 
-        return summary_df
+        # Convert to long format: [grid, node, f, time, value]
+        result = summary_df.reset_index(names='time')
+        result = result.melt(id_vars=['time'], var_name='node', value_name='value')
+        result['grid'] = result['node'].str.split('_').str[1]
+        result['f'] = 'f00'
+        return result[['grid', 'node', 'f', 'time', 'value']]

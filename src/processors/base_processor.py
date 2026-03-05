@@ -82,17 +82,20 @@ class BaseProcessor(ABC):
         1. Load or receive input data
         2. Transform the data according to processor requirements
         3. Optionally set self.secondary_result if needed
-        4. Return the main result as a pandas DataFrame
+        4. Return the main result as a long-format pandas DataFrame
 
         The method can use `self.logger.log_status()` to record progress and diagnostic information.
 
         Returns
         -------
         pd.DataFrame
-            The primary result of the processor. This DataFrame will be:
-            - Stored in self.main_result
-            - Included in the ProcessorResult returned by run_processor()
-            - Further processed by the pipeline (e.g., trimming, GDX conversion)
+            Long-format DataFrame with exactly the columns:
+                bb_parameter_dimensions (excluding 't')  +  ['time', 'value']
+            For example: ['grid', 'node', 'f', 'time', 'value'].
+            The 'time' column must contain datetime values covering the full
+            range from start_year-01-01 to end_year-12-31 23:00.
+            Climate-window slicing is handled by the runner, not the processor.
+            Nothing more, nothing less than the required columns.
 
         Raises
         ------

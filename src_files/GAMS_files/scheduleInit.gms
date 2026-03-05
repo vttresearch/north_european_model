@@ -35,6 +35,9 @@ if (mType('schedule'),
     mSettings('schedule', 't_jump') = 24;          // How many time steps the model rolls forward between each solve
 
     // Define length of data for proper circulation
+    // NOTE: do not edit the line below in the git version 
+    // unless updating also _patch_gams_file_content() in build_input_excel.py
+    // No restrictions for local versions.
     mSettings('schedule', 'dataLength') =  8760;
 
 
@@ -79,7 +82,7 @@ if (mType('schedule'),
     mInterval('schedule', 'stepsPerInterval', 'c003') = 24;
     mInterval('schedule', 'lastStepInIntervalBlock', 'c003') = 24*14;
     mInterval('schedule', 'stepsPerInterval', 'c004') = 168;
-    mInterval('schedule', 'lastStepInIntervalBlock', 'c004') = 24*7*65;
+    mInterval('schedule', 'lastStepInIntervalBlock', 'c004') = mSettings('schedule', 't_horizon');
 
 
 * =============================================================================

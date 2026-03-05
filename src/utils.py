@@ -62,7 +62,7 @@ def standardize_df_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     # can still contain float('nan').
     for col in df.columns:
         if df[col].dtype == "object":
-            df[col] = df[col].fillna(pd.NA)
+            df[col] = df[col].where(df[col].notna(), other=pd.NA)
 
     return df
 

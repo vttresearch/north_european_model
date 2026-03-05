@@ -18,8 +18,8 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
     Parameters:
         input_folder (str): relative location of input files.
         country_codes (list): List of country codes.
-        start_date (str or datetime): Start of the timeseries range.
-        end_date (str or datetime): End of the timeseries range.
+        start_year (int): First climate year to include (e.g., 1982).
+        end_year (int): Last climate year to include (e.g., 2016).
 
     Returns:
         main_result (pd.DataFrame): A MultiIndex DataFrame with time series data for each node
@@ -36,8 +36,8 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         required_params = [
             'input_folder',
             'country_codes',
-            'start_date',
-            'end_date',
+            'start_year',
+            'end_year',
         ]
 
         # Check if all required parameters are present
@@ -48,10 +48,12 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         # Unpack parameters
         self.input_folder = kwargs['input_folder']
         self.country_codes = kwargs['country_codes']
+        self.start_year = kwargs['start_year']
+        self.end_year = kwargs['end_year']
 
-        # Date range for the timeseries
-        self.start_date = pd.to_datetime(kwargs['start_date'])
-        self.end_date = pd.to_datetime(kwargs['end_date'])
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # Parameters for processing "reservoir" data.
         self.minvariable = 'downwardLimit'
@@ -349,4 +351,11 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
 
         self.logger.log_status("Hydro storage limit time series built.", level="info")
 
-        return summary_df
+        # Convert to long format: [grid, node, param_gnBoundaryTypes, f, time, value]
+        result = summary_df.reset_index()  # MultiIndex (time, param_gnBoundaryTypes) -> regular columns
+        node_cols = [c for c in result.columns if c not in ('time', 'param_gnBoundaryTypes')]
+        result = result.melt(id_vars=['time', 'param_gnBoundaryTypes'], value_vars=node_cols,
+                             var_name='node', value_name='value')
+        result['grid'] = result['node'].str.split('_').str[1]
+        result['f'] = 'f00'
+        return result[['grid', 'node', 'param_gnBoundaryTypes', 'f', 'time', 'value']]

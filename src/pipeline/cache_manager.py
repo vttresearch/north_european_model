@@ -1,11 +1,24 @@
 # src/cache_manager.py
+"""
+
+Purpose
+-------
+Cache manager -- allows partial reruns and watches which pipelines 
+needs to be rerun
+
+Backwards compatibility
+----------------
+The cache manager does not need to be backward compatible with prev_config
+and previous cache, because any change in the cache manager code will 
+cause a full rerun and flush the previous cache.
+
+"""
 
 import json
 from pathlib import Path
 import src.hash_utils as hash_utils
 import src.json_exchange as json_exchange
 import pickle
-from datetime import datetime
 import shutil
 
 class CacheManager:
@@ -124,23 +137,6 @@ class CacheManager:
         self.secondary_results_folder.mkdir(parents=True, exist_ok=True)
   
 
-    def _date_range_expanded(self, config: dict, prev: dict) -> bool:
-        """
-        Return True if the requested date range has expanded compared to the previous run.
-
-        An expansion occurs when:
-        - The new start_date is earlier than the previous start_date, OR
-        - The new end_date is later than the previous end_date
-        """
-        def parse(dt):
-            return datetime.strptime(dt, "%Y-%m-%d %H:%M:%S")
-
-        old_start = parse(prev["start_date"])
-        old_end = parse(prev["end_date"])
-        new_start = parse(config["start_date"])
-        new_end = parse(config["end_date"])
-
-        return new_start < old_start or new_end > old_end
 
 
     def _check_source_code_changes(self, files: list[Path], cache_name: str) -> bool:
@@ -379,7 +375,7 @@ class CacheManager:
         for key, curr_spec in curr_specs.items():
             changed = (key not in prev_specs) or (prev_specs[key] != curr_spec)
 
-            if demand_files_changed and "demand_grid" in curr_spec:
+            if demand_files_changed and curr_spec.get("demand_grid"):
                 changed = True
 
             result[key] = changed
@@ -608,17 +604,12 @@ class CacheManager:
                 full_rerun_reason = ("Config file topology, e.g. included countries, have changed. "
                                      "Starting a full rerun.")
 
-        # Date range expansion
+        # Climate years or timeseries window changed
         if not full_rerun_reason:
-            if self._date_range_expanded(self.config, prev_config):
-                full_rerun_reason = "Requested time range has expanded from previous run, starting a full rerun."
-
-        # Check if csv writing was previously disabled, but is now enabled
-        if not full_rerun_reason:
-            prev_status = prev_config["write_csv_files"]
-            curr_status = self.config["write_csv_files"]
-            if curr_status and not prev_status:
-                full_rerun_reason = "Config file now wants to print csv files, starting a full rerun."
+            climate_keys = ("climate_data", "bb_timeseries_start", "bb_timeseries_length")
+            changed = [k for k in climate_keys if prev_config.get(k) != self.config.get(k)]
+            if changed:
+                full_rerun_reason = f"Climate/timeseries config changed ({', '.join(changed)}), starting a full rerun."
 
         # 2) Check source code based full reruns.
         # _save_all_source_code_hashes() checks and updates hashes for all three groups.
@@ -732,7 +723,7 @@ class CacheManager:
         # Save current config structure for next run
         relevant_keys = [
             "country_codes", "exclude_grids", "exclude_nodes",
-            "start_date", "end_date", "write_csv_files",
+            "climate_data", "bb_timeseries_start", "bb_timeseries_length",
             "timeseries_specs"
         ]
         data = {k: self.config[k] for k in relevant_keys if k in self.config}
