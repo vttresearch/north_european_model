@@ -371,12 +371,34 @@ class ProcessorRunner:
                 ts_domains={},
                 ts_domain_pairs={},
             )
+        # Processors must return at most one row per (group, time) combination.
+        # Duplicates indicate a processor bug (e.g. duplicate timestamps or sub-hourly data)
+        # and would cause silent data corruption during t-label assignment.
+        key_cols = expected_dims + ['time']
+        if main_result.duplicated(subset=key_cols).any():
+            dup_count = main_result.duplicated(subset=key_cols).sum()
+            self.logger.log_status(
+                f"Processor '{processor_name}' returned {dup_count} duplicate rows "
+                f"(same group+time combination). This causes incorrect t-label assignment. "
+                f"No GDX output will be written.",
+                level="error",
+            )
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunnerResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
 
         # --- cure and standardize main results ---
 
-        # fill NA, ensure time is datetime
-        main_result = utils.fill_all_na(main_result)
-        main_result['time'] = pd.to_datetime(main_result['time'])
+        # fill NA only if needed (avoids a full DataFrame copy when processors return clean data)
+        if main_result.isnull().values.any():
+            main_result = utils.fill_all_na(main_result)
+        # ensure time is datetime only if needed (processors should already return datetime)
+        if not pd.api.types.is_datetime64_any_dtype(main_result['time']):
+            main_result['time'] = pd.to_datetime(main_result['time'])
 
         # Categorize grouping dimension columns (bb_parameter_dimensions excluding t and f).
         # Categorical dtype reduces memory use and speeds up groupby in downstream functions.
@@ -555,10 +577,18 @@ def _split_timeseries_to_climate_windows(
     final_cols = dims + ["value"]
     out: Dict[int, pd.DataFrame] = {}
 
+    # Pre-sort and pre-compute group ids once before the per-year loop.
+    # A mask applied to a pre-sorted DataFrame yields an already-sorted subset,
+    # and group_ids[mask] correctly identifies group boundaries in that subset.
+    if group_dims:
+        df = df.sort_values(group_dims + ["time"], kind="mergesort")
+        group_ids = df.groupby(group_dims, observed=True, sort=False).ngroup().values
+    time_np = df["time"].to_numpy()  # numpy datetime64 for fast per-year masking
+
     for yr in valid_climate_years:
         window_start = pd.Timestamp(f"{yr}-{bb_ts_start}")
         window_end   = window_start + pd.Timedelta(hours=max_hours - 1)
-        mask = (df["time"] >= window_start) & (df["time"] <= window_end)
+        mask = (time_np >= window_start.to_datetime64()) & (time_np <= window_end.to_datetime64())
         df_yr = df[mask].copy()
 
         # Skipping start years for which there is not enough data for the whole climate window
@@ -566,13 +596,10 @@ def _split_timeseries_to_climate_windows(
             continue
 
         if group_dims:
-            sort_cols = group_dims + ["time"]
-            df_yr = df_yr.sort_values(sort_cols, kind="mergesort")
-
-            group_ids = df_yr.groupby(group_dims, observed=True, sort=False).ngroup()
+            # group_ids[mask] reuses the pre-computed group structure; no re-sort or re-groupby needed.
+            group_changes = np.diff(group_ids[mask], prepend=-1) != 0
 
             # Fast row numbering within groups
-            group_changes = np.diff(group_ids.values, prepend=-1) != 0
             row_nums = np.arange(len(df_yr))
             row_nums -= np.repeat(
                 row_nums[group_changes],
@@ -581,9 +608,6 @@ def _split_timeseries_to_climate_windows(
             df_yr['_row_num'] = row_nums
         else:
             df_yr['_row_num'] = np.arange(len(df_yr))
-
-        # Safety: truncate if a group somehow has more rows than the window requires
-        df_yr = df_yr[df_yr['_row_num'] < max_hours]
 
         row_nums_filtered = df_yr['_row_num'].values
         t_cat = pd.Categorical(t_labels[row_nums_filtered], categories=t_labels)
