@@ -72,7 +72,11 @@ import pandas as pd
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_processor import ProcessorRunner
-import src.utils as utils 
+from src.timeseries_helpers import (
+    collect_domains_for_cache,
+    collect_domain_pairs_for_cache,
+    update_import_timeseries_inc,
+)
 import src.GDX_exchange as GDX_exchange
 import src.json_exchange as json_exchange
 
@@ -613,8 +617,8 @@ class TimeseriesPipeline:
             df_other_demands = self._create_other_demands(self.df_annual_demands, unprocessed_grids)
 
             # Collect domain info
-            other_domains = utils.collect_domains_for_cache(df_other_demands, ['grid', 'node'])
-            other_domain_pairs = utils.collect_domain_pairs_for_cache(df_other_demands, [['grid', 'node']])
+            other_domains = collect_domains_for_cache(df_other_demands, ['grid', 'node'])
+            other_domain_pairs = collect_domain_pairs_for_cache(df_other_demands, [['grid', 'node']])
 
             for dom, vals in other_domains.items():
                 all_ts_domains.setdefault(dom, set()).update(vals)
@@ -627,7 +631,7 @@ class TimeseriesPipeline:
             GDX_exchange.write_df_to_gdx(df_other_demands, str(output_file_other), self.logger,
                             parameter_name="ts_influx",
                             parameter_dimensions=["grid", "node", "f", "t"])
-            GDX_exchange.update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+            update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
 
         # --- 5. Cache management ---

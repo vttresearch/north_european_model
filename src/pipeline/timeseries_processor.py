@@ -56,6 +56,11 @@ import src.GDX_exchange as GDX_exchange
 import src.json_exchange as json_exchange
 from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
+from src.timeseries_helpers import (
+    collect_domains_for_cache,
+    collect_domain_pairs_for_cache,
+    update_import_timeseries_inc,
+)
 from typing import Dict, List, Optional, Sequence, Any
 
 
@@ -385,8 +390,8 @@ class ProcessorRunner:
             bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
             gdx_name_suffix=gdx_name_suffix,
         )
-        # Update Backbone ts import instructions file        
-        GDX_exchange.update_import_timeseries_inc(
+        # Update Backbone ts import instructions file
+        update_import_timeseries_inc(
             self.output_folder,
             bb_parameter=bb_parameter,
             gdx_name_suffix=gdx_name_suffix,
@@ -432,7 +437,7 @@ class ProcessorRunner:
             self.logger.log_status(f"Forecast data GDX written to {forecast_gdx_path}", level="info")                    
 
             # Update times series Backbone import instructions file
-            GDX_exchange.update_import_timeseries_inc(
+            update_import_timeseries_inc(
                 self.output_folder,
                 file_suffix="forecasts",
                 bb_parameter=bb_parameter,
@@ -451,8 +456,8 @@ class ProcessorRunner:
         # Collect domains and domain pairs
         domains = ['grid', 'node', 'flow', 'group']
         domain_pairs = [['grid', 'node'], ['flow', 'node']]
-        local_ts_domains = utils.collect_domains_for_cache(main_result, domains)
-        local_ts_domain_pairs = utils.collect_domain_pairs_for_cache(main_result, domain_pairs)
+        local_ts_domains = collect_domains_for_cache(main_result, domains)
+        local_ts_domain_pairs = collect_domain_pairs_for_cache(main_result, domain_pairs)
 
         # Save per-processor domain data for copy optimization
         domain_cache_data = {
