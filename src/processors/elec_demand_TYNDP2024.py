@@ -1,5 +1,4 @@
 import os
-import calendar
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -353,60 +352,48 @@ class elec_demand_TYNDP2024(BaseProcessor):
         """
         if input_df.empty:
             raise ValueError("Input DataFrame is empty - cannot process datetime index")
-        
-        # Calculate standardized day-of-year for each row (using a non-leap reference year)
-        # This gives us the "position" in the 365-day standardized year
-        input_df['std_doy'] = input_df.apply(
-            lambda row: pd.Timestamp(year=2001, month=int(row['month']), day=int(row['day'])).dayofyear,
-            axis=1
+
+        input_df = input_df.copy()
+
+        # Compute standardized day-of-year using a non-leap reference year (vectorized).
+        # This gives us the "position" in the 365-day standardized year.
+        ref_dates = pd.to_datetime(dict(
+            year=2001,
+            month=input_df['month'].astype(int),
+            day=input_df['day'].astype(int)
+        ))
+        input_df['std_doy'] = ref_dates.dt.dayofyear
+
+        # Compute actual datetime vectorially: year-01-01 + (std_doy-1) days + hour hours.
+        # pd.Timedelta respects the real calendar, so for leap years:
+        #   std_doy=60 → Feb 29 (day 59 offset from Jan 1 in a leap year lands on Feb 29)
+        #   std_doy=61 → Mar 1, etc. — the shift is handled automatically.
+        year_starts = pd.to_datetime(dict(
+            year=input_df['year'].astype(int),
+            month=1,
+            day=1
+        ))
+        input_df['datetime'] = (
+            year_starts
+            + pd.to_timedelta(input_df['std_doy'].astype(int) - 1, unit='D')
+            + pd.to_timedelta(input_df['hour'].astype(int), unit='h')
         )
-        
-        def map_to_actual_date(row):
-            """
-            Map standardized day-of-year to actual calendar date.
-            
-            For non-leap years: Direct 1:1 mapping
-            For leap years: 
-                - Days 1-59 map directly (Jan 1 - Feb 28)
-                - Day 60 becomes Feb 29 (inserted)
-                - Days 61-365 become Mar 1 - Dec 30
-                - Day 365 ALSO creates Dec 31 (duplicated)
-            """
-            y = int(row['year'])
-            h = int(row['hour'])
-            std_doy = int(row['std_doy'])
-            
-            if not calendar.isleap(y):
-                # Non-leap year: direct mapping (std day N → actual day N)
-                actual_doy = std_doy
-                ts = pd.Timestamp(year=y, month=1, day=1) + pd.Timedelta(days=actual_doy - 1, hours=h)
-                return [ts]
-            else:
-                # Leap year: need to insert Feb 29
-                if std_doy <= 59:  # Jan 1 - Feb 28: direct mapping
-                    actual_doy = std_doy
-                elif std_doy == 60:  # Std Mar 1 → Feb 29 (the inserted day)
-                    actual_doy = 60  # Feb 29
-                else:  # std_doy 61-365: shift back by 1
-                    actual_doy = std_doy  # Mar 1 comes from std day 61, etc.
-                
-                ts = pd.Timestamp(year=y, month=1, day=1) + pd.Timedelta(days=actual_doy - 1, hours=h)
-                
-                # For the last standardized day (Dec 31 in std year = day 365),
-                # also create the actual Dec 31 by duplicating
-                if std_doy == 365:
-                    # This row creates BOTH Dec 30 (ts) and Dec 31 (duplicate)
-                    dec_31_ts = pd.Timestamp(year=y, month=12, day=31, hour=h)
-                    return [ts, dec_31_ts]
-                
-                return [ts]
-        
-        # Apply the date mapping
-        input_df['datetime'] = input_df.apply(map_to_actual_date, axis=1)
-        
-        # Explode rows with multiple timestamps (Dec 30→31 duplication for leap years)
-        input_df = input_df.explode('datetime')
-        input_df = input_df.dropna(subset=['datetime'])
+
+        # For leap years, duplicate rows where std_doy == 365 to fill Dec 31
+        # (the formula above maps std_doy=365 to Dec 30 in a leap year).
+        years = input_df['year'].astype(int)
+        is_leap = (years % 4 == 0) & ((years % 100 != 0) | (years % 400 == 0))
+        leap_last_day_mask = is_leap & (input_df['std_doy'] == 365)
+
+        if leap_last_day_mask.any():
+            extra_rows = input_df[leap_last_day_mask].copy()
+            extra_rows['datetime'] = pd.to_datetime(dict(
+                year=extra_rows['year'].astype(int),
+                month=12,
+                day=31,
+                hour=extra_rows['hour'].astype(int)
+            ))
+            input_df = pd.concat([input_df, extra_rows], ignore_index=True)
         
         # Set datetime as index and sort
         input_df = input_df.set_index('datetime').sort_index()

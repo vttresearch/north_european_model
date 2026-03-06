@@ -13,22 +13,22 @@ from tqdm import tqdm
 # WRITE FUNCTIONS
 # ==============================================================================
 
-def write_BB_gdx(
+def write_df_to_gdx(
     df: Optional[pd.DataFrame],
     output_file: str,
     logger,
-    **kwargs: Any
+    parameter_name: str,
+    parameter_dimensions: Sequence[str],
     ) -> None:
     """
     Write a DataFrame to a GDX file using gams.transfer.
 
     Parameters:
-        df: DataFrame with columns matching bb_parameter_dimensions + 'value'
+        df: DataFrame with columns matching parameter_dimensions + 'value'
         output_file: Path to output GDX file
         logger: IterationLogger instance for status messages
-        **kwargs: Must include:
-            - bb_parameter: str -> GDX parameter name
-            - bb_parameter_dimensions: Sequence[str] -> dimension columns (optional, inferred if missing)
+        parameter_name: GDX parameter name
+        parameter_dimensions: dimension columns
 
     Returns:
         None: Writes content to output_file
@@ -37,62 +37,43 @@ def write_BB_gdx(
         logger.log_status(f"Skipping writing GDX '{output_file}': No data to write", level="warn")
         return
 
-    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
-    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
-
-    if not bb_parameter:
-        logger.log_status(f"Missing required kwarg 'bb_parameter' from '{output_file}'", level="warn")
-        return
-
-    # Infer dimensions if not provided
-    if not dims or len(dims) == 0:
-        dims = [c for c in df.columns if c != "value"]
-
-    # Validate columns
-    final_cols = list(dims) + ["value"]
-    missing = [c for c in final_cols if c not in df.columns]
-    if missing:
-        logger.log_status(f"DataFrame missing required columns: {missing} for '{output_file}'", level="warn")
-        return
-
-    # Select only required columns
-    work = df[final_cols]
+    work = df[list(parameter_dimensions) + ["value"]]
 
     m = gt.Container()
 
     # Create Sets for each dimension
     dim_sets = {}
-    for d in dims:
-        unique_vals = work[d].unique()
-        dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
+    for d in parameter_dimensions:
+        dim_sets[d] = gt.Set(m, d, records=work[d].unique().tolist(), description=f"{d} domain")
 
     # Create Parameter
-    domain = [dim_sets[d] for d in dims]
-    p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter} written via gams.transfer"))
-    param = gt.Parameter(m, bb_parameter, domain, description=p_desc)
+    domain = [dim_sets[d] for d in parameter_dimensions]
+    param = gt.Parameter(m, parameter_name, domain, description=parameter_name)
     param.setRecords(work)
 
     # Write
     m.write(output_file)
 
-def write_BB_gdx_annual(
+
+def write_climate_window_GDX_files(
     annual_dfs: Dict[int, pd.DataFrame],
     output_folder: str,
     logger,
-    **kwargs: Any
+    bb_parameter: str,
+    bb_parameter_dimensions: Sequence[str],
+    gdx_name_suffix: str = "",
     ) -> None:
     """
-    Write pre-split annual timeseries DataFrames to per-year GDX files.
+    Write pre-split climate window DataFrames to per-year GDX files.
 
     Parameters:
         annual_dfs: Dict mapping year -> DataFrame with bb_parameter_dimensions + 'value',
-                    as returned by split_timeseries_to_annual_gdx_frames.
+                    as returned by _split_timeseries_to_climate_windows.
         output_folder: Directory where GDX files will be written
         logger: IterationLogger instance for status messages
-        **kwargs: Must include:
-            - bb_parameter: str -> GDX parameter name
-            - bb_parameter_dimensions: Sequence[str] -> dimension columns
-            - gdx_name_suffix: str (optional) -> suffix for output filename
+        bb_parameter: GDX parameter name
+        bb_parameter_dimensions: dimension columns
+        gdx_name_suffix: suffix for output filename (optional)
 
     Returns:
         None: Writes content to
@@ -100,62 +81,35 @@ def write_BB_gdx_annual(
         - Multiple years: {bb_parameter}_{gdx_name_suffix}_{year}.gdx
     """
     if not annual_dfs:
-        logger.log_status(f"Skipping annual GDX writing for '{kwargs.get('bb_parameter', '?')}_{kwargs.get('gdx_name_suffix', '?')}': no data to write.", level="warn")
-        return
-
-    bb_parameter: Optional[str] = kwargs.get("bb_parameter")
-    dims: Optional[Sequence[str]] = kwargs.get("bb_parameter_dimensions")
-    gdx_name_suffix: Optional[str] = kwargs.get("gdx_name_suffix", "")
-
-    if not bb_parameter:
-        logger.log_status(f"Missing required kwarg 'bb_parameter' for annual GDX writing (gdx_name_suffix='{gdx_name_suffix}').", level="warn")
-        return
-
-    # If dims not provided, infer from first frame
-    first_df = next(iter(annual_dfs.values()))
-    if not dims or len(dims) == 0:
-        dims = [c for c in first_df.columns if c != "value"]
-
-    # Final columns of the written dataframe
-    final_cols = list(dims) + ["value"]
-
-    # Validate columns against first frame
-    missing = [c for c in final_cols if c not in first_df.columns]
-    if missing:
-        logger.log_status(f"DataFrame missing required columns: {missing} for annual GDX writing.", level="warn")
+        logger.log_status(f"Skipping GDX writing for '{bb_parameter}_{gdx_name_suffix}': no data to write.", level="warn")
         return
 
     years = sorted(annual_dfs.keys())
     single_year = (len(years) == 1)
-    fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
+    fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else bb_parameter
+    final_cols = list(bb_parameter_dimensions) + ["value"]
 
     # Build container and sets
     m = gt.Container()
 
-    # Create a Set for each dimension with records = unique labels
+    # Create a Set for each dimension.
+    # For 't', use only one year's labels (all years share the same t-structure).
+    # For other dimensions, collect unique values across all years.
     dim_sets = {}
-    for d in dims:
+    for d in bb_parameter_dimensions:
         if d == 't':
-            # For 't', use only one year's worth (always t000001..t008760)
-            # Pick from first annual df since all years have identical 't' structure
             unique_vals = annual_dfs[years[0]][d].unique()
         else:
-            # For other dimensions, collect unique values across ALL years
             unique_vals = pd.concat([annual_dfs[yr][d] for yr in years]).unique()
-
         dim_sets[d] = gt.Set(m, d, records=unique_vals.tolist(), description=f"{d} domain")
 
-    # Prepare parameter
-    domains = [dim_sets[d] for d in dims]
-    p_desc = str(kwargs.get(bb_parameter, f"{bb_parameter}"))
-    param = gt.Parameter(m, bb_parameter, domains, description=p_desc)
+    domains = [dim_sets[d] for d in bb_parameter_dimensions]
+    param = gt.Parameter(m, bb_parameter, domains, description=bb_parameter)
 
     for yr in tqdm(years, desc="  Writing"):
-        df_y = annual_dfs[yr][final_cols]
-        param.setRecords(df_y)
+        param.setRecords(annual_dfs[yr][final_cols])
         fname = f"{fname_base}_{yr}.gdx" if not single_year else f"{fname_base}.gdx"
-        output_file = os.path.join(output_folder, fname)
-        m.write(output_file)
+        m.write(os.path.join(output_folder, fname))
 
 
 # ==============================================================================

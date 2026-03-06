@@ -124,7 +124,7 @@ class ProcessorRunner:
 
     - Cleans and converts ``main_result`` to long format via ``prepare_BB_df``
       (dimension columns added; ``t`` assigned later by downstream functions).
-    - Writes one GDX file per calendar year (``write_BB_gdx_annual``) and
+    - Writes one GDX file per climate window (``write_climate_window_GDX_files``) and
       updates ``import_timeseries.inc``.
     - Computes climatological forecast GDX when the spec dimensions include
       both ``f`` and ``t`` and at least one additional grouping dimension.
@@ -352,12 +352,21 @@ class ProcessorRunner:
                 ts_domain_pairs={},
             )
 
-        # Standardize dtype, fill NA, ensure time is datetime, and round
-        #main_result = utils.standardize_df_dtypes(main_result)
+        # --- cure and standardize main results ---
+
+        # fill NA, ensure time is datetime
         main_result = utils.fill_all_na(main_result)
         main_result['time'] = pd.to_datetime(main_result['time'])
-        main_result = main_result.round(rounding_precision)
 
+        # Categorize grouping dimension columns (bb_parameter_dimensions excluding t and f).
+        # Categorical dtype reduces memory use and speeds up groupby in downstream functions.
+        group_dim_cols = [d for d in spec.get("bb_parameter_dimensions") if d != "t"]
+        for col in group_dim_cols:
+            if col in main_result.columns:
+                main_result[col] = main_result[col].astype("category")
+
+        # Round
+        main_result = main_result.round(rounding_precision)
 
         # --- Slice and write climate windows' data ---
         # Split into climate windows
@@ -370,7 +379,7 @@ class ProcessorRunner:
             valid_climate_years=valid_climate_years,
         )
         # Write climate windows' GDX files
-        GDX_exchange.write_BB_gdx_annual(
+        GDX_exchange.write_climate_window_GDX_files(
             annual_dfs, self.output_folder, self.logger,
             bb_parameter=bb_parameter,
             bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
@@ -415,10 +424,10 @@ class ProcessorRunner:
                 self.output_folder,
                 f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
             )
-            GDX_exchange.write_BB_gdx(
+            GDX_exchange.write_df_to_gdx(
                 forecast_df, forecast_gdx_path, self.logger,
-                bb_parameter=bb_parameter,
-                bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
+                parameter_name=bb_parameter,
+                parameter_dimensions=spec.get("bb_parameter_dimensions"),
             )
             self.logger.log_status(f"Forecast data GDX written to {forecast_gdx_path}", level="info")                    
 
@@ -554,7 +563,8 @@ def _split_timeseries_to_climate_windows(
         df_yr = df_yr[df_yr['_row_num'] < max_hours]
 
         row_nums_filtered = df_yr['_row_num'].values
-        df_yr['t'] = t_labels[row_nums_filtered]
+        t_cat = pd.Categorical(t_labels[row_nums_filtered], categories=t_labels)
+        df_yr['t'] = t_cat
 
         frame = df_yr[final_cols].reset_index(drop=True)
         out[int(yr)] = frame
@@ -617,12 +627,10 @@ def _calculate_climatological_forecasts(
         and Backbone t/f labels ready for GDX output.
     """
 
-    # ---- Dimension handling ----
-    # Dimension columns are everything in bb_parameter_dimensions except 'f' and 't'.
+    # ---- Drop f column ----
+    # Restrict columns early to reduce memory use in heavy operations: drop 'f'. 
+    # 't' is not yet present and will be generated here.
     dim_cols = [col for col in bb_parameter_dimensions if col not in ("f", "t")]
-
-    # Restrict columns early to reduce memory use in heavy operations.
-    # 'f' and 't' are not in the intermediate format; they are assigned here.
     cols_to_keep = dim_cols + ["time", "value"]
     input_df = input_df[cols_to_keep].copy()
 
@@ -696,7 +704,7 @@ def _calculate_climatological_forecasts(
         how="left",
     )
 
-    # ---- Prepare final DataFrame ----
+    # ---- Prepare final DataFrame, categorize ----
     # 't' is already set from window_df
     df_full["t"] = df_full["t"].astype("category")
 

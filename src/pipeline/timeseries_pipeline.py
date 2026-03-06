@@ -73,7 +73,7 @@ from src.pipeline.cache_manager import CacheManager
 from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
 from src.pipeline.timeseries_processor import ProcessorRunner
 import src.utils as utils 
-from src.GDX_exchange import write_BB_gdx, update_import_timeseries_inc
+import src.GDX_exchange as GDX_exchange
 import src.json_exchange as json_exchange
 
 @dataclass
@@ -624,10 +624,10 @@ class TimeseriesPipeline:
 
             # Write gdx file, update GAMS import instructions
             output_file_other = self.output_folder / "ts_influx_other_demands.gdx"
-            write_BB_gdx(df_other_demands, str(output_file_other), self.logger,
-                         bb_parameter="ts_influx",
-                         bb_parameter_dimensions=["grid", "node", "f", "t"])
-            update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
+            GDX_exchange.write_df_to_gdx(df_other_demands, str(output_file_other), self.logger,
+                            parameter_name="ts_influx",
+                            parameter_dimensions=["grid", "node", "f", "t"])
+            GDX_exchange.update_import_timeseries_inc(self.output_folder, bb_parameter="ts_influx", gdx_name_suffix="other_demands")
 
 
         # --- 5. Cache management ---
