@@ -108,12 +108,11 @@ class VRE_PECD(BaseProcessor):
 
         self.logger.log_status("Time series built.", level="info")
 
-        # Convert to long format: [flow, node, f, time, value]
+        # Convert to long format: [flow, node, time, value]
         result = summary_df.reset_index(names='time')
         result = result.melt(id_vars=['time'], var_name='node', value_name='value')
         result['flow'] = self.custom_column_value.get('flow', '')
-        result['f'] = 'f00'
-        return result[['flow', 'node', 'f', 'time', 'value']]
+        return result[['flow', 'node', 'time', 'value']]
     
     def _apply_logit_scaling(self, series, target_scaling, epsilon=1e-6):
         """

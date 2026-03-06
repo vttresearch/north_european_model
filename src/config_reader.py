@@ -119,6 +119,12 @@ def _validate_timeseries_specs(specs: Any) -> Dict[str, Any]:
             )
         for key, default in _TIMESERIES_SPEC_DEFAULTS.items():
             entry.setdefault(key, default)
+        quantile_map = entry.get("quantile_map") or {}
+        if "f00" in quantile_map.values():
+            raise ValueError(
+                f"timeseries_specs entry '{name}': quantile_map contains 'f00', "
+                "which is reserved for realized weather. Use f01, f02, … for forecast branches."
+            )
     return specs
 
 

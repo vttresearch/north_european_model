@@ -16,14 +16,16 @@ Every processor class must implement ``run_processor()`` and return a
 :class:`ProcessorResult` whose ``main_result`` is a **long-format**
 ``pd.DataFrame`` with exactly the following columns:
 
-    bb_parameter_dimensions (excluding 't')  +  ['time', 'value']
+    bb_parameter_dimensions (excluding 't' and 'f')  +  ['time', 'value']
 
 For example, if ``bb_parameter_dimensions = ['grid', 'node', 'f', 't']``
-the processor must return columns ``['grid', 'node', 'f', 'time', 'value']`` --
+the processor must return columns ``['grid', 'node', 'time', 'value']`` --
 nothing more, nothing less.  The ``time`` column must contain datetime values.
-The ``t`` dimension is absent from the processor output; it is assigned
-downstream by ``_split_timeseries_to_climate_windows`` and
-``_calculate_climatological_forecasts``.
+The ``t`` and ``f`` dimensions are absent from the processor output.
+``_split_timeseries_to_climate_windows`` assigns ``t`` and inserts ``f00``
+as the realized-weather branch.  ``_calculate_climatological_forecasts``
+computes the remaining forecast branches (f01, f02, …) from climatological
+quantiles.
 
 Processors must cover the full date range from the start of ``start_year``
 to the end of ``end_year`` (i.e. ``{end_year}-12-31 23:00``).  Climate-window
@@ -351,8 +353,8 @@ class ProcessorRunner:
                 f"No GDX output will be written.",
                 level="warn",
             )
-        # Processors must return exactly bb_parameter_dimensions (excluding 't') + ['time', 'value'].
-        expected_dims = [d for d in spec.get("bb_parameter_dimensions") if d != 't']
+        # Processors must return exactly bb_parameter_dimensions (excluding 't' and 'f') + ['time', 'value'].
+        expected_dims = [d for d in spec.get("bb_parameter_dimensions") if d not in ('t', 'f')]
         expected_cols = set(expected_dims + ['time', 'value'])
         actual_cols = set(main_result.columns)
         if actual_cols != expected_cols:
@@ -378,7 +380,7 @@ class ProcessorRunner:
 
         # Categorize grouping dimension columns (bb_parameter_dimensions excluding t and f).
         # Categorical dtype reduces memory use and speeds up groupby in downstream functions.
-        group_dim_cols = [d for d in spec.get("bb_parameter_dimensions") if d != "t"]
+        group_dim_cols = [d for d in spec.get("bb_parameter_dimensions") if d not in ("t", "f")]
         for col in group_dim_cols:
             if col in main_result.columns:
                 main_result[col] = main_result[col].astype("category")
@@ -519,8 +521,9 @@ def _split_timeseries_to_climate_windows(
     Parameters
     ----------
     df : pd.DataFrame
-        Long-format input with columns from bb_parameter_dimensions (excluding 't',
-        which is absent from the intermediate format), 'time' (datetime), and 'value'.
+        Long-format input with columns from bb_parameter_dimensions (excluding 't'
+        and 'f', which are both absent from the processor output), 'time' (datetime),
+        and 'value'.
     bb_parameter_dimensions : sequence of str
         Backbone dimension names for the output (must include 't').
     bb_ts_start : str
@@ -535,6 +538,8 @@ def _split_timeseries_to_climate_windows(
     dict[int, pd.DataFrame]
         Keys are climate years; values are DataFrames with columns
         bb_parameter_dimensions + ['value'] and t-labels t000001..t{bb_ts_length*24}.
+        If 'f' is in bb_parameter_dimensions, every row is assigned 'f00' (realized
+        weather branch).
     """
     dims = list(bb_parameter_dimensions)
 
@@ -584,6 +589,10 @@ def _split_timeseries_to_climate_windows(
         t_cat = pd.Categorical(t_labels[row_nums_filtered], categories=t_labels)
         df_yr['t'] = t_cat
 
+        # Insert f00 as the realized-weather branch when f is a spec dimension.
+        if "f" in dims:
+            df_yr['f'] = 'f00'
+
         frame = df_yr[final_cols].reset_index(drop=True)
         out[int(yr)] = frame
 
@@ -602,55 +611,48 @@ def _calculate_climatological_forecasts(
     """
     Build stochastic forecast timeseries for Backbone from long-term climatological statistics.
 
-    Backbone can represent uncertainty via multiple forecast branches (f-index).  This
-    function creates one such set of branches by computing quantiles of the input timeseries
+    Backbone can represent uncertainty via multiple forecast branches (f-index). This
+    function creates forecast data by computing quantiles of the input timeseries
     across all available climate years, so each branch reflects a different statistical
-    outcome drawn from the historical record -- e.g. a wet/dry/median hydro year or a
-    warm/cold/normal temperature year.
+    outcome drawn from the long-term climatological data provided in the input dataframe.
 
     The caller controls how many forecasts to create and which quantile each represents via
-    the ``quantile_map`` kwarg (default: ``{0.5: 'f01', 0.1: 'f02', 0.9: 'f03'}``).
-    Keys are quantile probabilities (0..1) and values are the Backbone f-labels to use.
-    A quantile of 0.5 gives the median climate year; 0.1 gives a low-end year; 0.9 a
-    high-end year.
+    the ``quantile_map`` defined in the config file. Keys are quantile probabilities (0..1) and 
+    values are the Backbone f-labels to use. For an example ``{0.5: 'f01', 0.1: 'f02', 0.9: 'f03'}``
+    would create three forecast branches, of which f01 presents the median, f02 lowest 10% 
+    of values, and f03 highest 90% of the values. 
 
-    To save disk space, these values are calculated and stored only once. They are the 
-    same for every climate_window.
+    These values are calculated and stored only once because they are the same for every climate window.
 
     Algorithm
     ---------
     For every combination of the non-f/t dimension columns (e.g. grid, node):
 
     1. Compute the requested quantiles across all years at each hour-of-year position
-       (1..8760).  Leap-day hours are excluded so that the statistics are always aligned
+       (1..8760). Leap-day hours are excluded so that the statistics are always aligned
        on a common 8760-hour calendar.
-    2. Map the resulting quantile values onto the output time window
+    2. Map the resulting quantile values onto the output climate window
        (``bb_ts_start`` + ``bb_ts_length`` * 24 hours), using hour-of-year as the key.
        Windows longer than one calendar year are tiled correctly.
-    3. Assign Backbone t-labels (t000001..) and f-labels from ``quantile_map``.
+    3. Assign Backbone t-labels (t000001..) starting from the first hour of the climate
+       window and f-labels from ``quantile_map``.
 
     Input requirements
     ------------------
     - Long-format DataFrame with the dimension columns from ``bb_parameter_dimensions``
-      (excluding 't', which is absent from the intermediate format), plus ``time``
-      (datetime) and ``value``.
+      excluding 't' and 'f' which are absent from the intermediate format, plus ``time``
+      (datetime) and ``value``. The columns are guarded beforehand. 
     - Data must cover more than one climate year (checked before calling this function).
-    - ``bb_parameter_dimensions`` must include both ``'f'`` and ``'t'`` and at least one
-      other dimension to group by (validated in config_reader).
 
     Returns
     -------
     pd.DataFrame
-        Single-year long-format DataFrame with columns ``bb_parameter_dimensions + ['value']``
-        and Backbone t/f labels ready for GDX output.
+        Single-year long-format DataFrame with columns ``bb_parameter_dimensions + ['value']``.
+        The dataframe must contain the same t labels than timeseries produced in _split_timeseries_to_climate_windows.
+        The dataframe contains f column with defined quantile headers.
     """
 
-    # ---- Drop f column ----
-    # Restrict columns early to reduce memory use in heavy operations: drop 'f'. 
-    # 't' is not yet present and will be generated here.
     dim_cols = [col for col in bb_parameter_dimensions if col not in ("f", "t")]
-    cols_to_keep = dim_cols + ["time", "value"]
-    input_df = input_df[cols_to_keep].copy()
 
     # ---- Create helper columns ----
     # Fast hour_of_year: avoid datetime arithmetic, use dayofyear + hour.

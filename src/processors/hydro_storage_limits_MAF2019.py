@@ -351,11 +351,10 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
 
         self.logger.log_status("Hydro storage limit time series built.", level="info")
 
-        # Convert to long format: [grid, node, param_gnBoundaryTypes, f, time, value]
+        # Convert to long format: [grid, node, param_gnBoundaryTypes, time, value]
         result = summary_df.reset_index()  # MultiIndex (time, param_gnBoundaryTypes) -> regular columns
         node_cols = [c for c in result.columns if c not in ('time', 'param_gnBoundaryTypes')]
         result = result.melt(id_vars=['time', 'param_gnBoundaryTypes'], value_vars=node_cols,
                              var_name='node', value_name='value')
         result['grid'] = result['node'].str.split('_').str[1]
-        result['f'] = 'f00'
-        return result[['grid', 'node', 'param_gnBoundaryTypes', 'f', 'time', 'value']]
+        return result[['grid', 'node', 'param_gnBoundaryTypes', 'time', 'value']]

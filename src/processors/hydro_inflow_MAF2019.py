@@ -238,9 +238,8 @@ class hydro_inflow_MAF2019(BaseProcessor):
 
         self.logger.log_status("Inflow time series built.", level="info")
 
-        # Convert to long format: [grid, node, f, time, value]
+        # Convert to long format: [grid, node, time, value]
         result = summary_df.reset_index(names='time')
         result = result.melt(id_vars=['time'], var_name='node', value_name='value')
         result['grid'] = result['node'].str.split('_').str[1]
-        result['f'] = 'f00'
-        return result[['grid', 'node', 'f', 'time', 'value']]
+        return result[['grid', 'node', 'time', 'value']]

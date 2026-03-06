@@ -90,11 +90,12 @@ class BaseProcessor(ABC):
         -------
         pd.DataFrame
             Long-format DataFrame with exactly the columns:
-                bb_parameter_dimensions (excluding 't')  +  ['time', 'value']
-            For example: ['grid', 'node', 'f', 'time', 'value'].
+                bb_parameter_dimensions (excluding 't' and 'f')  +  ['time', 'value']
+            For example: ['grid', 'node', 'time', 'value'].
             The 'time' column must contain datetime values covering the full
             range from start_year-01-01 to end_year-12-31 23:00.
-            Climate-window slicing is handled by the runner, not the processor.
+            Climate-window slicing and f (forecast) column insertion are handled 
+            by the runner, not the processor.
             Nothing more, nothing less than the required columns.
 
         Raises
