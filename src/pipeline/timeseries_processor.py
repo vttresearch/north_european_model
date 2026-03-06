@@ -274,6 +274,19 @@ class ProcessorRunner:
         demand_grid = spec.get("demand_grid")
         if demand_grid:
             df_annual_demands = self.source_excel_data_pipeline.df_demanddata
+            if "grid" not in df_annual_demands.columns:
+                self.logger.log_status(
+                    f"Demand data has not been loaded (df_demanddata has no columns). "
+                    f"Cannot run processor '{human_name}'. Re-run to trigger source excel import.",
+                    level="warn",
+                )
+                self._update_processor_hash(processor_file, processor_name)
+                return ProcessorRunnerResult(
+                    processor_name=processor_name,
+                    secondary_result=None,
+                    ts_domains={},
+                    ts_domain_pairs={},
+                )
             # Filter to the specific grid
             df_filtered = df_annual_demands[
                 df_annual_demands["grid"].str.lower() == demand_grid.lower()

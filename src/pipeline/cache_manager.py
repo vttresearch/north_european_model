@@ -373,7 +373,10 @@ class CacheManager:
         result = {}
 
         for key, curr_spec in curr_specs.items():
-            changed = (key not in prev_specs) or (prev_specs[key] != curr_spec)
+            # Normalize curr_spec through a JSON round-trip so types match prev_specs,
+            # which was loaded from JSON (e.g. float keys in quantile_map become strings).
+            curr_spec_normalized = json.loads(json.dumps(curr_spec))
+            changed = (key not in prev_specs) or (prev_specs[key] != curr_spec_normalized)
 
             if demand_files_changed and curr_spec.get("demand_grid"):
                 changed = True
@@ -696,14 +699,19 @@ class CacheManager:
                                    level="none")
 
         # Determine if source excels should be re-imported.
-        # Triggered by: full rerun, any input file change, or BB excel pipeline code change.
-        # Pure timeseries spec/processor-code changes do NOT require re-importing source excels.
+        # Triggered by: full rerun, any input file change, BB excel pipeline code change,
+        # or any changed processor that reads demand data from source excels.
+        any_demand_processor_changed = any(
+            self.timeseries_changed.get(human_name, False) and spec.get("demand_grid")
+            for human_name, spec in self.config["timeseries_specs"].items()
+        )
         self.reimport_source_excels = (
             self.full_rerun
             or self.demand_files_changed
             or self.other_input_files_changed
             or self.bb_excel_pipeline_code_updated
             or not bb_excel_succesfully_built
+            or any_demand_processor_changed
         )
 
         # Determine if BB input excel needs to be rebuilt
