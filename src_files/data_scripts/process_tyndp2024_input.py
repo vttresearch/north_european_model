@@ -133,6 +133,13 @@ gen_id_renamings =    {
     'Pump Storage - Open Loop (turbine)':   'PS Open turbine',
 }
 
+# Country-specific share of nuclear capacity treated as flexible (Nuclear-flex).
+# France has a higher flexible share due to its large and operationally diverse fleet.
+nuclear_flex_shares = {
+    'FR00': 0.60,   # France
+}
+nuclear_flex_default_share = 0.15  # all other countries
+
 # location-specific capacity aggregations for Generator_IDs
 # done after the renamings/aggregations specified in gen_id_renamings
 gen_id_aggregations_loc = {
@@ -236,6 +243,54 @@ def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_a
                 installed_capacities_ne_input = installed_capacities_ne_input[~mask]
 
     return installed_capacities_ne_input
+
+
+def split_nuclear_flex_capacity(installed_capacities):
+    """
+    Split Nuclear rows into Nuclear (base) and Nuclear-flex rows.
+
+    For each row with Generator_ID == 'Nuclear', a 'Nuclear-flex' row is
+    created that carries the flexible share of the capacity, and the original
+    row's capacity is reduced by that share.  The split is applied per country
+    using nuclear_flex_shares (see top of file), falling back to
+    nuclear_flex_default_share for countries not listed there.
+
+    Only capacity_output1 is split; all other columns are copied as-is from
+    the Nuclear row (scenario, year, node_suffix_output2, etc.).
+
+    Parameters
+    ----------
+    installed_capacities : pd.DataFrame
+        Output of process_installed_capacities.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with Nuclear-flex rows appended and Nuclear rows scaled down.
+    """
+    nuclear_mask = installed_capacities['Generator_ID'] == 'Nuclear'
+    if not nuclear_mask.any():
+        return installed_capacities
+
+    result = installed_capacities.copy()
+    flex_rows = []
+
+    for idx, row in result[nuclear_mask].iterrows():
+        flex_share = nuclear_flex_shares.get(row['Country'], nuclear_flex_default_share)
+        orig_cap = row['capacity_output1']
+
+        flex_row = row.copy()
+        flex_row['Generator_ID'] = 'Nuclear-flex'
+        flex_row['capacity_output1'] = orig_cap * flex_share
+        flex_rows.append(flex_row)
+
+        result.loc[idx, 'capacity_output1'] = orig_cap * (1 - flex_share)
+
+    if flex_rows:
+        flex_df = pd.DataFrame(flex_rows)
+        result = pd.concat([result, flex_df], ignore_index=True)
+
+    return result
 
 
 # --- TRANSMISSION CAPACITIES ---
@@ -600,7 +655,8 @@ def process_year_data(year):
                                                                  gen_id_renamings,
                                                                  gen_id_aggregations_loc,
                                                                  year)
-    
+    installed_capacities_ne_input = split_nuclear_flex_capacity(installed_capacities_ne_input)
+
     ref_capacities_year, min_max_exchanges_year = preprocess_transmission_data(ref_capacities,
                                                                                min_max_exchanges,
                                                                                agg_plexos_locations,
