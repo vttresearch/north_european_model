@@ -1,4 +1,5 @@
 import sys
+import re
 import math
 import shutil
 import time
@@ -206,7 +207,7 @@ def main(input_folder: Path, config_file: Path):
         logger.log_status("Finalizing", level="run", section_start_length=55, add_empty_line_before=True)
 
         bb_ts_length = config.get('bb_ts_length')    
-        if bb_ts_length != 365:
+        if cache_manager.full_rerun and bb_ts_length != 365:
             logger.log_status(
                 f"Modifying gams files to work with bb_ts_length = {bb_ts_length}...",
                 level="none"
@@ -391,11 +392,40 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
             f"mSettings('schedule', 'dataLength') =  {data_length};",
         )
 
+        prob_lines = "".join(
+            f"    p_mfProbability('schedule', '{label}') = {weight:g};\n"
+            for label, weight in config["forecast_weights"].items()
+        )
+        content = re.sub(
+            r'(    // NOTE: do not edit the lines below[^\n]*\n'
+            r'    // unless[^\n]*\n'
+            r'    // No restrictions for local versions\.[^\n]*\n)'
+            r'(?:    p_mfProbability\([^\n]*\n)+',
+            rf'\1{prob_lines}',
+            content,
+        )
+
     elif filename == "timeAndSamples.inc":
         t_max = math.ceil((bb_ts_length * 24 + def_t_horizon) / 1000) * 1000
         content = content.replace(
             "t000000 * t020000",
             f"t000000 * t{t_max:06d}",
+        )
+
+        last_f = f"f{len(config['forecast_quantiles']):02d}"
+        content = re.sub(
+            r'(f00 \* )f\d+',
+            rf'\g<1>{last_f}',
+            content,
+        )
+
+    elif filename == "changes.inc":
+        # forecastNumber = number of climatological forecast branches + 1 for f00 (realized weather)
+        forecast_number = len(config["forecast_quantiles"]) + 1
+        content = re.sub(
+            r'(\$if not set forecasts \$evalglobal forecastNumber )\d+',
+            rf'\g<1>{forecast_number}',
+            content,
         )
 
     return content

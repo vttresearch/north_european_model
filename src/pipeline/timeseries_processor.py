@@ -455,7 +455,7 @@ class ProcessorRunner:
             forecast_df = _calculate_climatological_forecasts(
                 main_result,
                 bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
-                quantile_map=self.config.get("forecast_quantiles"),
+                forecast_quantiles=self.config["forecast_quantiles"],
                 bb_ts_start=bb_ts_start,
                 bb_ts_length=bb_ts_length,
                 round_precision=rounding_precision,
@@ -627,7 +627,7 @@ def _calculate_climatological_forecasts(
     input_df: pd.DataFrame,
     *,
     bb_parameter_dimensions,
-    quantile_map,
+    forecast_quantiles,
     bb_ts_start: str,
     bb_ts_length: int,
     round_precision: int = 0,
@@ -641,10 +641,10 @@ def _calculate_climatological_forecasts(
     outcome drawn from the long-term climatological data provided in the input dataframe.
 
     The caller controls how many forecasts to create and which quantile each represents via
-    the ``quantile_map`` defined in the config file. Keys are quantile probabilities (0..1) and 
-    values are the Backbone f-labels to use. For an example ``{0.5: 'f01', 0.1: 'f02', 0.9: 'f03'}``
-    would create three forecast branches, of which f01 presents the median, f02 lowest 10% 
-    of values, and f03 highest 90% of the values. 
+    ``forecast_quantiles`` from the config file. Keys are Backbone f-labels and values are
+    quantile probabilities (0..1). For example ``{'f01': 0.5, 'f02': 0.1, 'f03': 0.9}``
+    creates three forecast branches where f01 is the median, f02 the lowest 10%,
+    and f03 the highest 90% of values.
 
     These values are calculated and stored only once because they are the same for every climate window.
 
@@ -694,7 +694,7 @@ def _calculate_climatological_forecasts(
     # Vectorized quantile computation:
     # Group by the additional dimensions and 'hour_of_year' then compute the quantiles.
     # Always computed over the full 8760-hour calendar year regardless of bb_ts_length.
-    q_values = list(quantile_map.keys())
+    q_values = list(forecast_quantiles.values())
 
     df_quant = (
         input_df
@@ -752,8 +752,8 @@ def _calculate_climatological_forecasts(
     # 't' is already set from window_df
     df_full["t"] = df_full["t"].astype("category")
 
-    # Map quantile -> f
-    df_full["f"] = df_full["quantile"].map(quantile_map)
+    # Map quantile probability -> f label
+    df_full["f"] = df_full["quantile"].map({v: k for k, v in forecast_quantiles.items()})
     df_full["f"] = df_full["f"].astype("category")
 
     # Fill missing quantile values with 0, then round

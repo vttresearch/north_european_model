@@ -36,7 +36,7 @@ if (mType('schedule'),
 
     // Define length of data for proper circulation
     // NOTE: do not edit the line below in the git version 
-    // unless updating also _patch_gams_file_content() in build_input_excel.py
+    // unless updating also _patch_gams_file_content() in build_input_data.py
     // No restrictions for local versions.
     mSettings('schedule', 'dataLength') =  8760;
 
@@ -89,24 +89,31 @@ if (mType('schedule'),
 * --- Model Forecast Structure ------------------------------------------------
 * =============================================================================
 
-    Option clear = gn_forecasts;  // Clearing first, because includes everything by default
-    Option clear = unit_forecasts;  // Clearing first, because includes everything by default
-
-if(%forecastNumber%=1, 
     // Define the number of forecasts used by the model
-    mSettings('schedule', 'forecasts') = 0;
+    mSettings('schedule', 'forecasts') = %forecastNumber%;
 
-    // Define Realized and Central forecasts
+    // Define Realized forecast
+    mf_realization('schedule', f) = no;
     mf_realization('schedule', 'f00') = yes;
-    mf_central('schedule', 'f00') = yes;
+
+    // Define Central forecast
+    mf_central('schedule', f) = no;      
+    mf_central('schedule', 'f01') = yes;
 
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;
-    p_mfProbability(mf_realization('schedule', f)) = 1;
+    p_mfProbability('schedule', 'f00') = 1;
+    // NOTE: do not edit the lines below in the git version
+    // unless updating also _patch_gams_file_content() in build_input_data.py
+    // No restrictions for local versions.
+    p_mfProbability('schedule', 'f01') = 0.6;
+    p_mfProbability('schedule', 'f02') = 0.2;
+    p_mfProbability('schedule', 'f03') = 0.2;
 
-else
 
     // Define which nodes and timeseries use forecasts
+    Option clear = gn_forecasts;  // Clearing first, because includes everything by default
+    Option clear = unit_forecasts;  // Clearing first, because includes everything by default
 
     // loops flowNodes that have ts_cf data
     option flowNode_tmp < ts_cf;
@@ -116,7 +123,6 @@ else
             gn_forecasts(flowNode_tmp, 'ts_cf') = yes;            
         );
     );
-
     // loops gridNodes that have ts_influx data
     option gn_tmp < ts_influx;
     loop(gn_tmp,
@@ -125,7 +131,6 @@ else
             gn_forecasts(gn_tmp, 'ts_influx') = yes;            
         );
     );
-
     // loops gridNodes that have ts_node data
     option gn_tmp < ts_node;
     loop(gn_tmp,
@@ -148,48 +153,20 @@ else
     mSettings('schedule', 't_improveForecastNew') = 24*10;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
     mSettings('schedule', 'boundForecastEnds') = 0;                // 0/1 parameter if last v_state and v_online in f02,f03,... are bound to f01
 
-
     // Shorter forecast improvement for cf nodes
     option flowNode_tmp < ts_cf;
     p_gn_improveForecastNew(flowNode_tmp, 'ts_cf_') = 24*4;
-
-    // longer improvement for hydro influx
-    option gn_tmp < ts_influx;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'psOpen')}= 168*4;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'reservoir')}= 168*4;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'ror')}= 168*4;
 
     // shorter improvement for upward and downward ts
     option gn_tmp < ts_node;
     p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_node_') $ {SameAs(grid, 'psOpen')}= 24*4;
     p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_node_') $ {SameAs(grid, 'reservoir')}= 24*4;
 
-    // Define the number of forecasts used by the model
-    mSettings('schedule', 'forecasts') = 2;
-
-    // Define Realized and Central forecasts
-    mf_realization('schedule', f) = no;
-    mf_realization('schedule', 'f00') = yes;
-    mf_central('schedule', f) = no;
-    mf_central('schedule', 'f01') = yes;
-
-    // Define forecast probabilities (weights)
-    p_mfProbability('schedule', f) = 0;
-    p_mfProbability('schedule', 'f00') = 1;
-    p_mfProbability('schedule', 'f01') = 1;
-);
-
-if(%forecastNumber%=4,
-    // Define the number of forecasts used by the model
-    mSettings('schedule', 'forecasts') = 4;
-
-    // Define forecast probabilities (weights)
-    p_mfProbability('schedule', f) = 0;
-    p_mfProbability('schedule', 'f00') = 1;
-    p_mfProbability('schedule', 'f01') = 0.6;
-    p_mfProbability('schedule', 'f02') = 0.2;
-    p_mfProbability('schedule', 'f03') = 0.2;
-);
+    // longer improvement for hydro influx
+    option gn_tmp < ts_influx;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'psOpen')}= 168*4;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'reservoir')}= 168*4;
+    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'ror')}= 168*4;
 
 
 * =============================================================================

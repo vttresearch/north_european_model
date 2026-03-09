@@ -81,7 +81,8 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'scaling_factor': 1,
 }
 
-_FORECAST_QUANTILES_DEFAULT = {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'}
+_FORECAST_QUANTILES_DEFAULT = {'f01': 0.5, 'f02': 0.1, 'f03': 0.9}
+_FORECAST_WEIGHTS_DEFAULT   = {'f01': 0.6, 'f02': 0.2, 'f03': 0.2}
 
 _TIMESERIES_SPEC_MANDATORY = ('processor_name', 'bb_parameter', 'bb_parameter_dimensions')
 
@@ -205,22 +206,48 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             f"Reduce bb_timeseries_length or extend the climate_data range."
         )
 
-    # Parse optional forecast_quantiles (default: {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'})
+    # Parse optional forecast_quantiles (default: {'f01': 0.5, 'f02': 0.1, 'f03': 0.9})
     forecast_quantiles_raw = inputdata.get('forecast_quantiles')
     if forecast_quantiles_raw is not None:
         forecast_quantiles = ast.literal_eval(forecast_quantiles_raw)
         if not isinstance(forecast_quantiles, dict):
             raise ValueError(
-                f"forecast_quantiles must be a dict mapping float quantiles to f-labels; "
+                f"forecast_quantiles must be a dict mapping f-labels to probability quantiles; "
                 f"got {type(forecast_quantiles).__name__}."
             )
-        if "f00" in forecast_quantiles.values():
+        if "f00" in forecast_quantiles:
             raise ValueError(
                 "forecast_quantiles contains 'f00', which is reserved for realized weather. "
                 "Use f01, f02, … for forecast branches."
             )
     else:
         forecast_quantiles = _FORECAST_QUANTILES_DEFAULT
+
+    # Parse optional forecast_weights (default: equal weights, or established defaults for the standard 3-forecast setup)
+    forecast_weights_raw = inputdata.get('forecast_weights')
+    if forecast_weights_raw is not None:
+        forecast_weights = ast.literal_eval(forecast_weights_raw)
+        if not isinstance(forecast_weights, dict):
+            raise ValueError(
+                f"forecast_weights must be a dict mapping f-labels to probability weights; "
+                f"got {type(forecast_weights).__name__}."
+            )
+        if set(forecast_weights.keys()) != set(forecast_quantiles.keys()):
+            raise ValueError(
+                f"forecast_weights keys {sorted(forecast_weights)} must match "
+                f"forecast_quantiles keys {sorted(forecast_quantiles)}."
+            )
+        total = sum(forecast_weights.values())
+        if abs(total - 1.0) > 1e-9:
+            raise ValueError(
+                f"forecast_weights values must sum to 1.0; got {total}."
+            )
+    else:
+        if set(forecast_quantiles.keys()) == set(_FORECAST_WEIGHTS_DEFAULT.keys()):
+            forecast_weights = _FORECAST_WEIGHTS_DEFAULT
+        else:
+            n = len(forecast_quantiles)
+            forecast_weights = {label: 1.0 / n for label in forecast_quantiles}
 
     # Build the config dictionary manually
     # Insert correctly shaped default values in case of missing keys
@@ -261,8 +288,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
         'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
-        # Timeseries forecast quantiles and specs
+        # Timeseries forecast quantiles, weights and specs
         'forecast_quantiles': forecast_quantiles,
+        'forecast_weights': forecast_weights,
         'timeseries_specs': _validate_timeseries_specs(
             ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
         )

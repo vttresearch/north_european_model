@@ -32,6 +32,9 @@ $offtext
 $if not set modelYear $setglobal modelYear 2025
 $if not set climateYear $setglobal tsYear 2015
 $if not set modelledDays $setglobal modelledDays 365
+// NOTE: do not edit the line below in the git version
+// unless updating also _patch_gams_file_content() in build_input_data.py
+// No restrictions for local versions.
 $if not set forecasts $evalglobal forecastNumber 4
 $if set forecasts $evalglobal forecastNumber %forecasts%
 

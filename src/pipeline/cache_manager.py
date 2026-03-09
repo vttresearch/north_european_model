@@ -614,6 +614,13 @@ class CacheManager:
             if changed:
                 full_rerun_reason = f"Climate/timeseries config changed ({', '.join(changed)}), starting a full rerun."
 
+        # Forecast structure changed (requires full rerun to recopy patched GAMS files and rerun timeseries)
+        if not full_rerun_reason:
+            forecast_keys = ("forecast_quantiles", "forecast_weights")
+            changed = [k for k in forecast_keys if prev_config.get(k) != self.config.get(k)]
+            if changed:
+                full_rerun_reason = f"Forecast config changed ({', '.join(changed)}), starting a full rerun."
+
         # 2) Check source code based full reruns.
         # _save_all_source_code_hashes() checks and updates hashes for all three groups.
         # The guard stops at the first change found, but Phase 2 always regenerates
@@ -681,21 +688,6 @@ class CacheManager:
             for key, changed in ts_spec_changes.items():
                 self.timeseries_changed[key] = self.timeseries_changed.get(key, False) or changed
 
-            # If forecast_quantiles changed, mark all timeseries specs as changed.
-            # forecast_quantiles has float keys (e.g. 0.5) in memory, but JSON serialises dict keys
-            # as strings, so prev_config loaded from JSON has string keys ("0.5").  A direct
-            # comparison would always report a change.  Normalising both sides through a JSON
-            # round-trip makes the types match before comparing.
-            prev_fq = json.loads(json.dumps(prev_config.get("forecast_quantiles", {})))
-            curr_fq = json.loads(json.dumps(self.config["forecast_quantiles"]))
-            if prev_fq != curr_fq:
-                self.logger.log_status(
-                    "forecast_quantiles changed — marking all timeseries processors for rerun.",
-                    level="info"
-                )
-                for key in self.config["timeseries_specs"].keys():
-                    self.timeseries_changed[key] = True
-
         # Detect processor code changes and merge into timeseries_changed
         proc_changes = self._detect_processor_code_changes()
         for human_name, changed in proc_changes.items():
@@ -747,7 +739,7 @@ class CacheManager:
         relevant_keys = [
             "country_codes", "exclude_grids", "exclude_nodes",
             "climate_data", "bb_timeseries_start", "bb_timeseries_length",
-            "forecast_quantiles", "timeseries_specs"
+            "forecast_quantiles", "forecast_weights", "timeseries_specs"
         ]
         data = {k: self.config[k] for k in relevant_keys if k in self.config}
         json_exchange.save_json(self.cache_folder / "config_structural.json", data)
