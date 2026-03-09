@@ -138,6 +138,9 @@ def normalize_dataframe(
     1) Lower-cases all column names.
     2) Lower-case column values (lowercase_col_values): lower-cases selected identifier-like columns (e.g. 'scenario').
     3) Remove leading and trailing whitespace from string columns.
+    3b) Drop comment rows: rows where any non-underscore-prefixed column contains a string
+       starting with ``#`` are silently removed. Use this to annotate or section off rows
+       in the source Excel (e.g. put ``# section header`` in the scenario column).
     4) 'method' column: ensures existence; trims/lower-cases values; unknown methods
        are warned and coerced to 'replace' against `allowed_methods`.
     5) Missing/empties: treat empty strings as NA.
@@ -194,6 +197,15 @@ def normalize_dataframe(
     for col in df_out.columns:
         if pd.api.types.is_string_dtype(df_out[col]) or pd.api.types.is_object_dtype(df_out[col]):
             df_out[col] = df_out[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+
+    # 3b) Drop comment rows: any row where a non-underscore column has a string cell starting with '#'
+    data_cols = [c for c in df_out.columns if not str(c).startswith("_")]
+    comment_mask = df_out[data_cols].apply(
+        lambda row: any(isinstance(v, str) and v.startswith("#") for v in row),
+        axis=1,
+    )
+    if comment_mask.any():
+        df_out = df_out[~comment_mask].reset_index(drop=True)
 
     # 4) Ensure and normalize 'method'
     if "method" not in df_out.columns:
