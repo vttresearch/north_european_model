@@ -455,7 +455,7 @@ class ProcessorRunner:
             forecast_df = _calculate_climatological_forecasts(
                 main_result,
                 bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
-                quantile_map=spec.get("quantile_map"),
+                quantile_map=self.config.get("forecast_quantiles"),
                 bb_ts_start=bb_ts_start,
                 bb_ts_length=bb_ts_length,
                 round_precision=rounding_precision,

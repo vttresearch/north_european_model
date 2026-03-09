@@ -75,12 +75,13 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'gdx_name_suffix': '',
     'rounding_precision': 0,
     'secondary_output_name': None,
-    'quantile_map': {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'},
     'input_sub_folder': '',
     'attached_grid': '',
     'is_input_data_dependent': True,
     'scaling_factor': 1,
 }
+
+_FORECAST_QUANTILES_DEFAULT = {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'}
 
 _TIMESERIES_SPEC_MANDATORY = ('processor_name', 'bb_parameter', 'bb_parameter_dimensions')
 
@@ -119,12 +120,6 @@ def _validate_timeseries_specs(specs: Any) -> Dict[str, Any]:
             )
         for key, default in _TIMESERIES_SPEC_DEFAULTS.items():
             entry.setdefault(key, default)
-        quantile_map = entry.get("quantile_map") or {}
-        if "f00" in quantile_map.values():
-            raise ValueError(
-                f"timeseries_specs entry '{name}': quantile_map contains 'f00', "
-                "which is reserved for realized weather. Use f01, f02, … for forecast branches."
-            )
     return specs
 
 
@@ -210,6 +205,23 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             f"Reduce bb_timeseries_length or extend the climate_data range."
         )
 
+    # Parse optional forecast_quantiles (default: {0.5: 'f01', 0.1: 'f02', 0.9: 'f03'})
+    forecast_quantiles_raw = inputdata.get('forecast_quantiles')
+    if forecast_quantiles_raw is not None:
+        forecast_quantiles = ast.literal_eval(forecast_quantiles_raw)
+        if not isinstance(forecast_quantiles, dict):
+            raise ValueError(
+                f"forecast_quantiles must be a dict mapping float quantiles to f-labels; "
+                f"got {type(forecast_quantiles).__name__}."
+            )
+        if "f00" in forecast_quantiles.values():
+            raise ValueError(
+                "forecast_quantiles contains 'f00', which is reserved for realized weather. "
+                "Use f01, f02, … for forecast branches."
+            )
+    else:
+        forecast_quantiles = _FORECAST_QUANTILES_DEFAULT
+
     # Build the config dictionary manually
     # Insert correctly shaped default values in case of missing keys
     config: Dict[str, Any] = {
@@ -249,7 +261,8 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
         'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
-        # Timeseries specs
+        # Timeseries forecast quantiles and specs
+        'forecast_quantiles': forecast_quantiles,
         'timeseries_specs': _validate_timeseries_specs(
             ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
         )
