@@ -635,12 +635,17 @@ class CacheManager:
             elif self.timeseries_pipeline_code_updated:
                 full_rerun_reason = "Timeseries pipeline code updated, starting a full rerun."
 
-        # 3) Check if previous workflow didn't complete successfully
+        # 3) Check if source excel or timeseries phases had errors in the previous run.
+        # BB excel failures are handled separately via rebuild_bb_excel (Phase 3),
+        # so they do not trigger a full rerun here.
         if not full_rerun_reason:
             general_flags = self.load_dict_from_cache("general_flags.json")
-            workflow_run_successfully = general_flags.get("workflow_run_successfully", False)
-            if not workflow_run_successfully:
-                full_rerun_reason = "Previous workflow did not complete successfully. Starting a full rerun."
+            source_excel_run_successfully = general_flags.get("source_excel_run_successfully", False)
+            timeseries_run_successfully = general_flags.get("timeseries_run_successfully", False)
+            if not source_excel_run_successfully:
+                full_rerun_reason = "Source excel phase did not complete successfully in previous run. Starting a full rerun."
+            elif not timeseries_run_successfully:
+                full_rerun_reason = "Timeseries phase did not complete successfully in previous run. Starting a full rerun."
 
 
         # ========================================================================

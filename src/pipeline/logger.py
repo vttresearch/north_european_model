@@ -91,3 +91,8 @@ class IterationLogger:
     def has_errors(self) -> bool:
         """True if any error-level message has been logged this iteration."""
         return bool(self._error_log)
+
+    @property
+    def error_count(self) -> int:
+        """Number of error-level messages logged so far this iteration."""
+        return len(self._error_log)

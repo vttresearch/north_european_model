@@ -534,23 +534,25 @@ class TimeseriesPipeline:
         bb_ts_start = self.config.get("bb_timeseries_start")
         bb_ts_length = self.config.get("bb_timeseries_length")
         data_end = pd.Timestamp(f"{end_year}-12-31 23:00")
-        self.logger.log_status(
-            f"Generating {bb_ts_length} days long timeseries data starting at {bb_ts_start} "
-            f"annually from {start_year} onwards...",
-            level="none"
-        )
 
-        excluded_years = [
-            yr for yr in range(start_year, end_year + 1)
-            if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(hours=bb_ts_length * 24 - 1) > data_end
-        ]
-        if excluded_years:
+        if processors_to_rerun:
             self.logger.log_status(
-                f"Not generating timeseries data starting from {excluded_years[0]} onwards, "
-                f"due to requested {bb_ts_length} day length of timeseries and the annual start "
-                f"day {bb_ts_start}. Otherwise the timeseries would exceed the end of {end_year}...",
+                f"Generating {bb_ts_length} days long timeseries data starting at {bb_ts_start} "
+                f"annually from {start_year} onwards...",
                 level="none"
             )
+
+            excluded_years = [
+                yr for yr in range(start_year, end_year + 1)
+                if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(hours=bb_ts_length * 24 - 1) > data_end
+            ]
+            if excluded_years:
+                self.logger.log_status(
+                    f"Not generating timeseries data starting from {excluded_years[0]} onwards, "
+                    f"due to requested {bb_ts_length} day length of timeseries and the annual start "
+                    f"day {bb_ts_start}. Otherwise the timeseries would exceed the end of {end_year}...",
+                    level="none"
+                )
 
         # --- 3. Run selected processors ---
         all_ts_domains = {}

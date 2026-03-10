@@ -107,8 +107,20 @@ def main(input_folder: Path, config_file: Path):
             files = [f for f in files if f.is_file()]
 
             if files:
+                locked_file = None
                 for f in files:
-                    f.unlink(missing_ok=True)
+                    try:
+                        f.unlink(missing_ok=True)
+                    except PermissionError:
+                        locked_file = f
+                        break
+                if locked_file:
+                    logger.log_status(
+                        f"Cannot delete '{locked_file.name}' — it is open in another program. "
+                        f"Please close it and rerun the code.",
+                        level="error"
+                    )
+                    continue
                 logger.log_status(f"Cleared {len(files)} output files from {output_folder}.",
                            level="info", add_empty_line_before=True)
 
@@ -128,16 +140,19 @@ def main(input_folder: Path, config_file: Path):
         )
 
         # Run if needed
+        error_count_before_source_excel = logger.error_count
         if cache_manager.reimport_source_excels:
             logger.log_status("Processing source Excel files.",
                        level="run", add_empty_line_before=True, section_start_length=55)
             source_excel_data_pipeline.run()
         else:
             logger.log_status("Skipping source excel processing.", level="skip")
+        source_excel_run_successfully = (logger.error_count == error_count_before_source_excel)
 
 
         # --- 2.4. Timeseries processing phase ---
         # Run timeseries or load cached results
+        error_count_before_ts = logger.error_count
         if cache_manager.needs_timeseries_run:
             logger.log_status(
                 "Starting timeseries processing phase",
@@ -171,8 +186,10 @@ def main(input_folder: Path, config_file: Path):
                 ts_domains=cache_manager.load_dict_from_cache("all_ts_domains.json"),
                 ts_domain_pairs=cache_manager.load_dict_from_cache("all_ts_domain_pairs.json"),
             )
+        timeseries_run_successfully = (logger.error_count == error_count_before_ts)
 
         # --- 2.5. Backbone Input Excel building phase ---
+
         # Checking if this step is needed or not
         if cache_manager.rebuild_bb_excel:
             logger.log_status("Building Backbone input Excel", level="run", section_start_length=45, add_empty_line_before=True)
@@ -197,9 +214,11 @@ def main(input_folder: Path, config_file: Path):
             bb_excel_succesfully_built = True
 
         # Update the general flag for succesfull BB excel building
-        if not bb_excel_succesfully_built:
-            logger.log_status("Backbone input excel building failed. Rerun the python script.", level="warn")
-        status_dict = {"bb_excel_succesfully_built": bb_excel_succesfully_built}
+        status_dict = {
+            "bb_excel_succesfully_built": bb_excel_succesfully_built,
+            "source_excel_run_successfully": source_excel_run_successfully,
+            "timeseries_run_successfully": timeseries_run_successfully,
+        }
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 
         # --- 2.6. Finalizing ---
@@ -232,9 +251,24 @@ def main(input_folder: Path, config_file: Path):
                     logger.log_status(f"No GAMS files found to copy in {gams_src_folder}", level="warn")
 
         # Flagging the run successful and writing the flag status
-        # workflow_run_successfully is False if any error-level message was logged
-        if logger.has_errors:
-            logger.log_status("Run completed with errors. workflow_run_successfully set to False.", level="warn")
+        # workflow_run_successfully is False if any error-level message was logged.
+        # Source/timeseries failures trigger a full rerun next time; BB excel failure
+        # triggers only a BB excel rebuild (already reported above at line 201).
+        if not source_excel_run_successfully:
+            logger.log_status(
+                "Source excel phase had errors — a full rerun will be triggered on next run.",
+                level="error"
+            )
+        if not timeseries_run_successfully:
+            logger.log_status(
+                "Timeseries phase had errors — a full rerun will be triggered on next run.",
+                level="error"
+            )
+        if not bb_excel_succesfully_built:
+            logger.log_status("Backbone input excel building failed — rerun the code.",
+                level="error"
+            )
+
         status_dict = {"workflow_run_successfully": not logger.has_errors}
         cache_manager.merge_dict_to_cache(status_dict, "general_flags.json")
 

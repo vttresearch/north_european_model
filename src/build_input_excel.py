@@ -1928,7 +1928,7 @@ class BuildInputExcel:
             except OSError:
                 self.logger.log_status(
                     f"The Backbone input excel file '{self.output_file}' is currently open. Please close it and rerun the code.",
-                    level="warn"
+                    level="error"
                 )
                 return
 
