@@ -55,17 +55,17 @@ class ProcessorRunResult:
     secondary_result : Any | None
         Optional secondary output (e.g., metadata, statistics)
         that will be cached for use in other pipeline stages
-    ts_domains : dict[str, set]
-        Mapping of domain names to sets of values found in the
-        processed data (e.g., {'grid': {'FI', 'SE'}, 'node': {...}})
-    ts_domain_pairs : dict[str, set[tuple]]
-        Mapping of domain pair keys to sets of tuples representing
-        relationships (e.g., {"grid,node": {("elec", "FI00_elec"), ...}})
+    ts_domains : dict[str, list]
+        Mapping of domain names to lists of values found in the
+        processed data (e.g., {'grid': ['FI', 'SE'], 'node': [...]})
+    ts_domain_pairs : dict[str, list[tuple]]
+        Mapping of domain pair keys to lists of tuples representing
+        relationships (e.g., {"grid,node": [("elec", "FI00_elec"), ...]})
     """
     processor_name: str
     secondary_result: Optional[Any]
-    ts_domains: dict[str, set]
-    ts_domain_pairs: dict[str, set[tuple]]
+    ts_domains: dict[str, list]
+    ts_domain_pairs: dict[str, list[tuple]]
 
 
 @dataclass

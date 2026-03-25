@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Dict, Optional, Sequence
 import pandas as pd
 import os
@@ -49,7 +50,7 @@ def write_df_to_gdx(
 
 def write_climate_window_GDX_files(
     annual_dfs: Dict[int, pd.DataFrame],
-    output_folder: str,
+    output_folder: Path,
     logger,
     bb_parameter: str,
     bb_parameter_dimensions: Sequence[str],

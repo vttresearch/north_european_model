@@ -174,12 +174,12 @@ class ProcessorRunner:
         # Extract config values
         start_year = self.config["start_year"]
         end_year   = self.config["end_year"]
-        bb_ts_start  = self.config.get("bb_timeseries_start")
-        bb_ts_length = self.config.get("bb_timeseries_length")
+        bb_ts_start  = self.config["bb_timeseries_start"]
+        bb_ts_length = self.config["bb_timeseries_length"]
         country_codes = self.config["country_codes"]
-        rounding_precision = spec.get("rounding_precision")
-        bb_parameter = spec.get("bb_parameter")
-        gdx_name_suffix = spec.get("gdx_name_suffix")
+        rounding_precision = spec["rounding_precision"]
+        bb_parameter = spec["bb_parameter"]
+        gdx_name_suffix = spec["gdx_name_suffix"]
 
         # Determine which climate years have a complete window within the available data.
         data_end = pd.Timestamp(f"{end_year}-12-31 23:00")
@@ -190,6 +190,18 @@ class ProcessorRunner:
 
         # Load processor module
         module_spec = importlib.util.spec_from_file_location(processor_name, processor_file)
+        if module_spec is None or module_spec.loader is None:
+            self.logger.log_status(
+                f"Could not load processor module '{processor_name}' from '{processor_file}'.",
+                level="warn",
+            )
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
         module = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(module)
 
@@ -384,6 +396,40 @@ class ProcessorRunner:
             bb_parameter=bb_parameter,
             gdx_name_suffix=gdx_name_suffix,
         )
+
+        # --- Annual summary CSV ---
+        annual_summary = spec.get("annual_summary", "")
+        if annual_summary:
+            valid_methods = {'avg', 'sum'}
+            if annual_summary not in valid_methods:
+                self.logger.log_status(
+                    f"Processor '{processor_name}': invalid annual_summary value "
+                    f"'{annual_summary}'. Expected 'avg' or 'sum'. Skipping summary.",
+                    level="warn",
+                )
+            else:
+                self.logger.log_status("Writing annual summary CSV...")
+                summary_df = main_result.copy()
+                summary_df['year'] = summary_df['time'].dt.year
+
+                group_cols = group_dim_cols + ['year']
+                agg_func = 'mean' if annual_summary == 'avg' else 'sum'
+                summary_df = (
+                    summary_df
+                    .groupby(group_cols, observed=True)['value']
+                    .agg(agg_func)
+                    .round(rounding_precision)
+                    .reset_index()
+                )
+                summary_df['aggregation'] = annual_summary
+
+                summary_filename = f"{bb_parameter}_{gdx_name_suffix}_summary.csv"
+                summary_path = os.path.join(self.output_folder, summary_filename)
+                summary_df.to_csv(summary_path, index=False)
+                self.logger.log_status(
+                    f"Annual summary ({annual_summary}) written to {summary_filename}",
+                    level="info",
+                )
 
         # --- Climatological forecasts ---
         # Automatically calculate when dimensions include 'f', 't', and at least one grouping dim.
