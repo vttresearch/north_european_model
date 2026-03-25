@@ -4,7 +4,7 @@ import os
 import ast
 import configparser
 import build_input_data
-from src.config_reader import load_config
+from src.infrastructure.config_reader import load_config
 from src.utils import parse_sys_args
 from openpyxl import load_workbook
 

@@ -1,6 +1,4 @@
-# src/cache_manager.py
 """
-
 Purpose
 -------
 Cache manager -- allows partial reruns and watches which pipelines 
@@ -20,6 +18,7 @@ import src.hash_utils as hash_utils
 import src.json_exchange as json_exchange
 import pickle
 import shutil
+
 
 class CacheManager:
     """
@@ -41,24 +40,24 @@ class CacheManager:
     # Paths are relative to the project root (where build_input_data.py lives).
     _OVERALL_CODE_FILES = [
         Path("./build_input_data.py"),
-        Path("./src/config_reader.py"),
-        Path("./src/pipeline/cache_manager.py"),
+        Path("./src/infrastructure/config_reader.py"),
+        Path("./src/infrastructure/cache_manager.py"),
         Path("./src/utils.py"),
         Path("./src/hash_utils.py"),
         Path("./src/json_exchange.py"),
     ]
     _SOURCE_PIPELINE_FILES = [
-        Path("./src/pipeline/source_excel_data_pipeline.py"),
-        Path("./src/data_loader.py"),
+        Path("./src/source_data/source_data_pipeline.py"),
+        Path("./src/source_data/source_data_loader.py"),
     ]
     _TS_PIPELINE_FILES = [
-        Path("./src/pipeline/timeseries_pipeline.py"),
-        Path("./src/pipeline/timeseries_processor.py"),
+        Path("./src/timeseries/timeseries_pipeline.py"),
+        Path("./src/timeseries/timeseries_processor.py"),
         Path("./src/GDX_exchange.py"),
     ]
     _BB_PIPELINE_FILES = [
-        Path("./src/pipeline/bb_excel_context.py"),
-        Path("./src/build_input_excel.py"),
+        Path("./src/bb_excel/bb_excel_inputs.py"),
+        Path("./src/bb_excel/bb_excel_pipeline.py"),
     ]
 
     @property
@@ -178,7 +177,7 @@ class CacheManager:
             return {}
 
         processor_hashes = self.load_processor_hashes()
-        processors_base = Path("src/processors")
+        processors_base = Path("src/timeseries/processors")
         result = {}
         changed_processors = []
 

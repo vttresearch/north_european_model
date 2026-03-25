@@ -1,5 +1,3 @@
-# src/pipeline/logger.py
-
 import time
 
 

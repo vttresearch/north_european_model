@@ -1,11 +1,10 @@
-# src/pipeline/timeseries_processor.py
 """
 Timeseries processor runner -- dynamic loading and execution of individual processors.
 
 Purpose
 -------
 This module provides the glue between the orchestrating ``TimeseriesPipeline``
-and the individual processor classes that live in ``src/processors/``.
+and the individual processor classes that live in ``src/timeseries/processors/``.
 ``ProcessorRunner`` dynamically loads a processor by name, injects a standard
 set of kwargs, calls ``run_processor()``, validates the returned DataFrame,
 and writes GDX output files.
@@ -13,7 +12,7 @@ and writes GDX output files.
 Data interface -- processor contract
 -------------------------------------
 Every processor class must implement ``run_processor()`` and return a
-:class:`ProcessorResult` whose ``main_result`` is a **long-format**
+:class:`ProcessorOutput` whose ``main_result`` is a **long-format**
 ``pd.DataFrame`` with exactly the following columns:
 
     bb_parameter_dimensions (excluding 't' and 'f')  +  ['time', 'value']
@@ -22,8 +21,8 @@ For example, if ``bb_parameter_dimensions = ['grid', 'node', 'f', 't']``
 the processor must return columns ``['grid', 'node', 'time', 'value']`` --
 nothing more, nothing less.  The ``time`` column must contain datetime values.
 The ``t`` and ``f`` dimensions are absent from the processor output.
-``_split_timeseries_to_climate_windows`` assigns ``t`` and inserts ``f00``
-as the realized-weather branch.  ``_calculate_climatological_forecasts``
+``split_timeseries_to_climate_windows`` assigns ``t`` and inserts ``f00``
+as the realized-weather branch.  ``calculate_climatological_forecasts``
 computes the remaining forecast branches (f01, f02, …) from climatological
 quantiles.
 
@@ -50,71 +49,22 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 import importlib.util
-import numpy as np
 import pandas as pd
 import src.hash_utils as hash_utils
 import src.utils as utils
 import src.GDX_exchange as GDX_exchange
 import src.json_exchange as json_exchange
-from src.pipeline.cache_manager import CacheManager
-from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
-from src.timeseries_helpers import (
+from src.infrastructure.cache_manager import CacheManager
+from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.timeseries_helpers import (
     collect_domains_for_cache,
     collect_domain_pairs_for_cache,
     update_import_timeseries_inc,
+    split_timeseries_to_climate_windows,
+    calculate_climatological_forecasts,
 )
-from typing import Dict, List, Optional, Sequence, Any
-
-
-
-@dataclass
-class ProcessorResult:
-    """
-    Results returned by a processor's ``run_processor()`` method.
-
-    Attributes
-    ----------
-    main_result : pd.DataFrame
-        Wide-format DataFrame in the processor's own output convention,
-        before any BB-format conversion or GDX writing.  Column layout
-        varies by processor (e.g. dates as index, countries as columns).
-    secondary_result : Any or None
-        Optional secondary output produced alongside the main timeseries
-        (e.g. annual totals, scaling factors) for use in later pipeline
-        stages such as ``BuildInputExcel``.  ``None`` if the processor
-        does not produce a secondary output.
-    """
-    main_result: pd.DataFrame
-    secondary_result: Optional[Any] = None
-
-
-@dataclass
-class ProcessorRunnerResult:
-    """
-    Results from ProcessorRunner execution.
-
-    This dataclass encapsulates all outputs from running a single
-    timeseries processor, including the processed data's domain
-    information and any secondary outputs.
-
-    Attributes
-    ----------
-    processor_name : str
-        Name of the processor that was executed
-    secondary_result : Any | None
-        Optional secondary output (e.g., metadata, statistics)
-        that will be cached for use in other pipeline stages
-    ts_domains : dict[str, set]
-        Mapping of domain names to sets of values found in the
-        processed data (e.g., {'grid': {'FI', 'SE'}, 'node': {...}})
-    ts_domain_pairs : dict[str, set[tuple]]
-        Mapping of domain pair keys to sets of tuples representing
-        relationships (e.g., {"grid,node": {("elec", "FI00_elec"), ...}})
-    """
-    processor_name: str
-    secondary_result: Optional[Any]
-    ts_domains: dict[str, set]
-    ts_domain_pairs: dict[str, set[tuple]]
+from src.timeseries.timeseries_results import ProcessorOutput, ProcessorRunResult
+from typing import Optional, Any
 
 
 @dataclass
@@ -122,12 +72,12 @@ class ProcessorRunner:
     """
     Executes a single timeseries processor and writes its outputs.
 
-    Dynamically loads the processor class from ``src/processors/`` (the module
+    Dynamically loads the processor class from ``src/timeseries/processors/`` (the module
     file and the class inside it must share the same name), instantiates it with
     a standardised set of kwargs derived from the config and the enriched
     processor spec, and calls ``run_processor()``.
 
-    After the processor returns a :class:`ProcessorResult`, this class:
+    After the processor returns a :class:`ProcessorOutput`, this class:
 
     - Cleans and converts ``main_result`` to long format via ``prepare_BB_df``
       (dimension columns added; ``t`` assigned later by downstream functions).
@@ -144,7 +94,7 @@ class ProcessorRunner:
     input_folder: Path
     output_folder: Path
     cache_manager: CacheManager
-    source_excel_data_pipeline: SourceExcelDataPipeline
+    source_data_pipeline: SourceDataPipeline
     scenario_year: Optional[int] = None
     logger: Optional[Any] = None
 
@@ -168,7 +118,7 @@ class ProcessorRunner:
         self.cache_manager.save_processor_hash(processor_name, hash_value)
 
 
-    def run(self) -> ProcessorRunnerResult:
+    def run(self) -> ProcessorRunResult:
         """
         Execute the processor and return all structured outputs.
 
@@ -183,7 +133,7 @@ class ProcessorRunner:
            - If the spec declares a ``demand_grid``, filter ``df_demanddata``
              to that grid and pass it to the processor as ``df_annual_demands``.
            - If no matching demand rows are found, log a warning and return an
-             empty :class:`ProcessorRunnerResult` (hash still updated).
+             empty :class:`ProcessorRunResult` (hash still updated).
 
         3. Run and convert
            - Instantiate the processor class and call ``run_processor()``.
@@ -196,7 +146,7 @@ class ProcessorRunner:
         4. Climatological forecasts
            - When the spec dimensions include both ``f`` and ``t`` and at least
              one additional grouping dimension, compute quantile-based forecast
-             branches via ``_calculate_climatological_forecasts`` and write them
+             branches via ``calculate_climatological_forecasts`` and write them
              as a separate ``_forecasts.gdx`` file, also registered in
              ``import_timeseries.inc``.
 
@@ -208,7 +158,7 @@ class ProcessorRunner:
 
         Returns
         -------
-        ProcessorRunnerResult
+        ProcessorRunResult
             Contains ``processor_name``, ``secondary_result``, ``ts_domains``,
             and ``ts_domain_pairs`` for the executed processor.
         """
@@ -249,7 +199,7 @@ class ProcessorRunner:
                 level="warn",
             )
             self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunnerResult(
+            return ProcessorRunResult(
                 processor_name=processor_name,
                 secondary_result=None,
                 ts_domains={},
@@ -275,7 +225,7 @@ class ProcessorRunner:
         # Add demand data to processor_kwargs if demand grid
         demand_grid = spec.get("demand_grid")
         if demand_grid:
-            df_annual_demands = self.source_excel_data_pipeline.df_demanddata
+            df_annual_demands = self.source_data_pipeline.df_demanddata
             if "grid" not in df_annual_demands.columns:
                 self.logger.log_status(
                     f"Demand data has not been loaded (df_demanddata has no columns). "
@@ -283,7 +233,7 @@ class ProcessorRunner:
                     level="warn",
                 )
                 self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunnerResult(
+                return ProcessorRunResult(
                     processor_name=processor_name,
                     secondary_result=None,
                     ts_domains={},
@@ -299,7 +249,7 @@ class ProcessorRunner:
                     level="warn",
                 )
                 self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunnerResult(
+                return ProcessorRunResult(
                     processor_name=processor_name,
                     secondary_result=None,
                     ts_domains={},
@@ -320,14 +270,14 @@ class ProcessorRunner:
                 level="warn",
             )
             self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunnerResult(
+            return ProcessorRunResult(
                 processor_name=processor_name,
                 secondary_result=None,
                 ts_domains={},
                 ts_domain_pairs={},
             )
 
-        # Extract results from ProcessorResult dataclass
+        # Extract results from ProcessorOutput dataclass
         main_result = processor_result.main_result
         secondary_result = processor_result.secondary_result
 
@@ -342,7 +292,7 @@ class ProcessorRunner:
             self.logger.log_status(
                 f"Processor '{processor_name}' returned main_result of type "
                 f"'{type(main_result).__name__}', expected pd.DataFrame.  "
-                f"Check that run_processor() returns a ProcessorResult.  "
+                f"Check that run_processor() returns a ProcessorOutput.  "
                 f"No GDX output will be written.",
                 level="error",
             )
@@ -365,7 +315,7 @@ class ProcessorRunner:
                 level="error",
             )
             self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunnerResult(
+            return ProcessorRunResult(
                 processor_name=processor_name,
                 secondary_result=None,
                 ts_domains={},
@@ -384,7 +334,7 @@ class ProcessorRunner:
                 level="error",
             )
             self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunnerResult(
+            return ProcessorRunResult(
                 processor_name=processor_name,
                 secondary_result=None,
                 ts_domains={},
@@ -413,7 +363,7 @@ class ProcessorRunner:
         # --- Slice and write climate windows' data ---
         # Split into climate windows
         self.logger.log_status("Preparing annual GDX files...")
-        annual_dfs = _split_timeseries_to_climate_windows(
+        annual_dfs = split_timeseries_to_climate_windows(
             main_result,
             bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
             bb_ts_start=bb_ts_start,
@@ -452,7 +402,7 @@ class ProcessorRunner:
 
         if calculate_forecasts:
             self.logger.log_status("Calculating climatological forecasts...")
-            forecast_df = _calculate_climatological_forecasts(
+            forecast_df = calculate_climatological_forecasts(
                 main_result,
                 bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
                 forecast_quantiles=self.config["forecast_quantiles"],
@@ -510,259 +460,10 @@ class ProcessorRunner:
         self.logger.log_status("Processing completed.", level="info")
 
         # Return structured result
-        return ProcessorRunnerResult(
+        return ProcessorRunResult(
             processor_name=processor_name,
             secondary_result=secondary_result,
             ts_domains=local_ts_domains,
             ts_domain_pairs=local_ts_domain_pairs,
         )
-    
-
-
-
-
-def _split_timeseries_to_climate_windows(
-    df: pd.DataFrame,
-    *,
-    bb_parameter_dimensions: Sequence[str],
-    bb_ts_start: str,
-    bb_ts_length: int,
-    valid_climate_years: List[int],
-    ) -> Dict[int, pd.DataFrame]:
-    """
-    Split a multi-year timeseries DataFrame into per-year climate window chunks
-    and assign Backbone t-labels.
-
-    A climate window for year Y starts at {Y}-{bb_ts_start} 00:00 and spans
-    bb_ts_length * 24 consecutive hours.  One output DataFrame is produced for
-    every year in valid_climate_years for which the data covers a complete window.
-    valid_climate_years is computed in run() from the config start/end years and
-    bb_ts_start/bb_ts_length, so only years that can start a full window with the 
-    available data are included.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Long-format input with columns from bb_parameter_dimensions (excluding 't'
-        and 'f', which are both absent from the processor output), 'time' (datetime),
-        and 'value'.
-    bb_parameter_dimensions : sequence of str
-        Backbone dimension names for the output (must include 't').
-    bb_ts_start : str
-        Window start within each year in "MM-DD" format (e.g. "01-01").
-    bb_ts_length : int
-        Window length in days.
-    valid_climate_years : list of int
-        Years for which to extract windows.
-
-    Returns
-    -------
-    dict[int, pd.DataFrame]
-        Keys are climate years; values are DataFrames with columns
-        bb_parameter_dimensions + ['value'] and t-labels t000001..t{bb_ts_length*24}.
-        If 'f' is in bb_parameter_dimensions, every row is assigned 'f00' (realized
-        weather branch).
-    """
-    dims = list(bb_parameter_dimensions)
-
-    if df["value"].dtype != np.float64:
-        df = df.copy()
-        df["value"] = df["value"].astype(np.float64)
-
-    # Grouping dimensions exclude f and t
-    group_dims = [c for c in dims if c not in {"f", "t"}]
-
-    max_hours = bb_ts_length * 24
-    t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
-    final_cols = dims + ["value"]
-    out: Dict[int, pd.DataFrame] = {}
-
-    # Pre-sort and pre-compute group ids once before the per-year loop.
-    # A mask applied to a pre-sorted DataFrame yields an already-sorted subset,
-    # and group_ids[mask] correctly identifies group boundaries in that subset.
-    if group_dims:
-        df = df.sort_values(group_dims + ["time"], kind="mergesort")
-        group_ids = df.groupby(group_dims, observed=True, sort=False).ngroup().values
-    time_np = df["time"].to_numpy()  # numpy datetime64 for fast per-year masking
-
-    for yr in valid_climate_years:
-        window_start = pd.Timestamp(f"{yr}-{bb_ts_start}")
-        window_end   = window_start + pd.Timedelta(hours=max_hours - 1)
-        mask = (time_np >= window_start.to_datetime64()) & (time_np <= window_end.to_datetime64())
-        df_yr = df[mask].copy()
-
-        # Skipping start years for which there is not enough data for the whole climate window
-        if len(df_yr) == 0:
-            continue
-
-        if group_dims:
-            # group_ids[mask] reuses the pre-computed group structure; no re-sort or re-groupby needed.
-            group_changes = np.diff(group_ids[mask], prepend=-1) != 0
-
-            # Fast row numbering within groups
-            row_nums = np.arange(len(df_yr))
-            row_nums -= np.repeat(
-                row_nums[group_changes],
-                np.diff(np.append(np.where(group_changes)[0], len(df_yr))),
-            )
-            df_yr['_row_num'] = row_nums
-        else:
-            df_yr['_row_num'] = np.arange(len(df_yr))
-
-        row_nums_filtered = df_yr['_row_num'].values
-        t_cat = pd.Categorical(t_labels[row_nums_filtered], categories=t_labels)
-        df_yr['t'] = t_cat
-
-        # Insert f00 as the realized-weather branch when f is a spec dimension.
-        if "f" in dims:
-            df_yr['f'] = 'f00'
-
-        frame = df_yr[final_cols].reset_index(drop=True)
-        out[int(yr)] = frame
-
-    return out
-
-
-def _calculate_climatological_forecasts(
-    input_df: pd.DataFrame,
-    *,
-    bb_parameter_dimensions,
-    forecast_quantiles,
-    bb_ts_start: str,
-    bb_ts_length: int,
-    round_precision: int = 0,
-    ) -> pd.DataFrame:
-    """
-    Build stochastic forecast timeseries for Backbone from long-term climatological statistics.
-
-    Backbone can represent uncertainty via multiple forecast branches (f-index). This
-    function creates forecast data by computing quantiles of the input timeseries
-    across all available climate years, so each branch reflects a different statistical
-    outcome drawn from the long-term climatological data provided in the input dataframe.
-
-    The caller controls how many forecasts to create and which quantile each represents via
-    ``forecast_quantiles`` from the config file. Keys are Backbone f-labels and values are
-    quantile probabilities (0..1). For example ``{'f01': 0.5, 'f02': 0.1, 'f03': 0.9}``
-    creates three forecast branches where f01 is the median, f02 the lowest 10%,
-    and f03 the highest 90% of values.
-
-    These values are calculated and stored only once because they are the same for every climate window.
-
-    Algorithm
-    ---------
-    For every combination of the non-f/t dimension columns (e.g. grid, node):
-
-    1. Compute the requested quantiles across all years at each hour-of-year position
-       (1..8760). Leap-day hours are excluded so that the statistics are always aligned
-       on a common 8760-hour calendar.
-    2. Map the resulting quantile values onto the output climate window
-       (``bb_ts_start`` + ``bb_ts_length`` * 24 hours), using hour-of-year as the key.
-       Windows longer than one calendar year are tiled correctly.
-    3. Assign Backbone t-labels (t000001..) starting from the first hour of the climate
-       window and f-labels from ``quantile_map``.
-
-    Input requirements
-    ------------------
-    - Long-format DataFrame with the dimension columns from ``bb_parameter_dimensions``
-      excluding 't' and 'f' which are absent from the intermediate format, plus ``time``
-      (datetime) and ``value``. The columns are guarded beforehand. 
-    - Data must cover more than one climate year (checked before calling this function).
-
-    Returns
-    -------
-    pd.DataFrame
-        Single-year long-format DataFrame with columns ``bb_parameter_dimensions + ['value']``.
-        The dataframe must contain the same t labels than timeseries produced in _split_timeseries_to_climate_windows.
-        The dataframe contains f column with defined quantile headers.
-    """
-
-    dim_cols = [col for col in bb_parameter_dimensions if col not in ("f", "t")]
-
-    # ---- Create helper columns ----
-    # Fast hour_of_year: avoid datetime arithmetic, use dayofyear + hour.
-    time = input_df["time"]
-    day_of_year = time.dt.dayofyear.to_numpy()
-    hour = time.dt.hour.to_numpy()
-    hour_of_year = (day_of_year - 1) * 24 + hour + 1
-
-    input_df["hour_of_year"] = hour_of_year.astype(np.int32)
-
-    # Only process hours up to 8760 (ignore extra hours from leap years)
-    input_df = input_df[input_df["hour_of_year"] <= 8760]
-
-    # ---- Quantile computation ----
-    # Vectorized quantile computation:
-    # Group by the additional dimensions and 'hour_of_year' then compute the quantiles.
-    # Always computed over the full 8760-hour calendar year regardless of bb_ts_length.
-    q_values = list(forecast_quantiles.values())
-
-    df_quant = (
-        input_df
-        .groupby(dim_cols + ["hour_of_year"], observed=True)["value"]
-        .quantile(q_values)
-        # quantile with sequence -> MultiIndex with a 'quantile' level
-        .rename_axis(index=dim_cols + ["hour_of_year", "quantile"])
-        .reset_index()
-    )
-    # df_quant now has columns: dim_cols..., 'hour_of_year', 'quantile', 'value'
-
-    # ---- Build window reference sequence ----
-    # Generate the sequence of hour_of_year positions (1..8760) that correspond
-    # to each hour in the output window.  Use a fixed non-leap reference year (2001)
-    # so that the sequence wraps correctly across calendar year boundaries.
-    ref_start = pd.Timestamp(f"2001-{bb_ts_start}")
-    ref_times = pd.date_range(ref_start, periods=bb_ts_length * 24, freq='h')
-    ref_hoy = ((ref_times.dayofyear - 1) * 24 + ref_times.hour + 1).astype(np.int32)
-    # Safety clip (should not be needed for non-leap 2001/2002, but guards edge cases)
-    ref_hoy = np.clip(ref_hoy, 1, 8760)
-
-    # t-labels for the full window length
-    t_labels_arr = np.array(['t' + str(i + 1).zfill(6) for i in range(bb_ts_length * 24)])
-
-    # Window dimension DataFrame: one row per window position
-    window_df = pd.DataFrame({
-        "hour_of_year": ref_hoy,
-        "t": t_labels_arr,
-    })
-
-    # ---- Build full grid (Cartesian product) ----
-    # Unique combinations of all dimension columns
-    unique_dims = input_df[dim_cols].drop_duplicates()
-
-    # Quantiles as in quantile_map (order preserved)
-    quantiles_df = pd.DataFrame({"quantile": q_values})
-
-    # Cross join: unique_dims × window_df × quantiles_df
-    full_grid = (
-        unique_dims
-        .merge(window_df, how="cross")
-        .merge(quantiles_df, how="cross")
-    )
-
-    # Merge the computed quantile results using hour_of_year as the lookup key.
-    # Multiple window positions can share the same hour_of_year (e.g. when tiling
-    # the average year for bb_ts_length > 365).
-    df_full = full_grid.merge(
-        df_quant,
-        on=dim_cols + ["hour_of_year", "quantile"],
-        how="left",
-    )
-
-    # ---- Prepare final DataFrame, categorize ----
-    # 't' is already set from window_df
-    df_full["t"] = df_full["t"].astype("category")
-
-    # Map quantile probability -> f label
-    df_full["f"] = df_full["quantile"].map({v: k for k, v in forecast_quantiles.items()})
-    df_full["f"] = df_full["f"].astype("category")
-
-    # Fill missing quantile values with 0, then round
-    df_full["value"] = df_full["value"].fillna(0)
-    if round_precision is not None:
-        df_full["value"] = df_full["value"].round(round_precision)
-
-    # Reorder columns to match bb_parameter_dimensions plus 'value'
-    df_final = df_full[bb_parameter_dimensions + ["value"]]
-
-    return df_final
 

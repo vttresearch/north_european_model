@@ -1,16 +1,15 @@
 import os
 import re
-from typing import Optional
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import src.utils as utils
-from src.pipeline.bb_excel_context import BBExcelBuildContext
+from src.bb_excel.bb_excel_inputs import BBExcelInputs
 
 
-class BuildInputExcel:
+class BBExcelPipeline:
     """
     Assembles the Backbone energy system model input Excel from pre-processed
     source DataFrames produced by the pipeline.
@@ -171,13 +170,10 @@ class BuildInputExcel:
         'isActive': 1,
     }
 
-    def __init__(
-        self,
-        context: BBExcelBuildContext,
-        logger=None
-        ) -> None:
+    def __init__(self, context: BBExcelInputs) -> None:
 
         self.context = context
+        self.logger = context.logger
         self.input_folder = context.input_folder
         self.output_folder = context.output_folder
         self.scen_tags = context.scen_tags
@@ -216,12 +212,10 @@ class BuildInputExcel:
         }
         self.mingen_nodes = [
             item
-            for sublist in mingen_vars.values() or [] 
+            for sublist in mingen_vars.values() or []
             if isinstance(sublist, list)
             for item in sublist
         ]
-        
-        self.logger = logger
 
         # Define the merged output file
         self.output_file = os.path.join(self.output_folder, 'inputData.xlsx')
@@ -231,9 +225,9 @@ class BuildInputExcel:
 
 
 
-# ------------------------------------------------------
-# Functions create and modify p_gnu_io 
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Functions create and modify p_gnu_io 
+    # ------------------------------------------------------
 
     def create_p_gnu_io(
         self,
@@ -502,9 +496,9 @@ class BuildInputExcel:
         return p_gnu_io, p_unit
 
 
-# ------------------------------------------------------
-# Functions to create unit derived input tables: 
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Functions to create unit derived input tables: 
+    # ------------------------------------------------------
 
     def create_unitUnittype(
         self,
@@ -692,9 +686,9 @@ class BuildInputExcel:
 
 
 
-# ------------------------------------------------------
-# Functions create transfer derived input tables
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Functions create transfer derived input tables
+    # ------------------------------------------------------
 
     def create_p_gnn(
         self,
@@ -749,9 +743,9 @@ class BuildInputExcel:
         return p_gnn
 
 
-# ------------------------------------------------------
-# Functions create node derived input tables
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Functions create node derived input tables
+    # ------------------------------------------------------
 
 
     def _collect_gn_pairs(
@@ -923,7 +917,7 @@ class BuildInputExcel:
             }
 
             # Add remaining param_gn (isActive + others) from nodedata.
-            # Skip zeros: 0 means "not set" (same as absent) in BuildInputExcel.
+            # Skip zeros: 0 means "not set" (same as absent) in BBExcelPipeline.
             if not node_data.empty:
                 for key in (k for k in param_gn if k not in row_dict):
                     low = key.lower()
@@ -1441,9 +1435,9 @@ class BuildInputExcel:
         return gnGroup
 
 
-# ------------------------------------------------------
-# Functions to create other input tables
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Functions to create other input tables
+    # ------------------------------------------------------
 
 
     def create_p_userconstraint(
@@ -1549,9 +1543,9 @@ class BuildInputExcel:
 
 
 
-# ------------------------------------------------------
-# Utility functions
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Utility functions
+    # ------------------------------------------------------
 
     def compile_domain_df(
         self, 
@@ -1654,9 +1648,9 @@ class BuildInputExcel:
         return df_flat
 
 
-# ------------------------------------------------------
-# Post-processing
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Post-processing
+    # ------------------------------------------------------
 
     def add_index_sheet(self) -> None:
         """
@@ -1803,9 +1797,9 @@ class BuildInputExcel:
 
 
 
-# ------------------------------------------------------
-# Pre checks
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Pre checks
+    # ------------------------------------------------------
 
     def _normalize_unitdata_columns(self) -> None:
         """
@@ -1912,9 +1906,9 @@ class BuildInputExcel:
 
 
 
-# ------------------------------------------------------
-# Main entry point for the script
-# ------------------------------------------------------
+    # ------------------------------------------------------
+    # Main entry point for the script
+    # ------------------------------------------------------
 
     def run(self) -> None:
 

@@ -1,4 +1,3 @@
-# src/timeseries_pipeline.py
 """
 Timeseries pipeline -- orchestration of timeseries processor execution.
 
@@ -31,7 +30,7 @@ Domain tracking collects only the columns that are present in each main result:
 
 These dicts are accumulated across all processors and merged into shared cache
 files (``all_ts_domains.json``, ``all_ts_domain_pairs.json``).  Final
-normalization and use of domain names happens downstream in ``BuildInputExcel``.
+normalization and use of domain names happens downstream in ``BBExcelPipeline``.
 
 Secondary results are processor-specific DataFrames or scalars stored under the
 processor's Python module name (e.g. ``{"ElecDemandProcessor": <df>}``).  They
@@ -52,27 +51,26 @@ For every executed processor the pipeline writes to ``output_folder``:
 - ``ts_influx_other_demands.gdx`` for demand
   grids not covered by an explicit processor.
 
-The ``run()`` method returns a ``TimeseriesRunResult`` dataclass with:
+The ``run()`` method returns a ``TimeseriesPipelineOutput`` dataclass with:
 
 - ``secondary_results`` -- dict of processor-name -> secondary output (loaded
   from cache when rebuilding BB Excel so all processors contribute even if they
   did not run this session).
 - ``ts_domains`` -- merged domain dict with sorted lists, ready for downstream
-  use in ``BuildInputExcel``.
+  use in ``BBExcelPipeline``.
 - ``ts_domain_pairs`` -- merged domain-pair dict with sorted tuple lists.
 """
 
 from pathlib import Path
-from dataclasses import dataclass
-import json
 import shutil
 import glob as glob_module
 import pickle
 import pandas as pd
-from src.pipeline.cache_manager import CacheManager
-from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
-from src.pipeline.timeseries_processor import ProcessorRunner
-from src.timeseries_helpers import (
+from src.infrastructure.cache_manager import CacheManager
+from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.timeseries_processor import ProcessorRunner
+from src.timeseries.timeseries_results import TimeseriesPipelineOutput
+from src.timeseries.timeseries_helpers import (
     collect_domains_for_cache,
     collect_domain_pairs_for_cache,
     update_import_timeseries_inc,
@@ -80,12 +78,6 @@ from src.timeseries_helpers import (
 import src.GDX_exchange as GDX_exchange
 import src.json_exchange as json_exchange
 
-@dataclass
-class TimeseriesRunResult:
-    """Results from the complete timeseries pipeline execution."""
-    secondary_results: dict
-    ts_domains: dict[str, list]
-    ts_domain_pairs: dict[str, list[tuple]]
 
 class TimeseriesPipeline:
     """
@@ -93,19 +85,19 @@ class TimeseriesPipeline:
     """
 
     def __init__(self, config: dict, input_folder: Path, output_folder: Path,
-                 cache_manager: CacheManager, source_excel_data_pipeline: SourceExcelDataPipeline,
-                 reference_ts_folder: Path = None, scenario_year: int = None,
+                 cache_manager: CacheManager, source_data_pipeline: SourceDataPipeline,
+                 reference_ts_folder: Path | None = None, scenario_year: int = None,
                  logger=None):
         self.config = config
         self.input_folder = input_folder
         self.output_folder = output_folder
         self.cache_manager = cache_manager
-        self.source_excel_data_pipeline = source_excel_data_pipeline
+        self.source_data_pipeline = source_data_pipeline
         self.reference_ts_folder = reference_ts_folder
         self.scenario_year = scenario_year
         self.secondary_results = {}
         self.logger = logger
-        self.df_annual_demands = source_excel_data_pipeline.df_demanddata
+        self.df_annual_demands = source_data_pipeline.df_demanddata
 
 
 
@@ -136,7 +128,7 @@ class TimeseriesPipeline:
         specs: list[dict] = []
         timeseries_specs: dict = self.config["timeseries_specs"]
         exclude_grids: list[str] = self.config["exclude_grids"]
-        processors_base = Path("src/processors")
+        processors_base = Path("src/timeseries/processors")
 
         for human_name, spec in timeseries_specs.items():
             processor_name: str = spec["processor_name"]
@@ -427,7 +419,7 @@ class TimeseriesPipeline:
         }
 
 
-    def run(self) -> TimeseriesRunResult:
+    def run(self) -> TimeseriesPipelineOutput:
         """
         Execute the full timeseries processing pipeline.
 
@@ -467,7 +459,7 @@ class TimeseriesPipeline:
 
         Returns
         -------
-        TimeseriesRunResult
+        TimeseriesPipelineOutput
             Dataclass containing:
               * ``secondary_results`` : dict
                 Secondary outputs from processors or cache.
@@ -568,7 +560,7 @@ class TimeseriesPipeline:
                     config=self.config,
                     input_folder=self.input_folder,
                     output_folder=self.output_folder,
-                    source_excel_data_pipeline=self.source_excel_data_pipeline,
+                    source_data_pipeline=self.source_data_pipeline,
                     cache_manager=self.cache_manager,
                     scenario_year=self.scenario_year,
                     logger=self.logger
@@ -654,8 +646,8 @@ class TimeseriesPipeline:
             all_secondary_results.update(self.secondary_results)
             self.secondary_results = all_secondary_results
 
-        # Returning TimeseriesRunResult dataclass
-        return TimeseriesRunResult(
+        # Returning TimeseriesPipelineOutput dataclass
+        return TimeseriesPipelineOutput(
             secondary_results=self.secondary_results,
             ts_domains={k: sorted(v) for k, v in all_ts_domains.items()},
             ts_domain_pairs={k: sorted(v) for k, v in all_ts_domain_pairs.items()},

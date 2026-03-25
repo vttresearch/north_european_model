@@ -1,15 +1,14 @@
-# src/source_excel_data_pipeline.py
 """
-Source Excel Data Pipeline
-==========================
+Source Data Pipeline
+====================
 
 Purpose
 -------
-SourceExcelDataPipeline is the first and only stage of the pipeline that is aware of
+SourceDataPipeline is the first and only stage of the pipeline that is aware of
 the scenario context. It reads source Excel files, filters them to the current
 (scenario, year, scenario_alternative) combination, merges them row-by-row, and
 exposes one normalized DataFrame per data category. Downstream stages (time series
-processing, BuildInputExcel) receive scenario-neutral data and do not need to repeat
+processing, BBExcelPipeline) receive scenario-neutral data and do not need to repeat
 scenario filtering.
 
 Scenario and alternative handling
@@ -83,21 +82,17 @@ files are configured):
   df_transferdata        interconnector parameters       key: from_country, from_suffix, to_country, to_suffix, grid
   df_userconstraintdata  custom constraint parameters    key: group, 1st dimension,
                          2nd dimension, 3rd dimension, 4th dimension, param_userconstraint
-
-                         
-                         
 """
 
 from pathlib import Path
-import src.data_loader as data_loader
+import src.source_data.source_data_loader as data_loader
 import src.utils as utils
 import pandas as pd
 
 
-
-class SourceExcelDataPipeline:
+class SourceDataPipeline:
     """
-    SourceExcelDataPipeline handles reading, merging, filtering, and validating all input Excel files.
+    SourceDataPipeline handles reading, merging, filtering, and validating all input Excel files.
     """
 
     def __init__(self, config: dict, input_folder: Path,
@@ -109,7 +104,7 @@ class SourceExcelDataPipeline:
                  country_codes: list = None,
                  logger=None):
         """
-        Initialize SourceExcelDataPipeline.
+        Initialize SourceDataPipeline.
 
         Args:
             config (dict): Parsed configuration dictionary.

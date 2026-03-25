@@ -17,24 +17,35 @@ All `.cmd` files are user-specific run scripts -- skip them.
 ## Repository structure
 
 ```
-build_input_data.py          Main entry point 
+build_input_data.py          Main entry point
 
 src/
-  config_reader.py           Reads .ini config files into a dict. Ensures that all config parameters exist and have valid default assumptions.
-  build_input_excel.py       Builds the final Backbone input Excel (BuildInputExcel class)
-  data_loader.py             Data loading utilities
+  utils.py                   Shared utilities
   GDX_exchange.py            GDX read/write helpers
   json_exchange.py           JSON read/write helpers
   hash_utils.py              File hashing for cache invalidation
-  utils.py                   Shared utilities
-  pipeline/
-    cache_manager.py                Tracks which pipeline steps need re-running
-    logger.py                       collects log messages
-    source_excel_data_pipeline.py   Reads and merges source Excel files
-    bb_excel_context.py             Context object passed to BuildInputExcel
-    timeseries_pipeline.py          Orchestrates time series processing
-    timeseries_processor.py         Runs individual processor classes
-  processors/                individual processors and an abstract class of processors 
+
+  infrastructure/            Shared pipeline infrastructure
+    config_reader.py           Reads .ini config files into a dict
+    cache_manager.py           Tracks which pipeline steps need re-running
+    logger.py                  Collects log messages
+
+  source_data/               Pipeline stage 1: read & merge source Excels
+    source_data_pipeline.py
+    source_data_loader.py      Data loading utilities
+
+  timeseries/                Pipeline stage 2: time series processing
+    timeseries_pipeline.py     Orchestrates time series processing
+    timeseries_processor.py    Runs individual processor classes
+    timeseries_helpers.py      Climate window slicing, forecast calculation, domain collection
+    processor_result.py        Dataclasses for processor results
+    processors/                Individual processor implementations
+      base_processor.py          Abstract base class
+      DH_demand_fromTemperature.py, elec_demand_TYNDP2024.py, ...
+
+  bb_excel/                  Pipeline stage 3: assemble output Excel
+    bb_excel_inputs.py         Input dataclass (contract for BBExcelPipeline)
+    bb_excel_pipeline.py       Builds the final Backbone input Excel
 
 src_files/
   config_*.ini               Scenario configs (NT2030, NT2040, OT2030, H2heavy, etc.)
@@ -53,7 +64,7 @@ src_files/
    - **Cache check** -- `CacheManager` determines which steps need re-running
    - **Source Excel phase** -- `SourceExcelDataPipeline` reads and merges data Excel files
    - **Time series phase** -- `TimeseriesPipeline` runs each processor defined in `timeseries_specs`
-   - **Build Excel phase** -- `BuildInputExcel` assembles the final `inputData.xlsx`
+   - **Build Excel phase** -- `BBExcelPipeline` assembles the final `inputData.xlsx`
    - **Finalize** -- GAMS template files are copied to the output folder
 4. Output goes to `<output_folder_prefix>_<scenario>_<year>[_<alternative>]/`
 
@@ -73,11 +84,11 @@ This distinction is necessary so that users can intentionally overwrite an inher
 
 After `normalize_dataframe`, numeric columns use pandas `Float64` dtype: missing cells become `pd.NA`, explicit zeros remain `0.0`. String/object columns use `pd.NA` for missing values; empty strings are not used.
 
-### BuildInputExcel (`build_input_excel.py`)
+### BBExcelPipeline (`bb_excel_pipeline.py`)
 
 **0 = NA = None = "parameter not set".**
 
-By the time data reaches `BuildInputExcel`, the distinction between an empty cell and an explicit zero is no longer meaningful. Backbone treats an absent parameter and an explicit 0 identically for all parameters whose Backbone default is 0.
+By the time data reaches `BBExcelPipeline`, the distinction between an empty cell and an explicit zero is no longer meaningful. Backbone treats an absent parameter and an explicit 0 identically for all parameters whose Backbone default is 0.
 
 Numeric columns are handled in three steps:
 1. `_coerce_numeric_dtypes()` casts all known numeric parameter columns in the source DataFrames to `Float64`, coercing non-numeric values to `pd.NA`. It does not fill defaults.

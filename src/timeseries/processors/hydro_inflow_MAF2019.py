@@ -1,10 +1,8 @@
-# src/processors/hydro_inflow_MAF2019.py
-
 import os
 import calendar
 import pandas as pd
 import numpy as np
-from src.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor
 
 
 class hydro_inflow_MAF2019(BaseProcessor):

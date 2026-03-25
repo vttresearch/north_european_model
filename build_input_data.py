@@ -8,13 +8,14 @@ from pathlib import Path
 from datetime import datetime
 from itertools import product
 
-import src.config_reader as config_reader
-from src.pipeline.cache_manager import CacheManager
-from src.pipeline.logger import IterationLogger
-from src.pipeline.source_excel_data_pipeline import SourceExcelDataPipeline
-from src.pipeline.timeseries_pipeline import TimeseriesPipeline, TimeseriesRunResult
-from src.pipeline.bb_excel_context import BBExcelBuildContext
-from src.build_input_excel import BuildInputExcel
+import src.infrastructure.config_reader as config_reader
+from src.infrastructure.cache_manager import CacheManager
+from src.infrastructure.logger import IterationLogger
+from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.timeseries_pipeline import TimeseriesPipeline
+from src.timeseries.timeseries_results import TimeseriesPipelineOutput
+from src.bb_excel.bb_excel_inputs import BBExcelInputs
+from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
 
 
 def main(input_folder: Path, config_file: Path):
@@ -74,7 +75,7 @@ def main(input_folder: Path, config_file: Path):
             logger.log_status(f"{scenario}, {year}, {', '.join(active_alts)}", section_start_length=70, add_empty_line_before=True)
         else:
             logger.log_status(f"{scenario}, {year}", section_start_length=70, add_empty_line_before=True)
-        # Each active alternative is stored as a separate element; build_input_excel.py
+        # Each active alternative is stored as a separate element; bb_excel_pipeline.py
         # uses the list length to determine which alternative columns to write.
         scen_tags = [scenario, str(year)] + active_alts
 
@@ -125,8 +126,8 @@ def main(input_folder: Path, config_file: Path):
                            level="info", add_empty_line_before=True)
 
         # --- 2.3. Input data phase ---
-        # Initialize source excel pipeline
-        source_excel_data_pipeline = SourceExcelDataPipeline(
+        # Initialize source data pipeline
+        source_data_pipeline = SourceDataPipeline(
             config=config,
             input_folder=input_folder,
             scenario=scenario,
@@ -144,7 +145,7 @@ def main(input_folder: Path, config_file: Path):
         if cache_manager.reimport_source_excels:
             logger.log_status("Processing source Excel files.",
                        level="run", add_empty_line_before=True, section_start_length=55)
-            source_excel_data_pipeline.run()
+            source_data_pipeline.run()
         else:
             logger.log_status("Skipping source excel processing.", level="skip")
         source_excel_run_successfully = (logger.error_count == error_count_before_source_excel)
@@ -165,7 +166,7 @@ def main(input_folder: Path, config_file: Path):
                 input_folder,
                 output_folder,
                 cache_manager,
-                source_excel_data_pipeline,
+                source_data_pipeline,
                 reference_ts_folder=reference_ts_folder,
                 scenario_year=year,
                 logger=logger
@@ -181,7 +182,7 @@ def main(input_folder: Path, config_file: Path):
                 level="skip"
             )
             # Load cached results
-            ts_results = TimeseriesRunResult(
+            ts_results = TimeseriesPipelineOutput(
                 secondary_results=cache_manager.load_all_secondary_results(),
                 ts_domains=cache_manager.load_dict_from_cache("all_ts_domains.json"),
                 ts_domain_pairs=cache_manager.load_dict_from_cache("all_ts_domain_pairs.json"),
@@ -194,17 +195,18 @@ def main(input_folder: Path, config_file: Path):
         if cache_manager.rebuild_bb_excel:
             logger.log_status("Building Backbone input Excel", level="run", section_start_length=45, add_empty_line_before=True)
 
-            excel_context = BBExcelBuildContext(
+            excel_context = BBExcelInputs(
                 input_folder=input_folder,
                 output_folder=output_folder,
                 scen_tags=scen_tags,
                 config=config,
                 cache_manager=cache_manager,
-                source_data=source_excel_data_pipeline,
+                logger=logger,
+                source_data=source_data_pipeline,
                 ts_results=ts_results
             )
 
-            builder = BuildInputExcel(excel_context, logger=logger)
+            builder = BBExcelPipeline(excel_context)
             builder.run()
             bb_excel_succesfully_built = builder.bb_excel_succesfully_built
 

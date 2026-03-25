@@ -1,11 +1,9 @@
-# src/processors/VRE_PECD.py
-
 import re
 import os
 import glob
 import pandas as pd
 import numpy as np
-from src.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor
 
 
 class VRE_PECD(BaseProcessor):

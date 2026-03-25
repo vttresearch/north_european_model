@@ -1,8 +1,6 @@
-# src/processors/hydro_storage_limits_MAF2019.py
-
 import os
 import pandas as pd
-from src.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor
 
 
 class hydro_storage_limits_MAF2019(BaseProcessor):

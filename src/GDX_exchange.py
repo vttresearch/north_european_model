@@ -1,16 +1,9 @@
-# src/GDX_exchange.py
-
 from typing import Dict, Optional, Sequence
 import pandas as pd
 import os
 import gams.transfer as gt
 from tqdm import tqdm
 
-
-
-# ==============================================================================
-# WRITE FUNCTIONS
-# ==============================================================================
 
 def write_df_to_gdx(
     df: Optional[pd.DataFrame],
@@ -88,7 +81,7 @@ def write_climate_window_GDX_files(
     fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else bb_parameter
     final_cols = list(bb_parameter_dimensions) + ["value"]
 
-    # Build container and sets
+    # Build container once
     m = gt.Container()
 
     # Create a Set for each dimension.

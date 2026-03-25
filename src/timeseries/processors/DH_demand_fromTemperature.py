@@ -1,9 +1,7 @@
-# src/processors/DH_demand_fromTemperature.py
-
 import os
 import pandas as pd
 import numpy as np
-from src.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor
 
 
 class DH_demand_fromTemperature(BaseProcessor):

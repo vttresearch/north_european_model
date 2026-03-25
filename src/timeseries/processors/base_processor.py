@@ -1,9 +1,7 @@
-# src/processors/base_processor.py
-
 import pandas as pd
 from abc import ABC, abstractmethod
 from typing import Optional, Any
-from src.pipeline.timeseries_processor import ProcessorResult
+from src.timeseries.timeseries_results import ProcessorOutput
 
 
 class BaseProcessor(ABC):
@@ -17,7 +15,7 @@ class BaseProcessor(ABC):
     This is called by ProcessorRunner in src/pipeline/timeseries_processor.py
 
     The base class handles:
-    - Result structuring via ProcessorResult dataclass
+    - Result structuring via ProcessorOutput dataclass
     - Logging via the shared IterationLogger
     - Consistent execution pattern through `run_processor()`
 
@@ -43,7 +41,7 @@ class BaseProcessor(ABC):
 
     See Also
     --------
-    ProcessorResult : Dataclass that structures the processor output
+    ProcessorOutput : Dataclass that structures the processor output
     ProcessorRunner : Orchestrates processor execution in the pipeline
     """
 
@@ -108,13 +106,13 @@ class BaseProcessor(ABC):
         """
         pass
 
-    def run_processor(self) -> ProcessorResult:
+    def run_processor(self) -> ProcessorOutput:
         """
         Execute the processor and return structured results.
 
         This is the main entry point for running a processor. It calls the
         abstract `process()` method implemented by the subclass, captures
-        the results, and packages them into a ProcessorResult dataclass.
+        the results, and packages them into a ProcessorOutput dataclass.
 
         This method implements the Template Method pattern - it defines the
         execution skeleton while delegating the actual work to the subclass's
@@ -122,7 +120,7 @@ class BaseProcessor(ABC):
 
         Returns
         -------
-        ProcessorResult
+        ProcessorOutput
             A dataclass containing:
             - main_result (pd.DataFrame): Primary output from process()
             - secondary_result (Any | None): Optional additional outputs
@@ -137,13 +135,13 @@ class BaseProcessor(ABC):
         See Also
         --------
         process : The abstract method that contains the actual processing logic
-        ProcessorResult : The returned dataclass structure
+        ProcessorOutput : The returned dataclass structure
         """
         # Run the main processing logic implemented by subclass
         self.main_result = self.process()
 
         # Package results into structured dataclass
-        return ProcessorResult(
+        return ProcessorOutput(
             main_result=self.main_result,
             secondary_result=self.secondary_result,
         )
