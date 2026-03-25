@@ -2,8 +2,11 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Union, List, Dict, Optional, Tuple, Iterable, Sequence, Set
+from typing import Union, List, Dict, Mapping, Tuple, Iterable, Sequence, Set
 import src.utils as utils
+from src.infrastructure.logger import IterationLogger
+
+FilterValue = list[str] | list[int]
 
 
 def read_input_excels(
@@ -613,7 +616,6 @@ def build_unittype_unit_column(
 def merge_unittypedata_into_unitdata(
     df_unitdata: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
-    logger=None,
     ) -> pd.DataFrame:
     """
     Merge type-level technical parameters from df_unittypedata into df_unitdata.
@@ -725,8 +727,8 @@ def expand_all_country(
 
 def apply_whitelist(
     df: pd.DataFrame,
-    filters: Optional[Dict[str, Union[str, int, List[Union[str, int]]]]],
-    logger,
+    filters: Mapping[str, FilterValue] | None,
+    logger: IterationLogger,
     df_identifier: str,
     ) -> pd.DataFrame:
     """
@@ -755,7 +757,7 @@ def apply_whitelist(
             logger.log_status(f"[{df_identifier}] Whitelist skipped: missing column '{col}'.", level="warn")
             continue
 
-        vals = val if isinstance(val, list) else [val]
+        vals = val
 
         if col == "scenario":
             # Include 'all' (universal)
@@ -786,8 +788,8 @@ def apply_whitelist(
 def apply_blacklist(
     df_input: pd.DataFrame,
     df_name: str,
-    filters: Dict[str, Union[str, int, List[Union[str, int]]]],
-    logger=None,
+    filters: Mapping[str, FilterValue],
+    logger: IterationLogger | None = None,
     *,
     log_warning: bool = True
     ) -> pd.DataFrame:
@@ -804,11 +806,6 @@ def apply_blacklist(
         Dictionary of {column_name: blacklisted_values} pairs
     logger : IterationLogger, optional
         Logger instance for status messages.
-
-    Returns:
-    --------
-    pandas.DataFrame
-        Filtered DataFrame with rows containing blacklisted values removed
 
     Notes:
     ------
@@ -827,10 +824,6 @@ def apply_blacklist(
             if log_warning and logger is not None:
                 logger.log_status(f"Missing column in {df_name}: {col!r}", level="warn")
             continue
-
-        # Ensure val is a list for consistent processing
-        if not isinstance(val, list):
-            val = [val]
 
         # Handle string columns with case-insensitive comparison
         if pd.api.types.is_string_dtype(df_filtered[col]):

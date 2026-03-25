@@ -64,7 +64,8 @@ from src.timeseries.timeseries_helpers import (
     calculate_climatological_forecasts,
 )
 from src.timeseries.timeseries_results import ProcessorOutput, ProcessorRunResult
-from typing import Optional, Any
+from src.infrastructure.logger import IterationLogger
+from typing import Optional
 
 
 @dataclass
@@ -95,8 +96,8 @@ class ProcessorRunner:
     output_folder: Path
     cache_manager: CacheManager
     source_data_pipeline: SourceDataPipeline
+    logger: IterationLogger
     scenario_year: Optional[int] = None
-    logger: Optional[Any] = None
 
     def _update_processor_hash(self, processor_file: Path, processor_name: str):
         """

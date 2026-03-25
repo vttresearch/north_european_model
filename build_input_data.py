@@ -11,7 +11,9 @@ from itertools import product
 import src.infrastructure.config_reader as config_reader
 from src.infrastructure.cache_manager import CacheManager
 from src.infrastructure.logger import IterationLogger
+from src.source_data.source_data_inputs import SourceDataPipelineInputs
 from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
 from src.timeseries.timeseries_pipeline import TimeseriesPipeline
 from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
@@ -127,7 +129,7 @@ def main(input_folder: Path, config_file: Path):
 
         # --- 2.3. Input data phase ---
         # Initialize source data pipeline
-        source_data_pipeline = SourceDataPipeline(
+        source_data_pipeline = SourceDataPipeline(SourceDataPipelineInputs(
             config=config,
             input_folder=input_folder,
             scenario=scenario,
@@ -137,8 +139,8 @@ def main(input_folder: Path, config_file: Path):
             scenario_alternative3=alt3,
             scenario_alternative4=alt4,
             country_codes=config['country_codes'],
-            logger=logger
-        )
+            logger=logger,
+        ))
 
         # Run if needed
         error_count_before_source_excel = logger.error_count
@@ -161,16 +163,16 @@ def main(input_folder: Path, config_file: Path):
                 add_empty_line_before=True, section_start_length=55
             )
 
-            ts_pipeline = TimeseriesPipeline(
-                config,
-                input_folder,
-                output_folder,
-                cache_manager,
-                source_data_pipeline,
+            ts_pipeline = TimeseriesPipeline(TimeseriesPipelineInputs(
+                config=config,
+                input_folder=input_folder,
+                output_folder=output_folder,
+                cache_manager=cache_manager,
+                source_data_pipeline=source_data_pipeline,
+                logger=logger,
                 reference_ts_folder=reference_ts_folder,
                 scenario_year=year,
-                logger=logger
-            )
+            ))
             ts_results = ts_pipeline.run()
 
             # Set reference folder for subsequent iterations to enable copy optimization

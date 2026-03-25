@@ -4,6 +4,7 @@ Utility functions used exclusively by the timeseries pipeline.
 
 import os
 import glob
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from typing import Any, Dict, List, Optional, Sequence
@@ -76,7 +77,7 @@ def collect_domain_pairs_for_cache(df, domain_pairs: list[list[str]]) -> dict[st
 
 
 def update_import_timeseries_inc(
-    output_folder: str,
+    output_folder: str | Path,
     file_suffix: Optional[str] = None,
     **kwargs: Any
     ) -> None:

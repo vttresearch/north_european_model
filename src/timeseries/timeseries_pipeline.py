@@ -68,6 +68,7 @@ import pickle
 import pandas as pd
 from src.infrastructure.cache_manager import CacheManager
 from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
 from src.timeseries.timeseries_processor import ProcessorRunner
 from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from src.timeseries.timeseries_helpers import (
@@ -84,20 +85,17 @@ class TimeseriesPipeline:
     Orchestrates the execution of timeseries processors based on configuration.
     """
 
-    def __init__(self, config: dict, input_folder: Path, output_folder: Path,
-                 cache_manager: CacheManager, source_data_pipeline: SourceDataPipeline,
-                 reference_ts_folder: Path | None = None, scenario_year: int = None,
-                 logger=None):
-        self.config = config
-        self.input_folder = input_folder
-        self.output_folder = output_folder
-        self.cache_manager = cache_manager
-        self.source_data_pipeline = source_data_pipeline
-        self.reference_ts_folder = reference_ts_folder
-        self.scenario_year = scenario_year
+    def __init__(self, inputs: TimeseriesPipelineInputs):
+        self.config = inputs.config
+        self.input_folder = inputs.input_folder
+        self.output_folder = inputs.output_folder
+        self.cache_manager = inputs.cache_manager
+        self.source_data_pipeline = inputs.source_data_pipeline
+        self.reference_ts_folder = inputs.reference_ts_folder
+        self.scenario_year = inputs.scenario_year
         self.secondary_results = {}
-        self.logger = logger
-        self.df_annual_demands = source_data_pipeline.df_demanddata
+        self.logger = inputs.logger
+        self.df_annual_demands = inputs.source_data_pipeline.df_demanddata
 
 
 
@@ -214,7 +212,7 @@ class TimeseriesPipeline:
         if df_filtered.empty:
             return pd.DataFrame(columns=["grid", "node", "f", "t", "value"])
 
-        bb_ts_length = self.config.get("bb_timeseries_length")
+        bb_ts_length: int = self.config["bb_timeseries_length"]
         t_index = [f"t{str(i).zfill(6)}" for i in range(1, bb_ts_length * 24 + 1)]
 
         rows: list[pd.DataFrame] = []
@@ -328,6 +326,13 @@ class TimeseriesPipeline:
         gdx_name_suffix = spec.get("gdx_name_suffix")
 
         self.logger.log_status(f"{human_name}", section_start_length=45)
+
+        if self.reference_ts_folder is None:
+            self.logger.log_status(
+                "No reference folder configured. Cannot copy.",
+                level="warn"
+            )
+            return {"secondary_result": None, "ts_domains": {}, "ts_domain_pairs": {}}
 
         ref_folder = Path(self.reference_ts_folder)
 
@@ -521,10 +526,10 @@ class TimeseriesPipeline:
             )
 
         # Log once if any climate years are excluded due to a long timeseries window
-        start_year = self.config["start_year"]
-        end_year = self.config["end_year"]
-        bb_ts_start = self.config.get("bb_timeseries_start")
-        bb_ts_length = self.config.get("bb_timeseries_length")
+        start_year: int = self.config["start_year"]
+        end_year: int = self.config["end_year"]
+        bb_ts_start: str = self.config["bb_timeseries_start"]
+        bb_ts_length: int = self.config["bb_timeseries_length"]
         data_end = pd.Timestamp(f"{end_year}-12-31 23:00")
 
         if processors_to_rerun:

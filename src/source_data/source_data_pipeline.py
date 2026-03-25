@@ -84,10 +84,10 @@ files are configured):
                          2nd dimension, 3rd dimension, 4th dimension, param_userconstraint
 """
 
-from pathlib import Path
 import src.source_data.source_data_loader as data_loader
 import src.utils as utils
 import pandas as pd
+from src.source_data.source_data_inputs import SourceDataPipelineInputs
 
 
 class SourceDataPipeline:
@@ -95,40 +95,19 @@ class SourceDataPipeline:
     SourceDataPipeline handles reading, merging, filtering, and validating all input Excel files.
     """
 
-    def __init__(self, config: dict, input_folder: Path,
-                 scenario: str, scenario_year: int,
-                 scenario_alternative: str = None,
-                 scenario_alternative2: str = None,
-                 scenario_alternative3: str = None,
-                 scenario_alternative4: str = None,
-                 country_codes: list = None,
-                 logger=None):
-        """
-        Initialize SourceDataPipeline.
+    def __init__(self, inputs: SourceDataPipelineInputs):
+        self.config = inputs.config
+        self.input_folder = inputs.input_folder
+        self.data_folder = inputs.input_folder / "data_files"
 
-        Args:
-            config (dict): Parsed configuration dictionary.
-            input_folder (Path): Base input folder containing src_files/data_files.
-            scenario (str): Selected scenario.
-            scenario_year (int): Selected scenario year.
-            scenario_alternative (str, optional): Selected scenario alternative (1st axis).
-            scenario_alternative2 (str, optional): Selected scenario alternative (2nd axis).
-            scenario_alternative3 (str, optional): Selected scenario alternative (3rd axis).
-            scenario_alternative4 (str, optional): Selected scenario alternative (4th axis).
-            country_codes (list, optional): List of country codes.
-        """
-        self.config = config
-        self.input_folder = input_folder
-        self.data_folder = input_folder / "data_files"
-
-        self.scenario = scenario
-        self.scenario_year = scenario_year
-        self.scenario_alternative = scenario_alternative
-        self.scenario_alternative2 = scenario_alternative2
-        self.scenario_alternative3 = scenario_alternative3
-        self.scenario_alternative4 = scenario_alternative4
-        self.country_codes = country_codes
-        self.logger = logger
+        self.scenario = inputs.scenario
+        self.scenario_year = inputs.scenario_year
+        self.scenario_alternative = inputs.scenario_alternative
+        self.scenario_alternative2 = inputs.scenario_alternative2
+        self.scenario_alternative3 = inputs.scenario_alternative3
+        self.scenario_alternative4 = inputs.scenario_alternative4
+        self.country_codes = inputs.country_codes
+        self.logger = inputs.logger
 
         self.df_demanddata = pd.DataFrame()
         self.df_transferdata = pd.DataFrame()
@@ -158,7 +137,7 @@ class SourceDataPipeline:
             dfs = data_loader.read_input_excels(input_folder, files, 'unittypedata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'unittypedata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logger, 'unittypedata')
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'unittypedata')
                    for df in dfs
                    ]
             self._df_unittypedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['generator_id'])
@@ -174,7 +153,7 @@ class SourceDataPipeline:
             dfs = data_loader.read_input_excels(input_folder, files, 'emissiondata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'emissiondata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year}, self.logger, 'emissiondata')
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'emissiondata')
                    for df in dfs
                    ]
             self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['emission'])
@@ -199,7 +178,7 @@ class SourceDataPipeline:
             dfs = [data_loader.apply_blacklist(df, 'nodedata', {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'nodedata', {'node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
                                    self.logger, 'nodedata')
                    for df in dfs
                    ]
@@ -220,7 +199,7 @@ class SourceDataPipeline:
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
                                    self.logger, 'demanddata')
                    for df in dfs
                    ]
@@ -243,7 +222,7 @@ class SourceDataPipeline:
             dfs = [data_loader.build_unit_grid_and_node_columns(df, self._df_unittypedata, self.logger) for df in dfs]
             dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logger=self.logger) for d in dfs]
             dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes, df_name="unitdata", logger=self.logger) for d in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
                                    self.logger, 'unitdata')
                    for df in dfs
                    ]
@@ -253,7 +232,7 @@ class SourceDataPipeline:
             # capacity defaults, etc.) from _df_unittypedata into each unit row.
             # Unit-specific values take priority; type-level values fill NAs only.
             self.df_unitdata = data_loader.merge_unittypedata_into_unitdata(
-                self.df_unitdata, self._df_unittypedata, self.logger
+                self.df_unitdata, self._df_unittypedata
             )
 
         else:
@@ -272,11 +251,11 @@ class SourceDataPipeline:
             dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'from_country': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'from_country': self.country_codes},
                                    self.logger, 'transferdata')
                    for df in dfs
                    ]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'to_country': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'to_country': self.country_codes},
                                    self.logger, 'transferdata')
                    for df in dfs
                    ]
@@ -309,7 +288,7 @@ class SourceDataPipeline:
         if len(files) > 0:
             dfs = data_loader.read_input_excels(input_folder, files, 'userconstraintdata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':self.scenario_year, 'country': self.country_codes},
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
                                    self.logger, 'userconstraintdata')
                    for df in dfs
                    ]
@@ -332,12 +311,7 @@ class SourceDataPipeline:
                      'df_userconstraintdata'):
             df = getattr(self, attr)
             if not df.empty:
-                setattr(self, attr, self._replace_empty_with_na(df))
-
-    def _replace_empty_with_na(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Replace empty strings and bare NaN with pd.NA in all object/string columns."""
-        for col in df.columns:
-            if df[col].dtype == object or isinstance(df[col].dtype, pd.StringDtype):
-                df[col] = df[col].replace('', pd.NA)
-                df[col] = df[col].where(df[col].notna(), pd.NA)
-        return df
+                for col in df.columns:
+                    if df[col].dtype == object or isinstance(df[col].dtype, pd.StringDtype):
+                        df[col] = df[col].replace('', pd.NA)
+                        df[col] = df[col].where(df[col].notna(), pd.NA)
