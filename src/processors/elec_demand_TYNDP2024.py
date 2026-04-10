@@ -158,7 +158,8 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
         melted_list = []
         allowed_countries = ('AT00', 'BE00', 'CH00', 'DE00', 'DKW1', 'DKE1', 'EE00', 'ES00', 
-                                  'FI00', 'FR00', 'LT00', 'LV00', 'NL00', 'NOS0', 'NOM1',
+                                  'FIN0', 'FIW0', 'FIC0', 'FIE0', 'FISW', 'FISE','FIUU', 'FI00',
+                                  'FR00', 'LT00', 'LV00', 'NL00', 'NOS0', 'NOM1',
                                   'NON1', 'PL00', 'SE01', 'SE02', 'SE03', 'SE04', 'UK00',
                                   'ITN1', 'ITCN', 'ITCS', 'PT00'
                                   )
