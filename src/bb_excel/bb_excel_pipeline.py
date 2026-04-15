@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import pandas as pd
@@ -393,11 +394,11 @@ class BBExcelPipeline:
 
                 # If input cap not set (0) and output cap is set, derive input from output
                 if not input_cap and output_cap:
-                    p_gnu_io_flat.at[input_idx, 'capacity'] = output_cap / efficiency
+                    p_gnu_io_flat.at[input_idx, 'capacity'] = math.ceil(output_cap / efficiency * 10) / 10
 
                 # If output cap not set (0) and input cap is set, derive output from input
                 elif input_cap and not output_cap:
-                    p_gnu_io_flat.at[output_idx, 'capacity'] = input_cap * efficiency
+                    p_gnu_io_flat.at[output_idx, 'capacity'] = math.ceil(input_cap * efficiency * 10) / 10
 
             # Rule 2: 1 input without capacity, 2 or more outputs with capacity (no 'cv')
             elif len(inputs) == 1 and len(outputs) > 1:
@@ -417,7 +418,7 @@ class BBExcelPipeline:
 
                         if not skip:
                             total_output = output_caps.sum()
-                            p_gnu_io_flat.at[input_idx, 'capacity'] = total_output / efficiency
+                            p_gnu_io_flat.at[input_idx, 'capacity'] = math.ceil(total_output / efficiency * 10) / 10
 
         # Recreate the fake multi-index
         p_gnu_io = self.create_fake_MultiIndex(p_gnu_io_flat, ['grid', 'node', 'unit', 'input_output'])
@@ -793,21 +794,23 @@ class BBExcelPipeline:
         ts_storage_limits: dict[str, pd.DataFrame],
         ) -> pd.DataFrame:
         """
-        Creates p_gn from pre-collected (grid, node) pairs. 
-        
+        Creates p_gn from pre-collected (grid, node) pairs.
+
         Every node is unique and can have only one grid. Each node has only
         one row of data after merge_row_by_row.
 
         Phase 1 — Node classification:
             Each node is classified as a price node (usePrice = 1) or balance node
             (nodeBalance = 1), and balance nodes optionally as a storage node
-            (energyStoredPerUnitOfState = 1).  Explicit user values in df_nodedata
+            (energyStoredPerUnitOfState > 0).  Explicit user values in df_nodedata
             are used as-is; missing values are deduced:
                 - usePrice: inferred if 'price' column is non-empty in df_nodedata
                 - nodeBalance: inferred for demand grids or when nodedata is present
-                - energyStoredPerUnitOfState: inferred from upwardLimit /
-                  downwardLimit / reference in df_nodedata, ts_storage_limits,
-                  or upperLimitCapacityRatio in p_gnu_io_flat
+                - energyStoredPerUnitOfState: read from df_nodedata when provided;
+                  otherwise inferred from upwardLimit / downwardLimit / reference in
+                  df_nodedata, ts_storage_limits, or upperLimitCapacityRatio in
+                  p_gnu_io_flat — deduced storage nodes default to 1; price nodes
+                  and non-storage balance nodes default to 0.
 
         Remaining param_gn:
             All other PARAM_GN columns (including isActive) are read from df_nodedata.
@@ -854,15 +857,21 @@ class BBExcelPipeline:
             # Normalize flags: 0 and NA mean "not set" (same as absent column).
             # Collapse 0/None/NA into a single None sentinel so all downstream
             # is None / not checks behave identically regardless of source.
-            usePrice                   = 1 if pd.notna(usePrice)                   and usePrice                   == 1 else None
-            nodeBalance                = 1 if pd.notna(nodeBalance)                and nodeBalance                == 1 else None
-            energyStoredPerUnitOfState = 1 if pd.notna(energyStoredPerUnitOfState) and energyStoredPerUnitOfState == 1 else None
+            usePrice    = 1 if pd.notna(usePrice)    and usePrice    == 1 else None
+            nodeBalance = 1 if pd.notna(nodeBalance) and nodeBalance == 1 else None
+            # energyStoredPerUnitOfState: preserve explicit positive numeric values from data;
+            # only collapse 0/None/NA to None (deduction fallback applied further below).
+            energyStoredPerUnitOfState = (
+                float(energyStoredPerUnitOfState)
+                if pd.notna(energyStoredPerUnitOfState) and energyStoredPerUnitOfState > 0
+                else None
+            )
 
             # Conflict checks on user-provided values
             if usePrice == 1 and nodeBalance == 1:
                 self.logger.log_status(f"Node data for {node} has 'usePrice'=1 and 'nodeBalance'=1, check the data.", level="warn")
-            if usePrice == 1 and energyStoredPerUnitOfState == 1:
-                self.logger.log_status(f"Node data for {node} has 'usePrice'=1 and 'energyStoredPerUnitOfState'=1, check the data.", level="warn")
+            if usePrice == 1 and energyStoredPerUnitOfState is not None:
+                self.logger.log_status(f"Node data for {node} has 'usePrice'=1 and 'energyStoredPerUnitOfState'={energyStoredPerUnitOfState}, check the data.", level="warn")
 
             # Deduction: usePrice — infer from 'price' column if not explicitly set
             if usePrice is None and not node_data.empty and 'price' in node_data.columns:
@@ -905,6 +914,11 @@ class BBExcelPipeline:
             if not nodeBalance and not usePrice:
                 self.logger.log_status(f"Did not find data and could not deduct if node {node} is price or balance node, check data.", level="warn")
 
+            # Resolve energyStoredPerUnitOfState to its final value.
+            # Deduction above sets a value for storage nodes; if still None the node
+            # is a price node or a non-storage balance node — default to 0.
+            if energyStoredPerUnitOfState is None:
+                energyStoredPerUnitOfState = 0
 
             # ---- Remaining param_gn ----
 
@@ -1074,7 +1088,7 @@ class BBExcelPipeline:
                 
             # Additional check for storage nodes
             isStorage = gn_row.get('energyStoredPerUnitOfState', 0)
-            if isStorage == 1:
+            if isStorage and isStorage > 0:
                 grid = gn_row['grid']
                 node = gn_row['node']
                 # Ensure all storage nodes have at least an 'Eps' downward limit
@@ -1147,12 +1161,12 @@ class BBExcelPipeline:
         p_gn_flat = self.drop_fake_MultiIndex(p_gn)
         p_gnBoundaryPropertiesForStates_flat = self.drop_fake_MultiIndex(p_gnBoundaryPropertiesForStates)
 
-        # Identify storage nodes - those where energyStoredPerUnitOfState is 1 or True
+        # Identify storage nodes - those where energyStoredPerUnitOfState > 0
         storage_gn = []
         if 'energyStoredPerUnitOfState' in p_gn_flat.columns:
             for _, row in p_gn_flat.iterrows():
                 isStorage = row.get('energyStoredPerUnitOfState', 0)
-                if isStorage == 1:
+                if isStorage and isStorage > 0:
                     storage_gn.append((row['grid'], row['node']))
 
         # Add 'boundStart' column to p_gn, initializing with 0

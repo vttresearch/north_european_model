@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-This repository builds input data for the Backbone energy system model, modelling European power systems including district heating, hydrogen, etc. It reads scenario data from Excel files and time series sources, processes them through a Python pipeline, and produces a folder with all files needed to run a Backbone model.
+This repository builds input data for the Backbone energy system model, modelling European power systems including district heating, hydrogen, etc. It reads scenario data from Excel files and time series sources, processes them through a Python pipeline, and produces a folder with all files needed to run the model.
 
 
 ## Scope for AI assistance
@@ -42,11 +42,6 @@ The two pipeline stages use **different** NA/zero conventions. Mixing them up is
 
 - **Before logger init** (config, arg parsing): raise and abort.
 - **After logger init** (pipeline phases): never raise -- log a warning and continue with a safe default.
-
-
-## Conventions
-
-- Follow local style in each file.
 
 
 ## Don't

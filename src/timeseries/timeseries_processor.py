@@ -178,6 +178,7 @@ class ProcessorRunner:
         bb_ts_length = self.config["bb_timeseries_length"]
         country_codes = self.config["country_codes"]
         rounding_precision = spec["rounding_precision"]
+        cutoff_below = spec["cutoff_below"]
         bb_parameter = spec["bb_parameter"]
         gdx_name_suffix = spec["gdx_name_suffix"]
 
@@ -372,6 +373,12 @@ class ProcessorRunner:
 
         # Round
         main_result = main_result.round(rounding_precision)
+
+        # Drop near-zero values to avoid tiny LP coefficients
+        if cutoff_below is not None:
+            main_result['value'] = main_result['value'].where(
+                main_result['value'].abs() >= cutoff_below, 0
+            )
 
         # --- Slice and write climate windows' data ---
         # Split into climate windows

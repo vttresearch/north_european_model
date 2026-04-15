@@ -80,6 +80,7 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'is_input_data_dependent': True,
     'scaling_factor': 1,
     'annual_summary': '',
+    'cutoff_below': None,
 }
 
 _FORECAST_QUANTILES_DEFAULT = {'f01': 0.5, 'f02': 0.1, 'f03': 0.9}
