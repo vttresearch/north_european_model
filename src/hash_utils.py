@@ -1,7 +1,6 @@
-# src/hash_utils.py
-
 import hashlib
 from pathlib import Path
+
 
 def compute_excel_sheets_hash(file_path: Path, sheet_name_prefix: str) -> dict[str, str]:
     """

@@ -1,9 +1,8 @@
 import os
-import calendar
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from src.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor
 from tqdm import tqdm
 
 
@@ -22,10 +21,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
         Relative location of input files containing TYNDP profiles
     country_codes : list[str]
         List of country codes to process (must match Excel sheet names)
-    start_date : str
-        Start datetime (e.g., '1982-01-01 00:00:00')
-    end_date : str
-        End datetime (e.g., '2021-01-01 00:00:00')
+    start_year : int
+        First climate year to include (e.g., 1982)
+    end_year : int
+        Last climate year to include (e.g., 2016)
     df_annual_demands : pd.DataFrame
         DataFrame containing annual demand targets with columns:
         ['country', 'node', 'twh/year', 'constant_share' (optional)]
@@ -51,11 +50,11 @@ class elec_demand_TYNDP2024(BaseProcessor):
         
         # Define required parameters
         required_params = [
-            'input_folder', 
-            'country_codes', 
-            'start_date', 
-            'end_date', 
-            'df_annual_demands', 
+            'input_folder',
+            'country_codes',
+            'start_year',
+            'end_year',
+            'df_annual_demands',
             'scenario_year'
         ]
 
@@ -67,14 +66,15 @@ class elec_demand_TYNDP2024(BaseProcessor):
         # Extract and store parameters
         self.input_folder = kwargs_processor['input_folder']
         self.country_codes = kwargs_processor['country_codes']
-        self.start_date = kwargs_processor['start_date']
-        self.end_date = kwargs_processor['end_date']
+        self.start_year = kwargs_processor['start_year']
+        self.end_year = kwargs_processor['end_year']
         self.df_annual_demands = kwargs_processor['df_annual_demands']
         self.scenario_year = kwargs_processor['scenario_year']
+        self.demand_grid = kwargs_processor.get('demand_grid', '')
 
-        # Extract start and end years
-        self.startyear = pd.to_datetime(self.start_date).year
-        self.endyear = pd.to_datetime(self.end_date).year
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # Choose the appropriate electricity profile file based on scenario_year
         if self.scenario_year <= 2035:
@@ -108,7 +108,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
             raise FileNotFoundError(f"Excel file not found: {self.input_file}")
         
         if not parquet_path.exists():
-            self.log("Parquet cache not found, will create from Excel file.", level="info")
+            self.logger.log_status("Parquet cache not found, will create from Excel file.", level="none")
             return True
         
         # Compare modification times
@@ -116,10 +116,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
         parquet_mtime = parquet_path.stat().st_mtime
         
         if parquet_mtime > excel_mtime:
-            self.log("Using parquet cache.", level="info")
+            self.logger.log_status("Using parquet cache.", level="none")
             return False
         else:
-            self.log("Excel file is newer than parquet cache, will rebuild cache.", level="info")
+            self.logger.log_status("Excel file is newer than parquet cache, will rebuild cache.", level="none")
             return True
 
     def read_excel_to_parquet(self) -> None:
@@ -148,7 +148,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         to debug and fix this issue, because it does not impact currently needed countries or the next
         possible expansion set.
         """
-        self.log(f"Reading full Excel file: '{self.input_file}' ...", level="info")
+        self.logger.log_status(f"Reading full Excel file: '{self.input_file}' ...", level="none")
         
         try:
             xl = pd.ExcelFile(self.input_file)
@@ -210,17 +210,17 @@ class elec_demand_TYNDP2024(BaseProcessor):
                 melted_list.append(df_melted)
                 
             except Exception as e:
-                self.log(f"Skipping sheet '{sheet_name}': {e}", level="warn")
+                self.logger.log_status(f"Skipping sheet '{sheet_name}' in '{self.input_file}': {e}", level="warn")
                 continue
 
         if not melted_list:
             raise ValueError("No valid data sheets found in Excel file")
 
         # Combine the melted DataFrames and pivot
-        self.log("Combining data from all sheets...", level="info")
+        self.logger.log_status("Combining data from all sheets...", level="none")
         combined_df = pd.concat(melted_list, ignore_index=True)
         
-        self.log("Pivoting to wide format...", level="info")
+        self.logger.log_status("Pivoting to wide format...", level="none")
         pivot_df = combined_df.pivot_table(
             index=['year', 'month', 'day', 'hour'], 
             columns='country', 
@@ -229,7 +229,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         ).reset_index()
         
         # Save to parquet
-        self.log(f"Saving parquet cache to: '{self.parquet_file}'...", level="info")
+        self.logger.log_status(f"Saving parquet cache to: '{self.parquet_file}'...", level="none")
         pivot_df.to_parquet(self.parquet_file, index=False, engine='pyarrow', compression='snappy')
 
 
@@ -246,7 +246,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
             Wide-format DataFrame with columns ['year', 'month', 'day', 'hour', ...requested countries]
             Contains ALL available years from the parquet file
         """
-        self.log(f"Loading parquet cache: '{self.parquet_file}'...", level="info")
+        self.logger.log_status(f"Loading parquet cache: '{self.parquet_file}'...", level="none")
         
         try:
             # Load the full parquet file
@@ -261,13 +261,13 @@ class elec_demand_TYNDP2024(BaseProcessor):
             missing_countries = [c for c in self.country_codes if c not in available_countries]
             
             if missing_countries:
-                self.log(f"Countries not found in cache: {missing_countries}", level="warn")
+                self.logger.log_status(f"Countries not found in cache: {missing_countries}", level="warn")
             
             # Select only the columns we need
             columns_to_keep = index_cols + countries_to_load
             df_filtered = df_full[columns_to_keep].copy()
             
-            self.log(
+            self.logger.log_status(
                 f"Loaded {len(countries_to_load)} countries from parquet cache "
                 f"({len(df_filtered)} total rows).", 
                 level="info"
@@ -306,11 +306,11 @@ class elec_demand_TYNDP2024(BaseProcessor):
         df_wide = self.load_data_from_parquet()
         
         # Filter by year on the complete row structure to preserve the standardized 8760 hours per year structure
-        year_mask = (df_wide['year'] >= self.startyear) & (df_wide['year'] <= self.endyear)
+        year_mask = (df_wide['year'] >= self.start_year) & (df_wide['year'] <= self.end_year)
         df_wide = df_wide[year_mask].copy()
-        
-        self.log(
-            f"Filtered to years {self.startyear}-{self.endyear}: {len(df_wide)} rows.",
+
+        self.logger.log_status(
+            f"Filtered to years {self.start_year}-{self.end_year}: {len(df_wide)} rows.",
             level="info"
         )
 
@@ -353,60 +353,48 @@ class elec_demand_TYNDP2024(BaseProcessor):
         """
         if input_df.empty:
             raise ValueError("Input DataFrame is empty - cannot process datetime index")
-        
-        # Calculate standardized day-of-year for each row (using a non-leap reference year)
-        # This gives us the "position" in the 365-day standardized year
-        input_df['std_doy'] = input_df.apply(
-            lambda row: pd.Timestamp(year=2001, month=int(row['month']), day=int(row['day'])).dayofyear,
-            axis=1
+
+        input_df = input_df.copy()
+
+        # Compute standardized day-of-year using a non-leap reference year (vectorized).
+        # This gives us the "position" in the 365-day standardized year.
+        ref_dates = pd.to_datetime(dict(
+            year=2001,
+            month=input_df['month'].astype(int),
+            day=input_df['day'].astype(int)
+        ))
+        input_df['std_doy'] = ref_dates.dt.dayofyear
+
+        # Compute actual datetime vectorially: year-01-01 + (std_doy-1) days + hour hours.
+        # pd.Timedelta respects the real calendar, so for leap years:
+        #   std_doy=60 → Feb 29 (day 59 offset from Jan 1 in a leap year lands on Feb 29)
+        #   std_doy=61 → Mar 1, etc. — the shift is handled automatically.
+        year_starts = pd.to_datetime(dict(
+            year=input_df['year'].astype(int),
+            month=1,
+            day=1
+        ))
+        input_df['datetime'] = (
+            year_starts
+            + pd.to_timedelta(input_df['std_doy'].astype(int) - 1, unit='D')
+            + pd.to_timedelta(input_df['hour'].astype(int), unit='h')
         )
-        
-        def map_to_actual_date(row):
-            """
-            Map standardized day-of-year to actual calendar date.
-            
-            For non-leap years: Direct 1:1 mapping
-            For leap years: 
-                - Days 1-59 map directly (Jan 1 - Feb 28)
-                - Day 60 becomes Feb 29 (inserted)
-                - Days 61-365 become Mar 1 - Dec 30
-                - Day 365 ALSO creates Dec 31 (duplicated)
-            """
-            y = int(row['year'])
-            h = int(row['hour'])
-            std_doy = int(row['std_doy'])
-            
-            if not calendar.isleap(y):
-                # Non-leap year: direct mapping (std day N → actual day N)
-                actual_doy = std_doy
-                ts = pd.Timestamp(year=y, month=1, day=1) + pd.Timedelta(days=actual_doy - 1, hours=h)
-                return [ts]
-            else:
-                # Leap year: need to insert Feb 29
-                if std_doy <= 59:  # Jan 1 - Feb 28: direct mapping
-                    actual_doy = std_doy
-                elif std_doy == 60:  # Std Mar 1 → Feb 29 (the inserted day)
-                    actual_doy = 60  # Feb 29
-                else:  # std_doy 61-365: shift back by 1
-                    actual_doy = std_doy  # Mar 1 comes from std day 61, etc.
-                
-                ts = pd.Timestamp(year=y, month=1, day=1) + pd.Timedelta(days=actual_doy - 1, hours=h)
-                
-                # For the last standardized day (Dec 31 in std year = day 365),
-                # also create the actual Dec 31 by duplicating
-                if std_doy == 365:
-                    # This row creates BOTH Dec 30 (ts) and Dec 31 (duplicate)
-                    dec_31_ts = pd.Timestamp(year=y, month=12, day=31, hour=h)
-                    return [ts, dec_31_ts]
-                
-                return [ts]
-        
-        # Apply the date mapping
-        input_df['datetime'] = input_df.apply(map_to_actual_date, axis=1)
-        
-        # Explode rows with multiple timestamps (Dec 30→31 duplication for leap years)
-        input_df = input_df.explode('datetime')
-        input_df = input_df.dropna(subset=['datetime'])
+
+        # For leap years, duplicate rows where std_doy == 365 to fill Dec 31
+        # (the formula above maps std_doy=365 to Dec 30 in a leap year).
+        years = input_df['year'].astype(int)
+        is_leap = (years % 4 == 0) & ((years % 100 != 0) | (years % 400 == 0))
+        leap_last_day_mask = is_leap & (input_df['std_doy'] == 365)
+
+        if leap_last_day_mask.any():
+            extra_rows = input_df[leap_last_day_mask].copy()
+            extra_rows['datetime'] = pd.to_datetime(dict(
+                year=extra_rows['year'].astype(int),
+                month=12,
+                day=31,
+                hour=extra_rows['hour'].astype(int)
+            ))
+            input_df = pd.concat([input_df, extra_rows], ignore_index=True)
         
         # Set datetime as index and sort
         input_df = input_df.set_index('datetime').sort_index()
@@ -417,7 +405,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
         # Check for duplicate timestamps before reindexing
         if not input_df.index.is_unique:
             n_dupes = input_df.index.duplicated().sum()
-            self.log(f"Warning: Found {n_dupes} duplicate timestamps, keeping first occurrence", level="warn")
+            self.logger.log_status(f"Found {n_dupes} duplicate timestamps in elec demand profiles, keeping first occurrence", level="warn")
             input_df = input_df[~input_df.index.duplicated(keep='first')]
         
         # Create a full hourly index for the defined date range
@@ -518,7 +506,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
             ]
             
             if country_demand.empty:
-                self.log(
+                self.logger.log_status(
                     f"No demand data for {country}, skipping.",
                     level="warn"
                 )
@@ -578,21 +566,26 @@ class elec_demand_TYNDP2024(BaseProcessor):
         possible expansion set.
         """
         # Get the raw hourly profiles (uses parquet cache if available)
-        self.log(f"Reading electricity demand profiles...")
+        self.logger.log_status(f"Reading electricity demand profiles...")
         df_out = self.get_values_from_excel()
 
-        self.log("Processing datetime index, handling leap days, etc...")
+        self.logger.log_status("Processing datetime index, handling leap days, etc...")
         df_out = self.process_datetime_index(df_out)
 
-        self.log("Normalizing demand profiles...")
+        self.logger.log_status("Normalizing demand profiles...")
         df_out = self.normalize_profiles(df_out)
 
-        self.log("Building demand time series...")
+        self.logger.log_status("Building demand time series...")
         df_out = self.build_demands(df_out, self.df_annual_demands)
 
         # Set secondary result (none for this processor)
         self.secondary_result = None
 
-        self.log("Demand time series built.", level="info")
+        self.logger.log_status("Demand time series built.", level="info")
 
-        return df_out
+        # Convert to long format: [grid, node, time, value]
+        result = df_out.reset_index(names='time')
+        result = result.melt(id_vars=['time'], var_name='node', value_name='value')
+        result['value'] = -result['value']
+        result['grid'] = self.demand_grid
+        return result[['grid', 'node', 'time', 'value']]

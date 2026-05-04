@@ -1,7 +1,6 @@
-# src/json_exchange.py
-
 import json
 from pathlib import Path
+
 
 def load_json(path: Path):
     """

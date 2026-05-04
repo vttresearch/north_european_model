@@ -1,12 +1,9 @@
-# src/processors/VRE_PECD.py
-
-from datetime import datetime
 import re
 import os
 import glob
 import pandas as pd
 import numpy as np
-from src.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor
 
 
 class VRE_PECD(BaseProcessor):
@@ -15,12 +12,12 @@ class VRE_PECD(BaseProcessor):
     and compile a time series DataFrame for a specified date range.
 
     Parameters:
-        input_folder (str): Relative location of input files.
-        input_file (str): Folder within input_folder containing the PECD CSV files.
+        input_folder (str): Path to the folder containing the PECD CSV files.
         country_codes (list): List of country codes to filter.
-        start_date (str): Start datetime (e.g., '1982-01-01 00:00:00').
-        end_date (str): End datetime (e.g., '2021-12-31 23:00:00').
+        start_year (int): First climate year to include (e.g., 1982).
+        end_year (int): Last climate year to include (e.g., 2016).
         attached_grid (str): Suffix to append to country codes in output columns.
+        scaling_factor (float): Applies logit scaling for the timeseries, e.g. 0.8 reduces the annual average by 20%.
 
     Returns:
         main_result (pd.DataFrame): DataFrame with processed time series data indexed by datetime
@@ -35,10 +32,9 @@ class VRE_PECD(BaseProcessor):
         # List of required parameters
         required_params = [
             'input_folder',
-            'input_file',
             'country_codes',
-            'start_date',
-            'end_date',
+            'start_year',
+            'end_year',
             'attached_grid'
         ]
 
@@ -50,12 +46,14 @@ class VRE_PECD(BaseProcessor):
         # Unpack required parameters
         for param in required_params:
             setattr(self, param, kwargs.get(param))
-        
-        # Ensure start_date and end_date are datetime objects
-        if not isinstance(self.start_date, datetime):
-            self.start_date = pd.to_datetime(self.start_date)
-        if not isinstance(self.end_date, datetime):
-            self.end_date = pd.to_datetime(self.end_date)
+
+        # Optional parameters
+        self.scaling_factor = kwargs.get('scaling_factor')
+        self.custom_column_value = kwargs.get('custom_column_value') or {}
+
+        # Derive full-year date boundaries from integer year values
+        self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
+        self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
     def process(self) -> pd.DataFrame:
         """
@@ -71,26 +69,31 @@ class VRE_PECD(BaseProcessor):
             pd.DataFrame: DataFrame indexed by the full date range (from start_date to end_date, hourly)
                          containing columns only for the specified countries with capacity factor values.
         """
-        # Create the full path to the CSV folder
-        self.csv_folder = os.path.join(self.input_folder, self.input_file)
+        self.csv_folder = self.input_folder
 
         # Check if the folder exists
         if not os.path.isdir(self.csv_folder):
-            self.log(f"The folder {self.csv_folder} does not exist.", level="warn")
+            self.logger.log_status(f"The folder {self.csv_folder} does not exist.", level="warn")
             return pd.DataFrame()
 
         # Check that the folder contains at least one CSV file
         csv_files = glob.glob(os.path.join(self.csv_folder, "*.csv"))
         if not csv_files:
-            self.log(f"No CSV files found in {self.csv_folder}.", level="warn")
+            self.logger.log_status(f"No CSV files found in {self.csv_folder}.", level="warn")
             return pd.DataFrame()
 
-        self.log(f"Processing input data in {self.csv_folder}...")
+        self.logger.log_status(f"Processing input data in {self.csv_folder}...")
        
         # Extract and compile data using the split methods
         summary_df = self._read_and_compile_input_CSVs(
             self.csv_folder, self.country_codes, self.start_date, self.end_date
         )
+
+        # Apply logit-normal scaling if scaling_factor differs from 1
+        if self.scaling_factor != 1:
+            self.logger.log_status(f"Applying logit scaling with factor {self.scaling_factor}...")
+            for col in summary_df.columns:
+                summary_df[col] = self._apply_logit_scaling(summary_df[col], self.scaling_factor)
 
         # Rename country columns to indicate the attached grid
         for country in self.country_codes:
@@ -101,10 +104,48 @@ class VRE_PECD(BaseProcessor):
         # Secondary result is None for this processor
         self.secondary_result = None
 
-        self.log("Time series built.")
+        self.logger.log_status("Time series built.", level="info")
 
-        return summary_df
+        # Convert to long format: [flow, node, time, value]
+        result = summary_df.reset_index(names='time')
+        result = result.melt(id_vars=['time'], var_name='node', value_name='value')
+        result['flow'] = self.custom_column_value.get('flow', '')
+        return result[['flow', 'node', 'time', 'value']]
     
+    def _apply_logit_scaling(self, series, target_scaling, epsilon=1e-6):
+        """
+        Adjusts capacity factor using Logit-Normal transformation.
+        Shifts the mean of a [0,1] bounded series by target_scaling multiplier
+        while preserving the overall shape and bounds.
+        """
+        original_mean = series.mean()
+        target_mean = original_mean * target_scaling
+
+        if original_mean == 0:
+            return series
+
+        # Map to latent space (logit)
+        clipped = np.clip(series.values, epsilon, 1 - epsilon)
+        y = np.log(clipped / (1 - clipped))
+
+        # Binary search for the offset
+        low, high = -15.0, 15.0
+        for _ in range(20):
+            mid = (low + high) / 2
+            transformed = 1 / (1 + np.exp(-(y + mid)))
+            if transformed.mean() < target_mean:
+                low = mid
+            else:
+                high = mid
+
+        final_values = 1 / (1 + np.exp(-(y + mid)))
+
+        # Preserve hard 0s and 1s
+        final_values[series == 0] = 0
+        final_values[series == 1] = 1
+
+        return pd.Series(final_values, index=series.index)
+
     def _calculate_annual_summary(self, df):
         """
         Calculate annual average capacity factors from the entire timeseries.
@@ -223,34 +264,58 @@ class VRE_PECD(BaseProcessor):
                     
                     if best_col is not None:
                         mapping[country_code] = best_col
-                        self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+                        self.logger.log_status(f"   {country_code}: Using '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
                         
                 elif len(matching_columns) == 1:
                     mapping[country_code] = matching_columns[0]
                 else:
-                    # Try 2-letter prefix matching
-                    prefix2 = country_code[:2]
-                    matching_columns = [col for col in df.columns if col.startswith(prefix2)]
-                    
+                    # Try 3-letter prefix matching
+                    prefix3 = country_code[:3]
+                    matching_columns = [col for col in df.columns if col.startswith(prefix3)]
+
                     if len(matching_columns) > 1:
-                        # Multiple matches found - select the one with highest sum
                         best_col = None
                         best_sum = -np.inf
                         sums = {}
-                        
+
                         for col in matching_columns:
                             col_sum = df[col].sum()
                             sums[col] = col_sum
                             if col_sum > best_sum:
                                 best_sum = col_sum
                                 best_col = col
-                        
+
                         if best_col is not None:
                             mapping[country_code] = best_col
-                            self.log(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
-                            
+                            self.logger.log_status(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+
                     elif len(matching_columns) == 1:
                         mapping[country_code] = matching_columns[0]
+
+                    else:
+                        # Try 2-letter prefix matching
+                        prefix2 = country_code[:2]
+                        matching_columns = [col for col in df.columns if col.startswith(prefix2)]
+
+                        if len(matching_columns) > 1:
+                            # Multiple matches found - select the one with highest sum
+                            best_col = None
+                            best_sum = -np.inf
+                            sums = {}
+
+                            for col in matching_columns:
+                                col_sum = df[col].sum()
+                                sums[col] = col_sum
+                                if col_sum > best_sum:
+                                    best_sum = col_sum
+                                    best_col = col
+
+                            if best_col is not None:
+                                mapping[country_code] = best_col
+                                self.logger.log_status(f"   {country_code}: Selected '{best_col}' (sum={best_sum:.2f}) from {len(matching_columns)} options: {list(sums.keys())}")
+
+                        elif len(matching_columns) == 1:
+                            mapping[country_code] = matching_columns[0]
                         
         return mapping
 
@@ -281,11 +346,11 @@ class VRE_PECD(BaseProcessor):
         try:
             df_csv = pd.read_csv(file, skiprows=header_row)
         except Exception as e:
-            self.log(f"Error reading file {file}: {e}", level="warn")
+            self.logger.log_status(f"Error reading file {file}: {e}", level="warn")
             return None
 
         if 'Date' not in df_csv.columns:
-            self.log(f"File {file} does not have a 'Date' column. Skipping the file.", level="warn")
+            self.logger.log_status(f"File {file} does not have a 'Date' column. Skipping the file.", level="warn")
             return None
 
         df_csv['Date'] = pd.to_datetime(df_csv['Date'])
@@ -327,10 +392,10 @@ class VRE_PECD(BaseProcessor):
         # Filter CSV files based on date from their filenames
         filtered_files = self._filter_csv_files(csv_folder, start_date, end_date)
         csv_files = glob.glob(os.path.join(csv_folder, "*.csv"))
-        self.log(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...")
+        self.logger.log_status(f"Using {len(filtered_files)} files within date range from the found {len(csv_files)} files...")
 
         if not filtered_files:
-            self.log("No valid CSV files found after filtering.", level="warn")
+            self.logger.log_status(f"No valid CSV files found in '{csv_folder}' after date filtering.", level="warn")
             return df_csv_summary
 
         # Process country code mapping using the first valid CSV file
@@ -345,18 +410,18 @@ class VRE_PECD(BaseProcessor):
         try:
             df_first = pd.read_csv(first_file, skiprows=header_row)
         except Exception as e:
-            self.log(f"Error reading the first file {first_file} for mapping: {e}", level="warn")
+            self.logger.log_status(f"Error reading the first file {first_file} for mapping: {e}", level="warn")
             return df_csv_summary
 
         if 'Date' not in df_first.columns:
-            self.log(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", level="warn")
+            self.logger.log_status(f"File {first_file} does not have a 'Date' column. Cannot determine country code mapping.", level="warn")
             return df_csv_summary
 
         # Pass the DataFrame instead of just columns for sum-based selection
         country_code_mapping = self._process_country_code_mapping(df_first, country_codes)
 
         if not country_code_mapping:
-            self.log("No country code mappings found.", level="warn")
+            self.logger.log_status(f"No country code mappings found in '{csv_folder}'. Check CSV column headers vs. country_codes.", level="warn")
 
         # Process each filtered CSV file and update the master DataFrame
         for file in filtered_files:

@@ -1,0 +1,317 @@
+"""
+Source Data Pipeline
+====================
+
+Purpose
+-------
+SourceDataPipeline is the first and only stage of the pipeline that is aware of
+the scenario context. It reads source Excel files, filters them to the current
+(scenario, year, scenario_alternative) combination, merges them row-by-row, and
+exposes one normalized DataFrame per data category. Downstream stages (time series
+processing, BBExcelPipeline) receive scenario-neutral data and do not need to repeat
+scenario filtering.
+
+Scenario and alternative handling
+----------------------------------
+build_input_data.py drives execution by iterating over the Cartesian product of
+(scenarios x scenario_years x scenario_alternatives x scenario_alternatives2 x
+scenario_alternatives3 x scenario_alternatives4). For each combination a new
+pipeline instance is created and run(). Alternative axes that are unused in a config
+file default to [""], which contributes no filtering and no folder-name segment.
+
+Within each data category the scenario filtering works in two steps:
+
+1. apply_whitelist() retains only rows whose 'scenario' column matches either the
+   current scenario, any of the active scenario_alternatives (if provided), or the
+   catch-all value 'all'. The 'year' column is similarly filtered to the target year
+   or the catch-all value 1. This means a single source Excel file can contain rows
+   for multiple scenarios and years; only the relevant rows survive.
+
+2. merge_row_by_row() processes the surviving rows in file load order. Each row
+   carries a 'method' value (replace / replace-partial / add / multiply / remove /
+   ...) that controls how it interacts with previously seen rows for the same key.
+   Because rows are handled in the order of appearance, base-scenario data can be
+   overwritten or supplemented in further input data files, and alternative-axis rows
+   can override or supplement base values without duplicating the full dataset.
+
+
+Interface
+---------
+Input dataframes are user given data and need to be handled very carefully and methodologically.
+
+All output DataFrames expose exactly three column dtypes: 
+- Float64 (pandas nullable float), 
+- object,  
+- string. 
+
+Each empty cell is converted to pd.NA as a sign of no data. Zero means data.
+
+Data conventions
+-----------------------------------------
+- Column names: lowercase, whitespace-stripped.
+- String values in key and categorical columns: lowercase, whitespace-stripped.
+- Numeric columns: pd.NA for missing values. Zero is meaningful data.
+- String/object columns: pd.NA for missing values. Empty string is not used.
+- Blacklists: apply_blacklist() is applied before apply_whitelist() for datasets that
+  support exclude_grids and exclude_nodes (demanddata, nodedata, unitdata,
+  transferdata). Rows whose grid/node matches an excluded value are dropped before any
+  further scenario or country filtering takes place.
+- Metadata columns (_source_file, _source_sheet, method): dropped by merge_row_by_row.
+- Scenario and year columns: retained in most output DataFrames. Downstream stages can
+  drop them; they carry no further information because filtering has already been
+  applied. Exception: df_userconstraintdata drops 'scenario', 'year', and 'country'
+  before merging because its key structure makes them redundant.
+- Topology columns (node, from_node, to_node): derived from component columns (country,
+  grid, suffix) by data_loader helpers during run(); the component columns are also
+  retained.
+
+
+Output DataFrames
+-----------------
+After run() the following attributes are populated (empty DataFrame if no source
+files are configured):
+
+  df_nodedata            node parameters (fuel costs, emissions, storage)  key: country, grid, node
+  df_emissiondata        emission factors                key: emission
+  df_demanddata          demand parameters               key: country, grid, node
+  df_unitdata            unit capacity parameters        key: country, generator_id, unit_name_prefix
+                         NOTE: df_unitdata is the MERGED result — type-level defaults
+                         from df_unittypedata are incorporated here via
+                         merge_unittypedata_into_unitdata().  df_unittypedata is
+                         NOT exposed as a public attribute after run().
+  df_transferdata        interconnector parameters       key: from_country, from_suffix, to_country, to_suffix, grid
+  df_userconstraintdata  custom constraint parameters    key: group, 1st dimension,
+                         2nd dimension, 3rd dimension, 4th dimension, param_userconstraint
+"""
+
+import src.source_data.source_data_loader as data_loader
+import src.utils as utils
+import pandas as pd
+from src.source_data.source_data_inputs import SourceDataPipelineInputs
+
+
+class SourceDataPipeline:
+    """
+    SourceDataPipeline handles reading, merging, filtering, and validating all input Excel files.
+    """
+
+    def __init__(self, inputs: SourceDataPipelineInputs):
+        self.config = inputs.config
+        self.input_folder = inputs.input_folder
+        self.data_folder = inputs.input_folder / "data_files"
+
+        self.scenario = inputs.scenario
+        self.scenario_year = inputs.scenario_year
+        self.scenario_alternative = inputs.scenario_alternative
+        self.scenario_alternative2 = inputs.scenario_alternative2
+        self.scenario_alternative3 = inputs.scenario_alternative3
+        self.scenario_alternative4 = inputs.scenario_alternative4
+        self.country_codes = inputs.country_codes
+        self.logger = inputs.logger
+
+        self.df_demanddata = pd.DataFrame()
+        self.df_transferdata = pd.DataFrame()
+        self._df_unittypedata = pd.DataFrame()  # internal; merged into df_unitdata before run() ends
+        self.df_unitdata = pd.DataFrame()
+        self.df_nodedata = pd.DataFrame()
+        self.df_emissiondata = pd.DataFrame()
+        self.df_userconstraintdata = pd.DataFrame()
+
+    def run(self):
+        """
+        Run the full pipeline: load, process, and filter all input DataFrames.
+        """
+        input_folder = self.data_folder
+
+        # Build scenario whitelist: base scenario plus any non-empty alternatives
+        scen_and_alt = [self.scenario]
+        for alt in (self.scenario_alternative, self.scenario_alternative2,
+                    self.scenario_alternative3, self.scenario_alternative4):
+            if alt:
+                scen_and_alt.append(alt)
+
+        # --- global datasets ---
+        # unittypedata (internal — will be merged into df_unitdata before run() ends)
+        files = self.config['unittypedata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'unittypedata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'unittypedata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'unittypedata')
+                   for df in dfs
+                   ]
+            self._df_unittypedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['generator_id'])
+        else:
+            self.logger.log_status(
+                "No Excel files for 'unittypedata_files' defined in the config file",
+                level="info"
+            )
+
+        # emissiondata
+        files = self.config['emissiondata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'emissiondata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'emissiondata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'emissiondata')
+                   for df in dfs
+                   ]
+            self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['emission'])
+        else:
+            self.logger.log_status(
+                "No Excel files for 'emissiondata_files' defined in the config file",
+                level="info"
+            )
+
+
+        # --- country-level datasets ---
+        exclude_grids = self.config['exclude_grids']
+        exclude_nodes = self.config['exclude_nodes']
+
+        # nodedata
+        files = self.config['nodedata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'nodedata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'nodedata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'nodedata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'nodedata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'nodedata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
+                                   self.logger, 'nodedata')
+                   for df in dfs
+                   ]
+            self.df_nodedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
+        else:
+            self.logger.log_status(
+                "No Excel files for 'nodedata_files' defined in the config file",
+                level="info"
+            )
+
+        # demanddata
+        files = self.config['demanddata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'demanddata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'demanddata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
+                                   self.logger, 'demanddata')
+                   for df in dfs
+                   ]
+            self.df_demanddata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
+            self.df_demanddata = data_loader.filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])
+        else:
+            self.logger.log_status(
+                "No Excel files for 'demanddata_files' defined in the config file",
+                level="info"
+            )
+
+        # unitdata
+        files = self.config['unitdata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logger) for df in dfs]
+            dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
+            dfs = [data_loader.build_unittype_unit_column(df, self._df_unittypedata, self.logger) for df in dfs]
+            dfs = [data_loader.build_unit_grid_and_node_columns(df, self._df_unittypedata, self.logger) for df in dfs]
+            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logger=self.logger) for d in dfs]
+            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes, df_name="unitdata", logger=self.logger) for d in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
+                                   self.logger, 'unitdata')
+                   for df in dfs
+                   ]
+            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'generator_id', 'unit_name_prefix'])
+
+            # Merge type-level technical parameters (LP/MIP, flow, emission_group*,
+            # capacity defaults, etc.) from _df_unittypedata into each unit row.
+            # Unit-specific values take priority; type-level values fill NAs only.
+            self.df_unitdata = data_loader.merge_unittypedata_into_unitdata(
+                self.df_unitdata, self._df_unittypedata
+            )
+
+        else:
+            self.logger.log_status(
+                "No Excel files for 'unitdata_files' defined in the config file",
+                level="info"
+            )
+
+        # transferdata
+        files = self.config['transferdata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'transferdata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logger) for df in dfs]
+            dfs = [data_loader.drop_underscore_values(df, 'transferdata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'from_country': self.country_codes},
+                                   self.logger, 'transferdata')
+                   for df in dfs
+                   ]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'to_country': self.country_codes},
+                                   self.logger, 'transferdata')
+                   for df in dfs
+                   ]
+            self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['from_country', 'from_suffix', 'to_country', 'to_suffix', 'grid'])
+
+            # Deprecation check: old bidirectional format used export_capacity / import_capacity
+            # per row; the new format uses one row per direction with transferCap instead.
+            # Remove this check once all source Excel files have been updated.
+            _deprecated_cols = [c for c in self.df_transferdata.columns
+                                 if c in ('export_capacity', 'import_capacity')]
+            if _deprecated_cols:
+                self.logger.log_status(
+                    f"transferdata contains deprecated column(s) {_deprecated_cols}. "
+                    "The old bidirectional format (one row with export_capacity + import_capacity) "
+                    "is no longer supported. Replace each bidirectional row with two directional rows "
+                    "using 'transferCap' as the capacity column. ",
+                    level="warn",
+                    add_empty_line_before=True,
+                    add_empty_line_after=True,
+                )
+        else:
+            self.logger.log_status(
+                "No Excel files for 'transferdata_files' defined in the config file",
+                level="info"
+            )
+
+        # --- custom datasets ---
+        # userconstraintdata
+        files = self.config['userconstraintdata_files']
+        if len(files) > 0:
+            dfs = data_loader.read_input_excels(input_folder, files, 'userconstraintdata', self.logger)
+            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logger) for df in dfs]
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
+                                   self.logger, 'userconstraintdata')
+                   for df in dfs
+                   ]
+            dfs = [df.drop(columns=['scenario', 'year', 'country']) for df in dfs]
+            self.df_userconstraintdata = data_loader.merge_row_by_row(
+                                            dfs, self.logger,
+                                            key_columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter']
+                                         )
+        else:
+            self.logger.log_status(
+                "No Excel files for 'userconstraintdata_files' defined in the config file",
+                level="info"
+            )
+
+        # Convert all empty cells to pd.NA across every output DataFrame.
+        # Object columns may contain empty strings from normalization; replace them.
+        # Float64 NaN values are already represented as pd.NA by the nullable dtype.
+        for attr in ('df_nodedata', 'df_emissiondata', 'df_demanddata',
+                     'df_unitdata', 'df_transferdata',
+                     'df_userconstraintdata'):
+            df = getattr(self, attr)
+            if not df.empty:
+                for col in df.columns:
+                    if df[col].dtype == object or isinstance(df[col].dtype, pd.StringDtype):
+                        df[col] = df[col].replace('', pd.NA)
+                        df[col] = df[col].where(df[col].notna(), pd.NA)

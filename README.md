@@ -20,6 +20,7 @@ This readme has the following main sections
 * Pauli Hiltunen - District heating data, testing
 * Eric Harrison - Data sets, testing
 * Justinas Jasiunas - H2 heavy scenario, testing
+* Touko Kumpulainen - District heating data, testing
 
 
 ## License
@@ -90,18 +91,15 @@ These instructions are written for Miniconda, but users can of course choose oth
 	```
 	
 
-The installed environment needs a few additional packages as Miniconda does not automatically find them. After creating and activating the `northEuropeanModel` environment, install the following additional packages in Miniconda by typing:
+The installed environment needs one additional package as Miniconda does not automatically find it. After creating and activating the `northEuropeanModel` environment, install the following additional package in Miniconda by typing:
 
 ```
-pip install gdxpds
 pip install gamsapi[transfer]==xx.y.z
 ```
 
 where xx.y.z is your GAMS version. You can find the correct version by opening GAMS Studio, clicking **Help** -> **GAMS Licensing** -> check GAMS Distribution xx.y.z.
 
-After these steps, you should have the required software and environment ready. 
-
-NOTE: GamsAPI is possible to install also for much older GAMS versions, see https://github.com/NREL/gdx-pandas
+After these steps, you should have the required software and environment ready.
 
  
 ## Updating the conda environment
