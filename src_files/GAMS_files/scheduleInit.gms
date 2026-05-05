@@ -234,5 +234,9 @@ if (mType('schedule'),
     // Automatic rounding of cost parameters, ts_influx, ts_node, ts_cf, ts_gnn, and ts_reserveDemand. 0 = off = default. 1 = on. 
     mSettings('schedule', 'automaticRoundings') = 1; 
 
+    // Automatically drop ts_cf values below the threshold
+    mSettings('schedule', 'discard_ts_cf_below') = 0.01; 
+
+
 
 ); // END if(mType)
