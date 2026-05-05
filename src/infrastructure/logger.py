@@ -72,7 +72,7 @@ class IterationLogger:
 
         self.messages.append(formatted)
 
-        if level in ("warn", "error", "skip"):
+        if level in ("warn", "error"):
             self._warning_log.append(formatted)
         if level == "error":
             self._error_log.append(formatted)
@@ -82,7 +82,7 @@ class IterationLogger:
 
     @property
     def warnings(self) -> list[str]:
-        """Return a copy of all warn/error/skip messages accumulated this iteration."""
+        """Return a copy of all warn/error messages accumulated this iteration."""
         return list(self._warning_log)
 
     @property
