@@ -19,7 +19,7 @@ All `.cmd` files are user-specific run scripts -- skip them.
 
 ## Execution flow
 
-1. User runs python build_input_data.py <input_folder> <config.ini>
+1. `python build_input_data.py <input_folder> <config.ini>`
 2. Config is parsed defining general settings, input files, and run instructions.
    - Git config files are stored in `src_files/config_*.ini`
 3. For each (scenario, year, alternative) combination:
@@ -46,5 +46,4 @@ The two pipeline stages use **different** NA/zero conventions. Mixing them up is
 
 ## Don't
 
-- Access folders above the workspace root
-- Run Python scripts or any shell commands. Do not execute `python`, `py`, `pip`, or any other CLI tool. Read and edit files only.
+- Access folders above the workspace root.

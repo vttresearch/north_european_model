@@ -443,6 +443,10 @@ class ProcessorRunner:
         dims = spec.get("bb_parameter_dimensions", [])
         calculate_forecasts = "f" in dims and "t" in dims and any(d not in ("f", "t") for d in dims)
 
+        # Deterministic mode: empty forecast_quantiles means no forecast branches to compute.
+        if calculate_forecasts and not self.config["forecast_quantiles"]:
+            calculate_forecasts = False
+
         # Guard: requires multi-year data.
         if calculate_forecasts:
             unique_years = main_result["time"].dt.year.unique()

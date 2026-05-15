@@ -119,6 +119,34 @@ $endif
 * --------------------------------------------------------------------------------
 
 
+* drop unnecessary forecast data
+if(%forecasts%<3,
+    option gn_tmp<ts_node;
+    ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)>3} = 0;
+    option gn_tmp<ts_influx;
+    ts_influx(gn_tmp(grid,node),f,t) $ {ord(f)>3} = 0;
+    option node_tmp<ts_cf;
+    ts_cf(flow,node_tmp(node),f,t) $ {ord(f)>3} = 0;
+);
+if(%forecasts%<2,
+    option gn_tmp<ts_node;
+    ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)=3} = 0;
+    option gn_tmp<ts_influx;
+    ts_influx(gn_tmp(grid,node),f,t) $ {ord(f)=3} = 0;
+    option node_tmp<ts_cf;
+    ts_cf(flow,node_tmp(node),f,t) $ {ord(f)=3} = 0;
+);
+if(%forecasts%<1,
+    option gn_tmp<ts_node;
+    ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)=2} = 0;
+    option gn_tmp<ts_influx;
+    ts_influx(gn_tmp(grid,node),f,t) $ {ord(f)=2} = 0;
+    option node_tmp<ts_cf;
+    ts_cf(flow,node_tmp(node),f,t) $ {ord(f)=2} = 0;
+);
+
+
+
 * --- converting constant ts_influx to p_gn('influx') ---------
 
 // timeseries with constant values are much slower to process than single constant parameter
@@ -237,12 +265,36 @@ option gn_tmp < ts_node;
 option tt < ts_node;
 
 ts_node(gn_tmp, 'upwardLimit', 'f01', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt);
-ts_node(gn_tmp, 'upwardLimit', 'f02', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 0.9;
-ts_node(gn_tmp, 'upwardLimit', 'f03', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 1.1;
+if(card(f)>2, 
+    ts_node(gn_tmp, 'upwardLimit', f, tt) 
+       $ { ts_node(gn_tmp, 'upwardLimit', 'f00', tt) 
+           and ord(f)=3 // f02
+           } 
+       = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 0.9;
+);
+if(card(f)>3,
+    ts_node(gn_tmp, 'upwardLimit', f, tt) 
+        $ { ts_node(gn_tmp, 'upwardLimit', 'f00', tt) 
+            and ord(f) = 4 // f03
+            }
+        = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 1.1;
+);
 
 ts_node(gn_tmp, 'downwardLimit', 'f01', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt);
-ts_node(gn_tmp, 'downwardLimit', 'f02', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 1.1;
-ts_node(gn_tmp, 'downwardLimit', 'f03', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 0.9;
+if(card(f)>2, 
+    ts_node(gn_tmp, 'downwardLimit', f, tt) 
+    $ { ts_node(gn_tmp, 'downwardLimit', 'f00', tt)
+        and ord(f)=3 // f02 
+        }
+    = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 1.1;
+);
+if(card(f)>3,
+    ts_node(gn_tmp, 'downwardLimit', f, tt) 
+    $ { ts_node(gn_tmp, 'downwardLimit', 'f00', tt) 
+        and ord(f) = 4 // f03
+        }  
+    = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 0.9;
+);
 
 
 // Set storage start levels for psOpen and reservoir hydro

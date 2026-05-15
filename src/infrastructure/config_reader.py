@@ -227,7 +227,17 @@ def load_config(config_file: Path) -> Dict[str, Any]:
 
     # Parse optional forecast_weights (default: equal weights, or established defaults for the standard 3-forecast setup)
     forecast_weights_raw = inputdata.get('forecast_weights')
-    if forecast_weights_raw is not None:
+    if not forecast_quantiles:
+        # Deterministic mode: realized weather (f00) only, no forecast branches.
+        if forecast_weights_raw is not None:
+            forecast_weights_parsed = ast.literal_eval(forecast_weights_raw)
+            if forecast_weights_parsed:
+                raise ValueError(
+                    "forecast_weights must be empty (or omitted) when "
+                    "forecast_quantiles is empty (deterministic mode)."
+                )
+        forecast_weights = {}
+    elif forecast_weights_raw is not None:
         forecast_weights = ast.literal_eval(forecast_weights_raw)
         if not isinstance(forecast_weights, dict):
             raise ValueError(

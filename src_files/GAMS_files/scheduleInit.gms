@@ -97,8 +97,13 @@ if (mType('schedule'),
     mf_realization('schedule', 'f00') = yes;
 
     // Define Central forecast
-    mf_central('schedule', f) = no;      
-    mf_central('schedule', 'f01') = yes;
+    mf_central('schedule', f) = no;    
+    if(%forecastNumber%>0,
+        mf_central('schedule', 'f01') = yes;
+    );
+    if(%forecastNumber%=0,
+        mf_central('schedule', 'f00') = yes;
+    );
 
     // Define forecast probabilities (weights)
     p_mfProbability('schedule', f) = 0;

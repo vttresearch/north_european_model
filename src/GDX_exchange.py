@@ -6,6 +6,32 @@ import gams.transfer as gt
 from tqdm import tqdm
 
 
+def read_gdx_parameter(
+    gdx_file: str,
+    parameter_name: str,
+    ) -> pd.DataFrame:
+    """
+    Read a single parameter from a GDX file using gams.transfer.
+
+    Parameters:
+        gdx_file: path to the .gdx file
+        parameter_name: name of the parameter to read
+
+    Returns:
+        DataFrame with one column per domain dimension plus a 'value' column.
+        Returns an empty DataFrame if the parameter is missing or has no records.
+        Note: GAMS drops zero values; missing keys should be treated as 0 by callers.
+    """
+    m = gt.Container(gdx_file)
+    if parameter_name not in m.data:
+        return pd.DataFrame()
+    param = m[parameter_name]
+    df = param.records
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+    return df.reset_index(drop=True)
+
+
 def write_df_to_gdx(
     df: Optional[pd.DataFrame],
     output_file: str,

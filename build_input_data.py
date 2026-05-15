@@ -450,7 +450,9 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
             f"t000000 * t{t_max:06d}",
         )
 
-        last_f = f"f{len(config['forecast_quantiles']):02d}"
+        # Floor at f01 so the declared range is never the invalid GAMS "f00 * f00".
+        # Backbone filters active f at runtime, so an unused f01 here is harmless.
+        last_f = f"f{max(len(config['forecast_quantiles']), 1):02d}"
         content = re.sub(
             r'(f00 \* )f\d+',
             rf'\g<1>{last_f}',
