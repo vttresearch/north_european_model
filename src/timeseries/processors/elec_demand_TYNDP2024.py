@@ -90,10 +90,12 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
     def need_to_create_parquet_cache(self) -> bool:
         """
-        Check if the code needs to create parquet 
-         * if cache does not exist or 
-         * if cache is older than the Excel file.
-        
+        Check if the code needs to create parquet
+         * if cache does not exist or
+         * if cache is older than the Excel file, or
+         * if cache is older than this processor source file (so bug fixes in
+           the Excel-to-parquet logic invalidate stale caches automatically).
+
         Returns
         -------
         bool
@@ -102,25 +104,31 @@ class elec_demand_TYNDP2024(BaseProcessor):
         """
         excel_path = Path(self.input_file)
         parquet_path = Path(self.parquet_file)
-        
+        processor_path = Path(__file__)
+
         # Check if both files exist
         if not excel_path.exists():
             raise FileNotFoundError(f"Excel file not found: {self.input_file}")
-        
+
         if not parquet_path.exists():
             self.logger.log_status("Parquet cache not found, will create from Excel file.", level="none")
             return True
-        
+
         # Compare modification times
         excel_mtime = excel_path.stat().st_mtime
         parquet_mtime = parquet_path.stat().st_mtime
-        
-        if parquet_mtime > excel_mtime:
-            self.logger.log_status("Using parquet cache.", level="none")
-            return False
-        else:
+        processor_mtime = processor_path.stat().st_mtime
+
+        if parquet_mtime <= excel_mtime:
             self.logger.log_status("Excel file is newer than parquet cache, will rebuild cache.", level="none")
             return True
+
+        if parquet_mtime <= processor_mtime:
+            self.logger.log_status("Processor source is newer than parquet cache, will rebuild cache.", level="none")
+            return True
+
+        self.logger.log_status("Using parquet cache.", level="none")
+        return False
 
     def read_excel_to_parquet(self) -> None:
         """
@@ -190,7 +198,7 @@ class elec_demand_TYNDP2024(BaseProcessor):
                 df['month'] = df['month'] + 1
                 
                 # The remaining columns are the values for different years
-                year_cols = df.columns[4:]  # Skip month, day, hour, and now the adjusted month
+                year_cols = df.columns[3:]  # Skip month, day, hour
               
                 # Melt the DataFrame so each row corresponds to a specific year and time
                 df_melted = df.melt(
