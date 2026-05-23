@@ -69,6 +69,36 @@ def _parse_bb_timeseries_start(value: str) -> str:
     return value
 
 
+def _safe_eval_int(expr: str) -> int:
+    """
+    Evaluate a simple arithmetic expression to an int.
+
+    Accepts numeric literals and + - * / // % ** and parentheses.
+    Rejects names, calls, attribute access, and anything else.
+
+    Raises:
+        ValueError: if the expression is invalid or not integer-valued.
+        SyntaxError: if the expression is not parseable as a Python expression.
+    """
+    tree = ast.parse(expr.strip(), mode='eval')
+    allowed = (
+        ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant,
+        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv,
+        ast.Mod, ast.Pow, ast.USub, ast.UAdd,
+    )
+    for node in ast.walk(tree):
+        if not isinstance(node, allowed):
+            raise ValueError(f"disallowed token in expression: {type(node).__name__}")
+        if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float)):
+            raise ValueError(f"non-numeric constant: {node.value!r}")
+    value = eval(compile(tree, '<config>', 'eval'))  # safe: AST whitelisted above
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"expression is not integer-valued: {value}")
+        value = int(value)
+    return value
+
+
 _TIMESERIES_SPEC_DEFAULTS = {
     'demand_grid': '',
     'custom_column_value': None,
@@ -176,12 +206,14 @@ def load_config(config_file: Path) -> Dict[str, Any]:
     bb_timeseries_start = _parse_bb_timeseries_start(bb_ts_start_raw)
 
     # Parse optional bb_timeseries_length (default: 365)
+    # Accepts a plain integer or a simple arithmetic expression (e.g. "365*5").
     bb_ts_length_raw = inputdata.get('bb_timeseries_length', '365')
     try:
-        bb_timeseries_length = int(bb_ts_length_raw)
-    except ValueError:
+        bb_timeseries_length = _safe_eval_int(bb_ts_length_raw)
+    except (ValueError, SyntaxError):
         raise ValueError(
-            f"bb_timeseries_length must be a positive integer; got '{bb_ts_length_raw}'."
+            f"bb_timeseries_length must be a positive integer or simple "
+            f"arithmetic expression (e.g. 365*5); got '{bb_ts_length_raw}'."
         )
     if not (1 <= bb_timeseries_length <= 365*35+9):
         raise ValueError(
