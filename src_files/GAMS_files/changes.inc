@@ -120,7 +120,7 @@ $endif
 
 
 * drop unnecessary forecast data
-if(%forecasts%<3,
+if(%forecastNumber%<3,
     option gn_tmp<ts_node;
     ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)>3} = 0;
     option gn_tmp<ts_influx;
@@ -128,7 +128,7 @@ if(%forecasts%<3,
     option node_tmp<ts_cf;
     ts_cf(flow,node_tmp(node),f,t) $ {ord(f)>3} = 0;
 );
-if(%forecasts%<2,
+if(%forecastNumber%<2,
     option gn_tmp<ts_node;
     ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)=3} = 0;
     option gn_tmp<ts_influx;
@@ -136,7 +136,7 @@ if(%forecasts%<2,
     option node_tmp<ts_cf;
     ts_cf(flow,node_tmp(node),f,t) $ {ord(f)=3} = 0;
 );
-if(%forecasts%<1,
+if(%forecastNumber%<1,
     option gn_tmp<ts_node;
     ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)=2} = 0;
     option gn_tmp<ts_influx;
