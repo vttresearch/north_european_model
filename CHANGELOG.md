@@ -1,6 +1,7 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-06-24
+- Updating changes_loop.inc to add more precise limits on vq_userconstraint.up to speed up the solver
 - Moved CLI arg parser to src/utils.py as shared parse_sys_args (was _parse_sys_args in build_input_data.py); fixes toolbox wrapper import.
 
 ## 2026-06-03
