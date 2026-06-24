@@ -3,7 +3,6 @@ import re
 import math
 import shutil
 import time
-import argparse
 from pathlib import Path
 from datetime import datetime
 from itertools import product
@@ -18,6 +17,7 @@ from src.timeseries.timeseries_pipeline import TimeseriesPipeline
 from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
+from src.utils import parse_sys_args
 
 
 def main(input_folder: Path, config_file: Path):
@@ -319,41 +319,6 @@ def main(input_folder: Path, config_file: Path):
 
 
 
-def _parse_sys_args():
-    # Instructions in case of mispelled input cmd
-    USAGE_MSG = (
-        "Usage: python build_input_data.py <input_folder> <config_file>,\n"
-        "       e.g. python build_input_data.py src_files config_test.ini"
-    )
-        
-    # detect legacy key=val syntax
-    if any("=" in arg for arg in sys.argv[1:]):
-        print(USAGE_MSG)
-        sys.exit(1)
-    else:
-        # strict positional: both required
-        parser = argparse.ArgumentParser(
-            usage=USAGE_MSG,
-            description="NorthEuropeanBackbone Input Builder"
-        )
-        parser.add_argument(
-            "input_folder",
-            type=str,
-            help="Input folder (e.g. src_files)"
-        )
-        parser.add_argument(
-            "config_file",
-            type=str,
-            help="Config file name (relative to input_folder)"
-        )
-        # argparse will print our USAGE_MSG if args are missing
-        args = parser.parse_args()
-        input_folder = Path(args.input_folder)
-        config_file  = Path(input_folder, args.config_file)
-
-        return (input_folder, config_file)
-    
-
 def _check_dependencies():
     """
     Verifies required dependencies.
@@ -474,6 +439,6 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
 
 if __name__ == "__main__":
     # Parse CLI arguments
-    input_folder, config_file = _parse_sys_args()
+    input_folder, config_file = parse_sys_args()
     print(f"\nLaunching pipelines defined in: {config_file}")
     main(input_folder, config_file)

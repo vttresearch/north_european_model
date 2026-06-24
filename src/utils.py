@@ -1,5 +1,44 @@
+import sys
+import argparse
+from pathlib import Path
+
 import pandas as pd
 from pandas.api.types import is_numeric_dtype, is_bool_dtype
+
+
+def parse_sys_args():
+    # Instructions in case of mispelled input cmd
+    USAGE_MSG = (
+        "Usage: python build_input_data.py <input_folder> <config_file>,\n"
+        "       e.g. python build_input_data.py src_files config_test.ini"
+    )
+
+    # detect legacy key=val syntax
+    if any("=" in arg for arg in sys.argv[1:]):
+        print(USAGE_MSG)
+        sys.exit(1)
+    else:
+        # strict positional: both required
+        parser = argparse.ArgumentParser(
+            usage=USAGE_MSG,
+            description="NorthEuropeanBackbone Input Builder"
+        )
+        parser.add_argument(
+            "input_folder",
+            type=str,
+            help="Input folder (e.g. src_files)"
+        )
+        parser.add_argument(
+            "config_file",
+            type=str,
+            help="Config file name (relative to input_folder)"
+        )
+        # argparse will print our USAGE_MSG if args are missing
+        args = parser.parse_args()
+        input_folder = Path(args.input_folder)
+        config_file  = Path(input_folder, args.config_file)
+
+        return (input_folder, config_file)
 
 
 def standardize_df_dtypes(df: pd.DataFrame) -> pd.DataFrame:
