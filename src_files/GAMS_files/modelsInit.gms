@@ -19,8 +19,10 @@ $offtext
 * --- Load Model Parameters ---------------------------------------------------
 * =============================================================================
 
+$if not set init_file $setglobal init_file 'scheduleInit.gms'
+
 // Include desired model definition files here
-$include '%input_dir%/scheduleInit.gms'
+$include '%input_dir%/%init_file%'
 
 * =============================================================================
 * --- Optional Data Manipulation ----------------------------------------------
