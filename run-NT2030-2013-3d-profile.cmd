@@ -7,12 +7,14 @@ cd..
 :: With a unique scrdir per run, several Backbone runs can be started in parallel
 :: without overwriting each other's temporary files. If the runs shared the default
 :: scratch folder, they would fail or return results from the wrong run.
+:: For the same reason, output_file and debug_file are named per run.
 if not exist ".\north_european_model\scratch\NT2030-2013-3d" mkdir ".\north_european_model\scratch\NT2030-2013-3d"
 
 :: running backbone
 gams Backbone.gms ^
 --input_dir="./north_european_model/input_tyndp2024_NationalTrends_2030" ^
 --output_dir="./north_european_model/results" ^
+--output_file="results-NT2030-2013-3d.gdx" ^
 --debug_file="debug-NT2030-2013-3d.gdx" ^
 --climateYear=2013 ^
 --modelledDays=3 ^

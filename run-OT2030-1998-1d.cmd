@@ -1,4 +1,4 @@
-Title NE Backbone, OT2025, 1998, 1d
+Title NE Backbone, OT2030, 1998, 1d
 
 cd..
 
@@ -7,20 +7,22 @@ cd..
 :: With a unique scrdir per run, several Backbone runs can be started in parallel
 :: without overwriting each other's temporary files. If the runs shared the default
 :: scratch folder, they would fail or return results from the wrong run.
-if not exist ".\north_european_model\scratch\OT2025-1998-1d" mkdir ".\north_european_model\scratch\OT2025-1998-1d"
+:: For the same reason, output_file and debug_file are named per run.
+if not exist ".\north_european_model\scratch\OT2030-1998-1d" mkdir ".\north_european_model\scratch\OT2030-1998-1d"
 
 :: running backbone
 gams Backbone.gms ^
---input_dir="./north_european_model/input_ObservedTrends_2025" ^
+--input_dir="./north_european_model/input_ObservedTrends_2030" ^
 --output_dir="./north_european_model/results" ^
---debug_file="debug-OT2025-1998-1d.gdx" ^
+--output_file="results-OT2030-1998-1d.gdx" ^
+--debug_file="debug-OT2030-1998-1d.gdx" ^
 --climateYear=1998 ^
 --modelledDays=1 ^
 --input_file_excel=inputData.xlsx ^
 --solver_name=cplex ^
 --debug=1 ^
 -profile=4 ^
-scrdir="./north_european_model/scratch/OT2025-1998-1d"
+scrdir="./north_european_model/scratch/OT2030-1998-1d"
 
 
 cmd
