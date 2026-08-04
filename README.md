@@ -101,6 +101,10 @@ where xx.y.z is your GAMS version. You can find the correct version by opening G
 
 After these steps, you should have the required software and environment ready.
 
+`environment.yml` covers both building the input data and the plotting done by
+`analyze_ts.py`. If you already have a `northEuropeanModel` environment from an earlier
+version, run the update command in the next section to pick up packages added since.
+
  
 ## Updating the conda environment
 

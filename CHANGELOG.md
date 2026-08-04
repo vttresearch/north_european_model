@@ -1,5 +1,8 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-04
+- environment.yml: added matplotlib, required by analyze_ts.py.
+
 ## 2026-06-24
 - Adding %init_file% command line parameters for more flexible switching between schedule and invest
 - Updating changes_loop.inc to add more precise limits on vq_userconstraint.up to speed up the solver
