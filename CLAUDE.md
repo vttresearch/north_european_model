@@ -14,7 +14,7 @@ Only the following directories contain actively developed code and data definiti
 
 All other subdirectories are generated outputs or ad-hoc analysis folders -- skip them.
 
-All `.cmd` files are user-specific run scripts -- skip them.
+All `.cmd` files are user-owned run scripts. Do not rewrite them unless explicitly asked.
 
 
 ## Execution flow
@@ -44,6 +44,19 @@ The two pipeline stages use **different** NA/zero conventions. Mixing them up is
 - **After logger init** (pipeline phases): never raise -- log a warning and continue with a safe default.
 
 
-## Don't
+## Working inside the Backbone checkout
 
-- Access folders above the workspace root.
+This project is installed inside a Backbone checkout, so the parent directory `../` is
+the Backbone repository. The two are separate git repos.
+
+- **Read freely** from `../` -- `../docs/dictionary.md` and `../docs/features.md` are the
+  authoritative parameter/feature references; `../inc/` is the core model logic.
+- **Editing anything under `../` needs explicit user confirmation first -- before
+  planning the edit, not just before making it.** It is allowed, but it should be rare.
+  Default to changing files in this project.
+- **Other sessions may work in the Backbone repo concurrently, in folders that change
+  from day to day.** Never assume which one is contended; ask before touching it at all.
+- **Never write to `../input` or `../output`.** Shared with the Backbone repo and with
+  whatever else is running.
+- **Never launch GAMS unprompted.** A run from here can collide with a run in another
+  stream. See `run-*.cmd`.
