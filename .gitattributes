@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.gms text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.inc text eol=lf
+*.txt text eol=lf
