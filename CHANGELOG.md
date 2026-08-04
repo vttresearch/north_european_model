@@ -2,6 +2,7 @@
 
 ## 2026-08-04
 - environment.yml: added matplotlib, required by analyze_ts.py.
+- Added config_OT2030-continuous5y.ini, an example of bb_timeseries_length expressions (365*5).
 
 ## 2026-06-24
 - Adding %init_file% command line parameters for more flexible switching between schedule and invest
