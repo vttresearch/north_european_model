@@ -1,0 +1,43 @@
+// reader_rules.wb.txt -- every quiet rule the source reader applies.
+//
+// Exists to cover the transformations that happen before any pipeline logic
+// runs, and that are invisible in the output unless you know to look:
+//
+//   * a '#' row is a comment and is dropped        (normalize_dataframe)
+//   * a blank row truncates the sheet              (read_input_excels)
+//   * a 'note' column is dropped entirely          (read_input_excels)
+//   * a blank column header is dropped             (read_input_excels)
+//   * a value containing '_' drops its row         (drop_underscore_values)
+//   * '_output1' is stripped from numeric columns  (normalize_dataframe)
+//   * an unknown method warns and becomes 'replace'
+//   * scenario 'all' and year 1 always pass the whitelist
+//
+// This single workbook is the argument for the text fixture format: none of it
+// is expressible in a binary workbook a reviewer cannot read, and half of it is
+// about blank lines and '#' characters that CSV would swallow.
+
+// scenario/year present so the whitelist runs rather than logging that it was
+// skipped -- the only warnings this fixture should raise are the ones under test.
+[unittypedata]
+scenario | year | Generator_ID | unittype   | grid_output1 | eff00 | isSource
+all      | 1    | keeper       | Keeper     | elec         | 1     | 1
+all      | 1    | commented    | Commented  | elec         | 1     | 1
+all      | 1    | underscored  | Undersc    | elec         | 1     | 1
+all      | 1    | methodless   | Methodless | elec         | 1     | 1
+all      | 1    | truncated    | Truncated  | elec         | 1     | 1
+
+[nodedata]
+Country | Grid | Scenario | Year | nodeBalance
+FI      | elec | all      | 1    | 1
+
+// The 'Note' column and the blank-header column must both vanish. The blank
+// header is the empty field between Year and capacity_output1.
+[unitdata]
+Country | Generator_ID | unit_name_prefix | Scenario | Year | | capacity_output1 | Note | method
+FI      | keeper       |                  | all      | 1    | | 100              | survives this run | replace
+#FI     | commented    |                  | all      | 1    | | 111              | dropped: comment row | replace
+FI      | underscored  | has_underscore   | all      | 1    | | 122              | dropped: '_' in a value | replace
+FI      | methodless   |                  | all      | 1    | | 133              | unknown method coerced | frobnicate
+FI      | keeper       | scen             | test     | 2030 | | 144              | explicit scenario+year | replace
+<<blank>>
+FI      | truncated    |                  | all      | 1    | | 155              | never read: below the blank row | replace

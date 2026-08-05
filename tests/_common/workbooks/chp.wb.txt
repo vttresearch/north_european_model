@@ -1,0 +1,32 @@
+// chp.wb.txt -- a back-pressure CHP unit: one fuel input, two outputs.
+//
+// Exists to cover the multi-connection path:
+//   * create_p_gnu_io emits one row per declared grid_<put>
+//   * fill_capacities infers the input capacity that was not given
+//   * cb / cv reach p_unit and drive the heat-to-power relationship
+//   * three grids and three nodes appear in the domain sheets
+//
+// The unit declares only capacity_output1. Everything else about its size is
+// derived, which is the point: a test can assert the relationship between the
+// three connections without naming any of the numbers.
+
+[unittypedata]
+scenario | year | Generator_ID | unittype | grid_input1 | grid_output1 | grid_output2 | eff00 | cb   | cv
+all      | 1    | chpbio       | CHPbio   | biomass     | elec         | heat         | 0.85  | 0.45 | 0.15
+
+[nodedata]
+Country | Grid    | Scenario | Year | nodeBalance | price
+FI      | elec    | all      | 1    | 1           |
+FI      | heat    | all      | 1    | 1           |
+FI      | biomass | all      | 1    |             | 30
+
+// unit_name_prefix is declared but left blank: it is part of the unitdata merge
+// key, and omitting the column entirely makes merge_row_by_row say so.
+[unitdata]
+Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1 | vomCosts
+FI      | chpbio       |                  | all      | 1    | 500              | 2
+
+[demanddata]
+Country | Grid | Scenario | Year | TWh/year
+FI      | elec | all      | 1    | 5
+FI      | heat | all      | 1    | 3

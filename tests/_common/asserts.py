@@ -99,7 +99,13 @@ def _norm(value: Any) -> Any:
 
 
 def rows_for(df: pd.DataFrame, **key: Any) -> pd.DataFrame:
-    """Rows matching every ``column=value`` pair, compared leniently."""
+    """Rows matching every ``column=value`` pair, compared leniently.
+
+    Pass ``None`` to select rows where the cell is missing. In the source stage
+    an empty cell is ``pd.NA`` and *not* the empty string, so matching on ``""``
+    would quietly find nothing -- the same NA/blank distinction the pipeline
+    depends on, applied to the test helper.
+    """
     if df.empty:
         return df
     mask = pd.Series(True, index=df.index)
@@ -108,7 +114,10 @@ def rows_for(df: pd.DataFrame, **key: Any) -> pd.DataFrame:
             raise AssertionError(
                 f"no column {column!r}; present: {list(df.columns)}"
             )
-        mask &= df[column].map(_norm) == _norm(wanted)
+        if wanted is None:
+            mask &= df[column].isna()
+        else:
+            mask &= df[column].map(_norm) == _norm(wanted)
     return df[mask]
 
 
