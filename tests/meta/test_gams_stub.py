@@ -1,19 +1,19 @@
 """Tests for the ``gams.transfer`` stand-in installed by ``tests/conftest.py``.
 
 On a machine with the real GAMS Python API the stub is never installed, so
-these tests exercise ``HostileModule`` directly.  Without them the stub would
+these tests exercise ``RefusingModule`` directly.  Without them the stub would
 only ever be exercised on machines nobody is looking at.
 """
 
 import pytest
 
-from tests.conftest import GAMS_IS_STUBBED, HostileModule
+from tests.conftest import GAMS_IS_STUBBED, RefusingModule
 
 
 def test_the_stub_satisfies_an_import_statement():
     # `import gams.transfer` only needs the module object to exist; it must not
     # trip the __getattr__ guard.
-    module = HostileModule("gams.transfer")
+    module = RefusingModule("gams.transfer")
     assert module.__name__ == "gams.transfer"
 
 
@@ -25,7 +25,7 @@ def test_touching_any_attribute_raises_and_names_it(attribute):
     loudly and say which attribute it wanted -- silently returning a Mock would
     let a GDX-writing test report success without writing anything.
     """
-    module = HostileModule("gams.transfer")
+    module = RefusingModule("gams.transfer")
     with pytest.raises(RuntimeError) as excinfo:
         getattr(module, attribute)
 

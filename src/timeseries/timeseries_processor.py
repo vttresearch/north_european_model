@@ -31,18 +31,36 @@ to the end of ``end_year`` (i.e. ``{end_year}-12-31 23:00``).  Climate-window
 slicing is handled entirely by the runner; processors must not filter to a
 particular window or timeseries length.
 
-If ``main_result`` is not a ``pd.DataFrame``, is empty, or does not have the
-required columns, ``ProcessorRunner`` logs a warning/error and continues --
-no GDX is written for that processor.
+Validation
+----------
+``main_result`` is rejected -- logged, and no GDX written for that processor --
+when it is not a ``pd.DataFrame``, is empty, does not have exactly the required
+columns, contains duplicate ``(dimensions, time)`` rows, has a missing value in
+any *dimension* column, has a non-numeric ``value`` column, or has a ``time``
+column that cannot be read as datetime.
+
+Missing values in ``value`` are **not** a rejection: they mean "no data", and
+they keep that meaning all the way to the GDX gate.
+
+NA and zero
+-----------
+GAMS has no NaN, and a plain ``0`` *is* empty.  That convention begins at the
+GDX boundary and nowhere earlier.  ``GDX_exchange.prepare_values_for_gdx`` is
+the single place NaN becomes 0, and it logs how many entries it converted.
+
+The distinction matters beyond tidiness: ``calculate_climatological_forecasts``
+computes quantiles, and pandas' ``quantile`` skips NaN.  Filling gaps with 0
+before that point makes a missing hour count as a genuine zero and biases the
+whole climatology downward.
 
 Post-processing applied by ProcessorRunner
 ------------------------------------------
 After ``run_processor()`` returns and the interface is validated:
 
-1. **Standardize dtypes** -- ``utils.standardize_df_dtypes`` converts numeric
-   columns to ``Float64``.
-2. **Fill numeric NA** -- ``utils.fill_all_na`` replaces ``pd.NA`` with ``0``.
-3. **Round** -- ``value`` is rounded to ``rounding_precision`` (default 0).
+1. **Coerce ``time``** to datetime if the processor did not already.
+2. **Categorise** dimension columns (memory + groupby speed).
+3. **Round** ``value`` to ``rounding_precision`` (default 0).
+4. **Apply ``cutoff_below``** -- small magnitudes to 0, leaving NaN untouched.
 """
 
 import os
@@ -51,7 +69,6 @@ from pathlib import Path
 import importlib.util
 import pandas as pd
 import src.hash_utils as hash_utils
-import src.utils as utils
 import src.GDX_exchange as GDX_exchange
 import src.json_exchange as json_exchange
 from src.infrastructure.cache_manager import CacheManager
@@ -317,6 +334,16 @@ class ProcessorRunner:
                 f"No GDX output will be written.",
                 level="warn",
             )
+            # Return rather than fall through: the message above promised no GDX
+            # output, but execution used to continue into the curing block and
+            # on towards the writers.
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
         # Processors must return exactly bb_parameter_dimensions (excluding 't' and 'f') + ['time', 'value'].
         expected_dims = [d for d in spec.get("bb_parameter_dimensions") if d not in ('t', 'f')]
         expected_cols = set(expected_dims + ['time', 'value'])
@@ -355,14 +382,77 @@ class ProcessorRunner:
                 ts_domain_pairs={},
             )
 
+        # Dimension values become GAMS set elements, so a missing one is not a
+        # value problem -- it is a broken key. Caught here, where the message can
+        # name the processor, rather than at the GDX gate where it can only name
+        # a filename.
+        for dim in expected_dims:
+            if main_result[dim].isna().any():
+                n_missing = int(main_result[dim].isna().sum())
+                self.logger.log_status(
+                    f"Processor '{processor_name}' returned {n_missing} row(s) with a "
+                    f"missing '{dim}' value. Dimension values become GAMS set elements "
+                    f"and cannot be blank. No GDX output will be written.",
+                    level="error",
+                )
+                self._update_processor_hash(processor_file, processor_name)
+                return ProcessorRunResult(
+                    processor_name=processor_name,
+                    secondary_result=None,
+                    ts_domains={},
+                    ts_domain_pairs={},
+                )
+
+        if not pd.api.types.is_numeric_dtype(main_result["value"]):
+            self.logger.log_status(
+                f"Processor '{processor_name}' returned a non-numeric 'value' column "
+                f"(dtype {main_result['value'].dtype}). No GDX output will be written.",
+                level="error",
+            )
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
+
         # --- cure and standardize main results ---
 
-        # fill NA only if needed (avoids a full DataFrame copy when processors return clean data)
-        if main_result.isnull().values.any():
-            main_result = utils.fill_all_na(main_result)
+        # NOTE: missing 'value' entries are deliberately NOT filled here.
+        # NaN means "no data" all the way to the GDX gate, where
+        # GDX_exchange.prepare_values_for_gdx converts it to 0 and logs how many.
+        # Filling at this point silently erased the difference between "no wind"
+        # and "no data", and -- worse -- fed those zeros into
+        # calculate_climatological_forecasts, which computes quantiles: a gap in
+        # the source data was counted as a genuine zero and dragged the whole
+        # climatology down. pandas' quantile skips NaN, so leaving it alone is
+        # both more honest and more correct.
+
         # ensure time is datetime only if needed (processors should already return datetime)
         if not pd.api.types.is_datetime64_any_dtype(main_result['time']):
-            main_result['time'] = pd.to_datetime(main_result['time'])
+            try:
+                main_result['time'] = pd.to_datetime(main_result['time'])
+            except (ValueError, TypeError) as e:
+                self.logger.log_status(
+                    f"Processor '{processor_name}' returned a 'time' column that is not "
+                    f"datetime and could not be converted ({e}). "
+                    f"No GDX output will be written.",
+                    level="error",
+                )
+                self._update_processor_hash(processor_file, processor_name)
+                return ProcessorRunResult(
+                    processor_name=processor_name,
+                    secondary_result=None,
+                    ts_domains={},
+                    ts_domain_pairs={},
+                )
+            self.logger.log_status(
+                f"Processor '{processor_name}' returned 'time' as "
+                f"{main_result['time'].dtype}; converted to datetime. Processors are "
+                f"expected to return datetime directly.",
+                level="warn",
+            )
 
         # Categorize grouping dimension columns (bb_parameter_dimensions excluding t and f).
         # Categorical dtype reduces memory use and speeds up groupby in downstream functions.
@@ -374,10 +464,14 @@ class ProcessorRunner:
         # Round
         main_result = main_result.round(rounding_precision)
 
-        # Drop near-zero values to avoid tiny LP coefficients
+        # Drop near-zero values to avoid tiny LP coefficients.
+        # The isna() term keeps missing data missing: without it, `NaN >= cutoff`
+        # is False and every gap would be quietly rewritten as a real 0 here,
+        # before the GDX gate ever gets to count and report it.
         if cutoff_below is not None:
-            main_result['value'] = main_result['value'].where(
-                main_result['value'].abs() >= cutoff_below, 0
+            values = main_result['value']
+            main_result['value'] = values.where(
+                values.isna() | (values.abs() >= cutoff_below), 0
             )
 
         # --- Slice and write climate windows' data ---

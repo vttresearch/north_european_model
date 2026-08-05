@@ -281,6 +281,73 @@ def assert_normalized(df: Any, *, where: str = "", require_clean_index: bool = F
             )
 
 
+def assert_gams_ready(
+    df: pd.DataFrame,
+    *,
+    dimensions: Sequence[str] = (),
+    value_col: str = "value",
+    where: str = "",
+) -> None:
+    """Assert `df` is safe to hand to gams.transfer -- boundary 7 of the NA/zero map.
+
+    GAMS has no NaN and a plain ``0`` *is* empty, so by this point:
+
+    1. `value_col` is numeric;
+    2. it holds no NA -- every gap must already have been converted to 0
+       *and reported*, not silently carried in;
+    3. it holds no ``inf``/``-inf``. GAMS would accept these as INF and the
+       model would then fail somewhere far away from the cause;
+    4. every dimension value is a non-blank string. ``''`` is not a usable GAMS
+       set element, and a blank key is silently wrong rather than loudly wrong.
+
+    Everything *upstream* of this gate may hold NA, and there it means
+    "no data". That is deliberate: pandas' ``quantile`` skips NA, so leaving
+    gaps alone until here keeps the climatological forecasts honest.
+    """
+    prefix = f"{where}: " if where else ""
+
+    for dim in dimensions:
+        if dim not in df.columns:
+            raise AssertionError(f"{prefix}dimension column {dim!r} is missing")
+        col = df[dim]
+        if col.isna().any():
+            first = col.index[col.isna()][0]
+            raise AssertionError(
+                f"{prefix}dimension {dim!r} row {first} is missing; GAMS set "
+                f"elements cannot be blank"
+            )
+        blank = col.astype("string").str.strip().eq("")
+        if blank.any():
+            first = col.index[blank][0]
+            raise AssertionError(
+                f"{prefix}dimension {dim!r} row {first} is blank; '' is not a "
+                f"usable GAMS set element"
+            )
+
+    if value_col not in df.columns:
+        raise AssertionError(f"{prefix}value column {value_col!r} is missing")
+
+    values = df[value_col]
+    if not pd.api.types.is_numeric_dtype(values):
+        raise AssertionError(
+            f"{prefix}{value_col!r} has dtype {values.dtype}, expected numeric"
+        )
+    if values.isna().any():
+        first = values.index[values.isna()][0]
+        raise AssertionError(
+            f"{prefix}{value_col!r} row {first} is NA. GAMS has no NaN, so every "
+            f"gap must be converted to 0 -- and counted in the log -- before this "
+            f"point, never carried in silently."
+        )
+    as_float = values.to_numpy(dtype="float64", na_value=0.0)
+    if np.isinf(as_float).any():
+        first = values.index[np.isinf(as_float)][0]
+        raise AssertionError(
+            f"{prefix}{value_col!r} row {first} is non-finite ({values.loc[first]}); "
+            f"GAMS accepts INF and the model would fail far from the cause"
+        )
+
+
 def assert_no_na_became_zero(
     before: pd.DataFrame,
     after: pd.DataFrame,

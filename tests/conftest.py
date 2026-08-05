@@ -21,7 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-class HostileModule(types.ModuleType):
+class RefusingModule(types.ModuleType):
     """A module that satisfies an ``import`` and refuses everything after it.
 
     Module-level (not nested inside the installer) so that ``tests/meta/`` can
@@ -40,7 +40,7 @@ class HostileModule(types.ModuleType):
 
 
 def _install_gams_stub() -> bool:
-    """Install a deliberately hostile ``gams.transfer`` stub if the real one is absent.
+    """Install a deliberately strict ``gams.transfer`` stub if the real one is absent.
 
     ``src/GDX_exchange.py`` imports ``gams.transfer`` at module level, and
     ``timeseries_pipeline.py`` / ``timeseries_processor.py`` import it in turn --
@@ -64,7 +64,7 @@ def _install_gams_stub() -> bool:
         pass
 
     gams_pkg = types.ModuleType("gams")
-    transfer_mod = HostileModule("gams.transfer")
+    transfer_mod = RefusingModule("gams.transfer")
     gams_pkg.transfer = transfer_mod
     sys.modules.setdefault("gams", gams_pkg)
     sys.modules.setdefault("gams.transfer", transfer_mod)

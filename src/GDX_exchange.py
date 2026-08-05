@@ -1,9 +1,112 @@
 from pathlib import Path
 from typing import Dict, Optional, Sequence
+import numpy as np
 import pandas as pd
 import os
 import gams.transfer as gt
 from tqdm import tqdm
+
+
+def prepare_values_for_gdx(
+    df: pd.DataFrame,
+    logger,
+    *,
+    dimensions: Sequence[str],
+    where: str,
+    value_col: str = "value",
+    ) -> pd.DataFrame:
+    """
+    Last gate before a DataFrame becomes GDX. Returns a writable copy.
+
+    This is where the GAMS data convention begins and nowhere earlier: GAMS has
+    no NaN, and a plain 0 *is* empty.  Upstream of this function ``NaN`` keeps
+    its Python meaning -- "no data" -- which is what lets
+    ``calculate_climatological_forecasts`` compute quantiles over the hours it
+    actually has, rather than counting missing hours as genuine zeros.
+
+    Three checks, in order of severity:
+
+    - **Missing dimension values** are an error.  A NaN or blank dimension cell
+      would otherwise be written as the empty-string GAMS set element ``''``,
+      which is silently wrong rather than loudly wrong.  The offending rows are
+      dropped so the GDX stays clean; the error makes the run report failure.
+    - **Non-finite values** (inf/-inf) are an error.  GAMS accepts INF, so these
+      would be written happily and then make the model unbounded or infeasible
+      somewhere far away from the cause.  Dropped as well.
+    - **Missing values** are filled with 0, and *logged with a count*.  The fill
+      itself is correct and necessary here.  Doing it silently is what destroys
+      the difference between "no wind" and "no data", so it is reported.
+
+    Parameters:
+        df: DataFrame with the dimension columns plus `value_col`
+        logger: IterationLogger (or any object with log_status)
+        dimensions: dimension column names that become GAMS sets
+        where: label used in log messages to identify the caller
+        value_col: name of the numeric column
+
+    Returns:
+        A copy of `df` safe to hand to gams.transfer.
+    """
+    if df is None or len(df) == 0:
+        return df
+
+    work = df.copy()
+
+    # --- dimensions must be usable as GAMS set elements ---
+    present_dims = [d for d in dimensions if d in work.columns]
+    if present_dims:
+        blank = pd.Series(False, index=work.index)
+        for d in present_dims:
+            col = work[d]
+            missing = col.isna()
+            # Compare as text: dimension columns may be categorical, and a
+            # whitespace-only label is as unusable as an empty one.
+            as_text = col.astype("string")
+            blank |= missing | as_text.fillna("").str.strip().eq("")
+        if blank.any():
+            examples = ", ".join(
+                str(v) for v in work.loc[blank, present_dims[0]].head(3).tolist()
+            )
+            logger.log_status(
+                f"{where}: {int(blank.sum())} row(s) have a missing or blank value in "
+                f"dimension column(s) {present_dims}; these cannot become GAMS set "
+                f"elements and have been dropped. First affected keys: {examples}.",
+                level="error",
+            )
+            work = work.loc[~blank]
+
+    if value_col not in work.columns or len(work) == 0:
+        return work
+
+    values = pd.to_numeric(work[value_col], errors="coerce")
+
+    # --- non-finite values ---
+    finite_check = values.to_numpy(dtype="float64", na_value=0.0)
+    non_finite = np.isinf(finite_check)
+    if non_finite.any():
+        logger.log_status(
+            f"{where}: {int(non_finite.sum())} row(s) have a non-finite {value_col} "
+            f"(inf/-inf) and have been dropped. GAMS would accept these as INF and "
+            f"the model would fail far from the cause.",
+            level="error",
+        )
+        work = work.loc[~non_finite]
+        values = values.loc[~non_finite]
+
+    # --- missing values: fill, but say so ---
+    na_count = int(values.isna().sum())
+    if na_count:
+        logger.log_status(
+            f"{where}: {na_count} of {len(values)} {value_col} entries were missing "
+            f"and are written to GDX as 0, because GAMS has no NaN. If these should "
+            f"be genuine zeros this is fine; if they are gaps in the source data, "
+            f"the model will read them as zero generation/demand.",
+            level="warn",
+        )
+        values = values.fillna(0)
+
+    work[value_col] = values.astype("float64")
+    return work
 
 
 def read_gdx_parameter(
@@ -56,6 +159,15 @@ def write_df_to_gdx(
         logger.log_status(f"Skipping writing GDX '{output_file}': No data to write", level="warn")
         return
 
+    df = prepare_values_for_gdx(
+        df, logger, dimensions=parameter_dimensions, where=f"GDX '{os.path.basename(output_file)}'"
+    )
+    if df is None or len(df) == 0:
+        logger.log_status(
+            f"Skipping writing GDX '{output_file}': no rows survived validation", level="warn"
+        )
+        return
+
     work = df[list(parameter_dimensions) + ["value"]]
 
     m = gt.Container()
@@ -101,6 +213,26 @@ def write_climate_window_GDX_files(
     """
     if not annual_dfs:
         logger.log_status(f"Skipping GDX writing for '{bb_parameter}_{gdx_name_suffix}': no data to write.", level="warn")
+        return
+
+    # Gate every window before any container is built, so that a bad year is
+    # reported once here rather than as an opaque gams.transfer failure below.
+    annual_dfs = {
+        yr: prepare_values_for_gdx(
+            frame,
+            logger,
+            dimensions=bb_parameter_dimensions,
+            where=f"GDX '{bb_parameter}_{gdx_name_suffix or ''}' climate year {yr}",
+        )
+        for yr, frame in annual_dfs.items()
+    }
+    annual_dfs = {yr: frame for yr, frame in annual_dfs.items() if frame is not None and len(frame)}
+    if not annual_dfs:
+        logger.log_status(
+            f"Skipping GDX writing for '{bb_parameter}_{gdx_name_suffix}': "
+            f"no rows survived validation.",
+            level="warn",
+        )
         return
 
     years = sorted(annual_dfs.keys())

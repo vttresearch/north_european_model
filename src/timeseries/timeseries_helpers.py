@@ -329,6 +329,10 @@ def calculate_climatological_forecasts(
     hour = time.dt.hour.to_numpy()
     hour_of_year = (day_of_year - 1) * 24 + hour + 1
 
+    # copy() first: this used to write 'hour_of_year' into the caller's frame,
+    # so main_result silently gained a column that ProcessorRunner then carried
+    # on using for domain collection and the annual summary.
+    input_df = input_df.copy()
     input_df["hour_of_year"] = hour_of_year.astype(np.int32)
 
     # Only process hours up to 8760 (ignore extra hours from leap years)
@@ -400,8 +404,18 @@ def calculate_climatological_forecasts(
     df_full["f"] = df_full["quantile"].map({v: k for k, v in forecast_quantiles.items()})
     df_full["f"] = df_full["f"].astype("category")
 
-    # Fill missing quantile values with 0, then round
-    df_full["value"] = df_full["value"].fillna(0)
+    # Missing quantile values are deliberately left as NaN.
+    #
+    # The merge above is a LEFT join onto the full (dims x window x quantile)
+    # grid, so any window hour with no climatological data lands here as NaN --
+    # for example when the source data does not span a whole calendar year but
+    # the requested window does. Filling silently with 0 turned "no climatology
+    # for this hour" into "a forecast of exactly zero", which is a real value the
+    # optimiser will act on, with nothing in the log to say so.
+    #
+    # GDX_exchange.prepare_values_for_gdx performs the conversion instead, and
+    # reports how many entries it converted. GAMS still receives 0; the
+    # difference is that the run now says so.
     if round_precision is not None:
         df_full["value"] = df_full["value"].round(round_precision)
 

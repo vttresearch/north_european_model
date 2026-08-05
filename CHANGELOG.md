@@ -1,6 +1,13 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- Timeseries NaN handling: missing values are now converted to 0 in one place only, the GDX boundary (GDX_exchange.prepare_values_for_gdx), which logs how many were converted. Removed the three silent fills that preceded it (ProcessorRunner after validation, cutoff_below as a side effect, calculate_climatological_forecasts after its left join).
+- Behaviour change: where source timeseries have gaps, climatological forecasts differ. Quantiles now skip missing hours instead of counting them as genuine zeros, which previously biased every forecast branch downward.
+- GDX writing rejects and logs rows with a blank dimension value (would have become the GAMS set element '') or a non-finite value.
+- ProcessorRunner rejects processor output with a missing dimension value, a non-numeric value column, or a time column that cannot be read as datetime. A convertible non-datetime time column is still accepted but now warns.
+- ProcessorRunner: an empty processor DataFrame now stops as its message always claimed; previously execution continued.
+- calculate_climatological_forecasts no longer adds an 'hour_of_year' column to the caller's DataFrame.
+- Removed src_files/config_unittest.ini and src_files/data_files/unitTest.xlsx; superseded by tests/.
 - source_data_loader.py: build_from_to_columns no longer raises TypeError when a country or grid cell is not a string (now stringifies, matching build_node_column).
 - source_data_loader.py: build_unit_grid_and_node_columns now writes pd.NA, not np.nan, into the object-dtype grid_/node_ columns it creates for unmatched generator_ids.
 - utils.py: is_col_empty returns a plain bool instead of numpy.bool_.

@@ -51,14 +51,26 @@ codebase's history lives at the seam. This table is what the suite is organised 
 | 2 | within source merging | `pd.NA` ≠ `0` | same | `merge_row_by_row` truth table (`:884-909`) | specified |
 | 3 | source DataFrames → BB Excel builder | `pd.NA` ≠ `0` | `0 = NA = None = not set` | `fill_all_na` / `fill_numeric_na` (`utils.py:107,119`) | specified |
 | 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns (`bb_excel_pipeline.py:332`) | specified |
-| 5 | processor `process()` → `main_result` | ? | ? | nothing | **UNSPECIFIED** |
-| 6 | `main_result` → climate windows → forecasts | ? | ? | `fill_all_na` at `:361` | **wrong place** |
-| 7 | window DataFrame → GDX | must have no NaN | GAMS: `0 = empty` | nothing — implicit | **UNSPECIFIED** |
+| 5 | processor `process()` → `main_result` | NaN = no data | NaN = no data | validation in `ProcessorRunner` | specified |
+| 6 | `main_result` → climate windows → forecasts | NaN = no data | NaN = no data | nothing — gaps pass through | specified |
+| 7 | window DataFrame → GDX | NaN = no data | GAMS: `0 = empty` | `GDX_exchange.prepare_values_for_gdx` | specified |
 | 8 | `secondary_result` → `BBExcelPipeline` | ? | consumed by `p_gn` / storage limits | nothing | **UNSPECIFIED** |
 
 **`0 = NA = None` governs written GDX files too, not only `inputData.xlsx`.** The GAMS
-convention begins at boundary 7 and nowhere earlier. Rows 5–8 are the subject of a later
-phase.
+convention begins at boundary 7 and nowhere earlier.
+
+Boundary 7 is the **only** place NaN becomes 0 on the timeseries route, and it logs how many
+entries it converted. Do not add a `fillna(0)` upstream of it. Three used to exist — in
+`ProcessorRunner` right after validation, as a side effect of `cutoff_below`, and inside
+`calculate_climatological_forecasts` — and each one silently made a gap in the source data
+indistinguishable from a genuine zero. Filling before the quantile step was the worst of the
+three: pandas' `quantile` skips NaN, so a missing hour counted as a real zero and dragged the
+whole climatology down.
+
+Dimension values are different from measurements: a missing one is a **broken key**, not a gap.
+It would become the GAMS set element `''`, so it is rejected rather than filled.
+
+Row 8 is still unspecified and remains open.
 
 ### The all-NA rule
 

@@ -33,9 +33,39 @@ All `.cmd` files are user-owned run scripts. Do not rewrite them unless explicit
 
 ## Data conventions
 
-The two pipeline stages use **different** NA/zero conventions. Mixing them up is a common source of bugs.
-- **SourceExcelDataPipeline**: `pd.NA` and `0` are distinct. NA = empty cell, 0 = explicitly zero. This lets `method=replace` overwrite a value with zero and avoid overwriting with missing data.
-- **BBExcelPipeline**: `0 = NA = None = "not set"`. The distinction no longer matters because Backbone treats absent and zero identically.
+GAMS has no NaN, and a plain `0` **is** empty -- efficient for memory and solve speed, and
+correspondingly hard to hold in your head. Python is precise about types; GAMS is not. Nearly
+every bug in this project's history lives at that seam, so be explicit about which side of it
+you are on.
+
+`0 = NA = None = "not set"` governs **written GDX files too**, not only `inputData.xlsx`.
+
+- **SourceDataPipeline**: `pd.NA` and `0` are distinct. NA = empty cell, 0 = explicitly zero.
+  This lets `method=replace` overwrite a value with zero and avoid overwriting with missing data.
+- **BBExcelPipeline**: `0 = NA = None = "not set"`. The distinction no longer matters because
+  Backbone treats absent and zero identically. `fill_all_na` / `fill_numeric_na` (`src/utils.py`)
+  are the crossing point.
+- **Timeseries -> GDX**: NaN means "no data" through the whole processor and curing chain. The
+  single conversion point is `GDX_exchange.prepare_values_for_gdx`, which converts NaN to 0 and
+  **logs how many**. Do not add a `fillna(0)` upstream of it: silent filling makes a gap in the
+  source data indistinguishable from a genuine zero, and -- because
+  `calculate_climatological_forecasts` takes quantiles, which skip NaN -- it also biases every
+  forecast branch downward.
+
+### Dtypes
+
+`utils.standardize_df_dtypes` leaves only `Float64`, `object` and `string`. An **all-NA column is
+`object`, never `Float64`**: that means "no assumption has been made", and it is the fix for a
+cascade bug where empty text and empty numeric columns became indistinguishable and downstream
+code crashed on the dtype it did not expect.
+
+The obligation this creates is on consumers: tolerate an all-NA `object` column where you expect
+`Float64`. Never write a `{column: dtype}` map -- state dtype rules as properties.
+
+Object columns use `pd.NA` for missing, never `None` and never `float('nan')`.
+
+`tests/README.md` carries the full boundary map and the assertion rules; the contract is
+enforced by `tests/_common/contracts.py` and swept over every loader function.
 
 
 ## Error handling policy
