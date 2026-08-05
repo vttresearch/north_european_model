@@ -552,20 +552,96 @@ class TestMeasureInference:
         )
         logger.assert_logged("Some measure_cols not found", level="warn")
 
-    def test_with_no_measures_at_all_every_method_behaves_as_replace(self):
-        """A quiet branch at :1101 worth knowing about.
+    def test_a_method_does_not_change_because_another_column_is_numeric(self):
+        """Regression: a sheet with no numeric column made every method blunt.
 
-        ``method == "replace" or not present_measures`` means that on a frame
-        with no numeric columns, an 'add' row silently becomes a full replace.
-        Reasonable -- there is nothing to add -- but surprising enough to pin.
+        ``present_measures`` is inferred from the columns, and the merge loop
+        used to fall back to a full replace whenever it came out empty. So the
+        very same 'add' row overwrote a text column when the sheet had no
+        numbers in it, and left that column alone when it did -- behaviour
+        depending on whether some *unrelated* column happened to be numeric.
+
+        'add' concerns measures. With none present it has nothing to do.
         """
-        merged = _merge(
+        without_numbers = _merge(
+            _frame(_row("replace", unittype="coal"), _row("add", unittype="gas"))
+        )
+        with_numbers = _merge(
             _frame(
-                _row("replace", unittype="coal"),
-                _row("add", unittype="gas"),
+                _row("replace", unittype="coal", capacity=100),
+                _row("add", unittype="gas", capacity=1),
             )
         )
-        assert _value(merged, "unittype") == "gas"
+        assert _value(without_numbers, "unittype") == "coal"
+        assert _value(with_numbers, "unittype") == "coal"
+
+
+class TestEmptyRows:
+    """What a row carrying no values does, per method.
+
+    A blank overlay row is easy to produce by accident -- a spreadsheet row left
+    half-filled, a template copied but not completed -- so every method needs a
+    defined answer. Only ``replace`` may destroy anything: clearing values is
+    what it is for.
+    """
+
+    ACCUMULATING = ("replace-partial", "add", "add-non-negative", "multiply")
+
+    @pytest.mark.parametrize("method", ACCUMULATING)
+    def test_an_empty_row_leaves_the_record_untouched(self, method):
+        merged = _merge(
+            _frame(
+                _row("replace", capacity=100, vomcosts=5, unittype="coal"),
+                _row(method),
+            )
+        )
+        assert _value(merged) == 100
+        assert _value(merged, "vomcosts") == 5
+        assert _value(merged, "unittype") == "coal"
+
+    @pytest.mark.parametrize("method", ACCUMULATING)
+    def test_and_still_does_so_when_the_sheet_has_no_numeric_column(self, method):
+        # The regression: with no measures to iterate, these used to fall
+        # through to a full replace and blank the record.
+        merged = _merge(
+            _frame(_row("replace", unittype="coal"), _row(method))
+        )
+        assert _value(merged, "unittype") == "coal"
+
+    @pytest.mark.parametrize("method", ACCUMULATING)
+    def test_and_across_a_frame_boundary(self, method):
+        # The accidental blank row usually arrives in a separate overlay file.
+        rows = (_row("replace", capacity=100, unittype="coal"), _row(method))
+        together = _merge(_frame(*rows))
+        apart = _merge(_frame(rows[0]), _frame(rows[1]))
+        pd.testing.assert_frame_equal(together, apart)
+
+    def test_an_empty_replace_row_does_clear_the_record(self):
+        # The one method allowed to destroy: 'replace' means the later row wins
+        # outright, blanks included, and users rely on it to clear a value.
+        merged = _merge(
+            _frame(_row("replace", capacity=100, unittype="coal"), _row("replace"))
+        )
+        assert pd.isna(_value(merged))
+        assert pd.isna(_value(merged, "unittype"))
+
+    def test_an_empty_row_as_the_first_occurrence_creates_a_blank_record(self):
+        # Nothing to accumulate onto; the key exists but carries no values.
+        merged = _merge(_frame(_row("add", capacity=None)))
+        assert len(merged) == 1
+        assert pd.isna(_value(merged))
+
+    def test_remove_ignores_any_values_it_carries(self):
+        """Accepted quirk, pinned deliberately.
+
+        A 'remove' row with values still only removes. Reading it as
+        "remove, then re-add these values" would be defensible, but deleting is
+        the more intuitive reading of the word and it is what users expect.
+        """
+        merged = _merge(
+            _frame(_row("replace", capacity=100), _row("remove", capacity=999))
+        )
+        assert merged.empty
 
 
 class TestOutputShape:

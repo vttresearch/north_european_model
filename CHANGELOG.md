@@ -1,6 +1,7 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- source_data_loader: merge_row_by_row no longer degrades every method to a full replace when a category has no numeric column anywhere. An empty 'add' row, and even a 'replace-partial' row, silently blanked the record it was meant to leave alone, and the same row behaved differently depending on whether an unrelated column happened to be numeric.
 - source_data_loader: merge_row_by_row now returns the key columns it reports creating. It added them to each input frame but rebuilt the result from a column list computed beforehand, so they were dropped again; create_p_userconstraint believed the message and crashed.
 - bb_excel_pipeline: create_p_userconstraint no longer raises KeyError when a userconstraintdata sheet omits unused dimension columns. It detected the missing columns and logged a warning, then selected them anyway and killed the build. A constraint using only the 1st and 2nd dimension is ordinary.
 - Tests: added the route tier -- source workbooks to inputData.xlsx, driven in-process with no GAMS and no working-directory dependence. Test workbooks are stored as text (.wb.txt) and built into .xlsx at run time, so fixtures are diffable and cannot rot unnoticed.

@@ -224,6 +224,25 @@ def assert_workbook_consistent(sheets: Mapping[str, pd.DataFrame]) -> None:
             label=f"{child_name}.{child_col} -> {parent_name}.{parent_col}",
         )
 
+    # nodeBalance and usePrice are mutually exclusive: one enforces an energy
+    # balance at the node, the other enables price calculation and disables that
+    # balance. docs/dictionary.md:241-263 -- "activating both is invalid".
+    # A node with both is accepted by the workbook writer and rejected by the
+    # model, far from the row that caused it.
+    p_gn = sheets.get("p_gn")
+    if p_gn is not None and not p_gn.empty:
+        if {"nodeBalance", "usePrice"} <= set(p_gn.columns):
+            def _set(series):
+                return pd.to_numeric(series, errors="coerce").fillna(0) != 0
+
+            both = _set(p_gn["nodeBalance"]) & _set(p_gn["usePrice"])
+            if both.any():
+                offenders = p_gn.loc[both, ["grid", "node"]].head(5).to_dict("records")
+                raise AssertionError(
+                    f"{int(both.sum())} node(s) set both nodeBalance and usePrice, "
+                    f"which the model rejects: {offenders}"
+                )
+
     # The unit domain must agree in both directions: a unit declared but never
     # connected, or connected but never declared, breaks the model rather than
     # merely looking untidy.

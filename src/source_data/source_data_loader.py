@@ -1105,7 +1105,16 @@ def merge_row_by_row(
                 continue
 
             # --- Apply appropriate handler based on method ----------------------
-            if method == "replace" or not present_measures:
+            # Every method routes to its own handler, including when there are no
+            # measure columns to act on. This used to short-circuit to a full
+            # replace whenever `present_measures` was empty, which meant a sheet
+            # with no numeric column anywhere turned 'add', 'multiply' and even
+            # 'replace-partial' into blunt overwrites -- so an empty 'add' row
+            # wiped the record it was meant to leave alone, and the same row
+            # behaved differently depending on whether some unrelated column
+            # happened to be numeric. With no measures the accumulating handlers
+            # simply have nothing to iterate and correctly do nothing.
+            if method == "replace":
                 acc[k] = _handle_replace(existing, row_dict, method, partial=False)
             elif method == "replace-partial":
                 acc[k] = _handle_replace(existing, row_dict, method, partial=True)
