@@ -167,10 +167,11 @@ class TestLongerWindowsLoseTheContainment:
         changes its calendar, breaks the alignment with no signal at all,
         because t-labels come from row position rather than from the timestamp.
 
-        The cheap guard is the same one the row-position labelling needs anyway:
-        assert every group in a window has the same row count, and that it
-        equals bb_ts_length * 24. That turns this from a silent 24-hour offset
-        into a message naming the node and the year.
+        Where the check belongs was decided in phase 5: the verifier, not the
+        pipeline. Whether a processor's calendar lines up with the others is a
+        property of the processor and its source, so the answer is identical for
+        every build -- and users generate 20-50 input folders per scenario
+        sweep, where ~16 s each buys nothing new.
         """
         out = _split(self._both(), start="12-01", days=380, year=2015)
         counts = set(out.groupby("node", observed=True).size())

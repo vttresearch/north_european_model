@@ -171,15 +171,16 @@ class TestWhatShouldHappenInstead:
         asks for full coverage, and ProcessorRunner validates columns,
         emptiness and duplicates but not this.
 
-        A cheaper first step than changing the labelling would be to detect it:
-        every group in a window should have the same row count, and that count
-        should be bb_ts_length * 24. Both are one line, and either turns a
-        silent time-shift into a message naming the node and the year.
+        Detecting it is cheap per run but not per *build*: checking that every
+        group has the same row count costs about 2 s per parameter, ~16 s a
+        build, and users generate 20-50 input folders for a scenario sweep. The
+        answer never changes between those builds -- it is a property of the
+        processor and its source data -- so it belongs in the timeseries data
+        verifier, run once when either changes, not in the pipeline.
 
-        This is the concrete case behind the planned timeseries data verifier:
-        the OT2030 build reported 191 missing ts_influx_hydro entries per
-        affected climate year, and coverage gaps are exactly what it should be
-        looking for.
+        Decided during phase 5. The pipeline checks form; coverage is content.
+        ``tests/_common/processor_contract.assert_even_hourly_coverage`` already
+        implements the check and is opt-in for exactly this reason.
         """
         times = pd.date_range("2014-01-01", periods=72, freq="h")
         out = _split(_frame(times.delete(10)))[2014]
