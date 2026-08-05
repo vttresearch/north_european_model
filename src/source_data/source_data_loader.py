@@ -994,6 +994,13 @@ def merge_row_by_row(
         new_frames.append(df)
     frames = new_frames
 
+    # ...and in the output. cols_union was built above from the frames as they
+    # arrived, so without this the columns just created are dropped again when
+    # the result is assembled from cols_union, and the warning above promises
+    # something the caller never receives. create_p_userconstraint believed it
+    # and died on a KeyError.
+    cols_union.extend(k for k in key_columns if k not in cols_union)
+
     # --- Method handlers ------------------------------------------------------
     def _handle_replace(existing: Dict[str, object], row_dict: Dict[str, object], method: str, partial: bool = False) -> Dict[str, object]:
         """Full or partial row replacement."""

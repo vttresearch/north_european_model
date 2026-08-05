@@ -1,6 +1,7 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- source_data_loader: merge_row_by_row now returns the key columns it reports creating. It added them to each input frame but rebuilt the result from a column list computed beforehand, so they were dropped again; create_p_userconstraint believed the message and crashed.
 - bb_excel_pipeline: create_p_userconstraint no longer raises KeyError when a userconstraintdata sheet omits unused dimension columns. It detected the missing columns and logged a warning, then selected them anyway and killed the build. A constraint using only the 1st and 2nd dimension is ordinary.
 - Tests: added the route tier -- source workbooks to inputData.xlsx, driven in-process with no GAMS and no working-directory dependence. Test workbooks are stored as text (.wb.txt) and built into .xlsx at run time, so fixtures are diffable and cannot rot unnoticed.
 - Tests: added workbook delta assertions. Both sides of a comparison are produced by the code under test in the same run, so adding a parameter column or changing a default does not require a test edit. There are deliberately no golden files.
