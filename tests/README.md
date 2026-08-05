@@ -22,7 +22,8 @@ tests/
   _common/     shared infrastructure. Leading underscore + no test_*.py => never collected
   meta/        tests for the test infrastructure itself
   unit/        mirrors src/, one module per source module
-  route/       full source-xlsx -> inputData.xlsx (later phase)
+  route/       full source-xlsx -> inputData.xlsx
+  _common/workbooks/   the .wb.txt fixture library
 ```
 
 Which folder does a new test go in?
@@ -182,15 +183,24 @@ DataFrame literals, pass `FakeLogger()`. Assert with the contract helpers plus
 policy in `CLAUDE.md`: after logger init, never raise), so assert on the logger, not
 `pytest.raises`.
 
-**Route** *(later phase)*. Write the workbook inline as a `.wb.txt` string. Call
+**Route.** Write the workbook inline as a `.wb.txt` string. Call
 `run_route(tmp_path, workbooks={"data.xlsx": TEXT})`. The first two assertions are always
-`r.logger.assert_no_errors()` and `assert_workbook_consistent(r.sheets)`. If a second test
-wants the same workbook, move it to `_common/workbooks/` with a header comment saying what
-it covers.
+`r.logger.assert_no_errors()` and `assert_workbook_consistent(r.sheets)`. A run takes about a
+second, so use a module-scoped fixture when several tests read the same result.
 
-**Delta** *(later phase)*. Start from a library fixture, produce the variant with
-`workbook_text_with` — never by hand-editing a copy, which drifts. Run both,
-`assert_delta`. Omission is the assertion.
+**Sprawl rule:** a workbook enters `_common/workbooks/` the moment a *second* test needs it.
+Until then it lives as a string literal in the one test that uses it. Every library fixture
+carries a header comment saying what it exists to cover.
+
+**Delta.** Start from a fixture, produce the variant with `workbook_text_with` — never by
+hand-editing a copy, which drifts, and never by writing the variant out in full, which hides
+what changed. Run both, `assert_delta`. **Omission is the assertion**: list what moved, and
+everything unmentioned is asserted unchanged. Prefer the 3-tuple `(sheet, key, column)` over
+the 4-tuple with a value — it says "this had to move, by how much is not my business" and
+survives a fixture edit.
+
+`assert_delta` refuses to assert nothing: passing no expected changes requires
+`expect_no_change=True`, so a variant that silently failed to differ cannot pass vacuously.
 
 ---
 

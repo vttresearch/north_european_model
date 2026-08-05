@@ -1,6 +1,8 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- Tests: added the route tier -- source workbooks to inputData.xlsx, driven in-process with no GAMS and no working-directory dependence. Test workbooks are stored as text (.wb.txt) and built into .xlsx at run time, so fixtures are diffable and cannot rot unnoticed.
+- Tests: added workbook delta assertions. Both sides of a comparison are produced by the code under test in the same run, so adding a parameter column or changing a default does not require a test edit. There are deliberately no golden files.
 - cache_manager: added timeseries_helpers.py to the watched timeseries files; editing the climate-window or forecast maths did not invalidate the cache, so the build served stale GDX without saying so. Also added the source_data/timeseries inputs and results dataclasses, which were watched for bb_excel but not the other two stages.
 - build_input_data: stdout/stderr are set to UTF-8 at entry. Redirecting output to a file (`> build.log`) previously crashed with UnicodeEncodeError on the first log line, because Windows falls back to the locale encoding when the stream is not a console and the status prefixes are non-ASCII.
 - GDX_exchange: gams.transfer now binds to the GAMS install matching the installed gamsapi (override with BB_GAMS_API, as in the parent Backbone repo) instead of whichever GAMS was registered last. Removes the "GAMS version differs from the API version" warning on every container. Use new_container(), not gt.Container().

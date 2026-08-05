@@ -1,0 +1,24 @@
+// minimal.wb.txt -- the smallest non-empty inputData.xlsx.
+//
+// One country, one grid, one unit burning nothing and producing electricity,
+// and one demand row so the node has a reason to exist.
+//
+// Exists to cover: the route runs at all, every cross-sheet invariant holds,
+// and the domain sheets are populated from the data rather than hardcoded.
+// Keep it minimal -- tests that need more should use or add a richer fixture.
+
+[unittypedata]
+Generator_ID | unittype  | grid_output1 | eff00 | isSource
+windturbine  | WindOnFI  | elec         | 1     | 1
+
+[unitdata]
+Country | Generator_ID | Scenario | Year | capacity_output1
+FI      | windturbine  | all      | 1    | 100
+
+[nodedata]
+Country | Grid | Scenario | Year | nodeBalance
+FI      | elec | all      | 1    | 1
+
+[demanddata]
+Country | Grid | Scenario | Year | TWh/year
+FI      | elec | all      | 1    | 5
