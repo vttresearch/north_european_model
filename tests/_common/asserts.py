@@ -78,7 +78,9 @@ def assert_fake_multiindex(raw_df: pd.DataFrame, dimensions: Sequence[str]) -> N
         if str(column).startswith("Unnamed") or str(column).startswith("The "):
             continue
         if column in dimensions:
-            if not pd.isna(first[column]):
+            # Blank is '' in memory and NaN once Excel has round-tripped it.
+            blank = pd.isna(first[column]) or str(first[column]).strip() == ""
+            if not blank:
                 raise AssertionError(
                     f"dimension column {column!r} must be blank in the marker row, "
                     f"got {first[column]!r}"

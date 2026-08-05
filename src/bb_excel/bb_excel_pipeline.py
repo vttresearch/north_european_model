@@ -379,7 +379,11 @@ class BBExcelPipeline:
         # Process each unit only once
         for unit in p_gnu_io_flat['unit'].unique():
             efficiency = unit_efficiency.get(unit, 0)
-            if efficiency <= 0:
+            # pd.isna first: a unit whose eff columns are all empty yields NaN,
+            # and `NaN <= 0` is False, so it slipped past this guard and reached
+            # math.ceil(capacity / NaN) -- an unhandled ValueError rather than a
+            # skipped unit.
+            if pd.isna(efficiency) or efficiency <= 0:
                 continue
 
             inputs = get_unit_rows(unit, 'input')
