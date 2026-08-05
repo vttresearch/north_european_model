@@ -1,5 +1,8 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-05
+- Added pytest suite: pytest.ini, tests/ package, conftest with a gams.transfer stub so most tests run without GAMS, shared FakeLogger and make_config. environment.yml: added pytest.
+
 ## 2026-08-04
 - environment.yml: added matplotlib, required by analyze_ts.py.
 - Added config_OT2030-continuous5y.ini, an example of bb_timeseries_length expressions (365*5).

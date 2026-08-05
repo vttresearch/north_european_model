@@ -2,6 +2,7 @@
 /*/
 !/src/
 !/src_files/
+!/tests/
 !/.spinetoolbox/
 
 #toolbox stuff
@@ -12,6 +13,8 @@
 /*/__pycache__
 /*/*/__pycache__
 /*/*/*/__pycache__
+__pycache__/
+.pytest_cache/
 
 # sub-folders under src_files/timeseries
 /src_files/timeseries/*/
