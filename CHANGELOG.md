@@ -1,6 +1,7 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- GDX_exchange: gams.transfer now binds to the GAMS install matching the installed gamsapi (override with BB_GAMS_API, as in the parent Backbone repo) instead of whichever GAMS was registered last. Removes the "GAMS version differs from the API version" warning on every container. Use new_container(), not gt.Container().
 - Timeseries NaN handling: missing values are now converted to 0 in one place only, the GDX boundary (GDX_exchange.prepare_values_for_gdx), which logs how many were converted. Removed the three silent fills that preceded it (ProcessorRunner after validation, cutoff_below as a side effect, calculate_climatological_forecasts after its left join).
 - Behaviour change: where source timeseries have gaps, climatological forecasts differ. Quantiles now skip missing hours instead of counting them as genuine zeros, which previously biased every forecast branch downward.
 - GDX writing rejects and logs rows with a blank dimension value (would have become the GAMS set element '') or a non-finite value.

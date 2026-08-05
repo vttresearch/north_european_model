@@ -3,7 +3,7 @@ import sys
 import shutil
 import pathlib
 import spinedb_api as api
-import gams.transfer as gt
+from src.GDX_exchange import new_container
 
 def main(include_db= False):
     if include_db:
@@ -21,7 +21,9 @@ def main(include_db= False):
 
 def get_input_file_folder(gdx_file):
     #read timeseries folder
-    m = gt.Container(gdx_file)
+    # new_container, not gt.Container: binds to the GAMS matching the installed
+    # gamsapi instead of whatever the machine-global registry key names.
+    m = new_container(gdx_file)
     if "scenario_year" in m:
         folder_names = m.data['scenario_year'].records["scenario_year"].array
         m.removeSymbols(symbols = "scenario_year")

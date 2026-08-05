@@ -1,3 +1,19 @@
+# Python environment for building Backbone input data.
+#
+#   conda env create -f environment.yml
+#   conda activate northEuropeanModel
+#   pip install gamsapi[transfer]==xx.y.z
+#
+# where xx.y.z is YOUR GAMS version (GAMS Studio -> Help -> GAMS Licensing, or
+# `gams audit`). gamsapi is intentionally not listed below: it is tied to a GAMS
+# version, and it is not on conda-forge. Install it with pip into this env.
+#
+# More than one GAMS installed? src/GDX_exchange.py binds gams.transfer to the
+# install whose major version matches the gamsapi you pinned, so this normally
+# needs no configuration. To override, set BB_GAMS_API to the GAMS folder, e.g.
+# BB_GAMS_API=C:\GAMS\47 -- the same variable the parent Backbone repo uses.
+# Without a deliberate binding, gams.transfer attaches to whichever GAMS was
+# installed last and warns on every container.
 name: northEuropeanModel
 channels:
   - defaults

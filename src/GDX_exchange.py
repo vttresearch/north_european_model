@@ -7,6 +7,79 @@ import gams.transfer as gt
 from tqdm import tqdm
 
 
+# --- Which GAMS installation gams.transfer binds to -------------------------
+#
+# A bare ``gt.Container()`` binds to whatever a machine-global setting names --
+# on Windows the registry key ``HKCU\Software\Classes\gams.location``, which is
+# simply whichever GAMS installer ran last. On a machine with several GAMS
+# versions that is usually not the one ``gamsapi`` is pinned to, and every
+# container then prints:
+#
+#     UserWarning: The GAMS version (53.5.0) differs from the API version (47.4.1)
+#
+# Reads and writes still succeed, so it scrolls past -- but the binding is
+# arbitrary. The parent Backbone repo resolves this explicitly rather than
+# silencing the warning (see its scripts/gams_api.py and
+# .claude/skills/backbone-quickstart/references/gams-transfer.md); the same
+# ``BB_GAMS_API`` variable is honoured here so one setting covers both repos.
+
+#: gams.transfer requires GAMS 45+ to read/write through the API.
+_API_MIN_GAMS_VERSION = 45
+
+
+def _installed_gamsapi_major() -> Optional[int]:
+    """Major version of the installed ``gamsapi`` package, or None if unknown."""
+    try:
+        from importlib.metadata import version
+
+        return int(version("gamsapi").split(".")[0])
+    except Exception:
+        return None
+
+
+def resolve_gams_system_directory() -> Optional[str]:
+    """Return the GAMS system directory gams.transfer should bind to.
+
+    Resolution order, mirroring the parent repo:
+
+    1. ``BB_GAMS_API`` -- an explicit pin, e.g. ``C:\\GAMS\\47``.
+    2. The GAMS install whose major version matches the installed ``gamsapi``.
+       The GAMS installer's own layout (``C:\\GAMS\\<major>``) makes this a
+       direct lookup, so most machines need no configuration at all.
+    3. ``None`` -- let gams.transfer auto-discover, the previous behaviour.
+
+    Returning None rather than raising is deliberate: an unresolvable binding is
+    a noisy warning, not a reason to fail a build.
+    """
+    explicit = os.environ.get("BB_GAMS_API")
+    if explicit:
+        return explicit
+
+    major = _installed_gamsapi_major()
+    if major is None or major < _API_MIN_GAMS_VERSION:
+        return None
+
+    candidate = Path(f"C:/GAMS/{major}")
+    if candidate.is_dir():
+        return str(candidate)
+    return None
+
+
+def new_container(load_from: Optional[str] = None) -> "gt.Container":
+    """Create a gams.transfer Container bound to a known GAMS installation.
+
+    Always use this rather than ``gt.Container(...)`` directly, so the binding is
+    the one we asked for rather than whatever the machine-global setting names.
+    """
+    kwargs = {}
+    system_directory = resolve_gams_system_directory()
+    if system_directory:
+        kwargs["system_directory"] = system_directory
+    if load_from is not None:
+        return gt.Container(load_from, **kwargs)
+    return gt.Container(**kwargs)
+
+
 def prepare_values_for_gdx(
     df: pd.DataFrame,
     logger,
@@ -125,7 +198,7 @@ def read_gdx_parameter(
         Returns an empty DataFrame if the parameter is missing or has no records.
         Note: GAMS drops zero values; missing keys should be treated as 0 by callers.
     """
-    m = gt.Container(gdx_file)
+    m = new_container(gdx_file)
     if parameter_name not in m.data:
         return pd.DataFrame()
     param = m[parameter_name]
@@ -170,7 +243,7 @@ def write_df_to_gdx(
 
     work = df[list(parameter_dimensions) + ["value"]]
 
-    m = gt.Container()
+    m = new_container()
 
     # Create Sets for each dimension
     dim_sets = {}
@@ -241,7 +314,7 @@ def write_climate_window_GDX_files(
     final_cols = list(bb_parameter_dimensions) + ["value"]
 
     # Build container once
-    m = gt.Container()
+    m = new_container()
 
     # Create a Set for each dimension.
     # For 't', use only one year's labels (all years share the same t-structure).
