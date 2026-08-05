@@ -436,11 +436,14 @@ def build_unit_grid_and_node_columns(
         # mask: valid grid (not NaN — blank markers are already NA after normalization)
         valid = grids.notna()
 
-        grid = pd.Series(np.nan, index=out.index, dtype=object)
+        # pd.NA, not np.nan: these are object columns, and object columns use
+        # pd.NA for missing. A bare float NaN here reaches every downstream
+        # consumer that expects the normalized convention.
+        grid = pd.Series(pd.NA, index=out.index, dtype=object)
         grid.loc[valid] = grids[valid].astype(str)
         out[f"grid_{p}"] = grid
 
-        node = pd.Series(np.nan, index=out.index, dtype=object)
+        node = pd.Series(pd.NA, index=out.index, dtype=object)
 
         # Build base where valid
         base = country_series[valid].astype(str) + "_" + grids[valid].astype(str)
@@ -499,9 +502,16 @@ def build_from_to_columns(
         else:
             df[suffix_col] = df[suffix_col].fillna('').astype(str)
 
-    # Build from_node and to_node with optional suffixes
-    df['from_node'] = df['from_country'] + '_' + df['grid'] + df['from_suffix'].apply(lambda x: f'_{x}' if x else '')
-    df['to_node']   = df['to_country']   + '_' + df['grid'] + df['to_suffix'].apply(lambda x: f'_{x}' if x else '')
+    # Build from_node and to_node with optional suffixes.
+    # astype(str) mirrors build_node_column, which stringifies via an f-string:
+    # without it, a country or grid cell holding anything but a string (a date
+    # Excel auto-converted, a number, a bool) raises TypeError on the '+' instead
+    # of producing a node name. The two functions do the same job and must
+    # tolerate the same input.
+    df['from_node'] = (df['from_country'].astype(str) + '_' + df['grid'].astype(str)
+                       + df['from_suffix'].apply(lambda x: f'_{x}' if x else ''))
+    df['to_node']   = (df['to_country'].astype(str)   + '_' + df['grid'].astype(str)
+                       + df['to_suffix'].apply(lambda x: f'_{x}' if x else ''))
 
     return df
 

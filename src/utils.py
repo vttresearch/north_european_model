@@ -160,15 +160,18 @@ def is_col_empty(s: pd.Series) -> bool:
         return True
 
     # Booleans: usually don't drop just because all False; only NaNs count as empty
+    # bool(...) throughout: pandas reductions return numpy.bool_, and the
+    # annotation promises a plain bool. Callers that use `is True` or serialise
+    # the result get the wrong answer otherwise.
     if is_bool_dtype(s):
-        return s.isna().all()
+        return bool(s.isna().all())
 
     # Numeric (excluding bool): empty if all zeros or NaN
     if is_numeric_dtype(s) and not is_bool_dtype(s):
-        return (s.fillna(0) == 0).all()
+        return bool((s.fillna(0) == 0).all())
 
     # Non-numeric: empty if all are NaN or whitespace-only strings
     na_mask = s.isna()
     # Safe elementwise test; no vectorized == on arbitrary objects
     empty_str_mask = s.map(lambda v: isinstance(v, str) and v.strip() == "")
-    return (na_mask | empty_str_mask).all()
+    return bool((na_mask | empty_str_mask).all())

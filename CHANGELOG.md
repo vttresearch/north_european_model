@@ -1,6 +1,11 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- source_data_loader.py: build_from_to_columns no longer raises TypeError when a country or grid cell is not a string (now stringifies, matching build_node_column).
+- source_data_loader.py: build_unit_grid_and_node_columns now writes pd.NA, not np.nan, into the object-dtype grid_/node_ columns it creates for unmatched generator_ids.
+- utils.py: is_col_empty returns a plain bool instead of numpy.bool_.
+- Added dtype/NA contract sweeps over the source-data loaders, plus unit tests for utils, config_reader, logger, hash_utils and _patch_gams_file_content.
+- Added tests/README.md: the NA/zero boundary map, assertion rules, and when pinning a value is correct.
 - Added pytest suite: pytest.ini, tests/ package, conftest with a gams.transfer stub so most tests run without GAMS, shared FakeLogger and make_config. environment.yml: added pytest.
 
 ## 2026-08-04
