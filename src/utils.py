@@ -6,6 +6,36 @@ import pandas as pd
 from pandas.api.types import is_numeric_dtype, is_bool_dtype
 
 
+def force_utf8_output() -> None:
+    """Make stdout/stderr UTF-8 so log output survives being redirected.
+
+    On Windows, Python writes to a *console* as UTF-8 but falls back to the
+    locale encoding (cp1252 here) as soon as the stream is redirected to a file
+    or a pipe. The status prefixes in IterationLogger are non-ASCII, so
+    redirecting output raised UnicodeEncodeError on the very first log line and
+    killed the run before any work started:
+
+        python build_input_data.py src_files config_OT2030.ini > build.log
+
+    The prefixes are deliberate -- warnings get missed without them -- so the
+    encoding is what gives way, not the message.
+
+    Safe to call more than once, and a no-op on streams that cannot be
+    reconfigured (some IDE and CI wrappers replace sys.stdout with objects that
+    have no reconfigure()).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # Detached or already-closed stream: printing is the caller's
+            # problem, and failing here would be worse than the mojibake.
+            pass
+
+
 def parse_sys_args():
     # Instructions in case of mispelled input cmd
     USAGE_MSG = (

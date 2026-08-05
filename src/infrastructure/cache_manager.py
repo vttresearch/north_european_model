@@ -49,10 +49,14 @@ class CacheManager:
     _SOURCE_PIPELINE_FILES = [
         Path("./src/source_data/source_data_pipeline.py"),
         Path("./src/source_data/source_data_loader.py"),
+        Path("./src/source_data/source_data_inputs.py"),
     ]
     _TS_PIPELINE_FILES = [
         Path("./src/timeseries/timeseries_pipeline.py"),
         Path("./src/timeseries/timeseries_processor.py"),
+        Path("./src/timeseries/timeseries_helpers.py"),
+        Path("./src/timeseries/timeseries_inputs.py"),
+        Path("./src/timeseries/timeseries_results.py"),
         Path("./src/GDX_exchange.py"),
     ]
     _BB_PIPELINE_FILES = [

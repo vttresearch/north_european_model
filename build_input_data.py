@@ -17,11 +17,18 @@ from src.timeseries.timeseries_pipeline import TimeseriesPipeline
 from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
-from src.utils import parse_sys_args
+from src.utils import parse_sys_args, force_utf8_output
 
 
 def main(input_folder: Path, config_file: Path):
     # --- 1. Prep ---
+    # Make log output survive redirection before anything logs. On Windows a
+    # redirected stream falls back to the locale encoding, and the status
+    # prefixes are non-ASCII, so `> build.log` used to kill the run on its first
+    # line. Called here rather than under __main__ so the Spine Toolbox wrapper
+    # gets it too.
+    force_utf8_output()
+
     # Timer to follow the progress
     start_time = time.time()
 

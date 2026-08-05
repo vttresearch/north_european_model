@@ -1,6 +1,8 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- cache_manager: added timeseries_helpers.py to the watched timeseries files; editing the climate-window or forecast maths did not invalidate the cache, so the build served stale GDX without saying so. Also added the source_data/timeseries inputs and results dataclasses, which were watched for bb_excel but not the other two stages.
+- build_input_data: stdout/stderr are set to UTF-8 at entry. Redirecting output to a file (`> build.log`) previously crashed with UnicodeEncodeError on the first log line, because Windows falls back to the locale encoding when the stream is not a console and the status prefixes are non-ASCII.
 - GDX_exchange: gams.transfer now binds to the GAMS install matching the installed gamsapi (override with BB_GAMS_API, as in the parent Backbone repo) instead of whichever GAMS was registered last. Removes the "GAMS version differs from the API version" warning on every container. Use new_container(), not gt.Container().
 - Timeseries NaN handling: missing values are now converted to 0 in one place only, the GDX boundary (GDX_exchange.prepare_values_for_gdx), which logs how many were converted. Removed the three silent fills that preceded it (ProcessorRunner after validation, cutoff_below as a side effect, calculate_climatological_forecasts after its left join).
 - Behaviour change: where source timeseries have gaps, climatological forecasts differ. Quantiles now skip missing hours instead of counting them as genuine zeros, which previously biased every forecast branch downward.
