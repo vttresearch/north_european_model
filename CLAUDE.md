@@ -46,11 +46,12 @@ you are on.
   Backbone treats absent and zero identically. `fill_all_na` / `fill_numeric_na` (`src/utils.py`)
   are the crossing point.
 - **Timeseries -> GDX**: NaN means "no data" through the whole processor and curing chain. The
-  single conversion point is `GDX_exchange.prepare_values_for_gdx`, which converts NaN to 0 and
-  **logs how many**. Do not add a `fillna(0)` upstream of it: silent filling makes a gap in the
-  source data indistinguishable from a genuine zero, and -- because
-  `calculate_climatological_forecasts` takes quantiles, which skip NaN -- it also biases every
-  forecast branch downward.
+  single conversion point is `GDX_exchange.prepare_values_for_gdx`. Do not add a `fillna(0)`
+  upstream of it: filling early makes a gap in the source data indistinguishable from a genuine
+  zero, and -- because `calculate_climatological_forecasts` takes quantiles, which skip NaN --
+  it also biases every forecast branch downward. The conversion is silent during a normal build
+  (a source-data gap is not actionable by whoever runs one); `report_missing=True` counts it for
+  the timeseries data verifier, whose audience is processor authors.
 
 ### Dtypes
 

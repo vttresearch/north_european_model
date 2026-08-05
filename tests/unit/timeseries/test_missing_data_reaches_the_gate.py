@@ -81,12 +81,13 @@ class TestForecastGapsStayMissing:
         out = _forecasts(_january_only(), length=31)
         assert not out["value"].isna().any()
 
-    def test_the_gate_converts_and_reports_the_gap(self):
-        """End of the chain: GAMS still gets 0, but the run says how many.
+    def test_the_gate_converts_the_gap_without_warning_the_build_user(self):
+        """End of the chain: GAMS gets 0, and a normal build stays quiet.
 
-        This is the behaviour the whole boundary exists for -- the conversion is
-        correct and necessary, and doing it silently is what made a data gap
-        indistinguishable from a real zero.
+        The gap is real and it originates in the source timeseries, which the
+        person running a build cannot fix. Keeping the conversion in ONE place
+        is what matters here -- who gets told about it is a separate question,
+        answered by the data verifier.
         """
         logger = FakeLogger()
         out = _forecasts(_january_only(), length=40)
@@ -95,6 +96,17 @@ class TestForecastGapsStayMissing:
 
         assert not gated["value"].isna().any()
         assert (gated["value"] >= 0).all()
+        logger.assert_clean()
+
+    def test_the_gap_is_countable_for_the_data_verifier(self):
+        # The information is not lost, only unaddressed to the build user.
+        logger = FakeLogger()
+        out = _forecasts(_january_only(), length=40)
+
+        prepare_values_for_gdx(
+            out, logger, dimensions=DIMS, where="forecasts", report_missing=True
+        )
+
         logger.assert_logged("216 of", level="warn")
 
     def test_the_input_frame_is_not_mutated(self):

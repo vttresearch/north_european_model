@@ -87,6 +87,7 @@ def prepare_values_for_gdx(
     dimensions: Sequence[str],
     where: str,
     value_col: str = "value",
+    report_missing: bool = False,
     ) -> pd.DataFrame:
     """
     Last gate before a DataFrame becomes GDX. Returns a writable copy.
@@ -106,9 +107,12 @@ def prepare_values_for_gdx(
     - **Non-finite values** (inf/-inf) are an error.  GAMS accepts INF, so these
       would be written happily and then make the model unbounded or infeasible
       somewhere far away from the cause.  Dropped as well.
-    - **Missing values** are filled with 0, and *logged with a count*.  The fill
-      itself is correct and necessary here.  Doing it silently is what destroys
-      the difference between "no wind" and "no data", so it is reported.
+    - **Missing values** are filled with 0, silently unless `report_missing`.
+      The fill is correct and necessary; the gap itself originates in the source
+      timeseries and is not something the person running a build can act on.
+      Reporting it here would bury the warnings their own data does cause, so
+      the audience for it is the person writing or checking a timeseries
+      processor -- see the timeseries data verifier.
 
     Parameters:
         df: DataFrame with the dimension columns plus `value_col`
@@ -116,6 +120,8 @@ def prepare_values_for_gdx(
         dimensions: dimension column names that become GAMS sets
         where: label used in log messages to identify the caller
         value_col: name of the numeric column
+        report_missing: log a count of the NaN entries converted to 0. Off for
+            normal builds; the data verifier turns it on.
 
     Returns:
         A copy of `df` safe to hand to gams.transfer.
@@ -166,16 +172,21 @@ def prepare_values_for_gdx(
         work = work.loc[~non_finite]
         values = values.loc[~non_finite]
 
-    # --- missing values: fill, but say so ---
+    # --- missing values: fill, quietly ---
+    # GAMS has no NaN, so this conversion has to happen. It is reported only when
+    # asked for: a gap in a source timeseries is not actionable by whoever is
+    # running a build, and warning about it every time trains people to skim past
+    # the warnings their own data does cause.
     na_count = int(values.isna().sum())
     if na_count:
-        logger.log_status(
-            f"{where}: {na_count} of {len(values)} {value_col} entries were missing "
-            f"and are written to GDX as 0, because GAMS has no NaN. If these should "
-            f"be genuine zeros this is fine; if they are gaps in the source data, "
-            f"the model will read them as zero generation/demand.",
-            level="warn",
-        )
+        if report_missing:
+            logger.log_status(
+                f"{where}: {na_count} of {len(values)} {value_col} entries were "
+                f"missing and are written to GDX as 0, because GAMS has no NaN. "
+                f"Gaps in a source timeseries reach the model as zero "
+                f"generation/demand.",
+                level="warn",
+            )
         values = values.fillna(0)
 
     work[value_col] = values.astype("float64")

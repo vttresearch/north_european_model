@@ -40,21 +40,40 @@ class TestMissingValues:
         out = _gate(_frame([1.0, pd.NA, 3.0]), FakeLogger())
         assert out["value"].tolist() == [1.0, 0.0, 3.0]
 
-    def test_the_conversion_is_reported_with_a_count(self):
-        """The fill is correct here; doing it *silently* is the bug.
+    def test_the_conversion_is_silent_during_a_normal_build(self):
+        """A gap in a source timeseries is not the build user's problem.
 
-        A missing wind capacity factor becoming zero generation is a real
-        modelling outcome, and the user has to be able to see that it happened.
+        They cannot act on it -- the data is what it is -- and warning every
+        time trains people to skim past the warnings their own inputs *do*
+        cause. The audience for this is whoever writes or checks a timeseries
+        processor, so it is reported by the data verifier instead.
         """
         logger = FakeLogger()
         _gate(_frame([pd.NA, pd.NA, 3.0]), logger)
+        logger.assert_clean()
+
+    def test_the_conversion_is_reported_when_asked_for(self):
+        logger = FakeLogger()
+        prepare_values_for_gdx(
+            _frame([pd.NA, pd.NA, 3.0]),
+            logger,
+            dimensions=DIMS,
+            where="test",
+            report_missing=True,
+        )
         logger.assert_logged("2 of 3", level="warn")
 
-    def test_clean_data_logs_nothing(self):
-        # The gate must be quiet when there is nothing to say, or the warning
-        # above becomes noise people learn to ignore.
+    def test_clean_data_logs_nothing_even_when_reporting(self):
+        # No "0 entries were missing" line: the gate must be quiet when there is
+        # nothing to say, or the report itself becomes noise.
         logger = FakeLogger()
-        _gate(_frame([1.0, 2.0]), logger)
+        prepare_values_for_gdx(
+            _frame([1.0, 2.0]),
+            logger,
+            dimensions=DIMS,
+            where="test",
+            report_missing=True,
+        )
         logger.assert_clean()
 
     def test_output_satisfies_the_gams_ready_contract(self):

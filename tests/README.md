@@ -59,16 +59,23 @@ codebase's history lives at the seam. This table is what the suite is organised 
 **`0 = NA = None` governs written GDX files too, not only `inputData.xlsx`.** The GAMS
 convention begins at boundary 7 and nowhere earlier.
 
-Boundary 7 is the **only** place NaN becomes 0 on the timeseries route, and it logs how many
-entries it converted. Do not add a `fillna(0)` upstream of it. Three used to exist — in
+Boundary 7 is the **only** place NaN becomes 0 on the timeseries route. Do not add a
+`fillna(0)` upstream of it. Three used to exist — in
 `ProcessorRunner` right after validation, as a side effect of `cutoff_below`, and inside
 `calculate_climatological_forecasts` — and each one silently made a gap in the source data
 indistinguishable from a genuine zero. Filling before the quantile step was the worst of the
 three: pandas' `quantile` skips NaN, so a missing hour counted as a real zero and dragged the
 whole climatology down.
 
+The conversion is **silent** during a normal build. A gap in a source timeseries is not
+something the person running a build can act on, and warning about it every time trains people
+to skim past the warnings their own inputs *do* cause. `prepare_values_for_gdx` counts the
+converted entries and reports them only under `report_missing=True`, which the timeseries data
+verifier turns on. The audience for that number is whoever writes or checks a processor.
+
 Dimension values are different from measurements: a missing one is a **broken key**, not a gap.
-It would become the GAMS set element `''`, so it is rejected rather than filled.
+It would become the GAMS set element `''`, so it is rejected rather than filled — and that *is*
+reported, because it means something upstream is broken rather than merely incomplete.
 
 Row 8 is still unspecified and remains open.
 
