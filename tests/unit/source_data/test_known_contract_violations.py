@@ -20,8 +20,57 @@ in ways that deserve a decision rather than a drive-by edit.
 import pandas as pd
 import pytest
 
-from src.source_data.source_data_loader import merge_unittypedata_into_unitdata
+from src.source_data.source_data_loader import merge_row_by_row, merge_unittypedata_into_unitdata
 from tests._common.contracts import assert_normalized
+from tests._common.fixtures import FakeLogger
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "merge_row_by_row logs that absent key columns 'will be created as <NA>' "
+        "but does not create them"
+    ),
+)
+def test_merge_row_by_row_creates_the_key_columns_it_says_it_will():
+    """A message that promises something the code does not do.
+
+    Handed frames without one of its ``key_columns``, ``merge_row_by_row`` logs
+    "Some key_columns not found and will be created as <NA>" and then returns a
+    frame that still lacks them.
+
+    This is not cosmetic. ``create_p_userconstraint`` consumed that promise: a
+    userconstraint sheet using only the 1st and 2nd dimension produced a frame
+    with no 3rd/4th dimension column, and the build died on a bare KeyError.
+    That call site is now defensive, so nothing is currently broken -- but the
+    next caller to believe the message will hit the same wall.
+
+    Why this is a judgment call rather than a fix:
+      - merge_row_by_row is the densest function in the repo and every source
+        category flows through it, so the blast radius of "create missing key
+        columns" is wide;
+      - the alternative is to change the message to say what it does (skip the
+        missing key), which is cheaper but leaves callers to defend themselves
+        one at a time.
+
+    Decide which, then delete this test.
+    """
+    frame = pd.DataFrame(
+        {
+            "group": pd.Series(["g1"], dtype="object"),
+            "parameter": pd.Series(["coefficient"], dtype="object"),
+            "value": pd.Series([1.0], dtype="Float64"),
+            "method": pd.Series(["replace"], dtype="object"),
+        }
+    )
+
+    merged = merge_row_by_row(
+        [frame, frame],
+        FakeLogger(),
+        key_columns=["group", "1st dimension", "parameter"],
+    )
+
+    assert "1st dimension" in merged.columns
 
 
 @pytest.mark.xfail(

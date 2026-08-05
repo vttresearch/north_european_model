@@ -1,0 +1,34 @@
+// transfer.wb.txt -- two countries joined by a transmission link.
+//
+// Exists to cover:
+//   * build_from_to_columns turning country pairs into from_node/to_node
+//   * create_p_gnn emitting one directional row per source row
+//   * both ends of a link contributing to the node domain
+//   * p_gnn's fake MultiIndex, which no single-country fixture can reach
+//
+// Two rows, one per direction, because the transfer format is directional: a
+// link that only appears one way is a link that only carries power one way.
+
+[unittypedata]
+scenario | year | Generator_ID | unittype | grid_output1 | eff00 | isSource
+all      | 1    | windturbine  | WindOn   | elec         | 1     | 1
+
+[nodedata]
+Country | Grid | Scenario | Year | nodeBalance
+FI      | elec | all      | 1    | 1
+SE      | elec | all      | 1    | 1
+
+[unitdata]
+Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1
+FI      | windturbine  |                  | all      | 1    | 100
+SE      | windturbine  |                  | all      | 1    | 200
+
+[transferdata]
+grid | from_country | to_country | scenario | Year | transferCap | transferLoss | variableTransCost
+elec | FI           | SE         | all      | 1    | 1500        | 0.02         | 0.1
+elec | SE           | FI         | all      | 1    | 1200        | 0.02         | 0.1
+
+[demanddata]
+Country | Grid | Scenario | Year | TWh/year
+FI      | elec | all      | 1    | 5
+SE      | elec | all      | 1    | 8

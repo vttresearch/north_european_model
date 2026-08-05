@@ -1,0 +1,31 @@
+// userconstraint.wb.txt -- user constraints, the one category exempt from the
+// underscore rule.
+//
+// Every other source category has its rows dropped when a string value contains
+// '_', because underscore is the node-name separator. userconstraintdata is
+// deliberately NOT filtered that way (source_data_pipeline.py), because its
+// dimensions REFER to nodes and units, whose names contain underscores by
+// construction.
+//
+// That exemption is invisible in a binary workbook and impossible to assert
+// without being able to write an underscore into a fixture on purpose, which is
+// the whole point of this file.
+
+[unittypedata]
+scenario | year | Generator_ID | unittype | grid_output1 | eff00 | isSource
+all      | 1    | windturbine  | WindOn   | elec         | 1     | 1
+
+[nodedata]
+Country | Grid | Scenario | Year | nodeBalance
+FI      | elec | all      | 1    | 1
+
+[unitdata]
+Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1
+FI      | windturbine  |                  | all      | 1    | 100
+
+// The 1st dimension names a node, so it MUST keep its underscore. A row dropped
+// here would silently remove a constraint from the model.
+[userconstraintdata]
+Scenario | year | country | group      | 1st dimension | 2nd dimension | parameter | value
+all      | 1    | FI      | elecLimit  | FI_elec       | v_state       | coefficient | 1
+all      | 1    | FI      | elecLimit  |               |               | constant    | 250

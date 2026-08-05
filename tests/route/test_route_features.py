@@ -12,6 +12,7 @@ the documented format contracts.
 import pytest
 
 from tests._common.asserts import (
+    assert_fake_multiindex,
     assert_passthrough,
     assert_workbook_consistent,
     cell,
@@ -149,3 +150,105 @@ class TestDomains:
     def test_a_demand_node_is_balanced_rather_than_priced(self, chp):
         assert float(cell(chp.sheets["p_gn"], "nodeBalance", grid="elec", node="FI_elec")) == 1
         assert float(cell(chp.sheets["p_gn"], "usePrice", grid="elec", node="FI_elec")) == 0
+
+
+@pytest.fixture(scope="module")
+def transfer(tmp_path_factory):
+    return run_route(
+        tmp_path_factory.mktemp("transfer"),
+        workbooks={"data.xlsx": load_workbook_fixture("transfer")},
+    )
+
+
+class TestTransferLinks:
+    def test_the_route_runs_cleanly(self, transfer):
+        transfer.logger.assert_no_errors()
+        assert_workbook_consistent(transfer.sheets)
+
+    def test_one_directional_row_per_source_row(self, transfer):
+        # The format is directional: a link present one way carries power one
+        # way. Two source rows must not be collapsed into a single link.
+        assert len(transfer.sheets["p_gnn"]) == 2
+
+    def test_each_direction_is_its_own_row(self, transfer):
+        gnn = transfer.sheets["p_gnn"]
+        assert len(rows_for(gnn, from_node="FI_elec", to_node="SE_elec")) == 1
+        assert len(rows_for(gnn, from_node="SE_elec", to_node="FI_elec")) == 1
+
+    def test_the_directions_keep_their_own_capacities(self, transfer):
+        # Asymmetric on purpose in the fixture: copying one direction's capacity
+        # onto the other would be invisible in a symmetric test.
+        forward = float(cell(transfer.sheets["p_gnn"], "transferCap",
+                             from_node="FI_elec", to_node="SE_elec"))
+        backward = float(cell(transfer.sheets["p_gnn"], "transferCap",
+                              from_node="SE_elec", to_node="FI_elec"))
+        assert forward != backward
+
+    def test_the_capacity_is_carried_from_the_source_row(self, transfer):
+        assert_passthrough(
+            transfer.sheets["p_gnn"], "transferCap",
+            transfer.source.df_transferdata, "transfercap",
+            out_key={"from_node": "FI_elec", "to_node": "SE_elec"},
+            src_key={"from_country": "FI", "to_country": "SE"},
+        )
+
+    def test_both_ends_contribute_to_the_node_domain(self, transfer):
+        # A link to a country with no units of its own must still declare its
+        # node, or the transfer references something that does not exist.
+        nodes = set(transfer.sheets["node"]["node"])
+        assert {"FI_elec", "SE_elec"} <= nodes
+
+    def test_p_gnn_carries_the_fake_multiindex(self, transfer):
+        # The sheet the minimal fixture cannot reach, since it has no transfers.
+        assert_fake_multiindex(
+            transfer.raw_sheets["p_gnn"], ["grid", "from_node", "to_node"]
+        )
+
+
+@pytest.fixture(scope="module")
+def userconstraint(tmp_path_factory):
+    return run_route(
+        tmp_path_factory.mktemp("uc"),
+        workbooks={"data.xlsx": load_workbook_fixture("userconstraint")},
+    )
+
+
+class TestUserConstraints:
+    def test_the_route_runs_cleanly(self, userconstraint):
+        userconstraint.logger.assert_no_errors()
+        assert_workbook_consistent(userconstraint.sheets)
+
+    def test_underscores_survive_in_user_constraint_dimensions(self, userconstraint):
+        """The one category exempt from drop_underscore_values.
+
+        Every other category loses a row whose string value contains '_',
+        because underscore separates the parts of a node name. User constraint
+        dimensions *refer* to nodes and units, whose names contain underscores
+        by construction, so filtering them would silently delete constraints.
+
+        Untestable with a hand-edited binary workbook, and the clearest single
+        argument for fixtures you can write an underscore into on purpose.
+        """
+        assert len(rows_for(userconstraint.sheets["p_userconstraint"],
+                            **{"1st dimension": "FI_elec"})) == 1
+
+    def test_the_referenced_node_actually_exists(self, userconstraint):
+        # The underscore is only worth keeping if it names something real.
+        assert len(rows_for(userconstraint.sheets["node"], node="FI_elec")) == 1
+
+    def test_a_sheet_using_only_some_dimensions_still_builds(self, userconstraint):
+        """Regression: this used to kill the build.
+
+        create_p_userconstraint detected the absent 3rd/4th dimension columns,
+        logged a warning, and then selected them anyway -- raising a bare
+        KeyError. A constraint using one or two dimensions is ordinary.
+        """
+        uc = userconstraint.sheets["p_userconstraint"]
+        assert len(uc) == 2
+        assert "3rd dimension" in uc.columns
+        assert uc["3rd dimension"].isna().all()
+
+    def test_the_group_reaches_the_group_domain(self, userconstraint):
+        assert "elecLimit".casefold() in {
+            str(g).casefold() for g in userconstraint.sheets["group"]["group"]
+        }

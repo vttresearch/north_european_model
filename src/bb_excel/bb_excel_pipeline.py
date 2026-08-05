@@ -1505,6 +1505,12 @@ class BBExcelPipeline:
             if missing:
                 self.logger.log_status(f"uc_data missing required columns (after case-insensitive matching): {missing}",
                            level="warn")
+                # Create them as NA rather than selecting strictly below, which
+                # raised KeyError immediately after this warning was written.
+                # A constraint using only the 1st and 2nd dimension is ordinary,
+                # so a sheet that omits the unused columns must not fail a build.
+                for column in missing:
+                    uc_data_renamed[column] = pd.NA
 
             uc_data_aligned = uc_data_renamed[expected_cols]
 
