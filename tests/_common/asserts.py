@@ -43,16 +43,24 @@ def assert_lacks_columns(df: pd.DataFrame, columns: Iterable[str], *, where: str
 
 
 def assert_unique_key(df: pd.DataFrame, key_columns: Sequence[str], *, where: str = "") -> None:
+    """Assert no two rows share a key.
+
+    Compared **case-insensitively**, because GAMS is: ``FI_heat_dh`` and
+    ``FI_heat_DH`` are one label to GAMS, and writing both is a duplicate record
+    that aborts the GDX write with only "GDX file was not created successfully"
+    to go on. Comparing case-sensitively here would call that workbook fine.
+    """
     prefix = f"{where}: " if where else ""
     key_columns = [c for c in key_columns if c in df.columns]
     if not key_columns or df.empty:
         return
-    duplicated = df.duplicated(subset=key_columns, keep=False)
+    folded = df[key_columns].apply(lambda col: col.map(_norm))
+    duplicated = folded.duplicated(keep=False)
     if duplicated.any():
-        examples = df.loc[duplicated, key_columns].head(3).to_dict("records")
+        examples = df.loc[duplicated, key_columns].head(4).to_dict("records")
         raise AssertionError(
-            f"{prefix}{int(duplicated.sum())} row(s) share a key on {key_columns}; "
-            f"first: {examples}"
+            f"{prefix}{int(duplicated.sum())} row(s) share a key on {key_columns} "
+            f"(compared case-insensitively, as GAMS does); first: {examples}"
         )
 
 
