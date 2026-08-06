@@ -2,18 +2,25 @@
 
 Backbone indexes time by label (``t000001``, ``t000002``, ...), not by
 timestamp, so this function is where real hours become model hours. It assigns
-the labels by **row position within each group** (:247-258), which is fast and
-correct as long as every group holds exactly one row per hour of the window.
+the labels by **row position within each group**, which is fast and correct as
+long as every group holds exactly one row per hour of the window.
 
-Nothing enforces that. The processor contract documents that processors must
-cover the full date range, and ``ProcessorRunner`` checks columns, emptiness and
-duplicates -- but not completeness. So a gap does not leave a hole in the
-labels: it pulls everything after it one step earlier.
+It still does, and always will: deriving the label from the timestamp instead
+was considered and rejected. What changed is that the precondition is now
+*proved* rather than assumed. ``ProcessorRunner`` calls
+``find_time_axis_defects`` before this function ever sees the frame, and rejects
+a processor whose axis has holes, repeats, sub-hourly rows, or groups covering
+different spans.
 
-That matters most across groups. Two nodes whose source data differ by a single
-missing hour end up disagreeing about what ``t000024`` means, for the remainder
-of the window -- and for a model whose value is largely in the correlation
-between countries, a silent one-hour offset between them is not a small error.
+So the behaviour characterised below is no longer reachable through the
+pipeline. The tests that pin it are kept deliberately: they are the executable
+statement of *why* the gate exists, and they are the only place the consequence
+is written down in full. A gap does not leave a hole in the labels -- it pulls
+everything after it one step earlier. Two nodes whose source data differ by a
+single missing hour end up disagreeing about what ``t000024`` means for the
+remainder of the window, and for a model whose value is largely in the
+correlation between countries, a silent one-hour offset between them is not a
+small error.
 """
 
 import pandas as pd
@@ -93,7 +100,12 @@ class TestCompleteData:
 
 
 class TestGapsShiftTheRemainderOfTheWindow:
-    """Characterisation. None of this is announced anywhere."""
+    """Characterisation of the helper called directly.
+
+    Reaching any of this through the pipeline is now impossible -- these pin
+    why. The function itself is unchanged and undefended: it is fast because it
+    trusts its input, and ``ProcessorRunner`` is what makes that trust sound.
+    """
 
     def _gapped(self, drop=10, periods=72, node="FI_elec"):
         times = pd.date_range("2014-01-01", periods=periods, freq="h").delete(drop)
@@ -142,48 +154,19 @@ class TestGapsShiftTheRemainderOfTheWindow:
         assert len(out[out["node"] == "A"]) == 72
         assert len(out[out["node"] == "B"]) == 60
 
-    def test_nothing_reports_any_of_this(self):
-        # The function takes no logger and returns no diagnostics, so a gap is
-        # indistinguishable from complete data to every caller.
+    def test_this_function_still_reports_none_of_it(self):
+        # It takes no logger and returns no diagnostics, by design: the check
+        # lives one level up, where it can name the processor. See
+        # test_processor_contract.py::TestTimeAxis for the rejection this now
+        # gets instead.
         out = _split(self._gapped())[2014]
         assert len(out) < 72
 
-
-class TestWhatShouldHappenInstead:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "t-labels are assigned by row position, so a gap shifts every later "
-            "hour instead of leaving a hole; nothing detects or reports it"
-        ),
-    )
-    def test_a_gap_keeps_later_hours_on_their_own_labels(self):
-        """Open: labels should follow the timestamp, not the row number.
-
-        Deriving the label from the offset between the row's timestamp and the
-        window start would make a gap a *missing row* -- which the GDX gate
-        already handles, converting it to 0 and able to report it -- instead of
-        a silent one-hour shift of everything after it.
-
-        Row-position labelling is the faster path and is correct whenever the
-        data is complete, which it is for the well-behaved processors. The
-        exposure is that nothing checks completeness: the processor contract
-        asks for full coverage, and ProcessorRunner validates columns,
-        emptiness and duplicates but not this.
-
-        Detecting it is cheap per run but not per *build*: checking that every
-        group has the same row count costs about 2 s per parameter, ~16 s a
-        build, and users generate 20-50 input folders for a scenario sweep. The
-        answer never changes between those builds -- it is a property of the
-        processor and its source data -- so it belongs in the timeseries data
-        verifier, run once when either changes, not in the pipeline.
-
-        Decided during phase 5. The pipeline checks form; coverage is content.
-        ``tests/_common/processor_contract.assert_even_hourly_coverage`` already
-        implements the check and is opt-in for exactly this reason.
-        """
-        times = pd.date_range("2014-01-01", periods=72, freq="h")
-        out = _split(_frame(times.delete(10)))[2014]
-
-        assert _at(out, "t000011") == 10.0   # hour 10 absent, hour 11 stays put
-        assert _at(out, "t000012") == 11.0
+# Retired here: an xfail proposing that labels follow the timestamp rather than
+# the row number. That design was not adopted -- row-position labelling stays,
+# and the gap is now rejected upstream instead of being tolerated downstream --
+# so the test could never have passed and was a permanent fixture in the xfail
+# register rather than an open question. What it gave up: any hope that this
+# function is safe called in isolation. What replaced it: proof that it never is
+# called that way. Its cost argument (~2 s per parameter, so the check belongs
+# in a separate tool) was measured and found wrong by a factor of about 25.

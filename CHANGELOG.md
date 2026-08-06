@@ -1,5 +1,11 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-06
+- ProcessorRunner verifies the time axis: every group must be one complete hourly grid, and all groups must cover the same span. Holes, repeated timestamps, sub-hourly rows, ragged spans and missing timestamps are errors, no config override. t-labels come from row position, so a hole pulled every later hour one label earlier with nothing detecting it.
+- Replaces the duplicated() check, which it subsumes and exceeds: 00:00 and 00:15 are distinct timestamps and passed that one. Measured -1.7 s per parameter (1.8 s removed, 66 ms added) by reusing the ordering the labeller needs anyway.
+- GDX_exchange: prepare_values_for_gdx decides blank dimension labels per label instead of per row. It was the most expensive step in the timeseries phase, four times the cost of writing the GDX files it guards. Roughly -30 s per build; no semantic change.
+- split_timeseries_to_climate_windows accepts precomputed group_ids and no longer re-sorts when given them. A frame with no grouping dimensions is now sorted by time rather than labelled in whatever order the processor returned.
+
 ## 2026-08-05
 - build_input_data: output folders are created beside build_input_data.py by default, not in the working directory, and main() accepts output_root to override it. cache_manager and timeseries_pipeline resolve their watched source paths and the processors folder against the project root for the same reason. Running the documented command from any other directory previously died on a bare FileNotFoundError naming ./build_input_data.py.
 - Timedelta calls use the explicit-unit form, e.g. pd.Timedelta(n, unit="h") rather than pd.Timedelta(hours=n). The keyword form raises a DeprecationWarning under numpy 2.5 that pandas says will become an error.

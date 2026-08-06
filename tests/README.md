@@ -60,6 +60,27 @@ codebase's history lives at the seam. This table is what the suite is organised 
 **`0 = NA = None` governs written GDX files too, not only `inputData.xlsx`.** The GAMS
 convention begins at boundary 7 and nowhere earlier.
 
+### The time axis is part of boundary 5
+
+A missing **value** is a gap and is legal all the way to boundary 7. A missing **row** is
+not the same thing at all, and is rejected at boundary 5. `split_timeseries_to_climate_windows`
+labels by row position, so an absent row does not leave a hole in the labels — it pulls every
+later hour of that group one label earlier, for the rest of the window, and nothing downstream
+can tell. `ProcessorRunner` therefore proves, per parameter, that every group is one complete
+hourly grid and that all groups cover the same span
+(`timeseries_helpers.find_time_axis_defects`). Holes, repeats, sub-hourly rows and ragged
+spans are all errors with no config escape hatch.
+
+This subsumed a `duplicated()` check and is strictly stronger — `00:00` and `00:15` are
+distinct timestamps and survived that one. `assert_processor_conforms` (with
+`check_coverage=True` by default) is the author-facing mirror and delegates to the same
+function, so the two cannot drift apart.
+
+Cost, because an earlier version of this document argued the opposite from an unmeasured
+figure: 66 ms on a 8.9 M-row parameter, against 1.8 s for the `duplicated()` it replaced. It
+is nearly free because it reuses the ordering the labeller needs anyway. **Profile before
+concluding something is too expensive to do properly.**
+
 Boundary 7 is the **only** place NaN becomes 0 on the timeseries route. Do not add a
 `fillna(0)` upstream of it. Three used to exist — in
 `ProcessorRunner` right after validation, as a side effect of `cutoff_below`, and inside
@@ -172,6 +193,14 @@ silently.
 
 To retire one: fix the code, watch the tripwire XPASS, then delete both the tripwire and
 the `known_contract_violation`.
+
+Two xfails were retired that way when the time-axis gate landed — one proposing that
+t-labels follow the timestamp rather than the row number, one about leap-day alignment in
+windows longer than 365 days. Both had been parked on the same reasoning: the check was
+believed to cost ~2 s per parameter, so it belonged in a separate tool rather than the
+build. Measured, it costs 66 ms. **An xfail whose stated blocker is a cost is only as good
+as the measurement behind it**, and neither of these had one. When retiring an xfail, delete
+its reasoning too — a stale justification outlives the test and gets quoted back as fact.
 
 ---
 

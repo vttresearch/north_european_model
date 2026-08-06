@@ -52,6 +52,13 @@ you are on.
   it also biases every forecast branch downward. The conversion is silent during a normal build
   (a source-data gap is not actionable by whoever runs one); `report_missing=True` counts it for
   the timeseries data verifier, whose audience is processor authors.
+- **A missing row is not a missing value.** A gap in `value` is legal to the GDX gate; an absent
+  *row* is rejected before it. `split_timeseries_to_climate_windows` assigns t-labels by row
+  position, so a hole pulls every later hour of that group one label earlier and nothing
+  downstream can detect it. `ProcessorRunner` proves per parameter that every group is one
+  complete hourly grid covering the same span as the others
+  (`timeseries_helpers.find_time_axis_defects`); holes, repeats, sub-hourly rows and ragged
+  spans are errors with no config override.
 
 ### Dtypes
 

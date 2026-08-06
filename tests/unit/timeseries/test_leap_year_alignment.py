@@ -11,22 +11,34 @@ series that skipped Feb 29 runs out a day early -- 8736 rows against 8760. The
 alignment holds only because the electricity processor expands its standardised
 year onto the real calendar first. That expansion is load-bearing, not tidying.
 
-Verified against the real build: all seven parameters produce exactly 8760 rows
-per group in leap year 1984.
+That all seven parameters produce exactly 8760 rows per group in leap year 1984
+used to be a hand-verified observation about one build. It is now an enforced
+invariant: ``ProcessorRunner`` calls ``find_time_axis_defects`` on every
+parameter and rejects any whose groups do not cover the same span.
+
+That check never compares two *parameters* -- it cannot, since the runner sees
+one at a time -- and it does not need to. If every parameter is independently
+proved to be one complete hourly grid over the range the config asks for, they
+are all in the same canonical form, so agreement between them follows by
+construction. Which is how a leap-day misalignment between electricity and hydro
+is now caught without anything ever putting the two side by side.
 
 What the window does contain is the *last* day: a leap year's Dec 31 falls
 outside a 365-day window, uniformly for every series. That containment depends
-on the window being no longer than a year.
-Past 365 days a window spans the leap day itself, and any series lacking it runs
-a day ahead of the others for the whole remainder -- silently, because t-labels
-are assigned by row position. ``config_OT2030-continuous5y.ini`` uses
-``bb_timeseries_length = 365*5``.
+on the window being no longer than a year. Past 365 days a window spans the leap
+day itself, and any series lacking it would run a day ahead of the others for
+the whole remainder -- silently, because t-labels are assigned by row position.
+``config_OT2030-continuous5y.ini`` uses ``bb_timeseries_length = 365*5``, which
+is exactly that case, and is why the gate matters beyond the default config.
+
+The tests below call the helper directly and so still show the old behaviour.
+That is deliberate: they are the statement of what the gate prevents.
 """
 
 import pandas as pd
-import pytest
 
 from src.timeseries.timeseries_helpers import split_timeseries_to_climate_windows
+from tests._common.processor_contract import run_fake_processor
 
 DIMS = ["grid", "node", "f", "t"]
 
@@ -150,29 +162,40 @@ class TestLongerWindowsLoseTheContainment:
         assert disagreements, "expected the two calendars to diverge"
         assert real["value"][disagreements[0]] == 60.0   # Feb 29
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "a window longer than 365 days spans the leap day, and a series "
-            "lacking it runs 24 h ahead of the others for the remainder"
-        ),
-    )
-    def test_series_should_stay_aligned_across_a_leap_day(self):
-        """Open, and known: electricity data comes in standard years.
+    def test_the_pipeline_now_refuses_this_frame(self, tmp_path):
+        """The same scenario, through ProcessorRunner instead of the helper.
 
-        The reconciliation exists (elec_demand_TYNDP2024 shifts its profile and
-        duplicates the last day), so the built parameters currently agree --
-        all seven produce 8760 rows per group in leap year 1984. What is missing
-        is anything that *checks* it. A processor added later, or a source that
-        changes its calendar, breaks the alignment with no signal at all,
-        because t-labels come from row position rather than from the timestamp.
+        Two nodes over a 380-day window from Dec 1, one of them missing Feb 29.
+        The helper labels it happily and the two nodes drift apart from the leap
+        day onward; the runner rejects it before the helper is ever called.
 
-        Where the check belongs was decided in phase 5: the verifier, not the
-        pipeline. Whether a processor's calendar lines up with the others is a
-        property of the processor and its source, so the answer is identical for
-        every build -- and users generate 20-50 input folders per scenario
-        sweep, where ~16 s each buys nothing new.
+        Reported as a **gap**, not as a ragged extent -- both series start Dec 1
+        and end Dec 31, so their spans agree exactly and only the interior
+        differs. That is the more useful diagnosis of the two: it names the
+        missing date instead of saying the groups disagree somewhere.
+
+        Replaces an xfail that deferred this to a standalone verifier on the
+        grounds that checking cost ~16 s per build. Measured, it costs 66 ms.
         """
-        out = _split(self._both(), start="12-01", days=380, year=2015)
-        counts = set(out.groupby("node", observed=True).size())
-        assert len(counts) == 1
+        run = run_fake_processor(
+            tmp_path,
+            "pd.concat(["
+            'pd.DataFrame({"grid": "elec", "node": "real_calendar", '
+            '"time": _span, "value": 1.0}), '
+            'pd.DataFrame({"grid": "elec", "node": "standard_calendar", '
+            '"time": _span[~((_span.month == 2) & (_span.day == 29))], '
+            '"value": 1.0})], ignore_index=True)',
+            body='_span = pd.date_range("2015-12-01", "2016-12-31 23:00", freq="h")',
+            config_overrides={
+                "climate_data": "2015-2016",
+                "start_year": 2015,
+                "end_year": 2016,
+                "bb_timeseries_start": "12-01",
+                "bb_timeseries_length": 380,
+            },
+        )
+
+        run.logger.assert_logged("gap", level="error")
+        assert "2016-03-01" in run.logger.matching("gap")[0]
+        assert "standard_calendar" in run.logger.matching("gap")[0]
+        run.assert_no_gdx_written()

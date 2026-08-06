@@ -23,6 +23,10 @@ from typing import Any, Sequence
 
 import pandas as pd
 
+from src.timeseries.timeseries_helpers import (
+    find_time_axis_defects,
+    order_timeseries_for_labelling,
+)
 from src.timeseries.timeseries_processor import ProcessorRunner
 from tests._common.contracts import assert_gams_ready
 from tests._common.fixtures import FakeLogger, make_config
@@ -186,6 +190,34 @@ def run_fake_processor(
     )
 
 
+def hourly_frame(
+    *,
+    hours: int = 48,
+    nodes: Sequence[str] = ("FI00_elec",),
+    start: str = "2014-01-01",
+    grid: str = "elec",
+) -> str:
+    """Source for a well-formed processor return value, one row per node-hour.
+
+    Returned as an expression string because that is what
+    ``FAKE_PROCESSOR_TEMPLATE`` splices in. `hours` defaults to 48 so a case
+    fills the whole window ``make_config`` declares (``bb_timeseries_length``
+    of 2); a shorter frame is legal but draws a short-window warning, and a
+    positive control asserting on a clean run should not have to assert through
+    noise it created itself.
+    """
+    node_list = ", ".join(repr(n) for n in nodes)
+    return (
+        "pd.concat(["
+        "pd.DataFrame({"
+        f'"grid": {grid!r}, "node": _n, '
+        f'"time": pd.date_range({start!r}, periods={hours}, freq="h"), '
+        '"value": 1.0'
+        "})"
+        f" for _n in [{node_list}]], ignore_index=True)"
+    )
+
+
 def assert_even_hourly_coverage(
     df: pd.DataFrame,
     *,
@@ -193,17 +225,12 @@ def assert_even_hourly_coverage(
     time_col: str = "time",
     where: str = "",
 ) -> None:
-    """Every group must cover the same hours, with no holes. **A content check.**
+    """Every group must be one complete hourly grid, and the same one.
 
-    Deliberately *not* part of what the pipeline enforces. The pipeline receives
-    what it receives; it cannot know a source's calendar, whether a last day is
-    meant to be there, or what complete coverage would even mean for a given
-    parameter. Its job is form -- columns, dtypes, no duplicates, no blank
-    dimension values -- and ``ProcessorRunner`` checks exactly that.
-
-    This belongs to whoever is reviewing a processor, which is why it is opt-in
-    here (``check_coverage``) and why the timeseries data verifier is its
-    eventual home.
+    The author-facing mirror of what ``ProcessorRunner`` enforces. It delegates
+    to ``find_time_axis_defects``, the same function the pipeline calls, because
+    a mirror that drifts from the gate it reflects is worse than no mirror --
+    it tells an author their processor is fine and the build then rejects it.
 
     ``split_timeseries_to_climate_windows`` assigns t-labels by row position
     within each group, so this is not a tidiness check -- it is the precondition
@@ -211,13 +238,13 @@ def assert_even_hourly_coverage(
 
     - a group with a **hole** does not get a gap in its labels, it gets every
       later hour pulled one step earlier;
-    - two groups of **different length** end up disagreeing about what a given
-      t-label means, for the whole remainder of the window.
+    - two groups covering **different spans** end up disagreeing about what a
+      given t-label means, for the whole remainder of the window.
 
-    Neither is announced anywhere, and neither shows up in a value check: the
-    numbers are all perfectly reasonable, just attached to the wrong hours. For
-    a model whose value is largely the correlation between countries, a silent
-    one-hour offset between two of them is not a small error.
+    Neither shows up in a value check: the numbers are all perfectly reasonable,
+    just attached to the wrong hours. For a model whose value is largely the
+    correlation between countries, a silent one-hour offset between two of them
+    is not a small error.
 
     The leap year is the realistic way this arises. Electricity demand comes on
     a standardised 365-day calendar while temperature and hydro come on the real
@@ -225,41 +252,42 @@ def assert_even_hourly_coverage(
     others in every leap year.
     """
     prefix = f"{where}: " if where else ""
-    present = [d for d in group_dims if d in df.columns]
     if df.empty or time_col not in df.columns:
         return
 
-    if present:
-        counts = df.groupby(present, observed=True).size()
-    else:
-        counts = pd.Series({(): len(df)})
+    present = [d for d in group_dims if d in df.columns]
+    ordered, group_ids = order_timeseries_for_labelling(
+        df, group_dims=present, time_col=time_col
+    )
+    report = find_time_axis_defects(ordered, group_ids, time_col=time_col)
+    if report.ok:
+        return
 
-    if counts.nunique() > 1:
-        shortest, longest = counts.min(), counts.max()
-        offenders = counts[counts != longest].head(3).to_dict()
+    if report.n_missing_timestamps:
         raise AssertionError(
-            f"{prefix}groups do not cover the same number of hours "
-            f"({shortest} to {longest}); t-labels are assigned by row position, "
-            f"so the short groups will be offset against the rest for the whole "
-            f"window. First: {offenders}"
+            f"{prefix}{report.n_missing_timestamps} row(s) have no usable "
+            f"timestamp, so they cannot be placed on the hour grid at all."
         )
-
-    times = pd.to_datetime(df[time_col])
-    for key, group in (
-        df.assign(**{time_col: times}).groupby(present, observed=True)
-        if present
-        else [((), df.assign(**{time_col: times}))]
-    ):
-        ordered = group[time_col].sort_values()
-        gaps = ordered.diff().dropna()
-        irregular = gaps[gaps != pd.Timedelta(hours=1)]
-        if not irregular.empty:
-            first = ordered.loc[irregular.index[0]]
-            raise AssertionError(
-                f"{prefix}group {key!r} is not hourly-continuous: a {irregular.iloc[0]} "
-                f"step at {first}. A hole shifts every later hour onto an earlier "
-                f"t-label rather than leaving a gap."
-            )
+    if report.n_duplicate_or_finer_than_step:
+        raise AssertionError(
+            f"{prefix}{report.n_duplicate_or_finer_than_step} row(s) share an "
+            f"hour with another row in the same group (repeated timestamps, or "
+            f"data finer than hourly), first at {report.first_defect_time}. "
+            f"t-label assignment would be corrupted."
+        )
+    if report.n_gaps:
+        raise AssertionError(
+            f"{prefix}the time axis has {report.n_gaps} hole(s), first at "
+            f"{report.first_defect_time}. A hole shifts every later hour onto an "
+            f"earlier t-label rather than leaving a gap."
+        )
+    raise AssertionError(
+        f"{prefix}groups do not cover the same hours: they start between "
+        f"{report.group_first_range[0]} and {report.group_first_range[1]}, and "
+        f"end between {report.group_last_range[0]} and "
+        f"{report.group_last_range[1]}. The short ones will be offset against "
+        f"the rest for the whole window."
+    )
 
 
 def assert_processor_conforms(
@@ -267,14 +295,15 @@ def assert_processor_conforms(
     *,
     dimensions: Sequence[str],
     value_col: str = "value",
-    check_coverage: bool = False,
+    check_coverage: bool = True,
     **required_kwargs: Any,
 ) -> pd.DataFrame:
     """Run a processor class and assert its output meets the documented contract.
 
     Exported for processor authors: import this in your own test and you get the
     same gate the built-in processors pass, instead of discovering the contract
-    from a GAMS error three stages later.
+    from a GAMS error three stages later -- or, worse, from model results that
+    are silently shifted by an hour.
 
     Checks the interface ``ProcessorRunner`` enforces:
 
@@ -282,10 +311,15 @@ def assert_processor_conforms(
     - its columns are exactly ``dimensions`` (minus ``t``/``f``) + time + value;
     - ``time`` is datetime and ``value`` is numeric;
     - no dimension value is missing or blank -- these become GAMS set elements;
-    - no duplicate ``(dimensions, time)`` rows, which would corrupt t-labelling;
-    - every group covers the same hours, hourly and without holes
-      (``check_coverage``) -- see :func:`assert_even_hourly_coverage` for why
-      this one matters more than it looks.
+    - every group is one complete hourly grid and they all cover the same span
+      (``check_coverage``), which also covers duplicate and sub-hourly rows --
+      see :func:`assert_even_hourly_coverage` for why this matters more than it
+      looks.
+
+    ``check_coverage`` defaults to True because the pipeline now rejects a
+    broken axis outright, and a mirror weaker than the gate it reflects gives
+    an author false confidence. Turn it off only while a processor is still
+    being built.
 
     Missing ``value`` entries are explicitly *allowed*: NaN means "no data" until
     the GDX gate converts it to 0 and reports how many. A missing *row* is not
@@ -321,12 +355,9 @@ def assert_processor_conforms(
             f"{main_result['time'].dtype}, expected datetime"
         )
 
-    duplicates = main_result.duplicated(subset=group_dims + ["time"])
-    if duplicates.any():
-        raise AssertionError(
-            f"{processor_cls.__name__} returned {int(duplicates.sum())} duplicate "
-            f"(dimensions, time) row(s); t-label assignment would be corrupted"
-        )
+    # Duplicates are not checked separately: a repeated (dimensions, time) row
+    # is a zero-hour step, which the coverage check below reports along with
+    # gaps, sub-hourly rows and ragged spans. One implementation, one answer.
 
     # Dimensions and dtype, but NOT NA in value -- gaps are legal until the gate.
     assert_gams_ready(

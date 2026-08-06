@@ -15,7 +15,7 @@ are ordinary ``.py`` files in ``tmp_path``. No monkeypatching involved.
 import pandas as pd
 import pytest
 
-from tests._common.processor_contract import run_fake_processor
+from tests._common.processor_contract import hourly_frame, run_fake_processor
 
 # A well-formed two-row frame, used as the base that each misbehaving case breaks.
 GOOD = (
@@ -84,6 +84,106 @@ class TestReturnShape:
         )
         run.logger.assert_logged("duplicate rows", level="error")
         run.assert_no_gdx_written()
+
+
+class TestTimeAxis:
+    """t-labels come from row position, so the row positions have to be right.
+
+    ``split_timeseries_to_climate_windows`` gives row n of a group the label
+    ``t{n+1}``. That is exact when the group holds one row per hour of the
+    window, and undetectably wrong otherwise: the values that land on each label
+    are all perfectly plausible, merely attached to the wrong hour.
+
+    None of these four is caught by looking at values, which is why they are
+    errors rather than warnings, and why they stop the GDX write.
+    """
+
+    def test_a_gap_is_rejected(self, tmp_path):
+        run = run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": "elec", "node": "FI00_elec", '
+            '"time": pd.date_range("2014-01-01", periods=48, freq="h").delete(10), '
+            '"value": 1.0})',
+        )
+        run.logger.assert_logged("gap", level="error")
+        run.assert_no_gdx_written()
+
+    def test_the_gap_message_says_where_and_why(self, tmp_path):
+        """The error text is the whole spec of this rule for most people.
+
+        Someone adding a processor reads the message, not tests/README.md, so
+        it has to name the hour and say what actually goes wrong -- otherwise
+        "gap in the time axis" reads like a tidiness complaint.
+        """
+        run = run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": "elec", "node": "FI00_elec", '
+            '"time": pd.date_range("2014-01-01", periods=48, freq="h").delete(10), '
+            '"value": 1.0})',
+        )
+        message = run.logger.matching("gap")[0]
+        assert "2014-01-01 11:00" in message
+        assert "one label earlier" in message
+
+    def test_sub_hourly_rows_are_rejected(self, tmp_path):
+        """The case the old duplicate check could not see.
+
+        00:00 and 00:15 are distinct timestamps, so ``duplicated()`` passed
+        them, and row-position labelling then handed the quarter-hour the next
+        model hour's label.
+        """
+        run = run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": "elec", "node": "FI00_elec", '
+            '"time": pd.to_datetime(["2014-01-01 00:00", "2014-01-01 00:15", '
+            '"2014-01-01 01:00"]), "value": 1.0})',
+        )
+        run.logger.assert_logged("duplicate rows", level="error")
+        run.assert_no_gdx_written()
+
+    def test_groups_covering_different_spans_are_rejected(self, tmp_path):
+        """Every step is one hour and the frame is still fatal.
+
+        Two nodes, each internally flawless, a day apart. They disagree about
+        which real hour ``t000001`` names -- and for a model whose value is
+        largely the correlation between countries, that is not a small error.
+        """
+        run = run_fake_processor(
+            tmp_path,
+            "pd.concat(["
+            'pd.DataFrame({"grid": "elec", "node": "FI00_elec", '
+            '"time": pd.date_range("2014-01-01", periods=48, freq="h"), "value": 1.0}), '
+            'pd.DataFrame({"grid": "elec", "node": "SE00_elec", '
+            '"time": pd.date_range("2014-01-02", periods=48, freq="h"), "value": 1.0})'
+            "], ignore_index=True)",
+        )
+        run.logger.assert_logged("do not cover the same hours", level="error")
+        run.assert_no_gdx_written()
+
+    def test_a_missing_timestamp_is_rejected(self, tmp_path):
+        run = run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": "elec", "node": "FI00_elec", '
+            '"time": pd.to_datetime(["2014-01-01 00:00", None, "2014-01-01 02:00"]), '
+            '"value": 1.0})',
+        )
+        run.logger.assert_logged("missing timestamp", level="error")
+        run.assert_no_gdx_written()
+
+    @pytest.mark.gams
+    def test_a_clean_axis_still_writes_gdx(self, tmp_path):
+        """The control. A gate that rejects everything would pass every test above.
+
+        Two nodes over the full 48-hour window ``make_config`` declares, so this
+        also pins that a complete frame draws no short-window warning.
+        """
+        run = run_fake_processor(
+            tmp_path, hourly_frame(nodes=("FI00_elec", "SE00_elec"))
+        )
+
+        assert run.gdx_files, "a well-formed processor must still produce GDX"
+        run.logger.assert_no_errors()
+        assert not run.logger.matching("do not cover the full")
 
 
 class TestDimensionValues:
