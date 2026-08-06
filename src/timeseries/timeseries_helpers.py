@@ -4,10 +4,11 @@ Utility functions used exclusively by the timeseries pipeline.
 
 import os
 import glob
+from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
@@ -165,6 +166,235 @@ def update_import_timeseries_inc(
         pass
 
 
+def order_timeseries_for_labelling(
+    df: pd.DataFrame,
+    *,
+    group_dims: Sequence[str],
+    time_col: str = "time",
+    ) -> Tuple[pd.DataFrame, np.ndarray]:
+    """
+    Sort a long-format timeseries into t-label order and return its group ids.
+
+    t-labels are assigned by row position within each group, so this ordering
+    *is* the labelling: sort by group then time, and row n of a group becomes
+    t{n+1}. Both the ordering and the group ids are returned because every
+    consumer needs them together and recomputing either is expensive -- the sort
+    and the ``ngroup`` cost about a second each on a nine-million-row parameter.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-format input with the grouping dimensions and `time_col`.
+    group_dims : sequence of str
+        The dimensions that define a series -- the spec dimensions minus
+        't' and 'f'. May be empty.
+    time_col : str
+        Name of the datetime column.
+
+    Returns
+    -------
+    (pd.DataFrame, np.ndarray)
+        The frame sorted by ``group_dims + [time_col]``, and group ids aligned
+        to it **positionally**. The frame keeps its original index; everything
+        downstream indexes by position, so resetting it would only cost a copy.
+
+    Notes
+    -----
+    With no `group_dims` the frame is still sorted by time. That case used to
+    skip sorting entirely and then hand out t-labels in whatever order the
+    processor happened to return, which is not a defensible thing to do with a
+    label that means "hour n of the window".
+
+    ``ngroup`` returns -1 for rows whose grouping key is missing, and
+    ``sort_values`` puts those rows last, so they arrive as one trailing
+    pseudo-group. Callers should reject missing dimension values before getting
+    here -- ``ProcessorRunner`` does -- because "blank is not a GAMS set
+    element" is a better message than anything derivable from the time axis.
+    """
+    group_dims = list(group_dims)
+
+    if "value" in df.columns and df["value"].dtype != np.float64:
+        df = df.copy()
+        df["value"] = df["value"].astype(np.float64)
+
+    if group_dims:
+        df = df.sort_values(group_dims + [time_col], kind="mergesort")
+        group_ids = df.groupby(group_dims, observed=True, sort=False).ngroup().to_numpy()
+    else:
+        df = df.sort_values([time_col], kind="mergesort")
+        group_ids = np.zeros(len(df), dtype=np.int64)
+
+    return df, group_ids
+
+
+@dataclass(frozen=True)
+class TimeAxisReport:
+    """What :func:`find_time_axis_defects` found. See ``ok`` for the verdict."""
+
+    n_rows: int
+    n_groups: int
+    #: Rows whose timestamp is NaT, or was not convertible to one.
+    n_missing_timestamps: int
+    #: Steps of zero or less within a group: a repeated timestamp, or two
+    #: timestamps that fall in the same step-sized bucket (sub-hourly data).
+    n_duplicate_or_finer_than_step: int
+    #: Steps of more than one within a group: a hole.
+    n_gaps: int
+    #: Groups disagree about which span they cover, even if each is internally
+    #: complete.
+    ragged_extent: bool
+    first_defect_index: Optional[int] = None
+    first_defect_time: Optional[pd.Timestamp] = None
+    first_time: Optional[pd.Timestamp] = None
+    last_time: Optional[pd.Timestamp] = None
+    #: (earliest, latest) first timestamp across groups; equal unless ragged.
+    group_first_range: Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None
+    #: (earliest, latest) last timestamp across groups; equal unless ragged.
+    group_last_range: Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None
+
+    @property
+    def ok(self) -> bool:
+        return (
+            self.n_missing_timestamps == 0
+            and self.n_duplicate_or_finer_than_step == 0
+            and self.n_gaps == 0
+            and not self.ragged_extent
+        )
+
+
+def find_time_axis_defects(
+    sorted_df: pd.DataFrame,
+    group_ids: np.ndarray,
+    *,
+    time_col: str = "time",
+    step: pd.Timedelta = pd.Timedelta(1, unit="h"),
+    ) -> TimeAxisReport:
+    """
+    Check that every group is one complete grid on `step`, and the same grid.
+
+    Requires `sorted_df` and `group_ids` from a single call to
+    :func:`order_timeseries_for_labelling`; it reads them positionally and does
+    not re-sort. Pure numpy over already-ordered data: no groupby, no per-group
+    Python loop, so a nine-million-row parameter costs tens of milliseconds
+    rather than the second and a half a ``duplicated()`` on the same frame does.
+
+    Two independent things have to hold, and neither implies the other:
+
+    - **within a group**, consecutive rows differ by exactly one `step`. That
+      one comparison proves no repeats, no sub-`step` rows, no holes, and
+      monotonic time all at once -- a repeat gives a difference of zero, a
+      hole gives more than one.
+    - **across groups**, every group starts and ends at the same timestamp.
+      Groups can each be internally perfect and still cover different spans,
+      and then they disagree about what a given t-label means.
+
+    Why any of it matters: ``split_timeseries_to_climate_windows`` labels by row
+    position. A hole does not leave a hole in the labels -- it pulls every later
+    hour of that group one label earlier, for the rest of the window. Nothing
+    downstream can detect that, because the numbers are all perfectly plausible
+    and merely attached to the wrong hours. For a model whose value is largely
+    the correlation between countries, a silent one-hour offset between two of
+    them is not a small error.
+
+    `step` is a parameter rather than a hard-coded hour because the checker has
+    no reason to know the pipeline's business. The hourly assumption lives in
+    ``split_timeseries_to_climate_windows``, whose window is ``bb_ts_length * 24``
+    labels. At a one-hour step, 00:00 and 00:15 land in the same bucket and are
+    reported as a duplicate -- which is the intent: the pipeline cannot label
+    sub-hourly data, so it must not accept it silently.
+
+    Returns
+    -------
+    TimeAxisReport
+        Counts and locations. ``report.ok`` is the verdict; the rest exists so
+        the caller can say *what* was wrong and *where*.
+    """
+    n_rows = len(sorted_df)
+    if n_rows == 0:
+        return TimeAxisReport(0, 0, 0, 0, 0, False)
+
+    gid = np.asarray(group_ids)
+    newg = np.empty(n_rows, dtype=bool)
+    newg[0] = True
+    np.not_equal(gid[1:], gid[:-1], out=newg[1:])
+    starts = np.flatnonzero(newg)
+
+    col = sorted_df[time_col]
+    if not pd.api.types.is_datetime64_any_dtype(col):
+        col = pd.to_datetime(col, errors="coerce")
+    times = col.to_numpy(dtype="datetime64[ns]")
+
+    # First, because a NaT makes every comparison below meaningless: it would
+    # read as an integer near the bottom of the int64 range and manufacture a
+    # gap of about 292 years next to it.
+    nat = np.isnat(times)
+    if nat.any():
+        return TimeAxisReport(
+            n_rows=n_rows,
+            n_groups=starts.size,
+            n_missing_timestamps=int(nat.sum()),
+            n_duplicate_or_finer_than_step=0,
+            n_gaps=0,
+            ragged_extent=False,
+            first_defect_index=int(np.flatnonzero(nat)[0]),
+        )
+
+    # Explicit floor-divide on int64 nanoseconds rather than
+    # `.astype("datetime64[h]")`: numpy's unit-downcast rounding for pre-epoch
+    # values is not something a t-label should depend on, and pinning [ns] in
+    # to_numpy above stops a different pandas resolution changing the divisor.
+    ticks = times.view("int64") // step.value
+
+    diff = np.empty(n_rows, dtype=np.int64)
+    diff[0] = 1
+    np.subtract(ticks[1:], ticks[:-1], out=diff[1:])
+    bad_idx = np.flatnonzero(~(newg | (diff == 1)))
+    bad_steps = diff[bad_idx]
+
+    ends = np.append(starts[1:], n_rows) - 1
+    group_firsts, group_lasts = times[starts], times[ends]
+    first_range = (pd.Timestamp(group_firsts.min()), pd.Timestamp(group_firsts.max()))
+    last_range = (pd.Timestamp(group_lasts.min()), pd.Timestamp(group_lasts.max()))
+
+    return TimeAxisReport(
+        n_rows=n_rows,
+        n_groups=starts.size,
+        n_missing_timestamps=0,
+        n_duplicate_or_finer_than_step=int((bad_steps <= 0).sum()),
+        n_gaps=int((bad_steps > 1).sum()),
+        ragged_extent=bool(first_range[0] != first_range[1] or last_range[0] != last_range[1]),
+        first_defect_index=int(bad_idx[0]) if bad_idx.size else None,
+        first_defect_time=pd.Timestamp(times[bad_idx[0]]) if bad_idx.size else None,
+        first_time=first_range[0],
+        last_time=last_range[1],
+        group_first_range=first_range,
+        group_last_range=last_range,
+    )
+
+
+def find_incomplete_climate_windows(
+    annual_dfs: Dict[int, pd.DataFrame],
+    *,
+    expected_rows: int,
+    ) -> Dict[int, int]:
+    """
+    Years whose window did not come out the expected size -> the size it did.
+
+    The one hazard a whole-frame time-axis check cannot see: data can be a
+    flawless grid and still not reach the end of the requested window, in which
+    case the window is simply short and every label in it is still correct.
+    Once :func:`find_time_axis_defects` has passed, ``expected_rows`` is exact
+    (``bb_ts_length * 24 * n_groups``), so this is one ``len()`` per year.
+    """
+    if expected_rows <= 0:
+        return {}
+    return {
+        year: len(frame)
+        for year, frame in annual_dfs.items()
+        if len(frame) != expected_rows
+    }
+
+
 def split_timeseries_to_climate_windows(
     df: pd.DataFrame,
     *,
@@ -172,6 +402,7 @@ def split_timeseries_to_climate_windows(
     bb_ts_start: str,
     bb_ts_length: int,
     valid_climate_years: List[int],
+    group_ids: Optional[np.ndarray] = None,
     ) -> Dict[int, pd.DataFrame]:
     """
     Split a multi-year timeseries DataFrame into per-year climate window chunks
@@ -198,6 +429,14 @@ def split_timeseries_to_climate_windows(
         Window length in days.
     valid_climate_years : list of int
         Years for which to extract windows.
+    group_ids : np.ndarray, optional
+        Group ids from :func:`order_timeseries_for_labelling`. Supplying them
+        asserts that `df` is **already** ordered by ``group_dims + ['time']``
+        and that the ids align with it positionally -- both must come from the
+        same call. Omit it and this function does the ordering itself, which is
+        what every caller did before the check was added; it exists so
+        ``ProcessorRunner``, which has to order the frame anyway to verify the
+        time axis, does not pay for a second sort.
 
     Returns
     -------
@@ -209,10 +448,6 @@ def split_timeseries_to_climate_windows(
     """
     dims = list(bb_parameter_dimensions)
 
-    if df["value"].dtype != np.float64:
-        df = df.copy()
-        df["value"] = df["value"].astype(np.float64)
-
     # Grouping dimensions exclude f and t
     group_dims = [c for c in dims if c not in {"f", "t"}]
 
@@ -221,12 +456,11 @@ def split_timeseries_to_climate_windows(
     final_cols = dims + ["value"]
     out: Dict[int, pd.DataFrame] = {}
 
-    # Pre-sort and pre-compute group ids once before the per-year loop.
-    # A mask applied to a pre-sorted DataFrame yields an already-sorted subset,
-    # and group_ids[mask] correctly identifies group boundaries in that subset.
-    if group_dims:
-        df = df.sort_values(group_dims + ["time"], kind="mergesort")
-        group_ids = df.groupby(group_dims, observed=True, sort=False).ngroup().values
+    # Sort and group ids come once, before the per-year loop. A mask applied to
+    # a pre-sorted DataFrame yields an already-sorted subset, and group_ids[mask]
+    # correctly identifies group boundaries in that subset.
+    if group_ids is None:
+        df, group_ids = order_timeseries_for_labelling(df, group_dims=group_dims)
     time_np = df["time"].to_numpy()  # numpy datetime64 for fast per-year masking
 
     for yr in valid_climate_years:
@@ -239,19 +473,19 @@ def split_timeseries_to_climate_windows(
         if len(df_yr) == 0:
             continue
 
-        if group_dims:
-            # group_ids[mask] reuses the pre-computed group structure; no re-sort or re-groupby needed.
-            group_changes = np.diff(group_ids[mask], prepend=-1) != 0
+        # group_ids[mask] reuses the pre-computed group structure; no re-sort or re-groupby needed.
+        # With no grouping dimensions the ids are all zero, which marks a single
+        # group and reduces the row numbering below to a plain arange -- so there
+        # is no second code path to keep in agreement with this one.
+        group_changes = np.diff(group_ids[mask], prepend=-1) != 0
 
-            # Fast row numbering within groups
-            row_nums = np.arange(len(df_yr))
-            row_nums -= np.repeat(
-                row_nums[group_changes],
-                np.diff(np.append(np.where(group_changes)[0], len(df_yr))),
-            )
-            df_yr['_row_num'] = row_nums
-        else:
-            df_yr['_row_num'] = np.arange(len(df_yr))
+        # Fast row numbering within groups
+        row_nums = np.arange(len(df_yr))
+        row_nums -= np.repeat(
+            row_nums[group_changes],
+            np.diff(np.append(np.where(group_changes)[0], len(df_yr))),
+        )
+        df_yr['_row_num'] = row_nums
 
         row_nums_filtered = df_yr['_row_num'].values
         t_cat = pd.Categorical(t_labels[row_nums_filtered], categories=t_labels)
