@@ -76,6 +76,9 @@ from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.timeseries_helpers import (
     collect_domains_for_cache,
     collect_domain_pairs_for_cache,
+    find_incomplete_climate_windows,
+    find_time_axis_defects,
+    order_timeseries_for_labelling,
     update_import_timeseries_inc,
     split_timeseries_to_climate_windows,
     calculate_climatological_forecasts,
@@ -134,6 +137,65 @@ class ProcessorRunner:
         """
         hash_value = hash_utils.compute_file_hash(processor_file)
         self.cache_manager.save_processor_hash(processor_name, hash_value)
+
+
+    @staticmethod
+    def _describe_time_axis_defect(
+        report, processor_name: str, ordered_result: pd.DataFrame, group_dims: list
+    ) -> str:
+        """
+        Turn a TimeAxisReport into the message its author needs.
+
+        This text is the whole specification of the rule for most people who hit
+        it: someone adding a processor reads the error, not the test suite. So it
+        has to say what is wrong, where, and -- the part that is not guessable --
+        why it corrupts results rather than merely being untidy.
+        """
+        prefix = f"Processor '{processor_name}'"
+        tail = "No GDX output will be written."
+
+        def group_at(index):
+            if index is None or not group_dims:
+                return None
+            row = ordered_result.iloc[index]
+            return tuple(row[d] for d in group_dims)
+
+        if report.n_missing_timestamps:
+            return (
+                f"{prefix} returned {report.n_missing_timestamps} row(s) with a "
+                f"missing timestamp. Every row has to sit at a known hour before "
+                f"it can be given a t-label. {tail}"
+            )
+
+        if report.n_duplicate_or_finer_than_step:
+            return (
+                f"{prefix} returned {report.n_duplicate_or_finer_than_step} "
+                f"duplicate rows: two or more rows fall on the same hour for the "
+                f"same group, either repeated timestamps or data finer than "
+                f"hourly. First at {report.first_defect_time} in group "
+                f"{group_at(report.first_defect_index)}. This causes incorrect "
+                f"t-label assignment. {tail}"
+            )
+
+        if report.n_gaps:
+            return (
+                f"{prefix} has {report.n_gaps} gap(s) in its hourly time axis, "
+                f"first at {report.first_defect_time} in group "
+                f"{group_at(report.first_defect_index)}. t-labels are assigned by "
+                f"row position, so a gap does not leave a hole -- it pulls every "
+                f"later hour of that group one label earlier, for the rest of the "
+                f"window. {tail}"
+            )
+
+        first_lo, first_hi = report.group_first_range
+        last_lo, last_hi = report.group_last_range
+        return (
+            f"{prefix} returned groups that do not cover the same hours: they "
+            f"start between {first_lo} and {first_hi}, and end between {last_lo} "
+            f"and {last_hi}. Each group may be complete on its own and they still "
+            f"disagree about which real hour a given t-label names, for the whole "
+            f"window. {tail}"
+        )
 
 
     def run(self) -> ProcessorRunResult:
@@ -362,25 +424,10 @@ class ProcessorRunner:
                 ts_domains={},
                 ts_domain_pairs={},
             )
-        # Processors must return at most one row per (group, time) combination.
-        # Duplicates indicate a processor bug (e.g. duplicate timestamps or sub-hourly data)
-        # and would cause silent data corruption during t-label assignment.
-        key_cols = expected_dims + ['time']
-        if main_result.duplicated(subset=key_cols).any():
-            dup_count = main_result.duplicated(subset=key_cols).sum()
-            self.logger.log_status(
-                f"Processor '{processor_name}' returned {dup_count} duplicate rows "
-                f"(same group+time combination). This causes incorrect t-label assignment. "
-                f"No GDX output will be written.",
-                level="error",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
-            )
+        # The time axis -- one complete grid per group, and the same grid -- is
+        # checked further down, once 'time' has actually been converted to
+        # datetime and the ordering it needs has been computed. It subsumes the
+        # duplicate check that used to live here, and costs a fortieth as much.
 
         # Dimension values become GAMS set elements, so a missing one is not a
         # value problem -- it is a broken key. Caught here, where the message can
@@ -474,16 +521,71 @@ class ProcessorRunner:
                 values.isna() | (values.abs() >= cutoff_below), 0
             )
 
+        # --- Verify the time axis ---
+        # Ordering by (group dimensions, time) is what t-label assignment means,
+        # so it is computed once here and handed to the splitter rather than
+        # thrown away and redone. Checking it costs a few tens of milliseconds
+        # on top; the duplicate check this replaced cost about 1.5 s.
+        #
+        # Deliberately after the missing-dimension guard above: ngroup() gives -1
+        # to rows whose key is missing and sort_values puts them last, so a frame
+        # with blank dimensions would arrive here as one bogus trailing group.
+        # "Blank is not a GAMS set element" is the more useful message, and it
+        # has already fired by this point.
+        ordered_result, group_ids = order_timeseries_for_labelling(
+            main_result, group_dims=group_dim_cols
+        )
+        time_axis = find_time_axis_defects(ordered_result, group_ids)
+        if not time_axis.ok:
+            self.logger.log_status(
+                self._describe_time_axis_defect(
+                    time_axis, processor_name, ordered_result, group_dim_cols
+                ),
+                level="error",
+            )
+            self._update_processor_hash(processor_file, processor_name)
+            return ProcessorRunResult(
+                processor_name=processor_name,
+                secondary_result=None,
+                ts_domains={},
+                ts_domain_pairs={},
+            )
+
         # --- Slice and write climate windows' data ---
-        # Split into climate windows
+        # Split into climate windows.
+        # main_result stays unsorted on purpose: the annual summary, the
+        # climatological forecasts and the domain caches all read it below, and
+        # reordering it would change the row order of the forecast GDX and the
+        # element order of the domain JSON -- identical content, different bytes,
+        # for no gain.
         self.logger.log_status("Preparing annual GDX files...")
         annual_dfs = split_timeseries_to_climate_windows(
-            main_result,
+            ordered_result,
             bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
             bb_ts_start=bb_ts_start,
             bb_ts_length=bb_ts_length,
             valid_climate_years=valid_climate_years,
+            group_ids=group_ids,
         )
+        # A complete, even axis can still stop before the window does. That is
+        # tolerated -- valid_climate_years already drops years with no data at
+        # all -- but it is worth saying, because a short window is not obvious
+        # from anything else the build prints.
+        short_windows = find_incomplete_climate_windows(
+            annual_dfs, expected_rows=bb_ts_length * 24 * time_axis.n_groups
+        )
+        if short_windows:
+            examples = ", ".join(
+                f"{year} ({rows} of {bb_ts_length * 24 * time_axis.n_groups} rows)"
+                for year, rows in list(short_windows.items())[:3]
+            )
+            self.logger.log_status(
+                f"Processor '{processor_name}': {len(short_windows)} climate "
+                f"window(s) do not cover the full {bb_ts_length}-day window "
+                f"because the source data ends first: {examples}. The labels in "
+                f"them are correct; the windows are simply shorter.",
+                level="warn",
+            )
         # Write climate windows' GDX files
         GDX_exchange.write_climate_window_GDX_files(
             annual_dfs, self.output_folder, self.logger,
