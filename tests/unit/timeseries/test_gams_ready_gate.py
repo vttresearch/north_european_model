@@ -122,6 +122,26 @@ class TestDimensionValues:
         assert len(out) == 1
         logger.assert_logged("GAMS set", level="error")
 
+    def test_a_categorical_catches_blank_labels_and_absent_ones_together(self):
+        """The two ways a categorical dimension can be unusable, in one frame.
+
+        A blank label is a *category*; a missing value is the absence of one,
+        carried as code -1 and never present in ``.cat.categories``. The gate
+        decides blankness per label rather than per row -- checking hundreds of
+        thousands of rows to learn about a dozen labels is what made this the
+        most expensive step in the timeseries phase -- so the -1 case is not
+        covered by that answer and has to be folded in separately. Both rows
+        must go, and the good row must stay.
+        """
+        df = _frame([1.0, 2.0, 3.0, 4.0], nodes=["FI00_elec", "  ", "FI00_elec", None])
+        df["node"] = df["node"].astype("category")
+        logger = FakeLogger()
+
+        out = _gate(df, logger)
+
+        assert out["value"].tolist() == [1.0, 3.0]
+        logger.assert_logged("GAMS set", level="error")
+
     def test_zero_is_a_value_not_a_blank(self):
         # Guards against over-eager emptiness rules: node "0" is a legal, if
         # unusual, set element and must survive.

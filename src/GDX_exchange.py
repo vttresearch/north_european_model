@@ -137,11 +137,25 @@ def prepare_values_for_gdx(
         blank = pd.Series(False, index=work.index)
         for d in present_dims:
             col = work[d]
-            missing = col.isna()
-            # Compare as text: dimension columns may be categorical, and a
-            # whitespace-only label is as unusable as an empty one.
-            as_text = col.astype("string")
-            blank |= missing | as_text.fillna("").str.strip().eq("")
+            if isinstance(col.dtype, pd.CategoricalDtype):
+                # A dimension column is categorical by the time it gets here
+                # (timeseries_processor casts it), and it has a handful of
+                # distinct labels against hundreds of thousands of rows. Decide
+                # blankness once per label and map back through the codes.
+                # Materialising the whole column as strings asks the same
+                # question of every row: measured at ~200 ms per climate window,
+                # ~6 s per parameter, which made this gate cost four times more
+                # than writing the GDX it guards.
+                cats = col.cat.categories.to_series().astype("string")
+                bad = (cats.isna() | cats.str.strip().eq("")).to_numpy()
+                # -1 is the code for a missing value, and indexing with -1 wraps
+                # to this appended True.
+                blank |= np.append(bad, True)[col.cat.codes.to_numpy()]
+            else:
+                # Compare as text: a whitespace-only label is as unusable as an
+                # empty one.
+                as_text = col.astype("string")
+                blank |= col.isna() | as_text.fillna("").str.strip().eq("")
         if blank.any():
             examples = ", ".join(
                 str(v) for v in work.loc[blank, present_dims[0]].head(3).tolist()
