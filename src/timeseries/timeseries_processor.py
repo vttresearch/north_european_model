@@ -203,7 +203,7 @@ class ProcessorRunner:
         data_end = pd.Timestamp(f"{end_year}-12-31 23:00")
         valid_climate_years = [
             yr for yr in range(start_year, end_year + 1)
-            if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(hours=bb_ts_length * 24 - 1) <= data_end
+            if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(bb_ts_length * 24 - 1, unit="h") <= data_end
         ]
 
         # Load processor module

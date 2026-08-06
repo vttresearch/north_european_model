@@ -126,7 +126,10 @@ class TimeseriesPipeline:
         specs: list[dict] = []
         timeseries_specs: dict = self.config["timeseries_specs"]
         exclude_grids: list[str] = self.config["exclude_grids"]
-        processors_base = Path("src/timeseries/processors")
+        # Anchored to this file, not the working directory: the processors live
+        # beside it and their location has nothing to do with where the build
+        # was started from.
+        processors_base = Path(__file__).resolve().parent / "processors"
 
         for human_name, spec in timeseries_specs.items():
             processor_name: str = spec["processor_name"]
@@ -541,7 +544,7 @@ class TimeseriesPipeline:
 
             excluded_years = [
                 yr for yr in range(start_year, end_year + 1)
-                if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(hours=bb_ts_length * 24 - 1) > data_end
+                if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(bb_ts_length * 24 - 1, unit="h") > data_end
             ]
             if excluded_years:
                 self.logger.log_status(

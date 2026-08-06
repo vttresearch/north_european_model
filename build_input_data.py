@@ -19,9 +19,25 @@ from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
 from src.utils import parse_sys_args, force_utf8_output
 
+#: Project root -- this file's own directory. Output folders are created here by
+#: default rather than in the working directory, so the same command produces
+#: the same output wherever it is run from.
+_REPO_ROOT = Path(__file__).resolve().parent
 
-def main(input_folder: Path, config_file: Path):
+
+def main(input_folder: Path, config_file: Path, output_root: Path | None = None):
+    """Build Backbone input data for every scenario the config declares.
+
+    output_root:
+        Where the per-scenario output folders are created. Defaults to the
+        project root, i.e. beside build_input_data.py. It used to be the working
+        directory, which meant the same command run from two places maintained
+        two independent caches and two half-built outputs -- and since the cache
+        lives inside the output folder, neither knew about the other.
+    """
     # --- 1. Prep ---
+    output_root = Path(output_root) if output_root is not None else _REPO_ROOT
+
     # Make log output survive redirection before anything logs. On Windows a
     # redirected stream falls back to the locale encoding, and the status
     # prefixes are non-ASCII, so `> build.log` used to kill the run on its first
@@ -95,7 +111,7 @@ def main(input_folder: Path, config_file: Path):
         # Build output folder_name, check existence
         output_folder_prefix = config['output_folder_prefix']
         folder_name = "_".join(part.replace(" ", "") for part in [output_folder_prefix, scenario, str(year)] + active_alts)
-        output_folder = Path("") / folder_name
+        output_folder = output_root / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
         logger.log_status(f"Using output folder: {output_folder}", level="info")
 

@@ -19,6 +19,13 @@ import src.json_exchange as json_exchange
 import pickle
 import shutil
 
+#: Project root, derived from this file's location rather than the working
+#: directory. The watched source paths below are relative to it, and resolving
+#: them against the CWD made `python build_input_data.py ...` fail from anywhere
+#: except the repo root -- with a bare FileNotFoundError naming a source file,
+#: which reads like a broken installation rather than a wrong directory.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 class CacheManager:
     """
@@ -37,7 +44,11 @@ class CacheManager:
 
     # Source code file groups monitored for changes.
     # Changes in these groups trigger the corresponding pipeline phase to re-run.
-    # Paths are relative to the project root (where build_input_data.py lives).
+    # Paths are relative to the project root (where build_input_data.py lives),
+    # and are resolved against _REPO_ROOT rather than the working directory --
+    # see the module-level constant. compute_file_hash opens the path directly
+    # and raises FileNotFoundError, so a CWD-relative lookup meant the whole
+    # build died on `./build_input_data.py` when run from anywhere else.
     _OVERALL_CODE_FILES = [
         Path("./build_input_data.py"),
         Path("./src/infrastructure/config_reader.py"),
@@ -153,7 +164,7 @@ class CacheManager:
             files (list[Path]): Source file paths to monitor for changes.
             cache_name (str): Filename within the cache folder to store the hash record.
         """
-        current_hashes = {str(f): hash_utils.compute_file_hash(f) for f in files}
+        current_hashes = {str(f): hash_utils.compute_file_hash(_REPO_ROOT / f) for f in files}
 
         hash_store_path = self.cache_folder / cache_name
         previous_hashes = json_exchange.load_json(hash_store_path)
@@ -181,7 +192,7 @@ class CacheManager:
             return {}
 
         processor_hashes = self.load_processor_hashes()
-        processors_base = Path("src/timeseries/processors")
+        processors_base = _REPO_ROOT / "src" / "timeseries" / "processors"
         result = {}
         changed_processors = []
 

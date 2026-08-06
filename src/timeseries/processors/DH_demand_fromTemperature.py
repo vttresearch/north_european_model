@@ -88,7 +88,7 @@ class DH_demand_fromTemperature(BaseProcessor):
         # Start 2 days before the requested period so the rolling window is fully
         # populated at self.start_date. The climate year range (1982-2016) guarantees
         # that two extra days are always available.
-        pre_start = pd.Timestamp(self.start_date) - pd.Timedelta(days=2)
+        pre_start = pd.Timestamp(self.start_date) - pd.Timedelta(2, unit="D")
         df_temperature = df_temperature.loc[pre_start:self.end_date]
 
         # Create a full datetime index for the requested output range.

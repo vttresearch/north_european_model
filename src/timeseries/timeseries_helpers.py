@@ -231,7 +231,7 @@ def split_timeseries_to_climate_windows(
 
     for yr in valid_climate_years:
         window_start = pd.Timestamp(f"{yr}-{bb_ts_start}")
-        window_end   = window_start + pd.Timedelta(hours=max_hours - 1)
+        window_end   = window_start + pd.Timedelta(max_hours - 1, unit="h")
         mask = (time_np >= window_start.to_datetime64()) & (time_np <= window_end.to_datetime64())
         df_yr = df[mask].copy()
 

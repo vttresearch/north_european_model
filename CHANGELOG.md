@@ -1,6 +1,9 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-05
+- build_input_data: output folders are created beside build_input_data.py by default, not in the working directory, and main() accepts output_root to override it. cache_manager and timeseries_pipeline resolve their watched source paths and the processors folder against the project root for the same reason. Running the documented command from any other directory previously died on a bare FileNotFoundError naming ./build_input_data.py.
+- Timedelta calls use the explicit-unit form, e.g. pd.Timedelta(n, unit="h") rather than pd.Timedelta(hours=n). The keyword form raises a DeprecationWarning under numpy 2.5 that pandas says will become an error.
+- Tests: FutureWarning and DeprecationWarning are now errors; the suite is clean of both.
 - Tests: assert_workbook_consistent now compares keys case-insensitively, as GAMS does, and checks the nodeBalance/usePrice mutual exclusion. Two labels differing only in case are one label to GAMS and a duplicate record that aborts the GDX write.
 - source_data_loader: merge_row_by_row no longer degrades every method to a full replace when a category has no numeric column anywhere. An empty 'add' row, and even a 'replace-partial' row, silently blanked the record it was meant to leave alone, and the same row behaved differently depending on whether an unrelated column happened to be numeric.
 - source_data_loader: merge_row_by_row now returns the key columns it reports creating. It added them to each input frame but rebuilt the result from a column list computed beforehand, so they were dropped again; create_p_userconstraint believed the message and crashed.

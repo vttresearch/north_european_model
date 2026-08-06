@@ -90,13 +90,13 @@ class hydro_inflow_MAF2019(BaseProcessor):
                 group = group.reset_index(drop=True)
                 n = len(group)
                 # For weekly data, use January 4th at 12:00 as the reference.
-                fourthday = pd.Timestamp(year, 1, 4) + pd.Timedelta(hours=12)
+                fourthday = pd.Timestamp(year, 1, 4) + pd.Timedelta(12, unit="h")
 
                 # Process "normal" weeks (up to week 52).
                 normal_count = min(n, 52)
                 if normal_count > 0:
                     i_array = np.arange(normal_count)
-                    t_array = fourthday + i_array * pd.Timedelta(days=7)
+                    t_array = fourthday + i_array * pd.Timedelta(7, unit="D")
                     valid_mask = t_array <= end_ts
                     t_valid = t_array[valid_mask]
 
@@ -109,7 +109,7 @@ class hydro_inflow_MAF2019(BaseProcessor):
 
                 # Handle the potential extra (53rd) week.
                 if n > 52:
-                    leap_t = pd.Timestamp(year, 12, 28) + pd.Timedelta(hours=12)
+                    leap_t = pd.Timestamp(year, 12, 28) + pd.Timedelta(12, unit="h")
                     if leap_t <= end_ts:
                         leap_val1 = 1000 * group[self.inflow1_header].iloc[51] / 168
                         leap_val2 = 1000 * group[self.inflow2_header].iloc[51] / 168
@@ -165,7 +165,7 @@ class hydro_inflow_MAF2019(BaseProcessor):
             df_country['timestamp'] = (
                 pd.to_datetime(df_country['year'].astype(str), format='%Y') +
                 pd.to_timedelta(df_country['day_offset'], unit='D') +
-                pd.Timedelta(hours=12)
+                pd.Timedelta(12, unit="h")
             )
 
             # Compute the flow values.
