@@ -186,6 +186,91 @@ class TestTimeAxis:
         assert not run.logger.matching("do not cover the full")
 
 
+class TestDeclarationsOfIntent:
+    """A processor says what its output should look like; the runner checks it.
+
+    These replace the idea of a committed "this processor was checked" record.
+    Such a record can only say that something passed once, against data the
+    reader does not have -- and VRE_PECD reads whatever CSVs are in a
+    config-supplied folder, so its inputs can change completely without a
+    filename changing. A declaration claims nothing about the past, is checked
+    against the data actually being processed, and cannot go stale.
+
+    Breaches are warnings: an out-of-range value may be a real feature of the
+    source data, where a broken time axis cannot be.
+    """
+
+    def _declaring(self, tmp_path, declaration, values="1.0"):
+        # Whole numbers throughout: the fake spec rounds to 0 decimals, so a
+        # fractional out-of-range value would be rounded back into range before
+        # the check ever sees it -- which is correct, since the check judges
+        # what actually gets written, but makes for a confusing test.
+        return run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": "elec", "node": "FI00_elec", '
+            '"time": pd.date_range("2014-01-01", periods=48, freq="h"), '
+            f'"value": {values}}})',
+            class_body=declaration,
+        )
+
+    def test_a_value_above_the_declared_maximum_warns(self, tmp_path):
+        run = self._declaring(
+            tmp_path, "value_range = (0.0, 1.0)", values="[1.0] * 47 + [5.0]"
+        )
+        run.logger.assert_logged("at most 1.0", level="warn")
+
+    def test_a_value_below_the_declared_minimum_warns(self, tmp_path):
+        run = self._declaring(
+            tmp_path, "value_range = (0.0, 1.0)", values="[-5.0] + [1.0] * 47"
+        )
+        run.logger.assert_logged("at least 0.0", level="warn")
+
+    def test_values_inside_the_declared_range_say_nothing(self, tmp_path):
+        run = self._declaring(tmp_path, "value_range = (0.0, 1.0)", values="0.5")
+        assert not run.logger.matching("value_range")
+        assert not run.logger.matching("at most")
+        assert not run.logger.matching("at least")
+
+    def test_a_declared_sign_is_checked(self, tmp_path):
+        run = self._declaring(
+            tmp_path, 'value_sign = "non_negative"', values="[-1.0] + [1.0] * 47"
+        )
+        run.logger.assert_logged("non-negative", level="warn")
+
+    def test_declaring_nothing_asserts_nothing(self, tmp_path):
+        """The defaults have to be inert, or adding a processor means adding
+        declarations before it will run quietly."""
+        run = self._declaring(tmp_path, "pass", values="-99999.0")
+        run.logger.assert_no_errors()
+        assert not run.logger.matching("declares")
+
+    def test_a_breach_does_not_stop_the_run(self, tmp_path):
+        # Content, not form: the value may be right and the declaration stale.
+        run = self._declaring(
+            tmp_path, "value_range = (0.0, 1.0)", values="[1.0] * 47 + [1.5]"
+        )
+        run.logger.assert_no_errors()
+        assert run.result.ts_domains
+
+    def test_a_malformed_declaration_is_reported_not_obeyed(self, tmp_path):
+        """A processor author who writes the attribute wrongly should hear about
+        it, rather than get silence that reads like approval."""
+        run = self._declaring(tmp_path, "value_range = 1.0", values="500.0")
+        run.logger.assert_logged("not a (minimum, maximum) pair", level="warn")
+        run.logger.assert_no_errors()
+
+    def test_an_unknown_sign_is_reported_not_obeyed(self, tmp_path):
+        run = self._declaring(tmp_path, 'value_sign = "positive"', values="1.0")
+        run.logger.assert_logged("not one of", level="warn")
+
+    def test_gaps_in_value_do_not_trip_the_range_check(self, tmp_path):
+        """NaN means "no data" until the GDX gate, and must not read as 0."""
+        run = self._declaring(
+            tmp_path, "value_range = (0.5, 1.0)", values="[np.nan] * 24 + [0.7] * 24"
+        )
+        assert not run.logger.matching("at least")
+
+
 class TestDimensionValues:
     @pytest.mark.parametrize(
         "bad", ["None", "np.nan", "pd.NA"], ids=["None", "np.nan", "pd.NA"]

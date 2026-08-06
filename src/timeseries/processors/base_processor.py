@@ -19,8 +19,47 @@ class BaseProcessor(ABC):
     - Logging via the shared IterationLogger
     - Consistent execution pattern through `run_processor()`
 
+    Declarations of intent
+    ----------------------
+    The three class attributes below say what this processor's output is
+    *supposed* to look like. ProcessorRunner reads them and checks the actual
+    data against them on every run.
+
+    They exist instead of a "this processor was checked" record committed
+    alongside the code. Such a record can only claim that something passed once,
+    somewhere, against data the reader does not have -- and the VRE processor
+    reads whatever CSVs are in a config-supplied folder, so its data can change
+    entirely without a single filename changing. A declaration makes no claim
+    about the past. It states what must always be true, is checked against the
+    data actually being processed, and cannot go stale.
+
+    They are versioned for free: ProcessorRunner hashes the processor file, so
+    editing one of these invalidates that processor's cache like any other edit.
+
+    Declaring nothing is fine. The defaults assert nothing and every check
+    involving them is skipped.
+
     Attributes
     ----------
+    value_range : tuple of (float or None, float or None)
+        Inclusive (minimum, maximum) the `value` column should stay within, each
+        independently optional. A capacity factor is `(0.0, 1.0)`. Violations are
+        warnings, not errors -- an out-of-range value may be a real feature of
+        the source data, where a broken time axis cannot be.
+
+    value_sign : {"any", "non_negative", "non_positive"}
+        Which side of zero values belong on. Per-class rather than per-parameter
+        because the same Backbone parameter legitimately takes both signs:
+        `elec_demand_TYNDP2024` and `DH_demand_fromTemperature` emit negative
+        `ts_influx`, `hydro_inflow_MAF2019` positive.
+
+    expects_complete_datetime_axis : bool
+        Whether the output is meant to be a complete, regular grid with one row
+        per step per group. True for everything shipped. Named for the datetime
+        axis rather than the hour because the checker takes the step as a
+        parameter; the hourly assumption belongs to the labeller, whose window
+        is `bb_ts_length * 24` labels.
+
     main_result : pd.DataFrame or None
         The primary output DataFrame from the processor. This is automatically
         set when `run_processor()` is called and should not be modified directly.
@@ -44,6 +83,11 @@ class BaseProcessor(ABC):
     ProcessorOutput : Dataclass that structures the processor output
     ProcessorRunner : Orchestrates processor execution in the pipeline
     """
+
+    #: See "Declarations of intent" above. Defaults assert nothing.
+    value_range: tuple = (None, None)
+    value_sign: str = "any"
+    expects_complete_datetime_axis: bool = True
 
     def __init__(self, **kwargs):
         """

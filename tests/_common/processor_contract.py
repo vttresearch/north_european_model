@@ -33,7 +33,8 @@ from tests._common.fixtures import FakeLogger, make_config
 
 #: Source template for a fake processor. ``{main_result}`` is spliced in as a
 #: Python expression, so a case can return literally anything -- including
-#: things that are not DataFrames at all.
+#: things that are not DataFrames at all. ``{class_body}`` carries class-level
+#: statements, which is how a case declares ``value_range`` and friends.
 FAKE_PROCESSOR_TEMPLATE = '''
 import numpy as np
 import pandas as pd
@@ -41,6 +42,8 @@ from src.timeseries.timeseries_results import ProcessorOutput
 
 
 class {name}:
+{class_body}
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
@@ -106,12 +109,25 @@ def write_fake_processor(
     main_result: str,
     *,
     body: str = "",
+    class_body: str = "",
 ) -> Path:
-    """Write a one-class processor module returning `main_result`, and return its path."""
+    """Write a one-class processor module returning `main_result`, and return its path.
+
+    `body` is spliced into ``run_processor``; `class_body` into the class itself,
+    which is where declarations such as ``value_range`` live.
+    """
     folder.mkdir(parents=True, exist_ok=True)
     indented_body = textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8) if body else ""
+    indented_class = (
+        textwrap.indent(textwrap.dedent(class_body).strip("\n"), " " * 4)
+        if class_body
+        else "    pass"
+    )
     source = FAKE_PROCESSOR_TEMPLATE.format(
-        name=name, main_result=main_result, body=indented_body
+        name=name,
+        main_result=main_result,
+        body=indented_body,
+        class_body=indented_class,
     )
     path = folder / f"{name}.py"
     path.write_text(source, encoding="utf-8")
@@ -125,6 +141,7 @@ def run_fake_processor(
     dimensions: Sequence[str] = ("grid", "node", "f", "t"),
     name: str = "FakeProcessor",
     body: str = "",
+    class_body: str = "",
     raw_source: str | None = None,
     config_overrides: dict | None = None,
     spec_overrides: dict | None = None,
@@ -142,7 +159,7 @@ def run_fake_processor(
         processor_file.write_text(textwrap.dedent(raw_source), encoding="utf-8")
     else:
         processor_file = write_fake_processor(
-            tmp_path / "processors", name, main_result, body=body
+            tmp_path / "processors", name, main_result, body=body, class_body=class_body
         )
     output_folder = tmp_path / "output"
     output_folder.mkdir(parents=True, exist_ok=True)

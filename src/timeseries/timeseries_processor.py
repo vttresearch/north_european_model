@@ -139,6 +139,74 @@ class ProcessorRunner:
         self.cache_manager.save_processor_hash(processor_name, hash_value)
 
 
+    def _warn_on_declaration_breaches(
+        self, processor_class, values: pd.Series, processor_name: str
+    ) -> None:
+        """
+        Check a processor's own declarations against what it actually produced.
+
+        ``value_range`` and ``value_sign`` are optional class attributes on the
+        processor (see ``BaseProcessor``). They are read with ``getattr`` and
+        never required: ``ProcessorRunner`` loads a processor by name and imposes
+        no base class, so demanding the attribute would break every processor
+        that does not inherit from one -- including the test fakes.
+
+        Breaches are warnings. A value outside its declared range is content, and
+        content can be legitimately surprising; a broken time axis is form, and
+        cannot be. So this does not stop the GDX write.
+        """
+        present = values.dropna()
+        if present.empty:
+            return
+        lowest, highest = float(present.min()), float(present.max())
+
+        declared = getattr(processor_class, "value_range", (None, None))
+        try:
+            low, high = declared
+        except (TypeError, ValueError):
+            self.logger.log_status(
+                f"Processor '{processor_name}' declares value_range={declared!r}, "
+                f"which is not a (minimum, maximum) pair. Ignoring it.",
+                level="warn",
+            )
+            low = high = None
+
+        if low is not None and lowest < low:
+            self.logger.log_status(
+                f"Processor '{processor_name}' declares values of at least {low} "
+                f"but produced {lowest}. Either the data is wrong or the "
+                f"declaration is out of date.",
+                level="warn",
+            )
+        if high is not None and highest > high:
+            self.logger.log_status(
+                f"Processor '{processor_name}' declares values of at most {high} "
+                f"but produced {highest}. Either the data is wrong or the "
+                f"declaration is out of date.",
+                level="warn",
+            )
+
+        sign = getattr(processor_class, "value_sign", "any")
+        if sign == "non_negative" and lowest < 0:
+            self.logger.log_status(
+                f"Processor '{processor_name}' declares non-negative values but "
+                f"produced {lowest}.",
+                level="warn",
+            )
+        elif sign == "non_positive" and highest > 0:
+            self.logger.log_status(
+                f"Processor '{processor_name}' declares non-positive values but "
+                f"produced {highest}.",
+                level="warn",
+            )
+        elif sign not in ("any", "non_negative", "non_positive"):
+            self.logger.log_status(
+                f"Processor '{processor_name}' declares value_sign={sign!r}, which "
+                f"is not one of 'any', 'non_negative', 'non_positive'. Ignoring it.",
+                level="warn",
+            )
+
+
     @staticmethod
     def _describe_time_axis_defect(
         report, processor_name: str, ordered_result: pd.DataFrame, group_dims: list
@@ -550,6 +618,12 @@ class ProcessorRunner:
                 ts_domains={},
                 ts_domain_pairs={},
             )
+
+        # Values are checked against the processor's own declarations after the
+        # rounding and cutoff above, so what is judged is what gets written.
+        self._warn_on_declaration_breaches(
+            ProcessorClass, ordered_result["value"], processor_name
+        )
 
         # --- Slice and write climate windows' data ---
         # Split into climate windows.

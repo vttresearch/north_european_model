@@ -63,6 +63,12 @@ class CacheManager:
         Path("./src/source_data/source_data_inputs.py"),
     ]
     _TS_PIPELINE_FILES = [
+        # Processors are hashed individually by ProcessorRunner, but only the
+        # concrete file -- never the base they inherit from. So editing
+        # base_processor.py changed every processor's behaviour while the cache
+        # reported no change. It carries the declaration defaults now, which
+        # makes that blind spot a live one.
+        Path("./src/timeseries/processors/base_processor.py"),
         Path("./src/timeseries/timeseries_pipeline.py"),
         Path("./src/timeseries/timeseries_processor.py"),
         Path("./src/timeseries/timeseries_helpers.py"),

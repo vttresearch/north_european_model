@@ -5,6 +5,8 @@
 - Replaces the duplicated() check, which it subsumes and exceeds: 00:00 and 00:15 are distinct timestamps and passed that one. Measured -1.7 s per parameter (1.8 s removed, 66 ms added) by reusing the ordering the labeller needs anyway.
 - GDX_exchange: prepare_values_for_gdx decides blank dimension labels per label instead of per row. It was the most expensive step in the timeseries phase, four times the cost of writing the GDX files it guards. Roughly -30 s per build; no semantic change.
 - split_timeseries_to_climate_windows accepts precomputed group_ids and no longer re-sorts when given them. A frame with no grouping dimensions is now sorted by time rather than labelled in whatever order the processor returned.
+- Processors can declare value_range, value_sign and expects_complete_datetime_axis as class attributes; ProcessorRunner checks the output against them and warns on a breach. Declaring nothing asserts nothing. VRE_PECD declares (0.0, 1.0), non-negative. Read via getattr, so a processor need not inherit BaseProcessor.
+- cache_manager watches base_processor.py. Processors are hashed individually but only the concrete file, so editing the base changed every processor's behaviour while the cache reported no change.
 
 ## 2026-08-05
 - build_input_data: output folders are created beside build_input_data.py by default, not in the working directory, and main() accepts output_root to override it. cache_manager and timeseries_pipeline resolve their watched source paths and the processors folder against the project root for the same reason. Running the documented command from any other directory previously died on a bare FileNotFoundError naming ./build_input_data.py.

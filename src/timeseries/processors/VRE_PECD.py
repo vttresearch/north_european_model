@@ -25,6 +25,12 @@ class VRE_PECD(BaseProcessor):
         # TBD: secondary_result (pd.DataFrame): Summary table with annual average capacity factors for each country
     """
 
+    # A capacity factor is a fraction of installed capacity, so it cannot leave
+    # [0, 1] whatever the weather did. Declared once for all three specs (PV,
+    # onshore, offshore) that share this class. See BaseProcessor.
+    value_range = (0.0, 1.0)
+    value_sign = "non_negative"
+
     def __init__(self, **kwargs):
         # Initialize base class
         super().__init__(**kwargs)
