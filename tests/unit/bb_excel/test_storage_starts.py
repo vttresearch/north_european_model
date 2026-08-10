@@ -163,6 +163,45 @@ class TestTheEarlierSourcesStillWin:
         assert reference["constant"].iloc[0] == 210.0
 
 
+class TestTheBoundarySheetItLeavesBehind:
+    """This function is the last thing to touch p_gnBoundaryPropertiesForStates.
+
+    It appends a 'reference' row per storage node, built from a five-key dict,
+    so every other column arrives through the concat as NaN. The fill meant to
+    clear that was assigning to the fake-MultiIndex frame while the return value
+    was rebuilt from the flat one, so it did nothing at all -- 78 NaN reached an
+    OT2030 workbook. Asserted on the frame rather than a written workbook on
+    purpose: Excel stores '' as an empty cell, so a read-back cannot tell a
+    filled blank from a NaN.
+    """
+
+    def test_the_appended_reference_row_carries_no_na(self, pipeline):
+        _, boundaries = pipeline.add_storage_starts(
+            _p_gn(pipeline), _boundaries(pipeline), _gnu_flat(upperLimitCapacityRatio=0.5), {}
+        )
+
+        flat = pipeline.drop_fake_MultiIndex(boundaries)
+        offenders = [c for c in flat.columns if flat[c].isna().any()]
+        assert not offenders, f"p_gnBoundaryPropertiesForStates emits NaN in {offenders}"
+
+    def test_an_empty_property_column_is_dropped(self, pipeline):
+        # slackCost is set by nothing in this project, so it was written as a
+        # column of blanks on every build.
+        _, boundaries = pipeline.add_storage_starts(
+            _p_gn(pipeline), _boundaries(pipeline), _gnu_flat(upperLimitCapacityRatio=0.5), {}
+        )
+
+        assert "slackCost" not in boundaries.columns
+        assert "useConstant" in boundaries.columns   # the kept column dimension
+
+    def test_a_property_in_use_survives(self, pipeline):
+        # Negative control for the drop.
+        _, boundaries = pipeline.add_storage_starts(
+            _p_gn(pipeline), _boundaries(pipeline, slackCost=250), _gnu_flat(), {}
+        )
+        assert "slackCost" in boundaries.columns
+
+
 class TestNodesThatAreNotStorage:
     def test_a_dropped_energy_stored_column_is_tolerated(self, pipeline):
         """``energyStoredPerUnitOfState`` is droppable too, and already guarded.

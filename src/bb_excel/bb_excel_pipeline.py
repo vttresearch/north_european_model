@@ -161,6 +161,15 @@ class BBExcelPipeline:
         'downwardSlack01',
     ]
 
+    # The parameter block of p_gnBoundaryPropertiesForStates. The boundary
+    # *types* above are dimension values on that sheet; these are its columns.
+    PARAM_GN_BOUNDARY_PROPERTIES = [
+        'useConstant',
+        'constant',
+        'useTimeSeries',
+        'slackCost',
+    ]
+
     # Default values for parameters that must not fall back to zero.
     # Applied per-connection in create_p_gnu_io so that every input/output
     # connection (not just _output1) receives the correct non-zero default.
@@ -659,6 +668,12 @@ class BBExcelPipeline:
         p_unit = pd.DataFrame(rows, columns=final_cols)
         p_unit = utils.fill_numeric_na(utils.standardize_df_dtypes(p_unit))
 
+        # Remove empty parameter columns. p_unit lists every PARAM_UNIT entry,
+        # so a build using a handful of them wrote the rest as columns of zeros.
+        # 'isActive' is kept even when empty so the Cdim=1 column dimension
+        # always has a member; PARAM_UNIT_DEFAULTS fills it whenever rows exist.
+        p_unit = utils.drop_empty_parameter_columns(p_unit, param_unit, 'isActive')
+
         # Sort p_unit by the 'unit' column in a case-insensitive manner.
         p_unit.sort_values(
             by=['unit'],
@@ -1048,7 +1063,7 @@ class BBExcelPipeline:
         dimensions = ['grid', 'node', 'param_gnBoundaryTypes']
 
         # Properties that will be assigned to each boundary type
-        param_gnBoundaryProperties = ['useConstant', 'constant', 'useTimeSeries', 'slackCost']
+        param_gnBoundaryProperties = self.PARAM_GN_BOUNDARY_PROPERTIES
 
         # Initialize an empty list to collect all rows for the output DataFrame
         rows = []
@@ -1281,10 +1296,24 @@ class BBExcelPipeline:
                         ignore_index=True
                     )
 
-        # Standardize dtypes, fill NA
+        # Standardize dtypes, fill NA.
+        # On the _flat frames: the fake multi-index is rebuilt from those below,
+        # so filling p_gnBoundaryPropertiesForStates here instead -- as this line
+        # used to -- was overwritten and did nothing. The rows appended above
+        # carry only five keys, so every other column came through the concat as
+        # NaN and reached the workbook that way.
         p_gn_flat = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gn_flat))
-        p_gnBoundaryPropertiesForStates = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gnBoundaryPropertiesForStates))
-        
+        p_gnBoundaryPropertiesForStates_flat = utils.fill_all_na(
+            utils.standardize_df_dtypes(p_gnBoundaryPropertiesForStates_flat)
+        )
+
+        # Drop parameter columns nothing set. 'useConstant' is kept even when
+        # empty so the Cdim=1 column dimension always has a member.
+        p_gnBoundaryPropertiesForStates_flat = utils.drop_empty_parameter_columns(
+            p_gnBoundaryPropertiesForStates_flat, self.PARAM_GN_BOUNDARY_PROPERTIES, 'useConstant'
+        )
+
+
         # Sort p_gnBoundaryPropertiesForStates alphabetically by [grid, node] in a case-insensitive manner
         p_gnBoundaryPropertiesForStates_flat = p_gnBoundaryPropertiesForStates_flat.sort_values(
                                                     by=['grid', 'node', 'param_gnBoundaryTypes'], 

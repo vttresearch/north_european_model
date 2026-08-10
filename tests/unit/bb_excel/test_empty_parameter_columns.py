@@ -34,6 +34,7 @@ DIMENSIONS = {
     "p_gn": ["grid", "node"],
     "p_gnn": ["grid", "from_node", "to_node"],
     "p_gnu_io": ["grid", "node", "unit", "input_output"],
+    "p_unit": ["unit"],
 }
 
 
@@ -66,10 +67,18 @@ def _p_gnu_io_with_every_row_skipped() -> pd.DataFrame:
     return make_pipeline().create_p_gnu_io(pd.DataFrame({"unit": ["u1"]}))
 
 
+def _p_unit_with_no_units() -> pd.DataFrame:
+    """No unit reached p_unit, so the parameter loop never runs."""
+    return make_pipeline().create_p_unit(
+        pd.DataFrame(columns=["unit", "unittype"]), pd.DataFrame()
+    )
+
+
 BUILDERS = {
     "p_gn": _p_gn_with_no_pairs,
     "p_gnn": _p_gnn_with_every_row_skipped,
     "p_gnu_io": _p_gnu_io_with_every_row_skipped,
+    "p_unit": _p_unit_with_no_units,
 }
 
 
@@ -99,3 +108,20 @@ class TestAZeroRowSheetKeepsItsColumnDimension:
         # create_fake_MultiIndex adds one marker row, so one row means no data.
         frame = BUILDERS[sheet]()
         assert len(frame) <= 1, f"{sheet} produced data rows; the fixture no longer isolates the empty build"
+
+
+class TestAPopulatedSheetKeepsOnlyWhatWasSet:
+    def test_p_unit_writes_only_the_parameters_in_use(self):
+        """p_unit lists all 26 PARAM_UNIT entries; a build sets a handful.
+
+        The rest used to be written as columns of zeros -- 19 of 29 columns in
+        an OT2030 build. The survivors here are exactly the PARAM_UNIT_DEFAULTS
+        entries, which is the point: a default is a value someone gets, so its
+        column is never empty.
+        """
+        p_unit = make_pipeline().create_p_unit(
+            pd.DataFrame([{"unit": "u1", "unittype": "WindOn"}]),
+            pd.DataFrame([{"unit": "u1"}]),
+        )
+
+        assert _parameters(p_unit, "p_unit") == ["isActive", "availability", "eff00", "op00"]
