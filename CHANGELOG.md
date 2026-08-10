@@ -1,6 +1,11 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-10
+- p_userconstraint: unused dimension slots are autofilled with '-'. 
+- merge_row_by_row: column titles are now compared case-insensitively, keeping the first spelling. 
+- merge_row_by_row: 'add-non-negative' does no longer zero previous negative values if there is a column header, but no number in it.
+- p_gn/p_gnn/p_gnu_io: empty parameter columns are dropped, always keeping minimum one column. 
+- unitdata: a generator_id missing from unittypedata is now reported instead of silently losing its defaults.
 - updating .gitignore rules for cleaner definition of the repository
 
 ## 2026-08-06

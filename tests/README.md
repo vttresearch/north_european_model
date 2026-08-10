@@ -192,15 +192,30 @@ moment the underlying issue is fixed — otherwise a fixed bug would keep its ex
 silently.
 
 To retire one: fix the code, watch the tripwire XPASS, then delete both the tripwire and
-the `known_contract_violation`.
+the `known_contract_violation`. A tripwire asserts that something is broken, so it cannot
+merely lose its marker — rewrite it into the positive statement of what the code now does.
 
-Two xfails were retired that way when the time-axis gate landed — one proposing that
-t-labels follow the timestamp rather than the row number, one about leap-day alignment in
-windows longer than 365 days. Both had been parked on the same reasoning: the check was
-believed to cost ~2 s per parameter, so it belonged in a separate tool rather than the
-build. Measured, it costs 66 ms. **An xfail whose stated blocker is a cost is only as good
-as the measurement behind it**, and neither of these had one. When retiring an xfail, delete
-its reasoning too — a stale justification outlives the test and gets quoted back as fact.
+**There are currently no entries.** The suite has no xfails at all: the register is empty
+and every `pytest.mark.xfail` is gone. That is worth keeping true — an xfail is a decision
+deferred, and the two rounds that cleared them both found the deferral had been resting on
+something that was never checked.
+
+Round one, when the time-axis gate landed: two xfails, both parked on the belief that the
+check cost ~2 s per parameter and therefore belonged in a separate tool. Measured, it costs
+66 ms. **An xfail whose stated blocker is a cost is only as good as the measurement behind
+it**, and neither had one.
+
+Round two cleared the remaining six. The lesson there is the mirror image: **an xfail parked
+as a formatting preference is worth re-deriving from the consumer's spec.** Three of the six
+were filed as "should the workbook show 0 or a blank?", which reads like a matter of taste —
+but `p_userconstraint` is Rdim=6 and `inc/1e_inputs.gms` carries 21 aborts demanding that an
+unused `uc` slot hold exactly `'-'`. The blank was a build failure, not a style choice, and
+the framing had kept it parked for weeks. Two others in that batch turned out to be reasoning
+about the wrong mechanism entirely — the fill was not missing, it was blind to all-NA columns
+— which no amount of re-reading the xfail would have shown, only running the code.
+
+When retiring an xfail, delete its reasoning too: a stale justification outlives the test and
+gets quoted back as fact.
 
 ---
 
