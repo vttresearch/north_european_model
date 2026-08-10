@@ -326,43 +326,31 @@ class TestNegativeCostsAreLegitimate:
         assert _value(merged) == 0                  # capacity floored
         assert _value(merged, "vomcosts") == -20    # subsidy survives
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "add-non-negative clamps every measure column in the sheet, not the "
-            "ones the row supplies, so it floors a negative cost an earlier row "
-            "established -- and the result depends on row order"
-        ),
-    )
     def test_an_add_non_negative_row_does_not_touch_columns_it_never_mentions(self):
-        """Open: the clamp reads *sheet* columns, not the row's own columns.
+        """A handler reaches only the columns its own row filled in.
 
         ``present_measures`` is computed once, from the union of columns across
-        all frames (:942-975), and ``_handle_add`` then loops over all of it
-        regardless of what the current row actually filled in (:1039-1051). A
-        row supplying only ``capacity`` still reaches every other measure in the
-        accumulated record -- and clamps it.
-
-        Concretely:
+        all frames, so it names every measure in the *sheet*. ``_handle_add``
+        used to loop over all of it regardless of what the current row supplied,
+        and a row naming only ``capacity`` reached every other measure in the
+        accumulated record -- and clamped it:
 
             replace           capacity=1000  vomcosts=10
             add               vomcosts=-30      -> vomcosts = -20
             add-non-negative  capacity=-5000    -> capacity = 0, vomcosts = 0
 
-        The subsidy is gone, silently, in a column that row never named. Reverse
-        the last two rows and it survives.
+        The subsidy vanished in a column that row never named, and reversing the
+        last two rows saved it. That made "put costs in an 'add' row and
+        capacities in an 'add-non-negative' row" necessary but not sufficient:
+        the cost row also had to come *after* every add-non-negative row touching
+        the same key. Two people writing separate overlay workbooks can neither
+        see nor control that ordering, which is the failure mode overlays exist
+        to avoid.
 
-        This is why "put costs in an 'add' row and capacities in an
-        'add-non-negative' row" is necessary but not sufficient: the cost row
-        must also come *after* every add-non-negative row touching the same key.
-        Two people writing separate overlay workbooks cannot see or control
-        that ordering, which is the failure mode overlays exist to avoid.
-
-        The likely repair is to apply a handler only to the columns the row
-        supplied, which would also make the two rows commute. It is not made
-        here: this is the most failure-prone function in the repo, every source
-        category flows through it, and the change alters merge semantics rather
-        than repairing a slip.
+        Both handlers now skip a measure the incoming row left blank, so the two
+        rows commute. The documented missing-value truth table is unaffected --
+        see :class:`TestAddMissingValueRules` and
+        :class:`TestMultiplyMissingValueRules`, which are the guard for that.
         """
         subsidy_then_guard = _merge(
             _frame(

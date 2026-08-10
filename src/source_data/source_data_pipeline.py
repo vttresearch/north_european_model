@@ -232,7 +232,7 @@ class SourceDataPipeline:
             # capacity defaults, etc.) from _df_unittypedata into each unit row.
             # Unit-specific values take priority; type-level values fill NAs only.
             self.df_unitdata = data_loader.merge_unittypedata_into_unitdata(
-                self.df_unitdata, self._df_unittypedata
+                self.df_unitdata, self._df_unittypedata, self.logger
             )
 
         else:

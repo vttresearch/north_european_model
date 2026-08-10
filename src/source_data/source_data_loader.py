@@ -626,6 +626,7 @@ def build_unittype_unit_column(
 def merge_unittypedata_into_unitdata(
     df_unitdata: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
+    logger,
     ) -> pd.DataFrame:
     """
     Merge type-level technical parameters from df_unittypedata into df_unitdata.
@@ -633,6 +634,10 @@ def merge_unittypedata_into_unitdata(
     df_unitdata values take priority: type-level values only fill cells that are
     NA in df_unitdata.  Columns already handled by earlier enrichment steps and
     meta/identity columns are excluded from the transfer.
+
+    A generator_id that matches nothing in df_unittypedata is a misconfiguration --
+    the unit silently loses every type-level default -- so it is warned about by
+    name rather than left to be noticed downstream.
 
     Excluded from transfer
     ----------------------
@@ -649,7 +654,7 @@ def merge_unittypedata_into_unitdata(
         Unit-level data, already enriched with unittype, grid_*, and node_* columns.
     df_unittypedata : pd.DataFrame
         Generator-type-level data keyed by generator_id.
-    logger : IterationLogger, optional
+    logger : IterationLogger
         Logger instance for status messages.
 
     Returns
@@ -683,6 +688,21 @@ def merge_unittypedata_into_unitdata(
         .drop_duplicates(subset=['generator_id'], keep='first')
     )
 
+    # A unit whose generator_id is absent from unittypedata keeps none of the
+    # type-level defaults. That is almost always a typo or a missing file rather
+    # than an intention, and nothing downstream can tell the difference.
+    if 'generator_id' in df_unitdata.columns:
+        unmatched = sorted(
+            set(df_unitdata['generator_id'].dropna()) - set(type_lookup['generator_id'])
+        )
+        if unmatched:
+            logger.log_status(
+                f"[merge_unittypedata_into_unitdata] No unittypedata found for generator_id(s): "
+                f"{unmatched}. Those units get no type-level defaults. Check spelling and "
+                "that the unittypedata files are listed in the config.",
+                level="warn"
+            )
+
     # Left join; overlapping columns get a '_type' suffix on the type side
     merged = df_unitdata.merge(
         type_lookup,
@@ -700,6 +720,15 @@ def merge_unittypedata_into_unitdata(
             cells_filled += int(na_mask.sum())
             merged.loc[na_mask, orig_col] = merged.loc[na_mask, type_col]
         merged.drop(columns=[type_col], inplace=True)
+
+    # A column the join filled nothing into keeps the Float64 dtype it had on the
+    # unittype side, which breaks the all-NA-is-object rule: an empty numeric and
+    # an empty text column must stay indistinguishable so no consumer can assume
+    # a dtype. Retyped narrowly rather than by re-running standardize_df_dtypes,
+    # which would copy the whole frame on a hot path for a handful of columns.
+    for col in type_cols:
+        if col in merged.columns and merged[col].isna().all():
+            merged[col] = merged[col].astype('object')
 
     return merged
 
@@ -1023,8 +1052,14 @@ def merge_row_by_row(
             existing["method"] = method
             return existing
         else:
-            # Full replacement
+            # Full replacement, except the key: the record is identified
+            # case-insensitively, so the spelling that created it is the one that
+            # stays. Without this an overlay written 'DH' against a base written
+            # 'dh' would rename the node it meant to edit, and the name of a live
+            # node would depend on overlay order.
             new_rec = {c: row_dict.get(c) for c in cols_union}
+            for kc in key_columns:
+                new_rec[kc] = existing[kc]
             new_rec["method"] = method
             return new_rec
 
@@ -1042,20 +1077,25 @@ def merge_row_by_row(
             new_rec["method"] = method
             return new_rec
 
-        # Subsequent occurrence: add to existing
+        # Subsequent occurrence: add to existing.
+        # present_measures spans every measure in the *sheet*, not the ones this
+        # row filled in, so a row is skipped wherever it supplied nothing. The
+        # documented missing-value rules are unchanged by that -- (missing+missing)
+        # leaves the NA already in place and (prev+missing) leaves prev -- but it
+        # stops 'add-non-negative' clamping a column the row never mentioned.
+        # Without it a row naming only capacity floored a negative cost an earlier
+        # row had established, and the outcome depended on row order.
         for mc in present_measures:
-            prev_val = existing.get(mc)
             cur_val = row_dict.get(mc)
+            if cur_val is None or pd.isna(cur_val):
+                continue
 
+            prev_val = existing.get(mc)
             prev_missing = prev_val is None or pd.isna(prev_val)
-            cur_missing = cur_val is None or pd.isna(cur_val)
 
-            if prev_missing and cur_missing:
-                existing[mc] = pd.NA
-            else:
-                # Treat single missing as 0.0
-                result = (0.0 if prev_missing else prev_val) + (0.0 if cur_missing else cur_val)
-                existing[mc] = max(0.0, result) if clamp_non_negative else result
+            # Treat a missing previous value as 0.0
+            result = (0.0 if prev_missing else prev_val) + cur_val
+            existing[mc] = max(0.0, result) if clamp_non_negative else result
         existing["method"] = method
         return existing
 
@@ -1067,21 +1107,21 @@ def merge_row_by_row(
             new_rec["method"] = method
             return new_rec
 
-        # Subsequent occurrence: multiply with existing
+        # Subsequent occurrence: multiply with existing.
+        # Same rule as _handle_add: a column this row left blank is not this row's
+        # to touch. The documented "current missing → 1.0" case is exactly a no-op,
+        # so skipping it produces the same values while keeping the two handlers
+        # consistent about what a row is allowed to reach.
         for mc in present_measures:
-            prev_val = existing.get(mc)
             cur_val = row_dict.get(mc)
+            if cur_val is None or pd.isna(cur_val):
+                continue
 
+            prev_val = existing.get(mc)
             prev_missing = prev_val is None or pd.isna(prev_val)
-            cur_missing = cur_val is None or pd.isna(cur_val)
 
-            if prev_missing and cur_missing:
-                existing[mc] = pd.NA
-            else:
-                # Previous missing → 0.0, current missing → 1.0
-                prev_eff = 0.0 if prev_missing else prev_val
-                cur_eff = 1.0 if cur_missing else cur_val
-                existing[mc] = prev_eff * cur_eff
+            # Previous missing → 0.0, which zeroes the product
+            existing[mc] = (0.0 if prev_missing else prev_val) * cur_val
         existing["method"] = method
         return existing
 
@@ -1093,9 +1133,17 @@ def merge_row_by_row(
         for row_dict in df.to_dict(orient="records"):
             # Method is already validated and lowercased by normalize_dataframe
             method = row_dict["method"]
-            # Build key tuple inline
-            k = tuple(None if val is None or pd.isna(val) else val
-                     for val in (row_dict.get(kc) for kc in key_columns))
+            # Build key tuple inline. Strings are compared case-insensitively,
+            # which is the rule compile_domain_df already applies when it builds
+            # the domain sheets: GAMS treats 'dh' and 'DH' as one label, so two
+            # keys here meant the node sheet listed one node while p_gn carried
+            # two rows, and the GDX write failed on a duplicate record naming
+            # nothing useful. The record keeps the first spelling seen -- see
+            # _handle_replace -- because production suffixes are uppercase city
+            # codes (HKI, TKU, TRE) that must not be folded.
+            k = tuple(None if val is None or pd.isna(val)
+                      else (val.lower() if isinstance(val, str) else val)
+                      for val in (row_dict.get(kc) for kc in key_columns))
             existing = acc.get(k)
 
             # --- 'remove': delete any existing record for this key --------------

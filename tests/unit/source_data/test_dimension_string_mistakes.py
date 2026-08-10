@@ -10,18 +10,21 @@ So a suffix that is added, omitted or mistyped does not fail to override. It
 to change stays as it was. There is no warning, because nothing invalid
 happened: the pipeline cannot tell an intended new node from a typo.
 
-Case is the sharp edge. The project already lowercases the fields it joins on
-(``scenario``, ``generator_id``, ``method`` -- ``normalize_dataframe``'s
-``lowercase_col_values``) and reconstructs the first-seen form for presentation
-(``compile_domain_df``). ``node_suffix`` and ``unit_name_prefix`` are not in
-that list, so ``dh`` and ``DH`` produce two distinct labels -- while GAMS
-considers them one, and refuses the GDX outright:
+Case is the exception, and it had to be. The project already lowercases the
+fields it joins on (``scenario``, ``generator_id``, ``method`` --
+``normalize_dataframe``'s ``lowercase_col_values``) and reconstructs the
+first-seen form for presentation (``compile_domain_df``). ``node_suffix`` and
+``unit_name_prefix`` are not in that list, so ``dh`` and ``DH`` used to produce
+two distinct labels -- while GAMS considers them one, and refuses the GDX
+outright:
 
     Exception: Encountered data errors with symbol `node`. Possible causes are
     from duplicate records ... GDX file was not created successfully.
 
-These tests pin the behaviour rather than assert it is right. Where it is
-clearly wrong -- the workbook GAMS cannot read -- there is an xfail.
+The merge key now folds case while keeping the first spelling, so that pair
+merges like the domain sheets already did. Everything else in this file pins
+the behaviour rather than asserts it is right: a typo'd suffix still forks the
+node, because the pipeline genuinely cannot tell that from an intended new one.
 """
 
 import pandas as pd
@@ -145,13 +148,21 @@ class TestUnitPrefixesBehaveTheSameWay:
 
 
 class TestCaseIsTheDangerousOne:
-    """``dh`` and ``DH`` are two labels here and one label to GAMS."""
+    """``dh`` and ``DH`` are one label to GAMS, so they are one key here too.
 
-    def test_a_case_difference_produces_two_distinct_nodes(self):
-        merged, logger = _nodedata(_node_row("dh", 100), _node_row("DH", 200))
+    This is the exception to the section above: every other kind of mistyped
+    suffix instantiates a second node, and a case difference used to do the same.
+    It could not stay that way, because the damage was asymmetric and therefore
+    untraceable -- the ``node`` domain sheet dedupes case-insensitively and listed
+    one node while ``p_gn`` kept both rows, so GDXXRW received two records for a
+    single label and the build failed with nothing more useful than::
 
-        assert set(_nodes(merged)) == {"FI_heat_dh", "FI_heat_DH"}
-        logger.assert_no_errors()
+        Encountered data errors with symbol `node`. Possible causes are from
+        duplicate records ... GDX file was not created successfully.
+
+    The build itself succeeded, so there was no path from that message back to
+    the two rows that caused it.
+    """
 
     def test_uppercase_suffixes_are_preserved_because_they_are_meaningful(self):
         """Not a defect: real suffixes are uppercase on purpose.
@@ -167,42 +178,37 @@ class TestCaseIsTheDangerousOne:
         merged, _ = _nodedata(_node_row("HKI", 100))
         assert _nodes(merged) == ["FI_heat_HKI"]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "merge_row_by_row compares keys case-sensitively, so labels that "
-            "GAMS considers identical are merged as two rows"
-        ),
-    )
     def test_labels_differing_only_in_case_merge_into_one_first_form_wins(self):
-        """Open: the merge key does not follow the rule the domains follow.
+        """The merge key follows the rule the domains follow.
 
-        The established convention is case-insensitive identity with the
-        first-presented form preserved -- which is exactly what
-        ``compile_domain_df`` does when it builds the ``node`` sheet. The merge
-        key does not: it compares raw strings, so ``dh`` and ``DH`` are two keys
-        here and one label in GAMS.
-
-        The damage is asymmetric, which is what makes it hard to trace. The
-        ``node`` domain sheet dedupes case-insensitively and lists one node,
-        while ``p_gn`` keeps both rows, so GDXXRW receives two records for a
-        single label. Writing the same pair through gams.transfer fails with
-        nothing more useful than::
-
-            Encountered data errors with symbol `node`. Possible causes are from
-            duplicate records ... GDX file was not created successfully.
-
-        Lowercasing the fields would not do: production suffixes are uppercase
-        city codes and folding them would rename 20 live nodes. Applying the
-        domain rule to the merge key would -- the two rows become one, carrying
-        the first form, and an overlay written ``DH`` against a base written
-        ``dh`` does what its author meant instead of silently forking the node.
-
-        Real data has no collisions today, so this is currently a no-op there.
-        Not made here: it changes key comparison in the most failure-prone
-        function in the repo, and that deserves a decision of its own.
+        Case-insensitive identity, first-presented form preserved -- exactly what
+        ``compile_domain_df`` does when it builds the ``node`` sheet. Lower-casing
+        the fields was never an option: production suffixes are uppercase city
+        codes and folding them would rename 20 live nodes. Comparing keys
+        case-insensitively while keeping the first spelling is what makes an
+        overlay written ``DH`` against a base written ``dh`` do what its author
+        meant instead of silently forking the node.
         """
         merged, _ = _nodedata(_node_row("dh", 100), _node_row("DH", 200))
 
         assert _nodes(merged) == ["FI_heat_dh"]        # first form preserved
         assert merged.iloc[0]["upwardlimit"] == 200    # the overlay applied
+
+    def test_the_first_form_wins_whichever_it_is(self):
+        """The rule is first-seen, not lower-case -- the reverse order proves it.
+
+        Without this the test above passes just as well against an implementation
+        that folds the stored label, which is the thing that must not happen.
+        """
+        merged, _ = _nodedata(_node_row("DH", 100), _node_row("dh", 200))
+
+        assert _nodes(merged) == ["FI_heat_DH"]
+        assert merged.iloc[0]["upwardlimit"] == 200
+
+    def test_an_uppercase_city_code_still_overrides_itself(self):
+        # The production shape: two overlays on the same HKI node must merge,
+        # and the label must come out unfolded.
+        merged, _ = _nodedata(_node_row("HKI", 100), _node_row("hki", 200))
+
+        assert _nodes(merged) == ["FI_heat_HKI"]
+        assert merged.iloc[0]["upwardlimit"] == 200

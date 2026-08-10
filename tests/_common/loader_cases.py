@@ -100,12 +100,7 @@ LOADER_CASES: list[LoaderCase] = [
     ),
     LoaderCase(
         "merge_unittypedata_into_unitdata",
-        lambda df, log: loader.merge_unittypedata_into_unitdata(df, UNITTYPEDATA),
-        known_contract_violation=(
-            "pandas merge leaves unmatched unittype columns all-NA but still "
-            "typed Float64, breaking the all-NA-is-object rule. See "
-            "test_known_contract_violations.py::test_merge_leaves_all_na_float64_columns"
-        ),
+        lambda df, log: loader.merge_unittypedata_into_unitdata(df, UNITTYPEDATA, log),
     ),
     LoaderCase(
         "expand_all_country",
