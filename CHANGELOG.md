@@ -1,13 +1,12 @@
 # Changelog -- North European Energy System Model
 
 ## 2026-08-10
-- removing fully empty columns from p_unit, p_gn, and p_gnu
 - p_userconstraint: unused dimension slots are autofilled with '-'. 
 - merge_row_by_row: column titles are now compared case-insensitively, keeping the first spelling. 
 - merge_row_by_row: 'add-non-negative' does no longer zero previous negative values if there is a column header, but no number in it.
 - p_gn/p_gnn/p_gnu_io/p_unit/p_gnBoundaryPropertiesForStates: empty parameter columns are dropped, always keeping minimum one column. 
-- p_gnBoundaryPropertiesForStates: storage start rows no longer leave empty cells; the fill had been assigned to the wrong frame.
 - unitdata: a generator_id missing from unittypedata is now reported instead of silently losing its defaults.
+- storage starts: a node with no determinable start level is now reported. It was already left unbounded, but boundStart=1 and a 0 reference made it look bound.
 - updating .gitignore rules for cleaner definition of the repository
 
 ## 2026-08-06

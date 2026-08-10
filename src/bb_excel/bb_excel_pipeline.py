@@ -1263,8 +1263,17 @@ class BBExcelPipeline:
                         if pd.notna(capacity):
                             start_value = capacity * upper_limit                      
 
-            # Only proceed with adding/updating p_gn and boundary properties if we have a valid start_value
-            if pd.notna(start_value) and start_value >= 0:
+            # A start value of 0 is not a start value. Backbone gates the bound on
+            # the reference constant's own value (3d_setVariableLimits.gms), and 0
+            # is indistinguishable from absent there, so writing boundStart=1 with
+            # a 0 reference bound nothing while looking in the workbook as though
+            # it did -- and the storage was free to initialise full.
+            #
+            # Skipping leaves exactly the same unconstrained model, so nothing
+            # changes for the solve; what changes is that the user is told. The
+            # node is named because the fix is in their data: give the node an
+            # upwardLimit, or give one of its units an upperLimitCapacityRatio.
+            if pd.notna(start_value) and start_value > 0:
                 # Set boundStart to 1 for storage nodes
                 p_gn_flat.loc[(p_gn_flat['grid'] == grid) & (p_gn_flat['node'] == node), 'boundStart'] = 1
 
@@ -1295,6 +1304,14 @@ class BBExcelPipeline:
                         [p_gnBoundaryPropertiesForStates_flat, new_row_df],
                         ignore_index=True
                     )
+            else:
+                self.logger.log_status(
+                    f"Could not determine a storage start level for ({grid}, {node}): no 'upwardLimit' "
+                    "time series, no upwardLimit constant, and no unit with 'upperLimitCapacityRatio'. "
+                    "The node keeps a state variable but its starting level is left unbounded, so the "
+                    "solver may start it full. Set one of those three to bound it.",
+                    level="warn"
+                )
 
         # Standardize dtypes, fill NA.
         # On the _flat frames: the fake multi-index is rebuilt from those below,

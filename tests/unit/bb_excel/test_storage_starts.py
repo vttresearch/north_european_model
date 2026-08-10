@@ -20,14 +20,20 @@ import pandas as pd
 import pytest
 
 from tests._common.bb_excel import make_pipeline
+from tests._common.fixtures import FakeLogger
 
 GN_DIMENSIONS = ["grid", "node"]
 BOUNDARY_DIMENSIONS = ["grid", "node", "param_gnBoundaryTypes"]
 
 
 @pytest.fixture
-def pipeline():
-    return make_pipeline()
+def logger():
+    return FakeLogger()
+
+
+@pytest.fixture
+def pipeline(logger):
+    return make_pipeline(logger=logger)
 
 
 def _p_gn(pipeline, **overrides) -> pd.DataFrame:
@@ -161,6 +167,60 @@ class TestTheEarlierSourcesStillWin:
         boundary_flat = pipeline.drop_fake_MultiIndex(boundary_out)
         reference = boundary_flat[boundary_flat["param_gnBoundaryTypes"] == "reference"]
         assert reference["constant"].iloc[0] == 210.0
+
+
+class TestAStartLevelThatCannotBeDetermined:
+    """All three sources missed, so there is no level to start the storage at.
+
+    Backbone gates the bound on the reference constant's own value
+    (``3d_setVariableLimits.gms``: ``v_state.fx(...)$p_gnBoundary...('constant')``),
+    and a 0 there is indistinguishable from absent -- the project's own
+    ``0 = NA`` convention seen from the GAMS side. So writing ``boundStart=1``
+    with a 0 reference bound nothing at all, while the workbook showed a flag
+    set and a reference row present. ``docs/dictionary.md`` says as much: a 0
+    reference "leaves the start free, which can let a storage initialise full".
+
+    Not writing them leaves exactly the same unconstrained model. The change is
+    that the log says so.
+    """
+
+    def test_nothing_is_written_for_the_node(self, pipeline):
+        gn_out, boundaries = pipeline.add_storage_starts(
+            _p_gn(pipeline), _boundaries(pipeline), _gnu_flat(), {}
+        )
+
+        gn_flat = pipeline.drop_fake_MultiIndex(gn_out)
+        assert gn_flat.loc[gn_flat["node"] == "FI_elec", "boundStart"].iloc[0] == 0
+
+        boundary_flat = pipeline.drop_fake_MultiIndex(boundaries)
+        assert boundary_flat[boundary_flat["param_gnBoundaryTypes"] == "reference"].empty
+
+    def test_the_node_is_named_in_a_warning(self, pipeline, logger):
+        # The fix is in the user's data, so the message has to say which node
+        # and what would bound it.
+        pipeline.add_storage_starts(_p_gn(pipeline), _boundaries(pipeline), _gnu_flat(), {})
+
+        logger.assert_logged("FI_elec", level="warn")
+        logger.assert_logged("upperLimitCapacityRatio", level="warn")
+
+    def test_a_node_that_resolves_is_not_warned_about(self, pipeline, logger):
+        # Negative control: the warning must not fire on the ordinary path.
+        pipeline.add_storage_starts(
+            _p_gn(pipeline), _boundaries(pipeline), _gnu_flat(upperLimitCapacityRatio=0.5), {}
+        )
+
+        logger.assert_not_logged("Could not determine a storage start level")
+
+    def test_a_non_storage_node_is_not_warned_about(self, pipeline, logger):
+        # Only nodes carrying a state variable are candidates, so a plain node
+        # must not produce noise.
+        p_gn = pipeline.create_fake_MultiIndex(
+            pd.DataFrame([{"grid": "elec", "node": "FI_elec", "isActive": 1}]),
+            GN_DIMENSIONS,
+        )
+        pipeline.add_storage_starts(p_gn, _boundaries(pipeline), _gnu_flat(), {})
+
+        logger.assert_not_logged("Could not determine a storage start level")
 
 
 class TestTheBoundarySheetItLeavesBehind:
