@@ -205,3 +205,43 @@ def is_col_empty(s: pd.Series) -> bool:
     # Safe elementwise test; no vectorized == on arbitrary objects
     empty_str_mask = s.map(lambda v: isinstance(v, str) and v.strip() == "")
     return bool((na_mask | empty_str_mask).all())
+
+
+def drop_empty_parameter_columns(
+    df: pd.DataFrame,
+    parameters: list,
+    must_keep: str,
+    ) -> pd.DataFrame:
+    """
+    Drop all-empty parameter columns from a fake-MultiIndex sheet, but never the last one.
+
+    For these sheets the parameter block *is* the column dimension -- indexSheet.xlsx
+    declares p_gn as Rdim=2/Cdim=1, p_gnn as Rdim=3/Cdim=1, p_gnu_io as Rdim=4/Cdim=1.
+    A sheet left with no parameter column is therefore a GDXXRW dimension error rather
+    than an empty sheet, so `must_keep` is retained even when it is empty.
+
+    Only names listed in `parameters` are considered, which is what keeps a dimension
+    column out of reach: is_col_empty() is True for a zero-length column, so a build
+    that produced no rows would otherwise drop every column in the frame -- dimensions
+    included, leaving the later sort_values() to fail with a bare KeyError.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Sheet frame, before the fake MultiIndex is added.
+    parameters : list
+        The sheet's parameter names (PARAM_GN, PARAM_GNN, PARAM_GNU). Anything not
+        in this list is left alone whether it is empty or not.
+    must_keep : str
+        Parameter kept even when empty, so the column dimension always has a member.
+
+    Returns
+    -------
+    pd.DataFrame
+        `df` without its all-empty parameter columns.
+    """
+    droppable = [
+        col for col in parameters
+        if col in df.columns and col != must_keep and is_col_empty(df[col])
+    ]
+    return df.drop(columns=droppable)

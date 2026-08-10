@@ -34,6 +34,23 @@ class BBExcelPipeline:
 
     Local truthiness checks are used throughout (not val, val == 1) rather than
     any shared utility, because the 0 = NA equivalence is specific to this class.
+
+    Any parameter column may be absent
+    ----------------------------------
+    p_gn, p_gnn and p_gnu_io drop their all-empty parameter columns before the
+    workbook is written (utils.drop_empty_parameter_columns), because 0 = NA
+    means an all-zero column states nothing. So **a PARAM_* column is present
+    only if some row set it**, and code reading one of those frames must guard:
+
+        if 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
+
+    or use .get(name, default) on a row. Dimension columns need no guard --
+    the drop cannot reach them, and the sheets are meaningless without them.
+
+    The guard is easy to forget precisely where it matters most: a column is
+    missing only when *no row in the whole model* set it, which is the case a
+    populated test fixture does not have. Two of the three consumers of
+    upperLimitCapacityRatio were guarded and the third crashed the build.
     """
 
     PARAM_GNU = [
@@ -170,6 +187,14 @@ class BBExcelPipeline:
     PARAM_GN_DEFAULTS = {
         'isActive': 1,
     }
+
+    # p_userconstraint(group, uc1, uc2, uc3, uc4, param_userconstraint): the four
+    # uc slots are optional selectors, but an unused one must carry the literal
+    # '-' rather than a blank. inc/1e_inputs.gms aborts the run otherwise -- it
+    # checks per parameter type that the slots it does not use are sameAs '-',
+    # e.g. "should be '-' for <param> multiplier: (grid, node, '-', '-')".
+    UC_DIMENSION_COLUMNS = ['1st dimension', '2nd dimension', '3rd dimension', '4th dimension']
+    UC_UNUSED_DIMENSION = '-'
 
     def __init__(self, context: BBExcelInputs) -> None:
 
@@ -328,9 +353,9 @@ class BBExcelPipeline:
         p_gnu_io = pd.DataFrame(rows, columns=final_cols)
         p_gnu_io = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gnu_io))
 
-        #  Remove empty columns except mandatory 'capacity' column
-        p_gnu_io = p_gnu_io.drop(columns=[col for col in p_gnu_io.columns
-                                          if utils.is_col_empty(p_gnu_io[col]) and col != 'capacity'])
+        #  Remove empty parameter columns, keeping mandatory 'capacity' as the
+        #  column dimension. Dimension columns are out of reach by construction.
+        p_gnu_io = utils.drop_empty_parameter_columns(p_gnu_io, param_gnu, 'capacity')
 
         # Sort by unit, input_output, node in a case-insensitive manner.
         p_gnu_io.sort_values(by=['unit', 'input_output', 'node'], 
@@ -737,6 +762,12 @@ class BBExcelPipeline:
                 p_gnn[p] = p_gnn[p].astype('Float64').fillna(default_val)
         p_gnn = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gnn))
 
+        # Remove empty parameter columns -- the optional transfer parameters
+        # (rampLimit, diffCoeff, invCost, ...) are absent from a plain link and
+        # were being written as a column of blanks. 'isActive' is kept even when
+        # empty so the Cdim=1 column dimension always has a member.
+        p_gnn = utils.drop_empty_parameter_columns(p_gnn, param_gnn, 'isActive')
+
         p_gnn.sort_values(
             by=['grid', 'from_node', 'to_node'],
             key=lambda col: col.str.lower() if col.dtype == 'object' else col,
@@ -959,9 +990,11 @@ class BBExcelPipeline:
                 p_gn[p] = p_gn[p].astype('Float64').fillna(default_val)
                 
         p_gn = utils.fill_numeric_na(utils.standardize_df_dtypes(p_gn))
-        protected_gn = {'grid', 'node', 'usePrice', 'nodeBalance', 'energyStoredPerUnitOfState'}
-        p_gn = p_gn.drop(columns=[col for col in p_gn.columns
-                                   if utils.is_col_empty(p_gn[col]) and col not in protected_gn])
+
+        # Remove empty parameter columns. 'isActive' is kept even when empty so the
+        # Cdim=1 column dimension always has a member; with any row at all it is
+        # non-empty anyway, PARAM_GN_DEFAULTS having filled it just above.
+        p_gn = utils.drop_empty_parameter_columns(p_gn, param_gn, 'isActive')
 
         # Sort by grid, node in a case-insensitive manner
         p_gn.sort_values(
@@ -1196,9 +1229,16 @@ class BBExcelPipeline:
                         start_value = constant_values.iloc[0]
 
             # 3) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
-            if start_value == 0 and not p_gnu_io_flat.empty:
-                subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) & 
-                                                (p_gnu_io_flat['node'] == node) & 
+            # The column is absent whenever no unit in the whole model sets it:
+            # drop_empty_parameter_columns removes an all-empty PARAM_GNU column
+            # from p_gnu_io, and this is reached exactly when sources 1 and 2
+            # found nothing, so a storage node declared any other way used to
+            # reach it and die on a bare KeyError.
+            if (start_value == 0
+                    and not p_gnu_io_flat.empty
+                    and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns):
+                subset_p_gnu_io = p_gnu_io_flat[(p_gnu_io_flat['grid'] == grid) &
+                                                (p_gnu_io_flat['node'] == node) &
                                                 (p_gnu_io_flat['upperLimitCapacityRatio'] > 0)
                                                 ]
                 if not subset_p_gnu_io.empty:
@@ -1533,22 +1573,23 @@ class BBExcelPipeline:
             ]
             group_UC = f"UC_{node}"
 
+            unused = self.UC_UNUSED_DIMENSION
             for _, r in row_gnu.iterrows():
                 generated_rows.append({
                     'group': group_UC,
                     '1st dimension': r['grid'],
                     '2nd dimension': node,
                     '3rd dimension': r['unit'],
-                    '4th dimension': "-",
+                    '4th dimension': unused,
                     'parameter': "v_gen",
                     'value': -1,
                 })
 
             # group-level rows
             generated_rows += [
-                {'group': group_UC, '1st dimension': "-", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "GT",             'value': -1},
-                {'group': group_UC, '1st dimension': "userconstraintRHS", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "ts_groupPolicy", 'value': 1},
-                {'group': group_UC, '1st dimension': "-", '2nd dimension': "-", '3rd dimension': "-", '4th dimension': "-", 'parameter': "penalty",        'value': 2000},
+                {'group': group_UC, '1st dimension': unused, '2nd dimension': unused, '3rd dimension': unused, '4th dimension': unused, 'parameter': "GT",             'value': -1},
+                {'group': group_UC, '1st dimension': "userconstraintRHS", '2nd dimension': unused, '3rd dimension': unused, '4th dimension': unused, 'parameter': "ts_groupPolicy", 'value': 1},
+                {'group': group_UC, '1st dimension': unused, '2nd dimension': unused, '3rd dimension': unused, '4th dimension': unused, 'parameter': "penalty",        'value': 2000},
             ]
 
         if generated_rows:
@@ -1559,6 +1600,41 @@ class BBExcelPipeline:
             p_userConstraint = pd.concat(frames, ignore_index=True)
         else:
             p_userConstraint = pd.DataFrame(columns=expected_cols)
+
+        # An unused uc slot must be '-', never blank: inc/1e_inputs.gms aborts the
+        # run on anything else (see UC_UNUSED_DIMENSION). A user sheet that omits
+        # the columns it does not need -- ordinary, and the columns are created as
+        # NA above -- would otherwise write blanks that GAMS refuses.
+        #
+        # Done before the dtype pass on purpose: filled first, the slots are never
+        # all-NA, so standardize_df_dtypes leaves them object rather than typing
+        # them numeric and fill_numeric_na writing 0 into a set-element slot.
+        for column in self.UC_DIMENSION_COLUMNS:
+            if column in p_userConstraint.columns:
+                filled = p_userConstraint[column].where(
+                    p_userConstraint[column].notna(), self.UC_UNUSED_DIMENSION
+                )
+                # Blank and whitespace-only cells reach here as strings from sheets
+                # that were never normalized, so emptiness is tested, not identity.
+                p_userConstraint[column] = filled.map(
+                    lambda v: self.UC_UNUSED_DIMENSION
+                    if isinstance(v, str) and not v.strip()
+                    else v
+                )
+
+        # group and parameter are not selector slots -- '-' would be a real label
+        # there, naming a constraint or a Backbone variable that does not exist.
+        for column in ('group', 'parameter'):
+            if column in p_userConstraint.columns:
+                blank = p_userConstraint[column].isna() | p_userConstraint[column].map(
+                    lambda v: isinstance(v, str) and not v.strip()
+                )
+                if blank.any():
+                    self.logger.log_status(
+                        f"p_userconstraint has {int(blank.sum())} row(s) with an empty '{column}', "
+                        "which Backbone cannot resolve. Check the userconstraintdata sheets.",
+                        level="warn"
+                    )
 
         # Standardize dtypes, fill NA
         p_userConstraint = utils.fill_numeric_na(utils.standardize_df_dtypes(p_userConstraint))

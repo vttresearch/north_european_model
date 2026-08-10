@@ -1,23 +1,27 @@
-"""The bb_excel stage should not emit NaN.
+"""The bb_excel stage does not emit NaN.
 
-Past this boundary the convention is ``0 = NA = None = "not set"`` (CLAUDE.md),
-and ``utils.fill_all_na`` exists precisely to cross it: numeric columns to 0,
-everything else to the empty string. NaN inside a function is fine; NaN handed
-*out* of one is what makes the next consumer guess.
+Past this boundary the convention is ``0 = NA = None = "not set"`` (CLAUDE.md).
+NaN inside a function is fine; NaN handed *out* of one is what makes the next
+consumer guess.
 
-Several constructing functions still emit it. That is recorded here as a strict
-xfail rather than repaired, because the repair is visible in the written
-workbook -- an empty cell becomes a literal 0 -- and whether that is an
-improvement is a judgment call:
+Three sheets used to breach it, and all three for the same mechanical reason
+rather than a missing call: they already ran
+``fill_numeric_na(standardize_df_dtypes(df))``, but that pairing is **blind to an
+entirely empty column**. ``standardize_df_dtypes`` types an all-NA column
+``object`` (the all-NA-is-object rule) and ``fill_numeric_na`` fills only
+``Float64``, so the one column that most needs filling is the one neither of them
+can see. ``fill_all_na`` is no answer either: by then the dtype signal is gone,
+so it would write ``''`` into every offender, never 0.
 
-- GAMS reads an empty cell and a 0 identically, so nothing changes for the model;
-- empty cells keep inputData.xlsx smaller and easier to read by eye;
-- but a frame carrying NaN between functions is exactly the dtype hazard the
-  source stage was cleaned up to avoid, and *some* of these columns are text
-  (user constraint dimensions), where 0 would be wrong and '' is right.
+The repairs therefore had to come from what each column *is*, not what it is
+typed as:
 
-``fill_all_na`` already draws that distinction correctly, so applying it is a
-small change -- the decision is whether the workbook should look different.
+- ``p_gn`` / ``p_gnn`` -- an all-empty **parameter** column is dropped
+  (``utils.drop_empty_parameter_columns``), keeping one so the ``Cdim=1`` column
+  dimension survives. See ``test_empty_parameter_columns.py``.
+- ``p_userconstraint`` -- an unused **dimension** slot is written as ``'-'``.
+  Not a formatting preference: ``inc/1e_inputs.gms`` aborts the run on anything
+  else, so this was a latent build failure rather than an untidy workbook.
 """
 
 import pathlib
@@ -74,52 +78,55 @@ class TestSheetsThatAreAlreadyClean:
             assert not offenders, f"{fixture}/{name} emits NaN in {offenders}"
 
 
-class TestSheetsThatStillEmitNa:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="create_p_gn emits NaN in usePrice instead of 0",
-    )
+class TestTheSheetsThatUsedToEmitNa:
     def test_p_gn_is_clean(self, built):
-        """usePrice is left NaN for nodes where it was never decided.
+        """usePrice was left NaN for nodes where it was never decided.
 
         nodeBalance and usePrice are mutually exclusive, so "not a price node"
-        is a real answer and 0 states it. NaN leaves the next reader to infer it.
+        is a real answer. With no price node anywhere the column carries no
+        answer at all, and is dropped rather than written as a blank.
         """
         offenders = {f: _na_columns(built[f]).get("p_gn") for f in FIXTURES}
         assert not any(offenders.values()), offenders
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="create_p_gnn emits NaN in every optional transfer parameter",
-    )
     def test_p_gnn_is_clean(self, built):
         """Seven columns, all optional transfer parameters.
 
         rampLimit, diffCoeff, diffLosses, transferCapInvLimit, investMIP,
-        invCost and annuityFactor are NaN whenever the source row omits them --
-        which is the normal case for a plain transfer link.
+        invCost and annuityFactor are absent whenever the source row omits them
+        -- the normal case for a plain transfer link -- so the column goes too.
         """
         assert not _na_columns(built["transfer"]).get("p_gnn")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="create_p_userconstraint emits NaN in unused dimension columns",
-    )
     def test_p_userconstraint_is_clean(self, built):
-        """The one case where 0 would be wrong.
-
-        These are set-element slots, not measures, so an unused dimension should
-        be the empty string. fill_all_na already makes that distinction --
-        numeric to 0, everything else to '' -- which is why it is the right tool
-        here rather than a blanket fillna(0).
-        """
         assert not _na_columns(built["userconstraint"]).get("p_userconstraint")
+
+    def test_an_unused_userconstraint_dimension_is_a_dash(self, built):
+        """The one case where neither 0 nor '' would do.
+
+        ``p_userconstraint`` is Rdim=6 in indexSheet.xlsx, so all four uc slots
+        are label columns and none can be dropped. Backbone then checks, per
+        parameter type, that the slots a parameter does not use hold exactly
+        ``'-'`` -- ``inc/1e_inputs.gms`` carries 21 aborts saying so, e.g.
+        "should be '-' for <param> multiplier: (grid, node, '-', '-')".
+
+        The fixture's sheet declares only the 1st and 2nd dimension, which is an
+        ordinary thing to write; the 3rd and 4th are created for it and used to
+        come out blank. Production data types the dashes by hand today.
+        """
+        frame = built["userconstraint"]["p_userconstraint"]
+        for column in ("1st dimension", "2nd dimension", "3rd dimension", "4th dimension"):
+            values = set(frame[column])
+            assert "" not in values and 0 not in values, f"{column} has a blank slot: {values}"
+        # The columns the sheet never declared are the ones that were broken.
+        assert set(frame["3rd dimension"]) == {"-"}
+        assert set(frame["4th dimension"]) == {"-"}
 
 
 class TestTheScanItself:
     def test_the_detector_notices_a_planted_na(self):
-        # Negative control: every xfail above would pass vacuously if _na_columns
-        # could not see a NaN.
+        # Negative control: every assertion above would pass vacuously if
+        # _na_columns could not see a NaN.
         planted = {"p_gn": pd.DataFrame({"grid": ["elec"], "usePrice": [pd.NA]})}
         assert _na_columns(planted) == {"p_gn": ["usePrice"]}
 

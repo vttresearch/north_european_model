@@ -237,16 +237,23 @@ class TestUserConstraints:
         assert len(rows_for(userconstraint.sheets["node"], node="FI_elec")) == 1
 
     def test_a_sheet_using_only_some_dimensions_still_builds(self, userconstraint):
-        """Regression: this used to kill the build.
+        """Regression, in two stages -- and the first fix was not enough.
 
         create_p_userconstraint detected the absent 3rd/4th dimension columns,
-        logged a warning, and then selected them anyway -- raising a bare
-        KeyError. A constraint using one or two dimensions is ordinary.
+        logged a warning, and then selected them anyway, raising a bare
+        KeyError. A constraint using one or two dimensions is ordinary, so that
+        was fixed by creating the columns as NA.
+
+        Which produced a workbook GAMS would not load. p_userconstraint is
+        Rdim=6, so all four uc slots are labels, and Backbone checks that a slot
+        a parameter does not use holds exactly '-' -- inc/1e_inputs.gms aborts
+        otherwise. The build stopped crashing and started emitting a file that
+        failed later, further away, with a message about the wrong thing.
         """
         uc = userconstraint.sheets["p_userconstraint"]
         assert len(uc) == 2
         assert "3rd dimension" in uc.columns
-        assert uc["3rd dimension"].isna().all()
+        assert set(uc["3rd dimension"]) == {"-"}
 
     def test_the_group_reaches_the_group_domain(self, userconstraint):
         assert "elecLimit".casefold() in {

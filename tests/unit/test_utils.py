@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from src.utils import (
+    drop_empty_parameter_columns,
     fill_all_na,
     fill_numeric_na,
     is_col_empty,
@@ -171,6 +172,85 @@ class TestIsColEmpty:
 
     def test_a_zero_length_column_is_empty(self):
         assert is_col_empty(pd.Series([], dtype="object")) is True
+
+
+class TestDropEmptyParameterColumns:
+    """Empty parameter columns go, but never the last one.
+
+    For the sheets that use this (p_gn, p_gnn, p_gnu_io) the parameter block is
+    the *column dimension* -- Cdim=1 in indexSheet.xlsx -- so a frame left with
+    no parameter column is a GDXXRW dimension error rather than an empty sheet.
+    Combined with ``is_col_empty`` being True for a zero-length column, a build
+    that produced no rows is exactly when every parameter looks droppable at
+    once. ``tests/unit/bb_excel/test_empty_parameter_columns.py`` pins that end.
+    """
+
+    PARAMETERS = ["isActive", "capacity", "rampLimit"]
+
+    def _frame(self, **columns) -> pd.DataFrame:
+        return pd.DataFrame(columns)
+
+    def test_an_empty_parameter_is_dropped(self):
+        df = self._frame(
+            grid=["elec"],
+            isActive=pd.Series([1.0], dtype="Float64"),
+            rampLimit=pd.Series([pd.NA], dtype="Float64"),
+        )
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert list(out.columns) == ["grid", "isActive"]
+
+    def test_a_column_outside_the_parameter_list_is_never_touched(self):
+        # Dimension columns live here. Reaching one leaves the later
+        # sort_values() to fail with a bare KeyError.
+        df = self._frame(
+            grid=pd.Series([pd.NA], dtype="object"),
+            isActive=pd.Series([1.0], dtype="Float64"),
+        )
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert "grid" in out.columns
+
+    def test_must_keep_survives_even_when_empty(self):
+        df = self._frame(
+            grid=["elec"],
+            isActive=pd.Series([pd.NA], dtype="Float64"),
+            capacity=pd.Series([pd.NA], dtype="Float64"),
+        )
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert list(out.columns) == ["grid", "isActive"]
+
+    def test_a_zero_row_frame_still_keeps_must_keep(self):
+        # The case the whole guarantee exists for: with no rows every column is
+        # empty by is_col_empty's definition, so without must_keep the frame
+        # would lose its column dimension entirely.
+        df = pd.DataFrame(columns=["grid", "isActive", "capacity", "rampLimit"])
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert list(out.columns) == ["grid", "isActive"]
+
+    def test_all_zero_counts_as_empty_because_zero_means_not_set(self):
+        # Inherited from is_col_empty, and load-bearing: 0 = NA = "not set".
+        df = self._frame(
+            grid=["elec"],
+            isActive=pd.Series([1.0], dtype="Float64"),
+            capacity=pd.Series([0.0], dtype="Float64"),
+        )
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert "capacity" not in out.columns
+
+    def test_a_frame_with_nothing_empty_comes_back_whole(self):
+        df = self._frame(
+            grid=["elec"],
+            isActive=pd.Series([1.0], dtype="Float64"),
+            capacity=pd.Series([100.0], dtype="Float64"),
+        )
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert list(out.columns) == ["grid", "isActive", "capacity"]
+
+    def test_a_parameter_absent_from_the_frame_is_not_an_error(self):
+        # PARAM_* lists name every settable parameter; a given build writes a
+        # subset, so the list routinely exceeds the frame.
+        df = self._frame(grid=["elec"], isActive=pd.Series([1.0], dtype="Float64"))
+        out = drop_empty_parameter_columns(df, self.PARAMETERS, "isActive")
+        assert list(out.columns) == ["grid", "isActive"]
 
 
 class TestFillHelpers:
