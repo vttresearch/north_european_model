@@ -3,6 +3,7 @@
 This repository contains the North European energy system model. The model is built for the Backbone modelling framework. 
 
 This readme has the following main sections
+- [Documentation](#documentation)
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
 - [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
 - [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
@@ -38,6 +39,21 @@ Ikäheimo, J., Lindroos, T.J., Purhonen, A., Rämä, M., Hiltunen, P., and Harri
 ## Support
 
 Contact the authors.
+
+
+## Documentation
+
+Pages in [docs/](docs/). Add a new page here as well as in the folder, or nothing
+links to it.
+
+- [Source workbook conventions](docs/source-workbook-conventions.md) — how the builder
+  reads the Excel files in `src_files/data_files/`: marking rows and columns as not
+  input, where a sheet ends, what happens to a cell that should be a number and is not,
+  and how `method` combines rows from several files.
+
+For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
+in the Backbone repository. For anyone changing the pipeline rather than the data,
+`tests/README.md` carries the NA/zero boundary map.
 
 
 ## Installing Backbone and the North European Model

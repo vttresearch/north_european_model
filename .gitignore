@@ -1,9 +1,15 @@
 # All folders except
 /*/
+!/docs/
 !/src/
 !/src_files/
 !/tests/
 !/.spinetoolbox/
+
+# Documentation pages are shared once they are finished; drafts stay local.
+# A new page needs its own '!' line here and a link from README.md.
+/docs/*
+!/docs/source-workbook-conventions.md
 
 # toolbox stuff
 /.spinetoolbox/items

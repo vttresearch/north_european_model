@@ -1,5 +1,11 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-21
+- source data: `##` marks something as the author's, not the model's -- in a data row it skips the row, in a column header it skips the column. Use it for helper tables beside the real one; they are dropped before any validation sees them. **Breaking:** the row marker was a single `#`, which collided with every Excel error value, so a broken formula deleted its own row.
+- source data: a cell that should hold a number but does not (`1,000.0`, `100 MW`, `#REF!`) is reported and treated as not set, instead of silently demoting its whole column and dropping rows.
+- timeseries processors: `BaseProcessor.read_input_csv`/`read_input_excel` reject an input file with malformed numbers or an inconsistent field count. An unquoted thousands separator no longer shifts every column unnoticed.
+- emissiondata and userconstraintdata: their value columns are now coerced to numbers, as are nodedata's `emission_*` columns.
+
 ## 2026-08-10
 - p_userconstraint: unused dimension slots are autofilled with '-'. 
 - merge_row_by_row: column titles are now compared case-insensitively, keeping the first spelling. 
