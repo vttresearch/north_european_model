@@ -92,13 +92,42 @@ NASTY_CELLS: list[Any] = [
     " 1 ",
     "1e3",
     "5,5",
+    # -- grouped digits. A helper UI started emitting the US thousands format
+    #    into a processor's input CSV and the build died; the same shapes reach
+    #    the workbooks by hand, by paste, and by locale.
+    "1,000.0",
+    "1 000",
+    "1 000",   # non-breaking space, which is what Excel pastes
+    "1'000",        # Swiss
+    "12,345,678",
+    "1.000,5",      # grouped *and* comma-decimal
+    "1_000",
+    # -- a number wearing its unit
+    "100 MW",
+    "100MW",
+    "5%",
+    "100 EUR",
+    # -- accounting and typographic sign conventions
+    "(500)",
+    "−5",      # U+2212 minus, not hyphen
+    # -- what Excel writes when a formula breaks. These begin with '#', which
+    #    used to mean "comment row" and silently deleted the row they sat in.
+    "#REF!",
+    "#DIV/0!",
+    "#VALUE!",
+    "#N/A",
+    # -- missing markers pandas does not know
+    "-",
+    "n.a.",
+    "tbd",
     # -- booleans, which pandas counts as numeric
     True,
     False,
     "TRUE",
     "yes",
     # -- values with meaning to the pipeline itself
-    "#comment",   # normalize_dataframe drops rows whose cells start with '#'
+    "## scratch",  # the ignore marker: drops the row it sits in
+    "#comment",    # a single '#' is ordinary data now -- it collided with #REF!
     "a_b",        # drop_underscore_values deletes rows containing '_'
     "all",        # apply_whitelist / expand_all_country magic value
     "ALL",
@@ -151,8 +180,64 @@ def frame_with_cell(
     The second row carries `filler` so that the frame is not accidentally
     all-NA -- otherwise every column would legitimately be ``object`` and the
     sweep would prove nothing.
+
+    **`filler` decides what kind of column the nasty value lands in**, and that
+    turns out to matter more than the value. See :data:`SWEEP_FILLERS`.
     """
     data = {col: [cell] + [filler] * (rows - 1) for col in columns}
+    return pd.DataFrame(data)
+
+
+#: The three kinds of column a nasty value can land in, swept over every value.
+#:
+#: The default ``"x"`` was the only one for a long time, and it is the one that
+#: proves least: it makes the whole column text, so a numeric-looking nasty value
+#: is simply one more string among strings and nothing branches differently.
+#:
+#: ``1.0`` is the shape that hid a live bug for the entire life of the suite. A
+#: numeric column with **one** bad cell is not "a text column" -- it is a column
+#: that was supposed to be ``Float64`` and silently is not, and roughly a dozen
+#: places downstream branch on exactly that dtype. The sweep could not see it
+#: because it never built it.
+#:
+#: ``pd.NA`` puts the value in an otherwise-empty column, where the all-NA rule
+#: says "no assumption has been made" -- so the single value is the only thing
+#: the dtype can be inferred from.
+SWEEP_FILLERS: dict[str, Any] = {
+    "text": "x",
+    "numeric": 1.0,
+    "empty": pd.NA,
+}
+
+
+def frame_with_poisoned_numeric_column(
+    columns: Sequence[str],
+    cell: Any,
+    *,
+    numeric_column: str = "capacity",
+    rows: int = 2,
+    filler: Any = "x",
+    number: Any = 1.0,
+) -> pd.DataFrame:
+    """A normal frame whose **one measure column** holds real numbers and `cell`.
+
+    This is the arrangement that hid a live bug: ``capacity`` is
+    ``[cell, 1.0]`` while every identifier column stays ordinary text. One
+    unparseable cell is enough to stop ``standardize_df_dtypes`` typing that
+    column ``Float64``, and about a dozen consumers branch on precisely that.
+
+    Why not simply pass ``filler=1.0`` to :func:`frame_with_cell`: that makes
+    *every* column numeric, ``generator_id`` and ``country`` included, and then
+    a merge against a text-keyed fixture fails on the key dtype rather than on
+    anything the test is about. The frame has to stay realistic everywhere
+    except the one column under examination, or the failure it produces is the
+    test's own.
+    """
+    data = {col: [cell] + [filler] * (rows - 1) for col in columns}
+    data[numeric_column] = [cell] + [number] * (rows - 1)
+    for col in columns:
+        if col != numeric_column:
+            data[col] = [filler] * rows
     return pd.DataFrame(data)
 
 

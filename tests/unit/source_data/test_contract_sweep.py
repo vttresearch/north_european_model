@@ -23,10 +23,12 @@ import pytest
 
 from tests._common.contracts import (
     NASTY_CELLS,
+    SWEEP_FILLERS,
     assert_no_na_became_zero,
     assert_normalized,
     frame_with_blank_column,
     frame_with_cell,
+    frame_with_poisoned_numeric_column,
     nasty_id,
 )
 from tests._common.fixtures import FakeLogger
@@ -63,16 +65,22 @@ def _normalized(df: pd.DataFrame) -> pd.DataFrame:
     return normalize_dataframe(df, "sweep-setup", FakeLogger())
 
 
+@pytest.mark.parametrize("filler", SWEEP_FILLERS.values(), ids=SWEEP_FILLERS.keys())
 @pytest.mark.parametrize("cell", NASTY_CELLS, ids=nasty_id)
-def test_normalize_dataframe_output_satisfies_the_contract(cell):
+def test_normalize_dataframe_output_satisfies_the_contract(cell, filler):
     """The gatekeeper must produce the canonical shape from anything.
 
     Everything downstream is entitled to assume this, so if it fails here the
     contract is not merely violated -- it never held in the first place.
+
+    Swept across all three filler kinds because the *column* the value lands in
+    decides what happens to it far more than the value does: the same
+    ``'1,000.0'`` is inert in a text column and, in a numeric one, quietly
+    demotes the whole column out of ``Float64``.
     """
-    raw = frame_with_cell(SWEEP_COLUMNS, cell)
+    raw = frame_with_cell(SWEEP_COLUMNS, cell, filler=filler)
     out = normalize_dataframe(raw, "sweep", FakeLogger())
-    assert_normalized(out, where=f"normalize_dataframe given {cell!r}")
+    assert_normalized(out, where=f"normalize_dataframe given {cell!r} among {filler!r}")
 
 
 @pytest.mark.parametrize("case", LOADER_CASES, ids=str)
@@ -85,6 +93,28 @@ def test_loader_output_satisfies_the_contract(case, cell):
     out = case.call(df, FakeLogger())
 
     _check(case, out, where=f"{case.name} given {cell!r}")
+
+
+@pytest.mark.parametrize("case", LOADER_CASES, ids=str)
+@pytest.mark.parametrize("cell", NASTY_CELLS, ids=nasty_id)
+def test_loader_output_survives_one_bad_cell_in_a_numeric_column(case, cell):
+    """The shape the sweep never used to build.
+
+    ``frame_with_cell``'s default filler is ``"x"``, which makes every column
+    text -- so for the whole life of this suite a numeric-looking nasty value was
+    only ever tested as one string among strings. The dangerous arrangement is a
+    column of real numbers with a single bad cell in it, because that is what
+    stops ``standardize_df_dtypes`` typing the column ``Float64`` and sends every
+    dtype-branching consumer down its other path.
+
+    A crash or a contract breach here is a real bug in the function under test.
+    """
+    raw = frame_with_poisoned_numeric_column(SWEEP_COLUMNS, cell)
+    df = _normalized(raw) if case.needs_normalized_input else raw
+
+    out = case.call(df, FakeLogger())
+
+    _check(case, out, where=f"{case.name} given {cell!r} in a numeric column")
 
 
 @pytest.mark.parametrize("case", LOADER_CASES, ids=str)

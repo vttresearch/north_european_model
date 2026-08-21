@@ -24,10 +24,19 @@ def read_input_excels(
 
     Cleaning steps
     --------------
+    - Drop columns whose header starts with ``##``: the author's own working columns.
+      Applied first, so a helper table beside the real one is never validated as input.
     - Drop columns whose header is empty/whitespace or auto-generated as 'Unnamed: x'.
-    - Optionally drop any column named 'note' (any casing).
+    - Optionally drop any column named exactly 'note' (any casing). Superseded by the
+      ``##`` marker above, which is not limited to one name or one column per sheet;
+      kept because shipped workbooks still rely on it, and because a note containing an
+      underscore would otherwise reach ``drop_underscore_values`` and delete its row.
     - Truncate the DataFrame at the first fully empty row (drop that row and all below).
       An "empty" cell is NA or a string consisting only of whitespace.
+    - Drop rows carrying ``##`` in any cell, evaluated after the column drops so that
+      scratch text in a helper column cannot delete a row of the real table.
+    - Report and blank cells that should hold a number but do not, and cells holding an
+      Excel error value, via ``utils.gate_xlsx_frame``.
 
     Parameters
     ----------
@@ -81,6 +90,24 @@ def read_input_excels(
                 )
                 continue
 
+            # --- Drop columns the author marked as not the model's ---
+            # '##' in a header is the column counterpart of '##' in a data row:
+            # one marker, one meaning, and it has to be typed deliberately.
+            #
+            # It runs before everything below it on purpose. A helper table
+            # parked to the right of the real one is scratch work -- half-built
+            # formulas, intermediate sums, the occasional #DIV/0! -- and the
+            # numeric gate a few lines down would otherwise report all of it as
+            # broken input. Dropping first also means a blank spacer column
+            # between the two tables has nothing named to its right any more, so
+            # it reads as the end of the sheet rather than a hole in it.
+            ignored_cols = [
+                c for c in df.columns
+                if str(c).strip().startswith(utils.IGNORE_MARKER)
+            ]
+            if ignored_cols:
+                df = df.drop(columns=ignored_cols, errors="ignore")
+
             # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
             # Consider empty if None, whitespace-only, or header starts with 'unnamed:' (case-insensitive).
             empty_title_cols = [
@@ -105,6 +132,23 @@ def read_input_excels(
             if row_is_empty.any():
                 first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
                 df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
+
+            # --- Drop rows the author marked as not the model's ---
+            # After the column drops above, deliberately: a '##' typed as free
+            # text in a helper column must not delete a real row of the table.
+            # Before the gate, for the same reason the column drop is -- a marked
+            # row is working material and its half-finished numbers are not
+            # something to report.
+            ignored_rows = utils.ignored_row_mask(df)
+            if ignored_rows.any():
+                df = df[~ignored_rows]
+
+            # --- Gate: report cells that should be numbers and are not ---
+            # Placed here because this is the only route source workbooks take,
+            # so no future reader can forget it. It runs before the comment-row
+            # rule in normalize_dataframe, which means an Excel error value is
+            # reported rather than being deleted along with its row.
+            df = utils.gate_xlsx_frame(df, f"{file_name}:{sheet}", logger)
 
             # Optionally add provenance columns
             if add_source_cols:
@@ -138,9 +182,11 @@ def normalize_dataframe(
     1) Lower-cases all column names.
     2) Lower-case column values (lowercase_col_values): lower-cases selected identifier-like columns (e.g. 'scenario').
     3) Remove leading and trailing whitespace from string columns.
-    3b) Drop comment rows: rows where any non-underscore-prefixed column contains a string
-       starting with ``#`` are silently removed. Use this to annotate or section off rows
-       in the source Excel (e.g. put ``# section header`` in the scenario column).
+    3b) Drop ignored rows: rows where any non-underscore-prefixed column contains a string
+       starting with ``##`` are silently removed. Use this to annotate or section off rows
+       in the source Excel (e.g. put ``## section header`` in the scenario column). A
+       single ``#`` is ordinary data -- it is how every Excel error value starts, and a
+       broken formula used to delete its own row.
     4) 'method' column: ensures existence; trims/lower-cases values; unknown methods
        are warned and coerced to 'replace' against `allowed_methods`.
     5) Missing/empties: treat empty strings as NA.
@@ -198,12 +244,11 @@ def normalize_dataframe(
         if pd.api.types.is_string_dtype(df_out[col]) or pd.api.types.is_object_dtype(df_out[col]):
             df_out[col] = df_out[col].map(lambda x: x.strip() if isinstance(x, str) else x)
 
-    # 3b) Drop comment rows: any row where a non-underscore column has a string cell starting with '#'
-    data_cols = [c for c in df_out.columns if not str(c).startswith("_")]
-    comment_mask = df_out[data_cols].apply(
-        lambda row: any(isinstance(v, str) and v.startswith("#") for v in row),
-        axis=1,
-    )
+    # 3b) Drop rows the author marked with '##' in any cell.
+    # read_input_excels has normally done this already, before the numeric gate;
+    # repeating it is idempotent and is what makes the rule hold for callers that
+    # build a frame themselves rather than reading a workbook.
+    comment_mask = utils.ignored_row_mask(df_out)
     if comment_mask.any():
         df_out = df_out[~comment_mask].reset_index(drop=True)
 
@@ -221,8 +266,14 @@ def normalize_dataframe(
         method = method.where(~method.isin(unknown_vals), "replace")
     df_out["method"] = method
 
-    # 5) Treat empty strings as NA
-    df_out = df_out.replace({"": pd.NA})
+    # 5) Treat empty strings as NA.
+    # where(~eq) rather than replace(): replace() also tries to downcast the
+    # result, which pandas has deprecated and which emits a FutureWarning as soon
+    # as an object column is left holding only numbers -- exactly what happens
+    # when a comment row is dropped from a two-row sheet. The downcast was never
+    # wanted here in any case, since standardize_df_dtypes decides every dtype on
+    # the next line.
+    df_out = df_out.where(~df_out.eq(""), pd.NA)
 
     # 6) dtype conversions (empty→object, numeric strings→Float64)
     df_out = utils.standardize_df_dtypes(df_out)
