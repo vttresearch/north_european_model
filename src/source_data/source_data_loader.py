@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -7,6 +8,13 @@ import src.utils as utils
 from src.infrastructure.logger import IterationLogger
 
 FilterValue = list[str] | list[int]
+
+
+#: pandas' rename for a repeated header: the second 'capacity' becomes
+#: 'capacity.1', the third 'capacity.2'. A column genuinely called 'eff.1' in the
+#: spreadsheet matches this too, which is why the base name has to be present in
+#: the same sheet before anything is concluded.
+_RENAMED_DUPLICATE = re.compile(r"^(?P<base>.+)\.(?P<n>\d+)$")
 
 
 def _has_no_header(col) -> bool:
@@ -44,6 +52,9 @@ def read_input_excels(
       One sitting *inside* the table rather than past its end is warned about first; one
       past the end is the scratch area and is silent. A sheet where no column has a
       header at all is an error, not an empty result.
+    - Report a header used twice. pandas renames the repeat to 'capacity.1', which
+      nothing reads, so the column is never used. Reported, never merged: the sheet
+      gives no basis for choosing which value wins.
     - Optionally drop any column named exactly 'note' (any casing). Superseded by the
       ``##`` marker above, which is not limited to one name or one column per sheet;
       kept because shipped workbooks still rely on it, and because a note containing an
@@ -187,6 +198,39 @@ def read_input_excels(
                 note_cols = [c for c in df.columns if isinstance(c, str) and c.lower() == "note"]
                 if note_cols:
                     df = df.drop(columns=note_cols, errors="ignore")
+
+            # --- Report a header used twice ---
+            # Excel allows two columns to carry the same header; pandas does not,
+            # and renames the second 'capacity' to 'capacity.1'. Nothing reads
+            # that name, so the column is simply never used, silently.
+            #
+            # Reported rather than merged. Merging would have to decide which of
+            # the two values wins, or how to combine them, and the sheet gives no
+            # basis for either -- a wrong answer chosen automatically is worse
+            # than a right question asked out loud. The file and sheet are still
+            # known here, which is what makes the question answerable.
+            #
+            # After the '##' drop above, or every helper block would report
+            # itself: those columns are all headed '##', so pandas numbers them
+            # '##.1', '##.2' and they look exactly like repeated headers.
+            present = {str(c) for c in df.columns}
+            repeated: Dict[str, List[str]] = {}
+            for col in df.columns:
+                match = _RENAMED_DUPLICATE.match(str(col))
+                if match and match.group("base") in present:
+                    repeated.setdefault(match.group("base"), []).append(col)
+            if repeated:
+                detail = "; ".join(
+                    f"'{base}' repeated {len(dups)} time(s), ignoring "
+                    + ", ".join(f"{c} ({int(df[c].notna().sum())} values)" for c in dups)
+                    for base, dups in repeated.items()
+                )
+                logger.log_status(
+                    f"[{file_name}:{sheet}] Duplicate column header(s): {detail}. Only the "
+                    f"first column of each name is read. Give the others their own name, "
+                    f"or mark them '{utils.IGNORE_MARKER}' if they are working material.",
+                    level="warn"
+                )
 
             # --- Truncate at the first fully empty row ---
             # Treat empty strings/whitespace as NA, then find first all-NA row.

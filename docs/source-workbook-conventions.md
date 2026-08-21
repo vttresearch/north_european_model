@@ -21,6 +21,7 @@ something in a build log does not look right.
 | a column with no header, inside the table | ignores it, and warns |
 | `1,000.0`, `100 MW`, `(500)` in a parameter column | reports it and reads it as not set |
 | `#REF!`, `#DIV/0!` anywhere | reports it and reads it as not set |
+| the same header on two columns | reads the first, warns about the rest |
 | `_` anywhere in a text cell | drops the row, with a warning |
 
 ---
@@ -201,6 +202,23 @@ reported wherever they appear, in dimension columns as much as parameter columns
 and read as not set. None is ever a value anyone meant to write. `#REF!` in
 particular is what Excel leaves behind when a column another sheet pointed at is
 deleted, so it usually means the workbook has quietly lost a reference.
+
+### A header used twice
+
+Excel lets two columns carry the same header. The builder reads the first and
+warns about the rest, naming the file, the sheet, the header and how many values
+are being passed over.
+
+It does not merge them, deliberately: nothing in the sheet says which value
+should win or how two of them should combine, and a wrong answer chosen
+automatically is worse than a question asked out loud. Give the second column its
+own name, or mark it `##` if it is working material.
+
+One pair looks like a duplicate and is reported differently. A bare parameter
+name means `_output1`, so `vomCosts` and `vomCosts_output1` in the same sheet are
+two spellings of the same column. That is reported as a rename collision, and the
+suffixed column is left as it is rather than one silently overwriting the other.
+Use one spelling or the other.
 
 ### Identifiers
 

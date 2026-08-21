@@ -4,6 +4,7 @@
 - source data: `##` in a row skips the row, `##`in a column header skips the column. 
 - source data: a wide range of added and improved checks on malformed numbers (`1,000.0`, `100 MW`, `#REF!`, etc) checked and reported clearly both for source excels and timeseries data.
 - source data: blank rows and unnamed columns inside a table are reported, not silently dropped.
+- source data: a repeated column header is reported. Only the first column of that name is read, as before.
 
 ## 2026-08-10
 - p_userconstraint: unused dimension slots are autofilled with '-'. 
