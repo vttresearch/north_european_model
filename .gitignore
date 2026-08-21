@@ -6,10 +6,9 @@
 !/tests/
 !/.spinetoolbox/
 
-# Documentation pages are shared once they are finished; drafts stay local.
-# A new page needs its own '!' line here and a link from README.md.
-/docs/*
-!/docs/source-workbook-conventions.md
+# Documentation pages are shared. Name a page here to keep it local instead --
+# a draft, or something that has not earned a link from README.md yet.
+/docs/Migration guide.md
 
 # toolbox stuff
 /.spinetoolbox/items

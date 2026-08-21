@@ -1,0 +1,269 @@
+# Hydro data
+
+How hydro reaches the model: what the four types mean, which file supplies which
+number, what is known to be missing, and what the builder does about it.
+
+Read [The four types](#the-four-types) once. The rest is reference for when a
+build log mentions a hydro node and you want to know whether to worry.
+
+## Quick reference
+
+| Quantity | Comes from | Unit |
+|---|---|---|
+| reservoir size | `nodedata` `upwardLimit` in `hydroUpd-v1.xlsx` | MWh |
+| turbining / pumping power | `unitdata` `capacity_output1` | MW |
+| weekly inflow | `PECD-hydro-weekly-inflows.csv` | GWh/week → MWh/h |
+| daily run-of-river | `PECD-hydro-daily-ror-generation.csv` | GWh/day → MWh/h |
+| seasonal fill limits | `PECD-hydro-weekly-reservoir-levels.csv` | ratio 0–1, scaled to MWh |
+| Norwegian psOpen limits | `PEMMDB_NO*_Hydro Inflow_SOR 20.xlsx` | ratio 0–1, scaled to MWh |
+
+## Where the PECD files come from
+
+The three `PECD-hydro-*.csv` files are used **unmodified** from:
+
+> De Felice, M. (2020). *ENTSO-E Hydropower modelling data (PECD) in CSV format*
+> (Version 4) [Data set]. Zenodo. <https://zenodo.org/records/3985078>
+
+That dataset ships six CSVs. Three are read here; the other three are not, and
+each absence is a decision rather than an oversight:
+
+| File | Status |
+|---|---|
+| `PECD-hydro-weekly-inflows.csv` | read |
+| `PECD-hydro-daily-ror-generation.csv` | read |
+| `PECD-hydro-weekly-reservoir-levels.csv` | read |
+| `PECD-hydro-capacities.csv` | **removed** — duplicated `nodedata` and `unitdata` exactly, in GWh where the workbook uses MWh |
+| `PECD-hydro-weekly-reservoir-min-max-generation.csv` | **removed** — unusable, see [minimum generation](#minimum-generation) |
+| `PECD-hydro-weekly-reservoir-min-max-uniform-levels.csv` | never imported |
+
+Keeping the files byte-identical to the citable source is deliberate. This repo
+previously carried a `PECD-hydro-weekly-inflows-corrected.csv`, a hand-patched
+copy that filled twenty-six of SE01's missing winter weeks by holding the
+previous week's value. Its provenance was not recorded and became unrecoverable;
+worse, its one headline edit — SE01 week 6 of 1991, 42.84 → 55 — was appended as
+a *duplicate row* rather than a replacement, and the reader keeps the first
+occurrence, so that correction never once took effect. Those gaps are now filled
+by the rules below, in code, with the reasoning written down.
+
+**`capacity` in this project always means unit power in MW, and nothing else.**
+Reservoir *size* is an energy, it lives in `nodedata.upwardLimit`, and it is in
+MWh. The two used to be confused because a now-deleted
+`PECD-hydro-capacities.csv` held both under one `variable` column, in GWh, and
+the storage-limits processor scaled its ratios by that file rather than by the
+node's own `upwardLimit` — the same number, maintained twice, with nothing able
+to tell whether the two had drifted apart.
+
+---
+
+## The four types
+
+Pan-European datasets simplify hydro to four types, and this project follows that
+convention:
+
+| Type | Inflow | Storage | Pumping | Grid |
+|---|---|---|---|---|
+| Reservoir | yes | yes | no | `reservoir` |
+| Run-of-river | yes | no | no | `ror` |
+| Pumped storage, open loop | yes | yes | yes | `psOpen` |
+| Pumped storage, closed loop | no | yes | yes | `psClosed` |
+
+The simplification is accepted, not believed. Run-of-river really does hold
+somewhere between a few hours and a couple of days of storage; the convention
+gives it none.
+
+**National data does not sit still inside these four boxes.** Norwegian hydro is
+psOpen in one database, reservoir in another, and a mixture of psOpen, psClosed
+and reservoir in a third. Several shapes in the processors exist only to fit the
+quirks of the source that was available, and neither side of that bargain was
+written down until this page. If something in `hydro_inflow_MAF2019` or
+`hydro_storage_limits_MAF2019` looks arbitrary, that is usually why.
+
+`hydroUpd-v1.xlsx` is a more complete database than PECD in several respects, and
+a v2 is coming.
+
+## What is not built, and why
+
+Seasonal fill limits exist for two of the four types:
+
+- **`reservoir`** for every zone with rows in the weekly levels CSV.
+- **`psOpen`** for the three Norwegian zones only, from the PEMMDB workbooks.
+- **`psOpen` elsewhere, and `psClosed` anywhere: not built.** PECD carries no
+  weekly levels for them.
+
+Those nodes are not broken and are not being skipped by mistake. They use the
+constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
+seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
+run so their absence from the time series is stated rather than discovered.
+
+## Gaps in the source data, and what the builder does
+
+The PECD files have holes. Left alone they become zero inflow in the shipped
+dataset — a zero nobody checks, and one that makes no sense to whoever eventually
+finds it. The builder's job is to do the best that can be done with the data and
+say so, rather than to leave the same work for every user.
+
+### The rule
+
+Every hydro series is completed **at its own resolution** — weekly for reservoir
+and pumped-storage inflow and for the fill limits, daily for run-of-river — and
+only then cast to hourly. That order matters: at weekly resolution a missing week
+sits one step from its neighbours, while on an hourly axis it is 168 steps and
+whether it gets bridged depends on an interpolation limit. Completing first makes
+the hourly step mechanical, and makes the grid easy to check before anything
+downstream can be affected by it.
+
+Then:
+
+- **A gap of one week or one day is interpolated**, without ceremony. It is a
+  repair.
+- **A longer run is never interpolated automatically.** Two consecutive missing
+  weeks is an invention rather than a repair, so the build warns and someone
+  decides. Decisions already taken are recorded in `ACCEPTED_LONG_RUNS` on the
+  processor, each with its reason and its magnitude.
+- **Anything still missing afterwards warns.**
+
+`ACCEPTED_LONG_RUNS` doubles as a register of where the source data is bad. A
+data refresh that introduces a new gap will warn rather than be quietly absorbed.
+What is in it today:
+
+| Series | Gap | Decision |
+|---|---|---|
+| `PL00_psOpen` | up to 9 weeks | ~1.2 GWh/week against ~3400 GWh of weekly Polish demand |
+| `CH00_reservoir` | 2 weeks × 4 years | source stops at week 51; ~110 GWh/year, 0.55% |
+| `SE02_reservoir` | 2 weeks in 1985 | between 176.6 and 112.2 GWh; ~289 GWh, 0.75% |
+| `SE01_reservoir` | winter weeks in 10 years, longest 5 | ~744 GWh over 35 years, ~0.1% of a 20.2 TWh year |
+| `NOS0_psOpen` | 5 weeks in 1995 | [neighbouring zones contradict the zeros](#the-norwegian-pump-storage-zeros); ~100 GWh |
+| `NON1_psOpen` | 4 weeks, 1984 and 1987 | as above; ~100 GWh |
+| `SE04_reservoir downwardLimit` | 2 weeks | the only multi-week zero run in the level data |
+
+### A recorded zero is a gap
+
+In every hydro series the builder reads, an exact `0` is treated as missing
+rather than as a value:
+
+| Series | Why a zero is a gap |
+|---|---|
+| reservoir inflow | no real zero occurs anywhere in 35 years × 11 zones |
+| pumped-storage inflow | see [the Norwegian zeros](#the-norwegian-pump-storage-zeros) |
+| run-of-river generation | a river does not stop for exactly one day |
+| `upwardLimit` | no zone asks for a reservoir kept empty |
+| `downwardLimit` | meaningful in principle; never actually said here |
+
+`downwardLimit` is the one worth explaining, because zero *is* a sensible thing
+for it to say: the reservoir may run dry. This source simply never says it. The
+whole shipped level dataset contains two zero runs, both in SE04's minimum — one
+week at 15, two weeks at 46–47 — and SE04 expresses "essentially empty" constantly
+in a different way, with a smallest non-zero of 0.00044 and eleven weeks below
+0.01. The lone zero sits between 0.0015 and 0.0145; the pair sits between 0.0268
+and 0.0386. A column with that vocabulary would have written 0.0004. They are
+dropped values, and they are treated as such.
+
+If a future dataset genuinely means zero here, the multi-week run will warn and
+the decision gets made deliberately — which is the point of the register below.
+
+### The Norwegian pump-storage zeros
+
+NOS0 records exactly zero natural inflow for five weeks of 1995, and NON1 for
+four weeks across 1984 and 1987. They are interpolated like any other gap, under
+the stated exceptions above. The reasoning is recorded once, in
+`ACCEPTED_LONG_RUNS`, because the conclusion is not the obvious one and nobody
+should have to re-derive it.
+
+Those weeks were genuinely dry. 1995 is NOS0's lowest inflow year of the 35
+(62,252 GWh against a 99,101 mean), the weeks fall in February and March, and
+every Norwegian zone is far below its seasonal normal at the time. So the obvious
+theory — frozen catchment, melt not started — fits.
+
+It fails its own test. If cold drove inflow to nothing it would do so across the
+region, and **NOM1 does not record a single zero in 35 years**. In those same
+weeks NOM1 sits at 5–25% of its median and NON1 at 17–77%. Cold takes a Norwegian
+catchment to a fraction of normal, not to nothing. Nor is it a rounding artefact:
+NON1's smallest non-zero is 0.0286 GWh/week, so the source can say "almost
+nothing" when it means it.
+
+So they are dropped values in genuinely dry weeks. Interpolating across the
+zone's own neighbouring weeks keeps the drought — 13.0 and 16.6 GWh between real
+weeks of 9.3 and 20.3, then a smooth ramp of 21.4, 32.1, 42.9 into the melt at
+53.6 — and adds roughly 100 GWh to each affected year. Far too little to move any
+conclusion about those years; they remain dry and remain difficult. What it
+removes is a discontinuity the solver has no reason to be handed.
+
+## Where hydro is defined
+
+- `src_files/data_files/hydroUpd-v1.xlsx` — `nodedata` (reservoir sizes, spill,
+  balance penalties), `unitdata` (turbining and pumping power), and
+  `userconstraintdata` (minimum-generation constraints). Listed after
+  `TYNDP-2024_National_Trends.xlsx` in the config, so its rows win.
+- `src_files/data_files/unittypedata_compilation.xlsx` — maps each hydro
+  `Generator_ID` to its unit type, grids and efficiency, which is what turns
+  `AT00 / Run-of-River` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.
+- `src/timeseries/processors/hydro_inflow_MAF2019.py` — inflow for all three
+  inflow-bearing types.
+- `src/timeseries/processors/hydro_storage_limits_MAF2019.py` — seasonal fill
+  limits, scaled by `nodedata.upwardLimit`.
+
+## Minimum generation
+
+Hydro minimum generation comes from hand-written rows in
+`hydroUpd-v1.xlsx :: userconstraintdata`, **not** from PECD.
+
+PECD's `min-max-generation` file was tried and abandoned, and it is worth saying
+why so that nobody tries again. Its required minimum generation exceeds the
+reservoir inflow of the same zone and week in **24.5% of SE02's weeks and 23% of
+SE01's**, with runs of 22 and 20 consecutive weeks — five months during which the
+model would be told to generate more than the water arriving. The worst single
+week asks for 302.6 GWh against 17.3 GWh of inflow. A constraint like that either
+drains the reservoir or makes the model infeasible, and no amount of gap-filling
+repairs it. The file has been removed from this repo.
+
+The hand-written rows that replaced it are an early cut of the data published in
+[Kiehle et al. (2026)](https://www.sciencedirect.com/science/article/pii/S0306261926009785).
+The final dataset from that article is what `hydroUpd` v2 will carry.
+
+## Known open items
+
+- **`hydroUpd` v2.** The article above is out and its final data supersedes the
+  early cut currently in `hydroUpd-v1.xlsx`, both for minimum generation and more
+  widely. v2 is the intended route for that.
+- **Pumped storage outside Norway has no seasonal profile**, and is left that
+  way deliberately. Thirteen nodes, 9.6 TWh, run on a flat `upwardLimit` with an
+  `Eps` floor. Only `AT00_psOpen` (1.72 TWh) looks like a case where a seasonal
+  ceiling would represent something physical; for the rest a flat bound is either
+  correct or unknowable. See the caveats below.
+
+## Some caveats from cross-checking the data
+
+Findings from comparing the sources against each other. They are recorded because
+each one looked like a fixable defect until the numbers came in.
+
+- **Norwegian psOpen is functionally reservoir, so it cannot validate anything
+  about pumped storage.** Pumping is 0% of turbining capacity in NON1, 1.8% in
+  NOM1 and 4.4% in NOS0, and their storage-to-annual-inflow ratios (0.41–0.81
+  years) sit inside the Nordic reservoir band (0.24–0.72). Continental plants run
+  74–100%. Any comparison that uses Norway as the pumped-storage reference is
+  comparing reservoirs with reservoirs.
+
+- **Some psOpen nodes are batteries with a hydrological label.** `ES00_psOpen`
+  holds **14.4 years** of its own natural inflow; `FR00_psOpen` has **no inflow at
+  all**. Their state follows electricity prices, not rainfall, and a flat bound
+  is the honest representation. Imposing an inflow-shaped season on them would
+  add an error rather than remove one.
+
+- **An upper bound transfers across a hydrological regime; a corridor width does
+  not.** Upper-bound shapes correlate +0.81 to +0.99 among the snowmelt zones and
+  −0.73 to −0.83 for Iberian ES00, which is the physically correct inversion.
+  Corridor widths correlate at −0.84 to +0.64 — noise. If a bound is ever
+  borrowed, it should be the ceiling alone.
+
+- **SE04's level data is unreliable, on four independent counts.** Its only
+  isolated zero, its only multi-week zero run, a width profile that correlates
+  with nothing, and a reservoir holding just 2.6 weeks of inflow — barely a
+  seasonal store at all. The node is small (71.7 GWh), so it has not been worth
+  chasing.
+
+**Conclusion: no seasonal bounds are conjured for the nodes that lack them.**
+Understanding what European pumped-storage systems physically are took weeks of
+work during the article above and ended without a general answer. An assumption
+here might happen to be right, but there is not enough knowledge behind it to
+tell — and a plausible invented profile is harder to catch later than an
+obviously flat one.

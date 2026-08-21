@@ -50,6 +50,9 @@ links to it.
   reads the Excel files in `src_files/data_files/`: marking rows and columns as not
   input, where a sheet ends, what happens to a cell that should be a number and is not,
   and how `method` combines rows from several files.
+- [Hydro data](docs/hydro.md) — the four hydro types and what they simplify away, which
+  file supplies which number and in what unit, which seasonal limits are not built and
+  why, and how gaps in the PECD data are repaired or refused.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

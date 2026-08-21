@@ -34,6 +34,7 @@ REQUIRED_KWARGS = {
     "hydro_inflow_MAF2019": ("input_folder", "country_codes", "start_year", "end_year"),
     "hydro_storage_limits_MAF2019": (
         "input_folder", "country_codes", "start_year", "end_year",
+        "df_nodedata",
     ),
     "VRE_PECD": (
         "input_folder", "country_codes", "start_year", "end_year", "attached_grid",
@@ -48,6 +49,10 @@ SAMPLE_VALUES = {
     "start_year": 2014,
     "end_year": 2015,
     "df_annual_demands": pd.DataFrame({"grid": ["elec"], "node": ["FI_elec"], "twh/year": [1.0]}),
+    "df_nodedata": pd.DataFrame({
+        "country": ["FI"], "grid": ["reservoir"], "node": ["FI_reservoir"],
+        "upwardlimit": pd.array([1000.0], dtype="Float64"),
+    }),
     "scenario_year": 2030,
     "attached_grid": "elec",
 }
