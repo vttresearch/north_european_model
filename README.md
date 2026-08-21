@@ -260,9 +260,9 @@ You can run Backbone either directly from the created output folder or by copyin
 
 ### Choosing VRE processor
 
-Current `config_NT2030.ini` is using PECD timeseries, but old MAF2019 processor is still available. It is not recommended to edit config files stored in GIT, but instead take a copy, rename it, and edit your own file.
+Current config files use PECD timeseries through the `VRE_PECD` processor. It is not recommended to edit config files stored in GIT, but instead take a copy, rename it, and edit your own file.
 
-Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The default configuration for new PECD processors for onshore wind looks like this:
+Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The configuration for onshore wind in `config_NT2030.ini` looks like this:
 
 	'wind_onshore': {
 		'processor_name': 'VRE_PECD',
@@ -270,26 +270,16 @@ Timeseries processors are selected and configured in the `timeseries_specs = {}`
 		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
 		'custom_column_value': {'flow': 'onshore'},
 		'gdx_name_suffix': 'wind_onshore',
-		'calculate_average_year': True,
 		'rounding_precision': 5,
-		'input_file': 'PECD-onshore/',   # folder, not file
-		'attached_grid': 'elec'
+		'input_sub_folder': 'PECD-onshore/',   # folder, not file
+		'attached_grid': 'elec',
+		'is_input_data_dependent': False,
+		'annual_summary': 'avg',
 	},
 
+The keys each spec accepts are documented in the comment block above `timeseries_specs` in any shipped config file.
 
-and the old configuration for the MAF2019 processor for PV would like this:
-
-	'PV': {
-		'processor_name': 'VRE_MAF2019',
-		'bb_parameter': 'ts_cf',
-  		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
-		'custom_column_value': {'flow': 'PV'},
-		'gdx_name_suffix': 'PV',
-		'calculate_average_year': True,
-		'rounding_precision': 5,
-		'input_file': 'PECD-MAF2019-wide-PV.csv',
-		'attached_grid': 'elec'
-	},
+**The older `VRE_MAF2019` processor has been removed.** A config still naming it will fail to load that processor and write no timeseries for it. Switch the spec to `VRE_PECD` as above; its `PECD-MAF2019-wide-*.csv` inputs are no longer read by anything.
 
 
 
