@@ -9,6 +9,20 @@ from src.infrastructure.logger import IterationLogger
 FilterValue = list[str] | list[int]
 
 
+def _has_no_header(col) -> bool:
+    """Whether a column's header cell was left empty in the spreadsheet.
+
+    pandas names such a column ``Unnamed: 7`` after its position, so the two
+    spellings -- a genuinely blank label and pandas' stand-in for one -- mean the
+    same thing and are tested together. Shared by the reporting and the dropping
+    below so they cannot disagree about which columns they are talking about.
+    """
+    return (
+        col is None
+        or (isinstance(col, str) and (col.strip() == "" or col.lower().startswith("unnamed:")))
+    )
+
+
 def read_input_excels(
     input_folder: Union[Path, str],
     files: Sequence[str],
@@ -27,12 +41,16 @@ def read_input_excels(
     - Drop columns whose header starts with ``##``: the author's own working columns.
       Applied first, so a helper table beside the real one is never validated as input.
     - Drop columns whose header is empty/whitespace or auto-generated as 'Unnamed: x'.
+      One sitting *inside* the table rather than past its end is warned about first; one
+      past the end is the scratch area and is silent. A sheet where no column has a
+      header at all is an error, not an empty result.
     - Optionally drop any column named exactly 'note' (any casing). Superseded by the
       ``##`` marker above, which is not limited to one name or one column per sheet;
       kept because shipped workbooks still rely on it, and because a note containing an
       underscore would otherwise reach ``drop_underscore_values`` and delete its row.
     - Truncate the DataFrame at the first fully empty row (drop that row and all below).
-      An "empty" cell is NA or a string consisting only of whitespace.
+      An "empty" cell is NA or a string consisting only of whitespace. Warned about only
+      when non-empty rows are discarded; trailing blank rows are how every sheet ends.
     - Drop rows carrying ``##`` in any cell, evaluated after the column drops so that
       scratch text in a helper column cannot delete a row of the real table.
     - Report and blank cells that should hold a number but do not, and cells holding an
@@ -108,13 +126,59 @@ def read_input_excels(
             if ignored_cols:
                 df = df.drop(columns=ignored_cols, errors="ignore")
 
+            # --- A sheet with no headers at all cannot be read ---
+            # Almost always a blank row above the table: the reader takes row 1
+            # as the header, so every column comes back unnamed, all of them are
+            # dropped below, and a frame with no columns has every row read as
+            # empty -- which truncates the sheet to nothing. Silently, and
+            # looking exactly like a sheet that was legitimately empty.
+            if df.columns.size and not any(not _has_no_header(c) for c in df.columns):
+                logger.log_status(
+                    f"[{file_name}:{sheet}] No column has a header, so nothing on the sheet "
+                    f"can be identified. The usual cause is a blank row above the header row. "
+                    f"The sheet is skipped.",
+                    level="error"
+                )
+                continue
+
             # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
-            # Consider empty if None, whitespace-only, or header starts with 'unnamed:' (case-insensitive).
-            empty_title_cols = [
-                c for c in df.columns
-                if c is None
-                or (isinstance(c, str) and (c.strip() == "" or c.lower().startswith("unnamed:")))
+            # A header left blank means "not part of the table", and past the
+            # last named column that is exactly what it is: the scratch area to
+            # the right. One with a named column still to its right is a
+            # different thing -- a hole in the table, usually a header someone
+            # deleted -- and the values under it are being discarded. The header
+            # cannot be recovered, so the column goes either way; the difference
+            # is whether anyone is told.
+            #
+            # Ordering note: '##' columns were dropped above, so a spacer between
+            # the real table and a declared helper block has nothing named to its
+            # right by now and stays silent, as intended.
+            cols = list(df.columns)
+            last_named = max(
+                (i for i, c in enumerate(cols) if not _has_no_header(c)),
+                default=-1,
+            )
+            holes = [
+                (i, int(df[c].notna().sum()))
+                for i, c in enumerate(cols)
+                if _has_no_header(c) and i < last_named
             ]
+            if holes:
+                carrying = [f"column {i + 1} ({n} values)" for i, n in holes if n]
+                empty = [f"column {i + 1}" for i, n in holes if not n]
+                detail = "; ".join(filter(None, [
+                    ", ".join(carrying),
+                    ", ".join(empty),
+                ]))
+                logger.log_status(
+                    f"[{file_name}:{sheet}] {len(holes)} column(s) without a header sit inside "
+                    f"the table rather than past its end: {detail}. Their headers cannot be "
+                    f"recovered, so they are dropped. Give each a header, or mark it "
+                    f"'{utils.IGNORE_MARKER}' if it is working material.",
+                    level="warn"
+                )
+
+            empty_title_cols = [c for c in cols if _has_no_header(c)]
             if empty_title_cols:
                 df = df.drop(columns=empty_title_cols, errors="ignore")
 
@@ -131,6 +195,23 @@ def read_input_excels(
 
             if row_is_empty.any():
                 first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
+
+                # Same rule as for columns, on the other axis. Trailing blank
+                # rows are simply where the table stops and are silent -- every
+                # sheet has them. A blank row with real rows still below it is a
+                # spacer someone used mid-table, and everything under it is being
+                # thrown away.
+                below = row_is_empty.iloc[first_empty_pos:]
+                discarded = int((~below).sum())
+                if discarded:
+                    logger.log_status(
+                        f"[{file_name}:{sheet}] An empty row at row {first_empty_pos + 2} ends "
+                        f"the table, so {discarded} row(s) below it are not read. An empty row "
+                        f"is where a sheet stops, not a separator inside it. Remove it, or mark "
+                        f"the rows below '{utils.IGNORE_MARKER}' if they are working material.",
+                        level="warn"
+                    )
+
                 df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
 
             # --- Drop rows the author marked as not the model's ---

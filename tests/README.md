@@ -113,6 +113,29 @@ It is also why the numeric gate is not applied there: a column that legitimately
 name with numbers is precisely the shape the gate reports, so running it would flag every
 sheet in the workbook.
 
+### Read, check, then process
+
+Every source data type runs in that order: `read_input_excels` (which gates the sheet),
+`normalize_dataframe`, `drop_underscore_values` — and only then `expand_all_country`, the
+blacklists, `apply_whitelist` and `merge_row_by_row`.
+
+The order is the point, not an accident. The whitelist drops rows for a scenario, year or
+country this run does not cover. If it ran first, a malformed cell in one of those rows
+would disappear as merely irrelevant and never be reported, and the author would discover
+it only when they ran the scenario that does use it. Judging a row's *form* before its
+*relevance* is what makes a build's complaints complete.
+
+This masking is not hypothetical: a route test asserting that a `#`-prefixed row was
+treated as a comment went on passing after the marker moved to `##`, because the row's
+country was `#FI` and the whitelist rejected it anyway. Nothing in the test could tell the
+two reasons apart, so it would have stayed green indefinitely — it surfaced only because a
+neighbouring assertion about warnings failed. `TestFormalityIsJudgedBeforeRelevance` in
+`route/test_route_reader_rules.py` now pins the pipeline order behaviourally.
+
+The one check that deliberately runs late is `merge_unittypedata_into_unitdata`'s unmatched
+`generator_id` report: it is a cross-reference rather than a property of the row, so it
+should only speak about rows the run actually uses.
+
 ### `##` is what the author declares is not input
 
 One marker, two placements: in a **data row** it skips the row, in a **column header** it

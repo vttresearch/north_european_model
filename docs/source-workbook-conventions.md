@@ -16,8 +16,9 @@ something in a build log does not look right.
 |---|---|
 | `##` in any cell of a row | ignores the whole row |
 | `##` as a column header | ignores the whole column |
-| a fully empty row | stops reading the sheet there |
-| a column with no header | ignores that column |
+| a fully empty row | stops reading the sheet there; warns if rows follow |
+| a column with no header, past the table | ignores that column, silently |
+| a column with no header, inside the table | ignores it, and warns |
 | `1,000.0`, `100 MW`, `(500)` in a parameter column | reports it and reads it as not set |
 | `#REF!`, `#DIV/0!` anywhere | reports it and reads it as not set |
 | `_` anywhere in a text cell | drops the row, with a warning |
@@ -144,12 +145,19 @@ happens to sit beside.
 
 **A fully empty row ends the sheet.** Everything below it is ignored. A row counts
 as empty when every cell is blank or whitespace. This is how you stop the table;
-it is not a spacer you can put in the middle of one.
+it is not a spacer you can put in the middle of one. If real rows do follow it,
+they are dropped and you get a warning saying how many.
 
-**A column with no header is ignored.** Several shipped sheets rely on this for
-scratch columns to the right of the table. `##` says the same thing deliberately,
-and it lets a reader tell "this is working material" from "someone forgot the
-header".
+**A column with no header is ignored.** Past the last named column that is the
+scratch area and nothing is said — several shipped sheets rely on it. A column
+with no header sitting *inside* the table is different: its values are dropped
+and you get a warning, because that is usually a header someone deleted rather
+than a decision. Marking the column `##` says "working material" deliberately and
+keeps it quiet.
+
+**Leave no blank row above the header.** The reader takes the first row as the
+header, so a blank one makes every column unnamed and there is nothing left to
+identify. That is reported as an error and the sheet is skipped.
 
 ---
 
@@ -176,6 +184,11 @@ The report is at **error** level: the build still finishes and still writes its
 output, but it is marked as failed, it re-runs from scratch next time, and the
 message is repeated in the summary at the end. Look in `summary.log` in the output
 folder.
+
+**Rows this run does not use are checked too.** A row for another scenario, year
+or country is reported before it is filtered out, so one build tells you about
+every bad cell in the workbook rather than only the ones this scenario happens to
+touch.
 
 Text that never looked like a number — `unknown` in a capacity column — is not
 caught. Nothing in the cell distinguishes it from a label, and a rule aggressive
