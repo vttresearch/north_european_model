@@ -115,6 +115,7 @@ class CacheManager:
         self.config_hash_file = self.cache_folder / "config_hash.json"
         self.input_data_hash_file = self.cache_folder / "input_data_hashes.json"
         self.processor_hash_file = self.cache_folder / "processor_hashes.json"
+        self.processor_requirements_file = self.cache_folder / "processor_requirements.json"
         self.secondary_results_folder = self.cache_folder / "secondary_results"
         self.secondary_results_folder.mkdir(exist_ok=True)
 
@@ -374,22 +375,40 @@ class CacheManager:
 
 
     def _detect_timeseries_spec_changes(self, config: dict, prev_config: dict,
-                                        demand_files_changed: bool = False) -> dict:
+                                        input_changes: dict | None = None) -> dict:
         """
         Detect which timeseries processors need to be rerun based on spec changes.
 
-        Compares each processor's current spec against the previously cached spec.
-        If `demand_files_changed` is True, all processors that reference 'demand_grid'
-        are also marked as changed.
+        Compares each processor's current spec against the previously cached spec,
+        then adds the processors whose *source data* changed. Two ways a processor
+        depends on source data:
+
+        - ``demand_grid`` in its spec, which asks for df_demanddata;
+        - ``requires_source_data`` on its class, recorded to the cache by
+          ProcessorRunner on the previous run.
+
+        The second is read from cache rather than from the class because this
+        object would otherwise have to import every processor module to answer the
+        question. A processor with no recorded requirement is treated
+        conservatively -- changed if any input file changed -- which covers a first
+        run, a cleared cache, and a processor that has never completed.
 
         Should only be called when prev_config exists and full_rerun is False — the caller
         is responsible for marking all processors True on a full rerun before calling this.
+
+        Args:
+            config: current config.
+            prev_config: config structure cached on the previous run.
+            input_changes: category name ('nodedata_files', ...) → whether it changed.
 
         Returns:
             dict[str, bool]: processor human_name → True if that processor needs to rerun.
         """
         curr_specs = config["timeseries_specs"]
         prev_specs = prev_config["timeseries_specs"]
+        input_changes = input_changes or {}
+        any_input_changed = any(input_changes.values())
+        recorded_requirements = self.load_processor_requirements()
         result = {}
 
         for key, curr_spec in curr_specs.items():
@@ -398,7 +417,17 @@ class CacheManager:
             curr_spec_normalized = json.loads(json.dumps(curr_spec))
             changed = (key not in prev_specs) or (prev_specs[key] != curr_spec_normalized)
 
-            if demand_files_changed and curr_spec.get("demand_grid"):
+            if input_changes.get("demanddata_files") and curr_spec.get("demand_grid"):
+                changed = True
+
+            processor_name = curr_spec.get("processor_name")
+            if processor_name in recorded_requirements:
+                for source_name in recorded_requirements[processor_name]:
+                    if input_changes.get(f"{source_name}_files"):
+                        changed = True
+            elif any_input_changed:
+                # Nothing recorded for this processor, so its requirements are
+                # unknown rather than empty. Rerunning is the cheap mistake.
                 changed = True
 
             result[key] = changed
@@ -525,6 +554,36 @@ class CacheManager:
             dict: Processor names mapped to their hashes.
         """
         return json_exchange.load_json(self.processor_hash_file)
+
+
+    def save_processor_requirements(self, processor_name: str, source_names):
+        """
+        Save which source-data frames a processor declared it needs.
+
+        Recorded by ProcessorRunner from the processor class's
+        ``requires_source_data``, and read back by
+        ``_detect_timeseries_spec_changes`` so a change to one of those source
+        workbooks reruns the processor. CacheManager cannot read the declaration
+        itself without importing processor modules, which it has no business
+        doing.
+
+        Args:
+            processor_name (str): Name of the processor.
+            source_names: Iterable of source-data names, without the 'df_' prefix.
+        """
+        requirements = json_exchange.load_json(self.processor_requirements_file)
+        requirements[processor_name] = sorted(source_names)
+        json_exchange.save_json(self.processor_requirements_file, requirements)
+
+
+    def load_processor_requirements(self) -> dict:
+        """
+        Load the source-data requirements recorded on the previous run.
+
+        Returns:
+            dict: Processor names mapped to a list of source-data names.
+        """
+        return json_exchange.load_json(self.processor_requirements_file)
 
 
     def save_secondary_result(self, processor_name: str, data, secondary_result_name: str):
@@ -708,7 +767,7 @@ class CacheManager:
         # Detect timeseries spec changes (granular only — full rerun already set all True in Phase 2)
         if prev_config and not self.full_rerun:
             ts_spec_changes = self._detect_timeseries_spec_changes(
-                self.config, prev_config, self.demand_files_changed
+                self.config, prev_config, input_changes
             )
             for key, changed in ts_spec_changes.items():
                 self.timeseries_changed[key] = self.timeseries_changed.get(key, False) or changed
@@ -732,9 +791,17 @@ class CacheManager:
 
         # Determine if source excels should be re-imported.
         # Triggered by: full rerun, any input file change, BB excel pipeline code change,
-        # or any changed processor that reads demand data from source excels.
-        any_demand_processor_changed = any(
-            self.timeseries_changed.get(human_name, False) and spec.get("demand_grid")
+        # or any changed processor that reads source excel data.
+        #
+        # The second half of that last clause is what stops a processor running
+        # against a SourceDataPipeline whose run() was skipped: a processor that
+        # declares requires_source_data would otherwise receive empty frames and
+        # refuse, producing no GDX for a reason the user cannot see.
+        recorded_requirements = self.load_processor_requirements()
+        any_source_consuming_processor_changed = any(
+            self.timeseries_changed.get(human_name, False)
+            and (spec.get("demand_grid")
+                 or recorded_requirements.get(spec.get("processor_name"), []))
             for human_name, spec in self.config["timeseries_specs"].items()
         )
         self.reimport_source_excels = (
@@ -743,16 +810,25 @@ class CacheManager:
             or self.other_input_files_changed
             or self.bb_excel_pipeline_code_updated
             or not bb_excel_succesfully_built
-            or any_demand_processor_changed
+            or any_source_consuming_processor_changed
         )
 
-        # Determine if BB input excel needs to be rebuilt
+        # Determine if BB input excel needs to be rebuilt.
+        #
+        # any_timeseries_changed belongs here because processor output reaches the
+        # workbook, not just the GDX: a secondary result drives create_p_gn,
+        # create_p_gnBoundaryPropertiesForStates and add_storage_starts. Individual
+        # processor files are hashed by ProcessorRunner and deliberately kept out of
+        # _TS_PIPELINE_FILES, so editing one used to rerun the timeseries phase and
+        # leave inputData.xlsx describing the previous run's series -- stale against
+        # its own GDX, with nothing saying so.
         self.rebuild_bb_excel = (
             self.full_rerun
             or self.demand_files_changed
             or self.other_input_files_changed
             or self.bb_excel_pipeline_code_updated
             or not bb_excel_succesfully_built
+            or self.any_timeseries_changed
         )
 
 

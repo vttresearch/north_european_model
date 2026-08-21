@@ -62,6 +62,7 @@ The ``run()`` method returns a ``TimeseriesPipelineOutput`` dataclass with:
 """
 
 from pathlib import Path
+import importlib.util
 import shutil
 import glob as glob_module
 import pickle
@@ -152,6 +153,32 @@ class TimeseriesPipeline:
             specs.append(enriched_spec)
 
         return specs
+
+
+    def _declared_source_data(self, processor_spec: dict) -> tuple[str, ...]:
+        """
+        Read ``requires_source_data`` off a processor class without running it.
+
+        Read from the class rather than from the cache because the answer decides
+        whether the processor may be *skipped*, and a cache written by a previous
+        run in a different output folder is exactly the wrong authority for that.
+
+        Any failure returns an empty tuple: a module that will not import is
+        ProcessorRunner's problem to report, and it does so with a message naming
+        the file. Failing loudly twice about the same thing helps nobody.
+        """
+        try:
+            module_spec = importlib.util.spec_from_file_location(
+                processor_spec["name"], Path(processor_spec["file"])
+            )
+            if module_spec is None or module_spec.loader is None:
+                return ()
+            module = importlib.util.module_from_spec(module_spec)
+            module_spec.loader.exec_module(module)
+            processor_cls = getattr(module, processor_spec["name"], None)
+            return tuple(getattr(processor_cls, "requires_source_data", ()) or ())
+        except Exception:
+            return ()
 
 
     def _create_other_demands(
@@ -505,15 +532,38 @@ class TimeseriesPipeline:
             if needs_rerun:
                 processors_to_rerun.add(human_name)
 
-        # Separate input-data-independent processors for copying from reference folder
+        # Separate input-data-independent processors for copying from reference folder.
+        #
+        # A processor that declares requires_source_data is input-data-dependent by
+        # construction: the frames it receives are whitelisted per scenario, year and
+        # country, so a copy from another scenario's folder would be that scenario's
+        # answer wearing this one's name. The declaration therefore overrides the
+        # config rather than the other way round -- a config cannot be right about
+        # this when the code says otherwise, and several ship saying 'false'.
         processors_to_copy = set()
         if self.reference_ts_folder and Path(self.reference_ts_folder) != Path(self.output_folder):
             timeseries_specs_raw = self.config["timeseries_specs"]
-            for human_name in list(processors_to_rerun):
+            for proc in self.processors:
+                human_name = proc["human_name"]
+                if human_name not in processors_to_rerun:
+                    continue
                 spec = timeseries_specs_raw.get(human_name, {})
-                if not spec.get('is_input_data_dependent', True):
-                    processors_to_copy.add(human_name)
-                    processors_to_rerun.discard(human_name)
+                if spec.get('is_input_data_dependent', True):
+                    continue
+
+                declared = self._declared_source_data(proc)
+                if declared:
+                    self.logger.log_status(
+                        f"'{human_name}' is configured is_input_data_dependent: false, but "
+                        f"{proc['name']} declares it needs source data ({', '.join(declared)}), "
+                        f"which is scenario-specific. Running it instead of copying. "
+                        f"Set is_input_data_dependent: true in the config to silence this.",
+                        level="warn"
+                    )
+                    continue
+
+                processors_to_copy.add(human_name)
+                processors_to_rerun.discard(human_name)
 
         # Log what will run and what will be copied
         self.logger.log_status(

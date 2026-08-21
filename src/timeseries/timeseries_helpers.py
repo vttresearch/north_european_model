@@ -657,3 +657,144 @@ def calculate_climatological_forecasts(
     df_final = df_full[bb_parameter_dimensions + ["value"]]
 
     return df_final
+
+
+@dataclass(frozen=True)
+class GridGapReport:
+    """What :func:`complete_native_grid` found and what it did about it.
+
+    ``ok`` is the verdict a processor should act on: the grid is whole, and every
+    value in it is one the model can use.
+    """
+
+    label: str
+    #: Slots on the standard grid, from the first real value onwards.
+    n_slots: int
+    #: Slots that held no usable value before filling.
+    n_missing: int
+    #: Single-slot gaps, filled here without ceremony.
+    n_autofilled: int
+    #: Slots left empty because their run was longer than one and this function
+    #: does not invent that much. Whoever owns the processor decides.
+    n_left: int
+    #: Length of the longest untouched run, in slots.
+    longest_run_left: int
+    first_left: Optional[pd.Timestamp] = None
+    #: Mean of the completed series times 8760, for judging whether a gap is
+    #: worth anyone's attention. A missing week means one thing in a 20 TWh
+    #: catchment and another in a 0.2 TWh one.
+    twh_per_year: float = 0.0
+
+    @property
+    def ok(self) -> bool:
+        return self.n_left == 0
+
+
+def complete_native_grid(
+    series: pd.Series,
+    standard_index: pd.DatetimeIndex,
+    *,
+    label: str,
+    zero_is_missing: bool = True,
+    isolated_zero_is_missing: bool = True,
+) -> Tuple[pd.Series, GridGapReport]:
+    """Make a weekly or daily series whole *before* it is cast to hourly.
+
+    The order is the point. At native resolution a missing week is one step from
+    its neighbours and interpolates cleanly; scattered onto an hourly index it is
+    168 steps, and whether it gets bridged depends on an interpolation limit. Fill
+    first and upsample second, and the hourly pass never has to reach across a gap
+    it cannot close -- so it cannot leave the holes that reach GAMS as zeros.
+
+    Only single-slot gaps are filled. Anything longer is left alone and counted:
+    two consecutive missing weeks is no longer a repair, it is an invention, and
+    the person adopting a new data source should decide what it ought to be rather
+    than discover later that this function decided for them.
+
+    Parameters
+    ----------
+    series : pd.Series
+        Values on a DatetimeIndex at the native step. Need not be complete.
+    standard_index : pd.DatetimeIndex
+        Every slot the series is supposed to have.
+    label : str
+        Column or node name, used in the report.
+    zero_is_missing : bool
+        Whether ``0`` counts as absent. True for inflow and generation, where a
+        real zero does not occur and a recorded one is a gap. False where zero is
+        a legitimate value -- ``downwardLimit`` of zero means the reservoir is
+        allowed to empty, which is an ordinary thing for a series to say.
+    isolated_zero_is_missing : bool
+        Applies only when ``zero_is_missing`` is False. A legitimate zero arrives
+        as a *stretch*: a season during which the reservoir may empty. One zero
+        wedged between two non-zero neighbours is not that, it is a dropped value
+        wearing a plausible costume, and it is treated as a gap. SE04's weekly
+        pattern is the case in point -- a two-week run at weeks 46-47 that is real,
+        and a lone zero at week 15 between 0.001 and 0.015 that is not.
+
+    Returns
+    -------
+    (pd.Series, GridGapReport)
+        The completed series, and what had to be done to it.
+    """
+    empty_report = GridGapReport(label=label, n_slots=0, n_missing=0,
+                                 n_autofilled=0, n_left=0, longest_run_left=0)
+    if series is None or series.empty:
+        return series, empty_report
+
+    combined = series.reindex(series.index.union(standard_index))
+    is_zero = combined.notna() & (combined == 0)
+    usable = combined.notna()
+    if zero_is_missing:
+        usable &= ~is_zero
+    elif isolated_zero_is_missing and is_zero.any():
+        zero_run = (is_zero != is_zero.shift()).cumsum()
+        zero_len = is_zero.groupby(zero_run).transform('size').where(is_zero, 0)
+        usable &= ~(is_zero & (zero_len == 1))
+    if not usable.any():
+        return combined.iloc[0:0], empty_report
+
+    # Slots before the first real value are not gaps -- there is nothing to
+    # interpolate from, and the hourly pass reaches back far enough to cover the
+    # few days before the first one.
+    first_real = combined.index[usable][0]
+    combined = combined.loc[first_real:]
+    usable = usable.loc[first_real:]
+
+    marked = combined.where(usable)
+    missing = ~usable
+
+    # Run lengths, so a lone gap can be told from a stretch of them.
+    run_id = (missing != missing.shift()).cumsum()
+    run_len = missing.groupby(run_id).transform('size').where(missing, 0)
+
+    singles = missing & (run_len == 1)
+    filled = marked.copy()
+    if singles.any():
+        interpolated = marked.interpolate(method='time', limit_area='inside')
+        filled[singles] = interpolated[singles]
+
+        # A single slot at the very end has nothing after it to interpolate
+        # towards, and limit_area='inside' deliberately refuses to guess. It is
+        # still a single-slot gap though, so it is still repaired -- by carrying
+        # the previous value forward, which is all a one-step persistence
+        # assumption amounts to. Escalating this would be noise.
+        trailing = singles & filled.isna()
+        if trailing.any():
+            filled[trailing] = marked.ffill()[trailing]
+
+    left = filled.isna()
+    longest_left = int(run_len[left].max()) if left.any() else 0
+    twh = float(filled.dropna().mean()) * 8760 / 1e6 if filled.notna().any() else 0.0
+
+    report = GridGapReport(
+        label=label,
+        n_slots=int(len(combined)),
+        n_missing=int(missing.sum()),
+        n_autofilled=int(singles.sum()),
+        n_left=int(left.sum()),
+        longest_run_left=longest_left,
+        first_left=(filled.index[left][0] if left.any() else None),
+        twh_per_year=twh,
+    )
+    return filled, report

@@ -61,12 +61,36 @@ class StubCacheManager:
         self.cache_folder.mkdir(parents=True, exist_ok=True)
         self.processor_hashes: dict[str, str] = {}
         self.secondary_results: list[tuple] = []
+        self.processor_requirements: dict[str, tuple] = {}
 
     def save_processor_hash(self, processor_name: str, hash_value: str) -> None:
         self.processor_hashes[processor_name] = hash_value
 
     def save_secondary_result(self, processor_name, data, secondary_result_name) -> None:
         self.secondary_results.append((processor_name, data, secondary_result_name))
+
+    def save_processor_requirements(self, processor_name, source_names) -> None:
+        self.processor_requirements[processor_name] = tuple(source_names)
+
+
+class StubSourceDataPipeline:
+    """The slice of SourceDataPipeline that ProcessorRunner reads.
+
+    Frames are addressed as ``df_<name>``, matching how a processor's
+    ``requires_source_data`` names them. Anything not supplied comes back as an
+    empty DataFrame, which is what the real pipeline holds before ``run()``, and
+    is the case ProcessorRunner has to refuse rather than pass on.
+    """
+
+    def __init__(self, **frames: pd.DataFrame):
+        self.df_demanddata = pd.DataFrame()
+        for name, frame in frames.items():
+            setattr(self, f"df_{name}", frame)
+
+    def __getattr__(self, name: str) -> pd.DataFrame:
+        if name.startswith("df_"):
+            return pd.DataFrame()
+        raise AttributeError(name)
 
 
 @dataclass
@@ -145,6 +169,7 @@ def run_fake_processor(
     raw_source: str | None = None,
     config_overrides: dict | None = None,
     spec_overrides: dict | None = None,
+    source_data: dict[str, pd.DataFrame] | None = None,
 ) -> FakeRun:
     """Run a synthetic processor through the real ``ProcessorRunner``.
 
@@ -195,7 +220,7 @@ def run_fake_processor(
         input_folder=tmp_path / "input",
         output_folder=output_folder,
         cache_manager=cache_manager,
-        source_data_pipeline=None,
+        source_data_pipeline=StubSourceDataPipeline(**(source_data or {})),
         logger=logger,
     )
 

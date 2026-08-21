@@ -367,6 +367,18 @@ class ProcessorRunner:
                 ts_domain_pairs={},
             )
 
+        # Resolved here rather than just before instantiation because the class
+        # carries requires_source_data, and that has to be read before the kwargs
+        # are assembled.
+        ProcessorClass = getattr(module, processor_name)
+
+        # Record what this processor asks for, so the next run's CacheManager can
+        # rerun it when one of those source files changes. It cannot import
+        # processor modules itself, and reading the declaration back from cache is
+        # cheaper than teaching it to.
+        required_source_data = tuple(getattr(ProcessorClass, "requires_source_data", ()) or ())
+        self.cache_manager.save_processor_requirements(processor_name, required_source_data)
+
         # Prepare processor kwargs
         # input_folder is pre-joined with the spec's input_sub_folder so that
         # processors receive a single ready-to-use path and need no knowledge of the
@@ -418,9 +430,34 @@ class ProcessorRunner:
                 )
             processor_kwargs["df_annual_demands"] = df_filtered
 
+        # Add the merged source-data frames the processor declared.
+        #
+        # SourceDataPipeline.run() is conditional in build_input_data.py, so the
+        # object can arrive with every frame still at its empty default. An empty
+        # frame here means the source excels were skipped this run, not that the
+        # user has no data -- so refuse rather than hand the processor an empty
+        # frame it would silently build nothing from. CacheManager forces
+        # reimport_source_excels for a declaring processor, so this should be
+        # unreachable; it is the backstop for when that wiring is wrong.
+        for source_name in required_source_data:
+            frame = getattr(self.source_data_pipeline, f"df_{source_name}", None)
+            if frame is None or frame.empty:
+                self.logger.log_status(
+                    f"Source data '{source_name}' has not been loaded, which processor "
+                    f"'{human_name}' declares it needs. Cannot run it. Re-run to trigger "
+                    f"source excel import.",
+                    level="warn",
+                )
+                self._update_processor_hash(processor_file, processor_name)
+                return ProcessorRunResult(
+                    processor_name=processor_name,
+                    secondary_result=None,
+                    ts_domains={},
+                    ts_domain_pairs={},
+                )
+            processor_kwargs[f"df_{source_name}"] = frame
 
         # Instantiate and run processor
-        ProcessorClass = getattr(module, processor_name)
         try:
             processor_instance = ProcessorClass(**processor_kwargs)
             processor_result = processor_instance.run_processor()

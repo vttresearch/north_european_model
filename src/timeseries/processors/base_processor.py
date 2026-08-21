@@ -37,9 +37,11 @@ class BaseProcessor(ABC):
 
     Declarations of intent
     ----------------------
-    The three class attributes below say what this processor's output is
+    The first three class attributes below say what this processor's output is
     *supposed* to look like. ProcessorRunner reads them and checks the actual
-    data against them on every run.
+    data against them on every run. ``requires_source_data`` is the odd one out:
+    it declares an *input* the processor needs rather than an output property,
+    and ProcessorRunner acts on it instead of checking it.
 
     They exist instead of a "this processor was checked" record committed
     alongside the code. Such a record can only claim that something passed once,
@@ -76,6 +78,29 @@ class BaseProcessor(ABC):
         parameter; the hourly assumption belongs to the labeller, whose window
         is `bb_ts_length * 24` labels.
 
+    requires_source_data : tuple of str
+        Which merged source-data frames this processor needs, named without the
+        `df_` prefix -- `('nodedata',)` asks for `SourceDataPipeline.df_nodedata`
+        and receives it as a `df_nodedata` kwarg.
+
+        This is the alternative to a processor keeping its own copy of a value
+        that source workbooks already carry. `hydro_storage_limits_MAF2019` used
+        to read reservoir sizes from a CSV that duplicated
+        `nodedata.upwardLimit` exactly, because the frame was unreachable from
+        here; the two drifted apart with nothing able to notice.
+
+        Declared on the class rather than in the config spec so that the cache
+        follows it: ProcessorRunner hashes the concrete processor file, so
+        changing what a processor needs invalidates that processor and nothing
+        else, with no config edit anywhere.
+
+        Two consequences a processor author should know. The frames are
+        whitelisted per scenario, year and country, so declaring one makes the
+        processor input-data-dependent and it will no longer be copied from a
+        reference folder between scenarios. And the frames obey the source-side
+        conventions, not the timeseries ones: `0` and `pd.NA` are distinct there,
+        and an all-NA column arrives as `object` rather than `Float64`.
+
     main_result : pd.DataFrame or None
         The primary output DataFrame from the processor. This is automatically
         set when `run_processor()` is called and should not be modified directly.
@@ -100,10 +125,12 @@ class BaseProcessor(ABC):
     ProcessorRunner : Orchestrates processor execution in the pipeline
     """
 
-    #: See "Declarations of intent" above. Defaults assert nothing.
+    #: See "Declarations of intent" above. Defaults assert nothing and ask for
+    #: nothing.
     value_range: tuple = (None, None)
     value_sign: str = "any"
     expects_complete_datetime_axis: bool = True
+    requires_source_data: tuple[str, ...] = ()
 
     def __init__(self, **kwargs):
         """
