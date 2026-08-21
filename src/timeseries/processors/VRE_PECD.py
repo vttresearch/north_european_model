@@ -3,7 +3,7 @@ import os
 import glob
 import pandas as pd
 import numpy as np
-from src.timeseries.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
 
 
 class VRE_PECD(BaseProcessor):
@@ -349,8 +349,14 @@ class VRE_PECD(BaseProcessor):
                     header_row = i
                     break
 
+        # A single unreadable file is skipped with a warning, but malformed
+        # numbers are not: these files are machine-generated, so one bad value
+        # means the producer changed format and every other file in the folder is
+        # suspect too. SourceDataError therefore propagates instead of skipping.
         try:
-            df_csv = pd.read_csv(file, skiprows=header_row)
+            df_csv = self.read_input_csv(file, skiprows=header_row)
+        except SourceDataError:
+            raise
         except Exception as e:
             self.logger.log_status(f"Error reading file {file}: {e}", level="warn")
             return None
@@ -414,7 +420,9 @@ class VRE_PECD(BaseProcessor):
                     header_row = i
                     break
         try:
-            df_first = pd.read_csv(first_file, skiprows=header_row)
+            df_first = self.read_input_csv(first_file, skiprows=header_row)
+        except SourceDataError:
+            raise
         except Exception as e:
             self.logger.log_status(f"Error reading the first file {first_file} for mapping: {e}", level="warn")
             return df_csv_summary

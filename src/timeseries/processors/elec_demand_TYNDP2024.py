@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from src.timeseries.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
 from tqdm import tqdm
 
 
@@ -178,9 +178,12 @@ class elec_demand_TYNDP2024(BaseProcessor):
             if sheet_name not in allowed_countries:
                 continue 
             try:
-                # Read the sheet (headers are on row 8; zero-indexed header=7)
-                df = pd.read_excel(self.input_file, sheet_name=sheet_name, header=7)
-                
+                # Read the sheet (headers are on row 8; zero-indexed header=7).
+                # read_input_excel rejects malformed numbers rather than letting
+                # them reach `df['month'] + 1` and the year astype(int) below,
+                # where a string would concatenate or raise per sheet.
+                df = self.read_input_excel(self.input_file, sheet_name=sheet_name, header=7)
+
                 # Skip if 'Date' column doesn't exist (not a data sheet)
                 if 'Date' not in df.columns:
                     continue
@@ -216,6 +219,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
                 melted_list.append(df_melted)
                 
+            except SourceDataError:
+                # Malformed numbers are not a per-sheet accident to skip past:
+                # one sheet in this shape means the workbook was exported wrong.
+                raise
             except Exception as e:
                 self.logger.log_status(f"Skipping sheet '{sheet_name}' in '{self.input_file}': {e}", level="warn")
                 continue

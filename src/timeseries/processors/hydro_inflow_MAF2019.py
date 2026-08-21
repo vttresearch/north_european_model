@@ -210,17 +210,15 @@ class hydro_inflow_MAF2019(BaseProcessor):
         """
         self.logger.log_status("Reading input files...")
         
-        # Read the weekly CSV file and filter by year.
-        weekly_df = pd.read_csv(self.file_weekly)
+        # read_input_csv rejects a file whose numbers did not survive whatever
+        # produced it, so the year comparison below cannot meet a string. The
+        # bare pd.to_numeric() calls that used to follow each read had no
+        # errors= argument and would have raised an unhandled ValueError here.
+        weekly_df = self.read_input_csv(self.file_weekly)
         weekly_df = weekly_df[(weekly_df["year"] >= self.start_year) & (weekly_df["year"] <= self.end_year)]
-        weekly_df["year"] = pd.to_numeric(weekly_df["year"])
-        weekly_df["week"] = pd.to_numeric(weekly_df["week"])
 
-        # Read the daily CSV file and filter by year.
-        daily_df = pd.read_csv(self.file_daily)
+        daily_df = self.read_input_csv(self.file_daily)
         daily_df = daily_df[(daily_df["year"] >= self.start_year) & (daily_df["year"] <= self.end_year)]
-        daily_df["year"] = pd.to_numeric(daily_df["year"])
-        daily_df["Day"] = pd.to_numeric(daily_df["Day"])
 
         self.logger.log_status("Processing reservoir inflows for all countries...")
         reservoir_all = self._process_reservoir_inflows(weekly_df)

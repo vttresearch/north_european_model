@@ -1,7 +1,23 @@
-import pandas as pd
+import warnings
 from abc import ABC, abstractmethod
-from typing import Optional, Any
+from pathlib import Path
+from typing import Optional, Any, Union
+
+import pandas as pd
+
+import src.utils as utils
 from src.timeseries.timeseries_results import ProcessorOutput
+
+
+class SourceDataError(Exception):
+    """An input file is not shaped the way the processor needs it.
+
+    Raised by the reader helpers below so that ``process()`` stops where the bad
+    data is, rather than carrying it forward. ``ProcessorRunner`` catches every
+    exception out of ``run_processor()`` and writes no GDX for that processor,
+    which is the intended consequence -- the reader has already logged the
+    detail at ``error`` level by the time this propagates.
+    """
 
 
 class BaseProcessor(ABC):
@@ -113,6 +129,148 @@ class BaseProcessor(ABC):
         self.logger = kwargs.get('logger')
         self.main_result: Optional[pd.DataFrame] = None
         self.secondary_result: Optional[Any] = None
+
+    # ------------------------------------------------------------------
+    # Reading input files
+    # ------------------------------------------------------------------
+    #
+    # Nothing forces a processor through these -- each processor is its own
+    # package and reads whatever its source happens to be. They are here because
+    # the alternative is worse than it looks.
+    #
+    # ProcessorRunner does check `main_result`, and its numeric check on the
+    # `value` column is a real backstop. But it validates the *output*, and the
+    # damage a malformed input file does is not confined to values: an unquoted
+    # thousands separator in a CSV is read as a field separator, so every column
+    # shifts and the node label becomes a number. pandas reports nothing -- it
+    # absorbs the extra field as an index and hands back a frame that looks
+    # healthy. Nothing downstream catches a corrupted *dimension* column, and it
+    # reaches GDX as a set element. These helpers are the only place that can
+    # see it.
+
+    def _reject(self, message: str) -> None:
+        """Log at error level and stop the processor."""
+        self.logger.log_status(message, level="error")
+        raise SourceDataError(message)
+
+    def _check_frame(self, df: pd.DataFrame, source: str) -> None:
+        """Reject a frame containing failed numbers or Excel error values.
+
+        Refuses rather than repairs, which is the opposite of what the source
+        workbook gate does with the same finding -- and deliberately so. A
+        hand-edited sheet makes isolated typos, so blanking one cell and
+        reporting it is proportionate. A generated file does not make typos: one
+        malformed number means the producer changed format, and blanking would
+        turn a whole column into a million fabricated zeros that look exactly
+        like real data. Writing no GDX is the only honest outcome.
+        """
+        for report, what in (
+            (utils.find_malformed_numeric_cells(df), "malformed number"),
+            (utils.find_excel_error_values(df), "Excel error value"),
+        ):
+            if report.ok:
+                continue
+            detail = "; ".join(
+                f"'{col}': {count} ({', '.join(repr(v) for v in report.examples[col])})"
+                for col, count in report.counts.items()
+            )
+            self._reject(
+                f"[{source}] {report.total} {what}(s) found -- {detail}. "
+                f"A generated file does not make isolated typos, so this reads as a "
+                f"format change at the source rather than a stray cell. "
+                f"No GDX output will be written."
+            )
+
+    def read_input_csv(
+        self,
+        path: Union[str, Path],
+        *,
+        na_values=None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """Read a CSV, refusing anything whose numbers or field count are wrong.
+
+        Parameters
+        ----------
+        path : str or Path
+            The file to read.
+        na_values : optional
+            Extra strings to treat as missing, passed to ``pd.read_csv``. pandas
+            already knows ``NA``, ``N/A``, ``n/a``, ``NULL``, ``NaN``, ``None``
+            and ``#N/A``; ``-`` and ``n.a.`` are **not** among them. A source
+            that uses a marker of its own declares it here, which keeps the
+            declaration visible in the processor instead of buried in a gate.
+        **kwargs
+            Passed to ``pd.read_csv``. ``index_col`` is not accepted -- see below.
+
+        Notes
+        -----
+        ``index_col=False`` is forced. Left to itself, pandas treats a row with
+        one field too many as "this file has an index column", silently shifting
+        every value one place left for that row; with ``index_col=False`` it
+        keeps the columns aligned and emits a ``ParserWarning`` instead, which is
+        the only signal that the file is malformed. That warning is therefore
+        treated as an error here rather than printed and forgotten.
+
+        There is deliberately no ``thousands`` default. Reading ``1,000`` as a
+        thousand would be a guess: the same cell is one-point-zero to an author
+        writing in a locale where the comma is the decimal mark, and nothing in
+        the file says which is meant. A processor whose source genuinely uses
+        grouped digits can pass ``thousands=','`` explicitly and take
+        responsibility for that claim.
+
+        Raises
+        ------
+        SourceDataError
+            If the field count is inconsistent, or any column mixes real numbers
+            with values that look like numbers but do not parse.
+        """
+        if "index_col" in kwargs:
+            raise TypeError(
+                "read_input_csv does not accept index_col: it forces index_col=False so "
+                "that a row with too many fields is reported instead of silently shifting "
+                "every column. Set an index on the returned frame if you need one."
+            )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            df = pd.read_csv(path, index_col=False, na_values=na_values, **kwargs)
+
+        for w in caught:
+            if issubclass(w.category, pd.errors.ParserWarning):
+                self._reject(
+                    f"[{path}] Inconsistent number of fields per row: {w.message} "
+                    f"Rows do not line up with the header, so column values are not "
+                    f"what their names say. The usual cause is an unquoted comma inside "
+                    f"a value, such as a thousands separator. "
+                    f"No GDX output will be written."
+                )
+
+        self._check_frame(df, str(path))
+        return df
+
+    def read_input_excel(
+        self,
+        path: Union[str, Path],
+        **kwargs,
+    ) -> pd.DataFrame:
+        """Read a sheet, refusing anything whose numbers are wrong.
+
+        The spreadsheet counterpart of :meth:`read_input_csv`. There is no field
+        alignment to check -- a sheet has cells, not delimiters -- so this is the
+        numeric and Excel-error check alone.
+
+        Raises
+        ------
+        SourceDataError
+            If any column mixes real numbers with values that look like numbers
+            but do not parse.
+        """
+        df = pd.read_excel(path, **kwargs)
+        sheet = kwargs.get("sheet_name")
+        source = f"{path}:{sheet}" if sheet is not None else str(path)
+        self._check_frame(df, source)
+        return df
 
     @abstractmethod
     def process(self) -> pd.DataFrame:

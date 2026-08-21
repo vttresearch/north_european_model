@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from src.timeseries.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
 
 
 class DH_demand_fromTemperature(BaseProcessor):
@@ -76,9 +76,13 @@ class DH_demand_fromTemperature(BaseProcessor):
             Hourly heating profiles indexed by timestamp, one column per country.
         """
 
-        # Read temperatures from csv to dataframe
+        # Read temperatures from csv to dataframe. SourceDataError carries its own
+        # already-reported detail about which column is malformed, so it is not
+        # reworded into a FileNotFoundError.
         try:
-            df_temperature = pd.read_csv(self.input_file)
+            df_temperature = self.read_input_csv(self.input_file)
+        except SourceDataError:
+            raise
         except Exception as e:
             raise FileNotFoundError(f"Unable to open {self.input_file}: {e}")
 

@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from src.timeseries.processors.base_processor import BaseProcessor
+from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
 
 
 class hydro_storage_limits_MAF2019(BaseProcessor):
@@ -256,17 +256,22 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         """
         # --- Read and prepare the input data
         self.logger.log_status("Reading input files...")
+        # SourceDataError is re-raised rather than swallowed: a missing or
+        # unreadable file is a warning and an empty result, but a file whose
+        # numbers are malformed has already been reported at error level and
+        # must stop the processor instead of quietly yielding no rows.
         try:
-            df_levels = pd.read_csv(self.levels_file)
+            df_levels = self.read_input_csv(self.levels_file)
+        except SourceDataError:
+            raise
         except Exception as e:
             self.logger.log_status(f"Error reading hydro storage levels CSV '{self.levels_file}': {e}", level="warn")
             return pd.DataFrame()
 
-        df_levels["year"] = pd.to_numeric(df_levels["year"])
-        df_levels["week"] = pd.to_numeric(df_levels["week"])
-
         try:
-            df_capacities = pd.read_csv(self.capacities_file)
+            df_capacities = self.read_input_csv(self.capacities_file)
+        except SourceDataError:
+            raise
         except Exception as e:
             self.logger.log_status(f"Error reading hydro capacities CSV '{self.capacities_file}': {e}", level="warn")
             return pd.DataFrame()
