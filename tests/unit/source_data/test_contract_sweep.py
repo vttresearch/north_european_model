@@ -178,7 +178,11 @@ def test_the_sweep_table_covers_the_public_loader_surface():
     # read_input_excels reads from disk rather than transforming a frame, so it
     # cannot take part in a frame-in/frame-out sweep; it is covered separately
     # in test_read_input_excels.py.
-    deliberately_excluded = {"read_input_excels"}
+    #
+    # report_node_disagreements takes two frames and returns nothing: it only
+    # reports, deliberately, because which of the two workbooks is wrong is not
+    # something it can know. Covered in test_node_disagreements.py.
+    deliberately_excluded = {"read_input_excels", "report_node_disagreements"}
 
     public = {
         name

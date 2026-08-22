@@ -276,5 +276,9 @@ rule never matched.
 
 ## See also
 
+- [District heating demand timeseries](dh-demand-timeseries.md) — what `TWh/year` in a
+  demand sheet means: a weather-normalised normal year, never a realised one, and the
+  same holds for the electricity demand table
+- [Hydro data](hydro.md) — which file supplies which hydro number, and in what unit
 - `tests/README.md` — the NA/zero boundary map, for anyone changing the pipeline
 - `docs/dictionary.md` in the Backbone repository — what each parameter means

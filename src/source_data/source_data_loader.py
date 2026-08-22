@@ -1380,3 +1380,84 @@ def filter_nonzero_numeric_rows(
 
     numeric_cols = df.select_dtypes(include='number').columns.difference(exclude)
     return df[df[numeric_cols].sum(axis=1) != 0]
+
+
+#: A grid is only cross-checked once this share of its demand nodes already have
+#: a nodedata row. Below it the grid is taken to be one nodedata does not
+#: describe at all -- electricity and hydrogen nodes carry no nodedata row today,
+#: and the day someone adds a single one of them, every other node of that grid
+#: must not suddenly be reported as missing.
+NODE_COVERAGE_THRESHOLD = 0.5
+
+
+def report_node_disagreements(
+    df_nodedata: pd.DataFrame,
+    df_demanddata: pd.DataFrame,
+    logger: IterationLogger | None = None,
+    ) -> None:
+    """
+    Report a node that one of nodedata and demanddata knows about and the other does not.
+
+    This is the check for a node name that came out of a mistyped cell. A node is
+    built as ``country_grid[_node_suffix]``, so a wrong ``country`` produces a
+    plausible-looking node that exists nowhere else -- ``NOS0_dheat_HKI`` from a
+    row meaning ``FI00``. Nothing downstream can see it: the workbook builder
+    unions the node names from every source, so the invented node simply becomes
+    a Backbone node with a balance penalty and no supply, and the real one loses
+    its demand.
+
+    Neither a hardcoded list of node names nor a duplicate check can find that.
+    A suffix is legitimately reused across grids (``HKI`` for electricity and for
+    heat) and across countries (industrial steam is added to all of them). What
+    is *not* legitimate is a node that only one of the two tables has heard of,
+    within a grid the other one describes.
+
+    That last clause is the whole trick, and ``NODE_COVERAGE_THRESHOLD`` is where
+    it lives: a grid nodedata does not describe produces no findings, so plain
+    balance nodes stay silent while ``dheat``, ``steam`` and the hydro grids are
+    checked.
+
+    Reports only, and never asserts which cause it is. A mistyped cell is one
+    cause; the other is a demand row written as ``0``, which
+    ``filter_nonzero_numeric_rows`` drops as empty, so it arrives here looking
+    exactly like a row nobody wrote. Both leave a node the model carries with
+    nothing to serve, and telling them apart needs the workbook, so no row is
+    dropped and the message names both.
+    """
+    if logger is None or df_nodedata.empty or df_demanddata.empty:
+        return
+    for df in (df_nodedata, df_demanddata):
+        if 'grid' not in df.columns or 'node' not in df.columns:
+            return
+
+    def nodes_by_grid(df):
+        pairs = df[['grid', 'node']].dropna()
+        grouped = {}
+        for grid, node in zip(pairs['grid'].astype(str), pairs['node'].astype(str)):
+            grouped.setdefault(grid.strip().lower(), set()).add(node.strip())
+        return grouped
+
+    described = nodes_by_grid(df_nodedata)
+    demanded = nodes_by_grid(df_demanddata)
+
+    for grid in sorted(set(described) & set(demanded)):
+        in_nodedata, in_demanddata = described[grid], demanded[grid]
+        covered = len(in_demanddata & in_nodedata) / len(in_demanddata)
+        if covered < NODE_COVERAGE_THRESHOLD:
+            continue
+
+        for missing_from, present_in, names in (
+            ("nodedata", "demanddata", sorted(in_demanddata - in_nodedata)),
+            ("demanddata", "nodedata", sorted(in_nodedata - in_demanddata)),
+        ):
+            if not names:
+                continue
+            logger.log_status(
+                f"{len(names)} '{grid}' node(s) appear in {present_in} but not in "
+                f"{missing_from}: {', '.join(names)}. Every other '{grid}' node is in "
+                f"both. Either a country, grid or node_suffix cell is mistyped -- which "
+                f"does not fail, it invents a node name that looks real and silently "
+                f"takes another node's data -- or the row is absent on purpose, "
+                f"including a demand row written as 0, which is dropped as empty.",
+                level="warn",
+            )

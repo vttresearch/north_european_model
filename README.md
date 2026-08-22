@@ -53,6 +53,10 @@ links to it.
 - [Hydro data](docs/hydro.md) — the four hydro types and what they simplify away, which
   file supplies which number and in what unit, which seasonal limits are not built and
   why, and how gaps in the PECD data are repaired or refused.
+- [District heating demand timeseries](docs/dh-demand-timeseries.md) — the whole
+  calculation from outdoor temperature, why `TWh/year` is a normal-year figure and no
+  single climate year reproduces it, what a zero hour would mean, and which countries
+  can be built.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

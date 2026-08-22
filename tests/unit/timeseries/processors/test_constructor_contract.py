@@ -23,9 +23,12 @@ PROCESSOR_DIR = pathlib.Path("src/timeseries/processors")
 
 #: processor name -> the kwargs it refuses to start without.
 REQUIRED_KWARGS = {
+    # No scenario_year: the demand rows reach it already whitelisted to the
+    # scenario year, so it had nothing to do with it. demand_grid instead, which
+    # it writes into every output row.
     "DH_demand_fromTemperature": (
         "input_folder", "country_codes", "start_year", "end_year",
-        "df_annual_demands", "scenario_year",
+        "df_annual_demands", "demand_grid",
     ),
     "elec_demand_TYNDP2024": (
         "input_folder", "country_codes", "start_year", "end_year",
@@ -55,6 +58,7 @@ SAMPLE_VALUES = {
     }),
     "scenario_year": 2030,
     "attached_grid": "elec",
+    "demand_grid": "dheat",
 }
 
 

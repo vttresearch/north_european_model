@@ -1,5 +1,8 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-22
+- district heating: Improved checks and warning, documentation added, see [docs/dh-demand-timeseries.md](docs/dh-demand-timeseries.md).
+
 ## 2026-08-21
 - hydro: reservoir sizes come from source excel `nodedata` `upwardLimit`, `PECD-hydro-capacities.csv` removed. See [docs/hydro.md](docs/hydro.md).
 - hydro: fixing several zero-inflow and zero-limit periods arising from partial source data. 

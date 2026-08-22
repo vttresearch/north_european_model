@@ -170,9 +170,13 @@ class TestTheRealWorkbooksStaySilent:
         import glob
         import os
 
+        # '~$name.xlsx' is the lock file Excel writes while a workbook is open.
+        # It matches the glob, is not readable, and is not a shipped workbook --
+        # without this the suite fails for anyone who left one open.
         files = [
             os.path.basename(f)
             for f in sorted(glob.glob(str(src_files_dir / "data_files" / "*.xlsx")))
+            if not os.path.basename(f).startswith("~$")
         ]
         prefixes = [
             "unitdata", "unittypedata", "nodedata", "transferdata",
