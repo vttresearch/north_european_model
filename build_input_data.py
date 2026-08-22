@@ -448,8 +448,10 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
         )
 
     elif filename == "changes.inc":
-        # forecastNumber = number of climatological forecast branches + 1 for f00 (realized weather)
-        forecast_number = len(config["forecast_quantiles"]) + 1
+        # mSettings(mType, 'forecasts') counts the branches *beside* the realization
+        # f00: 0 is a deterministic run using f00 alone, and the f set holds
+        # forecasts + 1 elements. See mSettings in ../docs/dictionary.md.
+        forecast_number = len(config["forecast_quantiles"])
         content = re.sub(
             r'(\$if not set forecasts \$evalglobal forecastNumber )\d+',
             rf'\g<1>{forecast_number}',

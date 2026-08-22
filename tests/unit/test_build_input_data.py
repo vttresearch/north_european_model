@@ -4,7 +4,7 @@
 so exact values are pinned here -- one of the five cases where pinning is
 correct (see tests/README.md).  The arithmetic it performs *is* the contract:
 ``dataLength = bb_timeseries_length * 24``, ``t_max`` rounded up to the next
-thousand, ``forecastNumber = len(quantiles) + 1``.
+thousand, ``forecastNumber = len(quantiles)``.
 
 The three GAMS templates carry in-file warnings reading "do not edit ... unless
 updating also _patch_gams_file_content() in build_input_data.py".  The
@@ -129,12 +129,16 @@ class TestTimeAndSamples:
 class TestChangesInc:
     @pytest.mark.parametrize(
         "quantiles, expected",
-        [({"f01": 0.5, "f02": 0.1, "f03": 0.9}, 4), ({"f01": 0.5}, 2), ({}, 1)],
+        [({"f01": 0.5, "f02": 0.1, "f03": 0.9}, 3), ({"f01": 0.5}, 1), ({}, 0)],
         ids=["three", "one", "none"],
     )
-    def test_forecast_number_counts_quantiles_plus_realized_weather(self, quantiles, expected):
-        # +1 for f00, the realized weather branch, which is not a quantile.
-        content = "$if not set forecasts $evalglobal forecastNumber 4\n"
+    def test_forecast_number_counts_branches_beside_f00(self, quantiles, expected):
+        # mSettings(mType, 'forecasts') counts the branches beside the realization
+        # f00, so it equals the quantile count -- not one more. 0 is a deterministic
+        # run using f00 alone. See mSettings in ../docs/dictionary.md.
+        # 9 is not any of the expected values, so a patch that silently failed to
+        # match cannot leave the anchor's own number behind and still pass.
+        content = "$if not set forecasts $evalglobal forecastNumber 9\n"
         out = _patch_gams_file_content(
             "changes.inc", content, make_config(forecast_quantiles=quantiles)
         )
@@ -200,9 +204,15 @@ class TestRealTemplatesStillMatch:
         assert "f00 * f03" in out  # three default quantiles
 
     def test_changes_inc_anchor_is_present(self, templates):
+        # One quantile, so the expected number differs from the template's own
+        # default: a patch that no longer matches cannot pass by leaving the
+        # template untouched.
         content = (templates / "changes.inc").read_text(encoding="utf-8")
-        out = _patch_gams_file_content("changes.inc", content, make_config())
-        assert "$if not set forecasts $evalglobal forecastNumber 4" in out
+        out = _patch_gams_file_content(
+            "changes.inc", content, make_config(forecast_quantiles={"f01": 0.5})
+        )
+        assert out != content, "forecastNumber anchor no longer matches changes.inc"
+        assert "$if not set forecasts $evalglobal forecastNumber 1" in out
 
 
 class TestCheckDependencies:

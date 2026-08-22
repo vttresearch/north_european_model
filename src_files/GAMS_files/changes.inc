@@ -35,7 +35,7 @@ $if not set modelledDays $setglobal modelledDays 365
 // NOTE: do not edit the line below in the git version
 // unless updating also _patch_gams_file_content() in build_input_data.py
 // No restrictions for local versions.
-$if not set forecasts $evalglobal forecastNumber 4
+$if not set forecasts $evalglobal forecastNumber 3
 $if set forecasts $evalglobal forecastNumber %forecasts%
 
 
