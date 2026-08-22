@@ -252,30 +252,23 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
 
         logger.log_status("Finalizing", level="run", section_start_length=55, add_empty_line_before=True)
 
-        bb_ts_length = config.get('bb_ts_length')    
-        if cache_manager.full_rerun and bb_ts_length != 365:
-            logger.log_status(
-                f"Modifying gams files to work with bb_ts_length = {bb_ts_length}...",
-                level="none"
-            )            
-
-
         # Copying GAMS files for a new run or changed topology
         if cache_manager.full_rerun:
-            logger.log_status(f"Copying GAMS files to {output_folder}  ...", level="none")
             gams_src_folder = input_folder / "GAMS_files"
             if not gams_src_folder.exists():
                 logger.log_status(f"GAMS source folder not found: {gams_src_folder}", level="warn")
             else:
-                copied_any = False
+                copied = 0
                 for file in gams_src_folder.glob("*.*"):
                     content = file.read_text(encoding="utf-8")
                     content = _patch_gams_file_content(file.name, content, config)
                     (output_folder / file.name).write_text(content, encoding="utf-8")
-                    logger.log_status(f"Copied {file.name}", level="info")
-                    copied_any = True
-                if not copied_any:
+                    copied += 1
+                if not copied:
                     logger.log_status(f"No GAMS files found to copy in {gams_src_folder}", level="warn")
+                else:
+                    logger.log_status(f"Copied {copied} GAMS files to {output_folder}", level="info")
+                    _log_gams_settings(logger, _derive_gams_settings(config))
 
         # Flagging the run successful and writing the flag status
         # workflow_run_successfully is False if any error-level message was logged.
@@ -403,24 +396,53 @@ def _check_dependencies():
 
 
 
+#: Mirrors mSettings('schedule', 't_horizon') = 24*7*65 in scheduleInit.gms.
+#: Used to size the t-index upper bound in timeAndSamples.inc.
+_DEF_T_HORIZON = 24 * 7 * 65  # 10920
+
+
+def _derive_gams_settings(config: dict) -> dict:
+    """Return the config-derived values that go into the GAMS template files.
+
+    Shared by _patch_gams_file_content, which writes them, and
+    _log_gams_settings, which reports them. A summary that recomputed the
+    arithmetic would be free to drift away from what was actually written,
+    which is worse than no summary at all.
+
+    forecast_quantiles and forecast_weights may both be empty: that is a
+    deterministic run using f00 alone.
+    """
+    days = config.get("bb_timeseries_length", 365)
+    quantiles = config["forecast_quantiles"]
+
+    return {
+        "days": days,
+        "data_length": days * 24,
+        "t_max": math.ceil((days * 24 + _DEF_T_HORIZON) / 1000) * 1000,
+        # Floor at f01 so the declared range is never the invalid GAMS "f00 * f00".
+        # Backbone filters active f at runtime, so an unused f01 here is harmless.
+        "last_f": f"f{max(len(quantiles), 1):02d}",
+        # mSettings(mType, 'forecasts') counts the branches *beside* the realization
+        # f00: 0 is a deterministic run using f00 alone, and the f set holds
+        # forecasts + 1 elements. See mSettings in ../docs/dictionary.md.
+        "forecast_number": len(quantiles),
+        "weights": config["forecast_weights"],
+    }
+
+
 def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
     """Return content with config-derived substitutions for known GAMS template files."""
-    bb_ts_length = config.get("bb_timeseries_length", 365)
-
-    # Mirrors mSettings('schedule', 't_horizon') = 24*7*65 in scheduleInit.gms.
-    # Used to size the t-index upper bound in timeAndSamples.inc.
-    def_t_horizon = 24 * 7 * 65  # 10920
+    settings = _derive_gams_settings(config)
 
     if filename == "scheduleInit.gms":
-        data_length = bb_ts_length * 24
         content = content.replace(
             "mSettings('schedule', 'dataLength') =  8760;",
-            f"mSettings('schedule', 'dataLength') =  {data_length};",
+            f"mSettings('schedule', 'dataLength') =  {settings['data_length']};",
         )
 
         prob_lines = "".join(
             f"    p_mfProbability('schedule', '{label}') = {weight:g};\n"
-            for label, weight in config["forecast_weights"].items()
+            for label, weight in settings["weights"].items()
         )
         content = re.sub(
             r'(    // NOTE: do not edit the lines below[^\n]*\n'
@@ -432,33 +454,50 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
         )
 
     elif filename == "timeAndSamples.inc":
-        t_max = math.ceil((bb_ts_length * 24 + def_t_horizon) / 1000) * 1000
         content = content.replace(
             "t000000 * t020000",
-            f"t000000 * t{t_max:06d}",
+            f"t000000 * t{settings['t_max']:06d}",
         )
 
-        # Floor at f01 so the declared range is never the invalid GAMS "f00 * f00".
-        # Backbone filters active f at runtime, so an unused f01 here is harmless.
-        last_f = f"f{max(len(config['forecast_quantiles']), 1):02d}"
         content = re.sub(
             r'(f00 \* )f\d+',
-            rf'\g<1>{last_f}',
+            rf'\g<1>{settings["last_f"]}',
             content,
         )
 
     elif filename == "changes.inc":
-        # mSettings(mType, 'forecasts') counts the branches *beside* the realization
-        # f00: 0 is a deterministic run using f00 alone, and the f set holds
-        # forecasts + 1 elements. See mSettings in ../docs/dictionary.md.
-        forecast_number = len(config["forecast_quantiles"])
         content = re.sub(
             r'(\$if not set forecasts \$evalglobal forecastNumber )\d+',
-            rf'\g<1>{forecast_number}',
+            rf'\g<1>{settings["forecast_number"]}',
             content,
         )
 
     return content
+
+
+def _log_gams_settings(logger, settings: dict) -> None:
+    """Report the config-derived values just written into the GAMS files.
+
+    Each row names the GAMS symbol it wrote, so a value can be checked against
+    the file it came from. Four labels next to a forecastNumber of three is not
+    a typo -- see _derive_gams_settings.
+    """
+    if settings["weights"]:
+        probabilities = ", ".join(
+            f"{label} {weight:g}" for label, weight in settings["weights"].items()
+        )
+    else:
+        probabilities = "none (deterministic)"
+
+    logger.log_status("GAMS settings written:", level="none")
+    for symbol, value in (
+        ("dataLength", f"{settings['data_length']} h ({settings['days']} days)"),
+        ("t", f"t000000 * t{settings['t_max']:06d}"),
+        ("f", f"f00 * {settings['last_f']} "
+              f"(forecastNumber {settings['forecast_number']} = branches beside f00)"),
+        ("p_mfProbability", probabilities),
+    ):
+        logger.log_status(f"   {symbol:<15} {value}", level="none")
 
 
 

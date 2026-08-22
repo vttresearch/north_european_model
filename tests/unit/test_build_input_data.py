@@ -19,7 +19,7 @@ import pytest
 
 import build_input_data
 from build_input_data import _patch_gams_file_content
-from tests._common.fixtures import make_config
+from tests._common.fixtures import FakeLogger, make_config
 
 #: 24 * 7 * 65, mirroring mSettings('schedule', 't_horizon') in scheduleInit.gms.
 DEF_T_HORIZON = 10920
@@ -213,6 +213,78 @@ class TestRealTemplatesStillMatch:
         )
         assert out != content, "forecastNumber anchor no longer matches changes.inc"
         assert "$if not set forecasts $evalglobal forecastNumber 1" in out
+
+
+class TestGamsSettingsSummary:
+    """The Finalizing block reports what the patcher wrote into the GAMS files.
+
+    The whole value of that block is that it agrees with the files.  A summary
+    free to drift away from them is worse than no summary, so these tests read
+    the reported text and the patched templates side by side.
+    """
+
+    @pytest.fixture
+    def templates(self, src_files_dir):
+        return src_files_dir / "GAMS_files"
+
+    @staticmethod
+    def _report(config):
+        logger = FakeLogger()
+        settings = build_input_data._derive_gams_settings(config)
+        build_input_data._log_gams_settings(logger, settings)
+        return settings, logger
+
+    def test_reported_values_are_the_ones_written_to_the_templates(self, templates):
+        # Every value deliberately differs from the template's own default, so a
+        # substitution that stopped happening cannot pass by accident.
+        config = make_config(
+            bb_timeseries_length=40,
+            forecast_quantiles={"f01": 0.5, "f02": 0.9},
+            forecast_weights={"f01": 0.7, "f02": 0.3},
+        )
+        settings, logger = self._report(config)
+        reported = "\n".join(logger.messages)
+
+        def patched(name):
+            return _patch_gams_file_content(
+                name, (templates / name).read_text(encoding="utf-8"), config
+            )
+
+        schedule = patched("scheduleInit.gms")
+        times = patched("timeAndSamples.inc")
+        changes = patched("changes.inc")
+
+        assert f"'dataLength') =  {settings['data_length']};" in schedule
+        assert str(settings["data_length"]) in reported
+
+        t_range = f"t000000 * t{settings['t_max']:06d}"
+        assert t_range in times
+        assert t_range in reported
+
+        f_range = f"f00 * {settings['last_f']}"
+        assert f_range in times
+        assert f_range in reported
+
+        forecasts = f"forecastNumber {settings['forecast_number']}"
+        assert forecasts in changes
+        assert forecasts in reported
+
+        for label, weight in settings["weights"].items():
+            assert f"p_mfProbability('schedule', '{label}') = {weight:g};" in schedule
+            assert f"{label} {weight:g}" in reported
+
+    def test_a_deterministic_run_reports_no_probabilities(self):
+        _, logger = self._report(make_config(forecast_quantiles={}, forecast_weights={}))
+        reported = "\n".join(logger.messages)
+        assert "forecastNumber 0" in reported
+        assert "deterministic" in reported
+
+    def test_the_block_stays_short_and_carries_no_warnings(self):
+        # A lead-in and one row per patched symbol.  The block is a reassurance
+        # on a normal build, so growing it is a decision, not an accident.
+        _, logger = self._report(make_config())
+        assert len(logger.records) == 5
+        assert all(level == "none" for level, _ in logger.records)
 
 
 class TestCheckDependencies:
