@@ -1,7 +1,11 @@
 import os
+import numpy as np
 import pandas as pd
 from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
-from src.timeseries.timeseries_helpers import complete_native_grid
+from src.timeseries.timeseries_helpers import (
+    complete_native_grid,
+    nodes_present_in_nodedata,
+)
 
 
 class hydro_storage_limits_MAF2019(BaseProcessor):
@@ -116,9 +120,10 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         self.file_last = '_Hydro Inflow_SOR 20.xlsx'
         self.norway_codes = ['NOS0', 'NOM1', 'NON1']
 
-        # Tracks which (col, boundary_type) series had year-boundary jumps smoothed.
-        # Populated by _smooth_year_boundaries; summarised at the end of process().
-        self.smoothed_series: set = set()
+        # (node, boundary type, blend length in weeks) for each pattern whose tail
+        # was rewritten. Populated by _bound_year_change_step, summarised once at
+        # the end of process().
+        self.blended_patterns: set = set()
 
         # Nodes this run could not build, as (node, reason). Reported together at
         # the end of process() rather than one line at a time -- a country set that
@@ -126,8 +131,26 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         # warnings about it reads as breakage.
         self.unbuilt_nodes: list = []
 
+        # Which storage-bearing nodes the model actually has. Empty means nodedata
+        # could not be read, which callers must treat as "cannot tell" rather than
+        # "nothing exists" -- see _is_in_model.
+        self.model_nodes = nodes_present_in_nodedata(
+            self.df_nodedata,
+            suffixes=(self.suffix_reservoir, self.suffix_open, self.suffix_closed),
+        )
+
         # Input file paths.
         self.levels_file = os.path.join(self.input_folder, 'PECD-hydro-weekly-reservoir-levels.csv')
+
+    def _is_in_model(self, node) -> bool:
+        """Whether nodedata carries this node at all, ignoring its parameters.
+
+        Separate from having a usable size on purpose. A node absent here is not
+        in the model and there is nothing to report about it; a node present but
+        without an ``upwardLimit`` is a real node whose workbook row is
+        inconsistent, and that is worth a warning.
+        """
+        return not self.model_nodes or node in self.model_nodes
 
     def _node_sizes(self) -> dict:
         """
@@ -210,48 +233,88 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
             lowerBound.at[t, col] = weekly_df.at[i, lower_col] * size_mwh
             upperBound.at[t, col] = weekly_df.at[i, upper_col] * size_mwh
 
-    def _smooth_year_boundaries(self, bound_df, col, boundary_type, typical_multiplier=3.0):
+    def _bound_pattern_year_change(self, df_week_data, node, lower, upper):
+        """Apply the year-change bound to both bounds of one node's weekly pattern.
+
+        `lower` and `upper` are (column header, boundary type name) pairs -- the
+        header differs between the PECD levels CSV and the Norwegian workbooks,
+        while the boundary type is what the report and the output index call it.
+
+        Truncated to 52 rows first, because that is the pattern that actually gets
+        placed: the source carries a 53rd row and ``_fill_weekly_data_for_year``
+        has always stopped at 52. Blending the full frame would measure the year
+        change against week 53 and then rewrite rows nothing reads.
         """
-        Detect and smooth large value jumps at year boundaries in a sparse weekly series.
+        out = df_week_data.head(52).reset_index(drop=True).copy()
+        for header, boundary_type in (lower, upper):
+            if header not in out.columns:
+                continue
+            out[header] = self._bound_year_change_step(
+                out[header].to_numpy(dtype=float), node, boundary_type
+            )
+        return out
 
-        For each year boundary in the date range, computes the jump between the last weekly
-        anchor of year Y and the first of year Y+1. If the jump exceeds typical_multiplier
-        times the typical mid-year week-to-week variation, logs an info message and linearly
-        blends the two boundary-week values toward each other.
+    def _bound_year_change_step(self, weekly_values, node, boundary_type):
+        """Blend the tail of the weekly pattern so the year change is an ordinary step.
+
+        The pattern is climatological and the same every year, so replicating it
+        per calendar year wraps week 52 back onto week 1 -- and the profile is not
+        cyclic. AT00's minimum fill limit steps 0.504 -> 0.244 there, twenty-six
+        percentage points of reservoir, against a largest ordinary weekly move of
+        0.133. With ``bb_timeseries_start`` at 01-01 that lands on the window edge
+        where nobody meets it; a summer start or a length past 365 days puts it
+        mid-sample, where the solver has to absorb it.
+
+        Week 1 is trusted and never moved: the model's year begins there. The
+        blend walks backwards from week 52 only as far as it has to, so that the
+        step into week 1 is no larger than one the profile already makes inside
+        the year. "Already makes" is the 95th percentile rather than the maximum,
+        so a single outlying week cannot license a seam as large as itself.
+
+        This runs on the 52-row pattern before replication rather than on the
+        hourly frame per year: one computation instead of thirty-five identical
+        ones, and it covers the Norwegian path without a second call site.
+
+        Returns the pattern with its tail replaced, and records what it took.
         """
-        if col not in bound_df.columns:
-            return
-        series = bound_df[col].dropna()
-        if len(series) < 4:
-            return
+        values = np.asarray(weekly_values, dtype=float)
+        if len(values) < 4 or not np.isfinite(values).all():
+            return values
 
-        for year in range(self.start_date.year, self.end_date.year):
-            year_vals = series[series.index.year == year]
-            next_year_vals = series[series.index.year == year + 1]
+        interior = np.abs(np.diff(values))
+        normal = float(np.percentile(interior, 95))
+        if normal <= 0:
+            return values
 
-            if len(year_vals) < 3 or len(next_year_vals) < 2:
-                continue
+        # Smallest N whose ramp from week 52-N to week 1 stays within `normal`.
+        # N == 0 means the year change is already ordinary, which is 15 of the 18
+        # series the shipped data carries.
+        first = values[0]
+        blend = None
+        for n in range(0, len(values) - 2):
+            anchor = values[len(values) - 1 - n]
+            if abs(first - anchor) / (n + 1) <= normal:
+                blend = n
+                break
 
-            val_prev = year_vals.iloc[-2]    # week 51 of year Y
-            val_last = year_vals.iloc[-1]    # week 52 of year Y
-            val_first = next_year_vals.iloc[0]   # week 1 of year Y+1
-            val_second = next_year_vals.iloc[1]  # week 2 of year Y+1
+        if blend is None:
+            self.logger.log_status(
+                f"{node} {boundary_type}: the year change steps {abs(first - values[-1]):.3f} and "
+                f"no blend inside the year brings it within {normal:.3f}. Left as the source has "
+                f"it -- this pattern is not seasonal in any shape this can repair.",
+                level="warn"
+            )
+            return values
+        if blend == 0:
+            return values
 
-            boundary_jump = abs(val_last - val_first)
+        blended = values.copy()
+        anchor = values[len(values) - 1 - blend]
+        for k in range(1, blend + 1):
+            blended[len(values) - 1 - blend + k] = anchor + k * (first - anchor) / (blend + 1)
 
-            # Typical week-to-week change from inner weeks (skip first and last 2)
-            inner = year_vals.iloc[2:-2]
-            if len(inner) < 2:
-                continue
-            typical_change = inner.diff().abs().mean()
-
-            if typical_change > 0 and boundary_jump > typical_multiplier * typical_change:
-                self.smoothed_series.add((col, boundary_type))
-                # Blend boundary weeks linearly from val_prev toward val_second
-                t_last = year_vals.index[-1]
-                t_first = next_year_vals.index[0]
-                bound_df.at[t_last, col] = val_prev + (val_second - val_prev) / 3
-                bound_df.at[t_first, col] = val_prev + 2 * (val_second - val_prev) / 3
+        self.blended_patterns.add((node, boundary_type, blend))
+        return blended
 
     def merge_bounds(self, lowerBound, upperBound, minvariable, maxvariable):
         """
@@ -384,14 +447,15 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         if df_week_data is None:
             return None
         col = country + suffix_reservoir
+        df_week_data = self._bound_pattern_year_change(
+            df_week_data, col, (minvariable_header, minvariable), (maxvariable_header, maxvariable)
+        )
         for year in range(self.start_date.year, self.end_date.year + 1):
             self._fill_weekly_data_for_year(
                 df_lowerBound, df_upperBound, df_week_data,
                 year, country, suffix_reservoir, size_mwh,
                 minvariable_header, maxvariable_header
             )
-        self._smooth_year_boundaries(df_lowerBound, col, minvariable)
-        self._smooth_year_boundaries(df_upperBound, col, maxvariable)
 
         df_lowerBound.interpolate(inplace=True, limit_direction='both')
         df_upperBound.interpolate(inplace=True, limit_direction='both')
@@ -439,14 +503,17 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
             f"{os.path.basename(filename)}:{country}"
         )
         col = country + suffix_open
+        df = self._bound_pattern_year_change(
+            df, col,
+            (minvariable_header_norway, minvariable),
+            (maxvariable_header_norway, maxvariable),
+        )
         for year in range(self.start_date.year, self.end_date.year + 1):
             self._fill_weekly_data_for_year(
                 df_lowerBound, df_upperBound, df,
                 year, country, suffix_open, size_mwh,
                 minvariable_header_norway, maxvariable_header_norway
             )
-        self._smooth_year_boundaries(df_lowerBound, col, minvariable)
-        self._smooth_year_boundaries(df_upperBound, col, maxvariable)
 
         df_lowerBound.interpolate(inplace=True, limit_direction='both')
         df_upperBound.interpolate(inplace=True, limit_direction='both')
@@ -573,14 +640,19 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
             # A size is required before anything is built. Missing one used to be a
             # KeyError out of the capacity lookup, which ProcessorRunner caught at
             # whole-processor level and turned into no GDX for *any* country.
+            # A node the model does not have is not an absence to describe.
+            # nodedata answers that directly; this used to guess it from whether
+            # PECD happened to carry ratios for the zone, which is a proxy for the
+            # wrong question.
+            if not self._is_in_model(node):
+                continue
+
             size_mwh = node_sizes.get(node)
             if size_mwh is None:
-                has_ratios = is_norway or not df_levels[df_levels["zone"] == country].empty
-                if has_ratios:
-                    self.unbuilt_nodes.append((
-                        node, f"no usable '{self.maxvariable}' in nodedata to scale the ratios",
-                        "warn"
-                    ))
+                self.unbuilt_nodes.append((
+                    node, f"no usable '{self.maxvariable}' in nodedata to scale the ratios",
+                    "warn"
+                ))
                 continue
 
             if is_norway:
@@ -614,11 +686,19 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
 
         self._report_coverage(node_sizes, list(summary_df.columns))
 
-        # Log a summary of any year-boundary smoothing that was applied
-        if self.smoothed_series:
-            series_list = ', '.join(f"{col} ({btype})" for col, btype in sorted(self.smoothed_series))
+        # Say which patterns needed their tail blended, and by how much. The
+        # blend length is the point: it is the smallest that brings the year
+        # change within an ordinary weekly step, so a long one says the source
+        # profile is far from cyclic rather than that the code tried hard.
+        if self.blended_patterns:
+            series_list = ', '.join(
+                f"{col} ({btype}, {weeks} week{'s' if weeks > 1 else ''})"
+                for col, btype, weeks in sorted(self.blended_patterns)
+            )
             self.logger.log_status(
-                f"Smoothed year-to-year jumps in {len(self.smoothed_series)} series: {series_list}.",
+                f"Blended the last weeks of {len(self.blended_patterns)} weekly pattern(s) so the "
+                f"year change is no larger a step than the profile makes inside the year: "
+                f"{series_list}. Week 1 is unchanged in every case.",
                 level="info"
             )
 

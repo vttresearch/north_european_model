@@ -16,6 +16,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -50,6 +51,8 @@ def write_levels(
         zero_min_weeks  -- weeks whose downwardLimit is written as 0
         zero_max_weeks  -- weeks whose upwardLimit is written as 0
         min/max         -- the ratio values to use
+        min_profile     -- callable week -> downwardLimit, overriding `min`
+        max_profile     -- callable week -> upwardLimit, overriding `max`
     """
     rows = []
     for zone, opts in zones.items():
@@ -60,11 +63,15 @@ def write_levels(
         zero_max = set(opts.get("zero_max_weeks", ()))
         lo = opts.get("min", MIN_RATIO)
         hi = opts.get("max", MAX_RATIO)
+        min_profile = opts.get("min_profile")
+        max_profile = opts.get("max_profile")
         for year in years:
             for week in range(1, 53):
                 blank = year in na_years or week in blank_weeks
-                low = None if blank else (0.0 if week in zero_min else lo)
-                high = None if blank else (0.0 if week in zero_max else hi)
+                lo_w = min_profile(week) if min_profile else lo
+                hi_w = max_profile(week) if max_profile else hi
+                low = None if blank else (0.0 if week in zero_min else lo_w)
+                high = None if blank else (0.0 if week in zero_max else hi_w)
                 rows.append({
                     "zone": zone,
                     "week": week,
@@ -276,15 +283,33 @@ class TestCountrySetTolerance:
 
         It escaped to ProcessorRunner, which catches at whole-processor level, so
         one zone without a size meant no GDX at all.
+
+        YY00 is in nodedata here, with no usable size. That is the case worth a
+        warning -- a real node whose workbook row contradicts itself -- and it is
+        a different thing from the node simply not existing, below.
+        """
+        sizes = nodedata(XX00_reservoir=1_000_000.0, YY00_reservoir=1.0)
+        sizes.loc[sizes["node"] == "YY00_reservoir", "upwardlimit"] = pd.NA
+
+        result, logger = run(tmp_path, {"XX00": {}, "YY00": {}}, sizes)
+        assert "XX00_reservoir" in set(result["node"])
+        assert "YY00_reservoir" not in set(result["node"])
+        logger.assert_logged("YY00_reservoir", level="warn")
+
+    def test_a_node_the_model_does_not_have_is_never_mentioned(self, tmp_path):
+        """nodedata says what exists, so its absence is not an absence to describe.
+
+        This used to be guessed from whether PECD happened to carry ratios for the
+        zone, which answers a different question and warned about nodes no run
+        ever had.
         """
         result, logger = run(
             tmp_path,
             {"XX00": {}, "YY00": {}},
-            nodedata(XX00_reservoir=1_000_000.0),  # YY00 has no size
+            nodedata(XX00_reservoir=1_000_000.0),  # YY00 is not in the model
         )
-        assert "XX00_reservoir" in set(result["node"])
         assert "YY00_reservoir" not in set(result["node"])
-        logger.assert_logged("YY00_reservoir", level="warn")
+        logger.assert_not_logged("YY00_reservoir")
 
     def test_a_zero_size_is_reported_rather_than_silently_dropped(self, tmp_path):
         result, logger = run(
@@ -427,3 +452,90 @@ class TestDeclarations:
 
     def test_stored_energy_is_declared_non_negative(self):
         assert hydro_storage_limits_MAF2019.value_sign == "non_negative"
+
+
+#: A sawtooth: fill climbs all year and drops back at the year change. Every
+#: week is distinct, and the wrap is the largest step in the series -- which is
+#: what a climatological pattern replicated per calendar year actually does.
+def rising(base: float, step: float):
+    return lambda week: base + step * week
+
+
+def weekly_anchors(result: pd.DataFrame, node: str, boundary_type: str) -> pd.Series:
+    """The weekly anchor values behind the hourly output, in week order."""
+    wide = result.pivot_table(
+        index="time", columns=["node", "param_gnBoundaryTypes"], values="value"
+    )[(node, boundary_type)]
+    idx = [
+        pd.Timestamp(year, 1, 4, 12) + pd.Timedelta(7 * k, unit="D")
+        for year in range(START_YEAR, END_YEAR + 1)
+        for k in range(52)
+    ]
+    idx = [t for t in idx if t in wide.index]
+    return pd.Series(wide.reindex(idx).values, index=pd.DatetimeIndex(idx))
+
+
+class TestYearChangeIsBounded:
+    """The pattern is replicated per calendar year, so week 52 wraps onto week 1.
+
+    Nothing used to verify what that wrap looked like. The rule now is that the
+    step into week 1 must be no larger than one the profile already makes inside
+    the year, measured as the 95th percentile so a single outlying week cannot
+    license a seam as large as itself.
+    """
+
+    def test_a_flat_pattern_needs_no_blend(self, tmp_path):
+        result, logger = run(tmp_path, {"XX00": {}}, nodedata(XX00_reservoir=1_000_000.0))
+        assert not result.empty
+        logger.assert_not_logged("Blended the last weeks")
+
+    def test_a_sawtooth_is_blended_and_reported(self, tmp_path):
+        result, logger = run(
+            tmp_path,
+            {"XX00": {"min_profile": rising(0.2, 0.004), "max_profile": rising(0.5, 0.004)}},
+            nodedata(XX00_reservoir=1_000_000.0),
+        )
+        logger.assert_logged("Blended the last weeks", level="info")
+        logger.assert_logged("Week 1 is unchanged", level="info")
+
+    def test_week_one_is_never_moved(self, tmp_path):
+        """The model's year starts there, so it is the value that is trusted."""
+        result, _ = run(
+            tmp_path,
+            {"XX00": {"min_profile": rising(0.2, 0.004), "max_profile": rising(0.5, 0.004)}},
+            nodedata(XX00_reservoir=1_000_000.0),
+        )
+        anchors = weekly_anchors(result, "XX00_reservoir", "downwardLimit")
+        week_one = anchors.loc[pd.Timestamp(START_YEAR, 1, 4, 12)]
+        assert week_one == pytest.approx((0.2 + 0.004 * 1) * 1_000_000.0)
+
+    def test_the_seam_ends_within_an_ordinary_weekly_step(self, tmp_path):
+        result, _ = run(
+            tmp_path,
+            {"XX00": {"min_profile": rising(0.2, 0.004), "max_profile": rising(0.5, 0.004)}},
+            nodedata(XX00_reservoir=1_000_000.0),
+        )
+        for boundary_type in ("downwardLimit", "upwardLimit"):
+            anchors = weekly_anchors(result, "XX00_reservoir", boundary_type)
+            by_year = {y: g for y, g in anchors.groupby(anchors.index.year)}
+            interior = np.concatenate(
+                [np.abs(np.diff(g.values)) for g in by_year.values() if len(g) > 1]
+            )
+            p95 = float(np.percentile(interior, 95))
+            years = sorted(by_year)
+            seam = max(
+                abs(by_year[b].iloc[0] - by_year[a].iloc[-1])
+                for a, b in zip(years, years[1:])
+            )
+            assert seam <= p95 * 1.000001, f"{boundary_type}: {seam} > {p95}"
+
+    def test_only_the_tail_is_rewritten(self, tmp_path):
+        """The blend is the shortest that works, so the rest of the year stands."""
+        result, _ = run(
+            tmp_path,
+            {"XX00": {"min_profile": rising(0.2, 0.004), "max_profile": rising(0.5, 0.004)}},
+            nodedata(XX00_reservoir=1_000_000.0),
+        )
+        anchors = weekly_anchors(result, "XX00_reservoir", "downwardLimit")
+        midyear = anchors.loc[pd.Timestamp(START_YEAR, 1, 4, 12) + pd.Timedelta(7 * 25, unit="D")]
+        assert midyear == pytest.approx((0.2 + 0.004 * 26) * 1_000_000.0)

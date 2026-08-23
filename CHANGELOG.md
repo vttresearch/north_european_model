@@ -1,5 +1,9 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-23
+- hydro: timeseries are built only for hydro nodes that `nodedata` carries. See [docs/hydro.md](docs/hydro.md).
+- hydro: inflow and the seasonal fill limits are now continuous over the year change.
+
 ## 2026-08-22
 - district heating: Improved checks and warnings, documentation added, see [docs/dh-demand-timeseries.md](docs/dh-demand-timeseries.md).
 

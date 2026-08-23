@@ -29,7 +29,7 @@ each absence is a decision rather than an oversight:
 
 | File | Status |
 |---|---|
-| `PECD-hydro-weekly-inflows.csv` | read |
+| `PECD-hydro-weekly-inflows.csv` | read, weeks 1–52; see [the year change](#the-year-change) |
 | `PECD-hydro-daily-ror-generation.csv` | read |
 | `PECD-hydro-weekly-reservoir-levels.csv` | read |
 | `PECD-hydro-capacities.csv` | **removed** — duplicated `nodedata` and `unitdata` exactly, in GWh where the workbook uses MWh |
@@ -95,6 +95,27 @@ constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
 seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
 run so their absence from the time series is stated rather than discovered.
 
+## Which nodes get built
+
+`nodedata` is the statement of what the model has. By the time a processor sees
+the frame, the source workflow has already applied its scenario, year and country
+filtering, so a node absent from it is absent from the model — not missing, not
+broken, and not something to report. Both hydro processors gate on that.
+
+The gate is **presence of the row**, and for inflow it is only presence. Inflow
+describes water arriving, which happens whether or not the workbook records a
+reservoir size, so an `upwardLimit` left blank or zero by oversight must not
+cascade into a node reaching GAMS with no inflow at all. The storage limits are
+the opposite case and do additionally require a usable `upwardLimit`, because a
+fill limit is a fraction of a size and there is nothing to express without one.
+That distinction is the whole reason the two are separate tests.
+
+Before the gate, `hydro_inflow_MAF2019` built the cross product of every country
+code and every hydro type and then reported on all of it: 37 lines about 35 nodes
+that do not exist, burying the two that do. It now names what it built, and the
+only nodes it reports are the ones the model has and the source cannot fill —
+`CH00_psOpen` and `FR00_psOpen` on the shipped configuration.
+
 ## Gaps in the source data, and what the builder does
 
 The PECD files have holes. Left alone they become zero inflow in the shipped
@@ -135,6 +156,52 @@ What is in it today:
 | `NOS0_psOpen` | 5 weeks in 1995 | [neighbouring zones contradict the zeros](#the-norwegian-pump-storage-zeros); ~100 GWh |
 | `NON1_psOpen` | 4 weeks, 1984 and 1987 | as above; ~100 GWh |
 | `SE04_reservoir downwardLimit` | 2 weeks | the only multi-week zero run in the level data |
+
+### The year change
+
+A climate window does not have to start on 1 January. `bb_timeseries_start` takes
+any `MM-DD` and `bb_timeseries_length` any number of days, so a summer-to-summer
+or three-year window puts the calendar-year seam **in the middle of a sample**,
+where the solver has to absorb whatever is there. With the default `01-01` it sits
+at the window edge, where nobody meets it. Both hydro processors used to ship a
+step there.
+
+**Inflow: week 53 is not read.** The year is 52 whole weeks and a remainder of one
+or two days, and PECD says different things about that remainder depending on the
+zone. Ten of the twenty-eight reservoir zones repeat week 52 verbatim, so the cell
+carries nothing. AT00 reports the remainder day itself — its week 53 is 0.136 to
+0.145 of its week 52 in all 36 years — and dividing that by 168 like a whole week
+put a one-day cliff at every New Year, collapsing AT00 inflow from 51.7 to
+14.2 MWh/h and back up to 68 by 4 January. Dropping the cell costs at most 0.33%
+of one node's annual inflow (AT00_psOpen, 18.8 GWh of 5.67 TWh) and under 0.07%
+everywhere else.
+
+What that buys is geometry, not levels: the year change is now one straight
+eight-day span, interpolated at the same weekly resolution as the rest of the
+year. How far apart week 52 and week 1 are is weather, and it is left alone. It is
+also unremarkable — the change exceeds the node's own 95th-percentile weekly
+change in **none** of the 34 year changes for AT00, FI00, SE01–04 or the Norwegian
+zones. Where it is genuinely large the build says so and changes nothing, which is
+the same job [`ACCEPTED_LONG_RUNS`](#the-rule) does for gaps.
+
+**Fill limits: the tail of the pattern is blended.** The weekly ratios are
+climatological and get replicated onto every calendar year, so week 52 wraps back
+onto week 1 — and the profile is not cyclic. AT00's minimum steps 0.504 → 0.244
+there, twenty-six percentage points of reservoir. Week 1 is trusted and never
+moved; the blend walks back from week 52 only as far as it must for the step into
+week 1 to be no larger than one the profile already makes inside the year, at the
+95th percentile so a single outlying week cannot license a seam as large as
+itself. On the shipped data five of the twenty-four series need it at all:
+
+| Series | Blend |
+|---|---|
+| `AT00_reservoir` `downwardLimit` | 2 weeks |
+| `NOM1_psOpen` `downwardLimit` | 3 weeks |
+| `NOS0_psOpen` `downwardLimit` | 3 weeks |
+| `SE02_reservoir` `downwardLimit` | 1 week |
+| `SE03_reservoir` `downwardLimit` | 1 week |
+
+The rest, upper bounds included, are already within their own normal variation.
 
 ### A recorded zero is a gap
 
@@ -245,9 +312,21 @@ each one looked like a fixable defect until the numbers came in.
 
 - **Some psOpen nodes are batteries with a hydrological label.** `ES00_psOpen`
   holds **14.4 years** of its own natural inflow; `FR00_psOpen` has **no inflow at
-  all**. Their state follows electricity prices, not rainfall, and a flat bound
+  all**. `PL00_psOpen` receives **81 GWh/year** in total, a median of 1.21 GWh in a
+  non-zero week and 0.00135 GWh in its smallest — about 0.008 MWh/h, which at the
+  default `rounding_precision` of 0 rounds to nothing in **10 492 hours**, 3.4% of
+  the series. That is faithful, not a defect: the source has no blanks for this
+  zone, the distribution is smooth, and the rounding costs 0.05% of the annual
+  total because it cancels. Polish open-loop pumped storage is effectively closed
+  loop. Their state follows electricity prices, not rainfall, and a flat bound
   is the honest representation. Imposing an inflow-shaped season on them would
   add an error rather than remove one.
+
+  It also rules out a per-hour zero alarm here. A district heating node cannot
+  have zero demand in June, so for that data "any zero hour is an error" is a
+  sound rule; applied to hydro it would fire on ten thousand correct hours every
+  build and teach people to ignore warnings. What hydro reports instead is a
+  *node* that comes out empty, which is the case that actually means something.
 
 - **An upper bound transfers across a hydrological regime; a corridor width does
   not.** Upper-bound shapes correlate +0.81 to +0.99 among the snowmelt zones and

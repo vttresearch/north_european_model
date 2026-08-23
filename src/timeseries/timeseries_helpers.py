@@ -11,6 +11,41 @@ import pandas as pd
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
+def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
+    """Which nodes with these name endings does the model actually contain?
+
+    ``nodedata`` is the statement of what exists. By the time a processor sees the
+    frame the source workflow has already applied its scenario, year and country
+    filtering, so a node absent from it is absent from the model -- not missing,
+    not broken, and not something to report. A country dropped from the run takes
+    its hydro nodes with it, and the processor should fall silent about them
+    rather than describe them as gaps.
+
+    Presence is the whole test. Whether a node's parameters are *usable* is a
+    separate question, and it belongs to whichever processor needs them: inflow
+    describes a node and needs nothing else, while a fill limit is a fraction of a
+    reservoir size and is meaningless without one. Keeping the two apart is what
+    stops an ``upwardLimit`` that is blank or zero -- which may simply be an
+    oversight in the workbook -- from cascading into "this node has no inflow".
+
+    Returns an empty set when the frame or its ``node`` column is missing, which
+    callers must read as "cannot tell" rather than "nothing exists".
+    """
+    if df_nodedata is None or getattr(df_nodedata, "empty", True):
+        return set()
+    columns = {str(c).lower(): c for c in df_nodedata.columns}
+    node_col = columns.get('node')
+    if node_col is None:
+        return set()
+
+    wanted = tuple(suffixes)
+    return {
+        str(node)
+        for node in df_nodedata[node_col]
+        if not pd.isna(node) and str(node).endswith(wanted)
+    }
+
+
 def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
     """
     Collect domain values from a processor result for JSON caching and cross-processor accumulation.

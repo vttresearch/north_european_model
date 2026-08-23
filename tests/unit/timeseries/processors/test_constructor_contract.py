@@ -34,7 +34,10 @@ REQUIRED_KWARGS = {
         "input_folder", "country_codes", "start_year", "end_year",
         "df_annual_demands", "scenario_year",
     ),
-    "hydro_inflow_MAF2019": ("input_folder", "country_codes", "start_year", "end_year"),
+    "hydro_inflow_MAF2019": (
+        "input_folder", "country_codes", "start_year", "end_year",
+        "df_nodedata",
+    ),
     "hydro_storage_limits_MAF2019": (
         "input_folder", "country_codes", "start_year", "end_year",
         "df_nodedata",
