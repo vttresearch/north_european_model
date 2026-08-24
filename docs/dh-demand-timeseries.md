@@ -161,11 +161,14 @@ The flat term divides by a nominal 8760 hours regardless of how long the year
 actually is, so a leap year receives 24 hours' worth more of its constant part
 than nominal — with `Constant_share = 0.3`, about 0.02% of the annual total.
 
-Left alone deliberately, and worth stating alongside the opposite case: the
-electricity demand source is a real 2016 series used without a leap correction,
-which errs the other way. Both are far inside the precision of the demand
-projections themselves. `elec_demand_TYNDP2024` divides by the same constant, so
-the two would have to change together.
+Left alone deliberately, and worth stating alongside the electricity case, which
+errs the same way for a different reason: the TYNDP source has no leap years at
+all, so a leap year's output is built by reusing a standardised 365-day year and
+comes out about 0.28% high. See
+[Electricity demand timeseries](elec-demand-timeseries.md#the-source-has-no-leap-years).
+Both are far inside the precision of the demand projections themselves.
+`elec_demand_TYNDP2024` divides by the same constant, so the two would have to
+change together.
 
 ## Node names and exclusions
 
@@ -197,7 +200,11 @@ row in both.
 
 ## See also
 
+- [Electricity demand timeseries](elec-demand-timeseries.md) — the same
+  calculation driven by a TYNDP profile instead of temperature
 - [Source workbook conventions](source-workbook-conventions.md) — how the demand
   sheets are read and combined
 - [Hydro data](hydro.md) — the same treatment for the other timeseries-heavy part
   of the model
+- [Wind and solar timeseries](vre-timeseries.md) — where a zero is ordinary rather
+  than an alarm, and why the rule differs from this one

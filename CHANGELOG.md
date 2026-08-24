@@ -2,6 +2,7 @@
 
 ## 2026-08-24
 - electricity demand: every scenario year now reads `elec_2030_National_Trends.xlsx`; the 2040 profiles are not used, because they contain hours of negative demand. Improved checks and warnings, documentation added, see [docs/elec-demand-timeseries.md](docs/elec-demand-timeseries.md).
+- VRE: Improved checks and warnings, documentation added, see [docs/vre-timeseries.md](docs/vre-timeseries.md).
 
 ## 2026-08-23
 - hydro: timeseries are built only for hydro nodes that `nodedata` carries. See [docs/hydro.md](docs/hydro.md).

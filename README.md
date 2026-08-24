@@ -60,6 +60,9 @@ links to it.
 - [Electricity demand timeseries](docs/elec-demand-timeseries.md) — how a TYNDP profile
   becomes each node's hourly demand, why `Constant_share` is blank, which countries and
   climate years exist, and what the parquet cache proves before it is trusted.
+- [Wind and solar timeseries](docs/vre-timeseries.md) — what a PECD download decides and
+  why the CSV cannot tell you, why one folder may hold only one download, how a node is
+  given one of several PECD zones, and what a zero capacity factor means.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

@@ -11,6 +11,30 @@ import pandas as pd
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
+#: How many items a log line names before it starts counting instead.
+LOG_LIST_LIMIT = 3
+
+
+def summarise(items, limit: int = LOG_LIST_LIMIT) -> str:
+    """Render a list for a log line: the first few, then how many are left.
+
+    A build prints a handful of report lines per processor and a person has to
+    be able to read them at a glance. The full lists -- every country code,
+    every zone choice, every node that could not be built -- belong in the
+    documentation pages, because a log line carrying one of them in full is a
+    line nobody reads and the warning next to it gets skipped too.
+
+    Callers order `items` most-interesting-first, since that is what survives
+    the truncation. Where the whole list is what a reader has to act on -- the
+    nodes that were *not* built, rather than the ones that were -- name it in
+    full and do not call this.
+    """
+    items = [str(item) for item in items]
+    if len(items) <= limit:
+        return ", ".join(items)
+    return f"{', '.join(items[:limit])} and {len(items) - limit} more"
+
+
 def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     """Which nodes with these name endings does the model actually contain?
 
