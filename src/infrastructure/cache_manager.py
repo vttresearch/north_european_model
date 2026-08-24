@@ -492,17 +492,34 @@ class CacheManager:
         Merge new data into the existing cache entry (if any), then save the result.
 
         - For set-valued keys: union old and new.
-        - For list-of-2-tuples keys: append any new tuples (preserving order).
+        - For pair-valued keys: append any new pairs (preserving order).
         - For any other types or brand-new keys: overwrite/take new.
 
+        A pair collection is matched by what it holds, not by its container.
+        The round trip through JSON is not type-preserving: a set of tuples is
+        saved as an array of arrays and comes back from ``load_dict_from_cache``
+        as a *list* of tuples. Requiring a list on both sides therefore matched
+        the two ends of that round trip against each other and never fired --
+        so ``all_ts_domain_pairs.json`` took the overwrite branch and lost the
+        pairs of every processor that did not run. ``all_ts_domains.json`` was
+        unaffected: scalars come back as a set, which is what the pipeline
+        passes in.
+
         Args:
-            data (dict): New data to merge (values as sets or list-of-2-tuples).
+            data (dict): New data to merge (values as sets or collections of pairs).
             filename (str): Name of the JSON cache file.
         """
+        def is_pair_collection(value) -> bool:
+            return (
+                isinstance(value, (list, set))
+                and bool(value)
+                and all(isinstance(t, tuple) and len(t) == 2 for t in value)
+            )
+
         # 1) Load existing (or get empty dict if none)
         try:
             merged = self.load_dict_from_cache(filename)
-        except (FileNotFoundError, json.JSONDecodeError):      
+        except (FileNotFoundError, json.JSONDecodeError):
             merged = {}
 
         # 2) Merge in new values
@@ -513,16 +530,18 @@ class CacheManager:
                 merged[key] = new_val
             elif isinstance(old_val, set) and isinstance(new_val, set):
                 merged[key] = old_val.union(new_val)
-            elif (
-                isinstance(old_val, list)
-                and isinstance(new_val, list)
-                and all(isinstance(t, tuple) and len(t) == 2 for t in old_val)
-                and all(isinstance(t, tuple) and len(t) == 2 for t in new_val)
-            ):
-                # list-of-2-tuples: append uniques
+            elif is_pair_collection(old_val) and is_pair_collection(new_val):
+                # Append uniques. The cached order is kept and new pairs arrive
+                # in a fixed order, so a run that adds nothing rewrites the file
+                # byte for byte rather than reshuffling it. Sorted by str() to
+                # stay deterministic whatever the pair members turn out to be:
+                # they come from DataFrame columns, and a set that mixed str
+                # with a number would make a plain sort raise mid-build.
                 combined = list(old_val)
-                for tup in new_val:
-                    if tup not in combined:
+                seen = set(combined)
+                for tup in sorted(new_val, key=str):
+                    if tup not in seen:
+                        seen.add(tup)
                         combined.append(tup)
                 merged[key] = combined
             else:
@@ -789,30 +808,6 @@ class CacheManager:
             self.logger.log_status("BB input excel pipeline code updated, generating new input excel for Backbone.",
                                    level="none")
 
-        # Determine if source excels should be re-imported.
-        # Triggered by: full rerun, any input file change, BB excel pipeline code change,
-        # or any changed processor that reads source excel data.
-        #
-        # The second half of that last clause is what stops a processor running
-        # against a SourceDataPipeline whose run() was skipped: a processor that
-        # declares requires_source_data would otherwise receive empty frames and
-        # refuse, producing no GDX for a reason the user cannot see.
-        recorded_requirements = self.load_processor_requirements()
-        any_source_consuming_processor_changed = any(
-            self.timeseries_changed.get(human_name, False)
-            and (spec.get("demand_grid")
-                 or recorded_requirements.get(spec.get("processor_name"), []))
-            for human_name, spec in self.config["timeseries_specs"].items()
-        )
-        self.reimport_source_excels = (
-            self.full_rerun
-            or self.demand_files_changed
-            or self.other_input_files_changed
-            or self.bb_excel_pipeline_code_updated
-            or not bb_excel_succesfully_built
-            or any_source_consuming_processor_changed
-        )
-
         # Determine if BB input excel needs to be rebuilt.
         #
         # any_timeseries_changed belongs here because processor output reaches the
@@ -829,6 +824,35 @@ class CacheManager:
             or self.bb_excel_pipeline_code_updated
             or not bb_excel_succesfully_built
             or self.any_timeseries_changed
+        )
+
+        # Determine if source excels should be re-imported.
+        #
+        # rebuild_bb_excel comes first because BBExcelPipeline reads every source
+        # frame there is -- nodedata, unitdata, demanddata, transferdata,
+        # emissiondata, userconstraintdata. SourceDataPipeline holds those as empty
+        # DataFrames until run() fills them, so a rebuild against a skipped import
+        # does not degrade, it dies on the first column it looks for. The two flags
+        # once shared every term but rebuild_bb_excel, so nothing forced the import
+        # for a processor that reads neither demanddata nor a declared workbook:
+        # editing VRE_PECD alone rebuilt the workbook from nothing.
+        #
+        # The second clause is what stops a *processor* running against a
+        # SourceDataPipeline whose run() was skipped: one that declares
+        # requires_source_data would otherwise receive empty frames and refuse,
+        # producing no GDX for a reason the user cannot see. It answers a different
+        # question than the first and keeps its own name, even though a changed
+        # processor implies a rebuild today.
+        recorded_requirements = self.load_processor_requirements()
+        any_source_consuming_processor_changed = any(
+            self.timeseries_changed.get(human_name, False)
+            and (spec.get("demand_grid")
+                 or recorded_requirements.get(spec.get("processor_name"), []))
+            for human_name, spec in self.config["timeseries_specs"].items()
+        )
+        self.reimport_source_excels = (
+            self.rebuild_bb_excel
+            or any_source_consuming_processor_changed
         )
 
 

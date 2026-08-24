@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+import src.hash_utils as hash_utils
+import src.json_exchange as json_exchange
 from src.infrastructure.cache_manager import CacheManager
 from tests._common.fixtures import FakeLogger, make_config
 
@@ -32,6 +34,20 @@ SPEC = {
     "demand_grid": "",
     "secondary_output_name": None,
 }
+
+#: Two real processor files, because _detect_processor_code_changes hashes the
+#: file on disk and skips a name it cannot find. VRE_PECD is the shape that
+#: matters: no demand_grid, and requires_source_data is empty.
+VRE_SPEC = dict(SPEC, processor_name="VRE_PECD", bb_parameter="ts_cf",
+                bb_parameter_dimensions=["flow", "node", "f", "t"])
+DH_SPEC = dict(SPEC, processor_name="DH_demand_fromTemperature", demand_grid="dheat")
+
+#: The keys run() writes to config_structural.json in its finalization phase.
+_STRUCTURAL_KEYS = [
+    "country_codes", "exclude_grids", "exclude_nodes",
+    "climate_data", "bb_timeseries_start", "bb_timeseries_length",
+    "forecast_quantiles", "forecast_weights", "timeseries_specs",
+]
 
 
 def make_manager(tmp_path: Path, **config_overrides) -> CacheManager:
@@ -44,6 +60,47 @@ def make_manager(tmp_path: Path, **config_overrides) -> CacheManager:
         config=make_config(**config_overrides),
         logger=FakeLogger(),
     )
+
+
+def settle_cache(manager: CacheManager, stale_processors: tuple[str, ...] = ()) -> None:
+    """Leave the cache as a clean, complete run leaves it.
+
+    Every full-rerun cause in Phase 1 is answered: hashes recorded for all four
+    file groups, a config structure to compare against, and the three success
+    flags build_input_data writes when nothing failed. Without this a new
+    manager's run() reports a full rerun and decides nothing granular, which is
+    the state most of this module's assertions would silently pass in.
+
+    `stale_processors` names the processor files whose recorded hash is wrong,
+    i.e. the ones the next run will see as edited.
+    """
+    manager._save_all_source_code_hashes()
+    manager._check_source_code_changes(
+        CacheManager._BB_PIPELINE_FILES, "bb_excel_pipeline_hashes.json"
+    )
+    manager._detect_input_file_changes(manager.config, manager.input_file_folder)
+    json_exchange.save_json(
+        manager.cache_folder / "config_structural.json",
+        {k: manager.config[k] for k in _STRUCTURAL_KEYS if k in manager.config},
+    )
+    manager.merge_dict_to_cache(
+        {
+            "source_excel_run_successfully": True,
+            "timeseries_run_successfully": True,
+            "bb_excel_succesfully_built": True,
+        },
+        "general_flags.json",
+    )
+
+    processors_base = Path(__file__).resolve().parents[3] / "src" / "timeseries" / "processors"
+    for spec in manager.config["timeseries_specs"].values():
+        name = spec["processor_name"]
+        manager.save_processor_hash(
+            name,
+            "stale" if name in stale_processors
+            else hash_utils.compute_file_hash(processors_base / f"{name}.py"),
+        )
+        manager.save_processor_requirements(name, [])
 
 
 class TestRebuildBBExcelFollowsTheTimeseries:
@@ -155,6 +212,56 @@ class TestSourceDataRequirementsDriveReruns:
         manager.save_processor_requirements("a", ["nodedata"])
         manager.save_processor_requirements("b", [])
         assert manager.load_processor_requirements() == {"a": ["nodedata"], "b": []}
+
+
+class TestARebuildAlwaysGetsItsSourceData:
+    """BBExcelPipeline reads every source frame, so the two flags cannot diverge.
+
+    ``SourceDataPipeline`` holds its frames as empty DataFrames until ``run()``
+    fills them, and ``run()`` is called only when ``reimport_source_excels`` is
+    set. A rebuild against a skipped import does not produce a thin workbook: it
+    dies on the first column it looks for -- ``KeyError: 'unit'``, from
+    ``p_gnu_io_flat`` built out of an empty ``df_unitdata``.
+
+    These go through ``run()`` rather than re-evaluating the expression. The gap
+    they cover was open for three commits underneath assertions that re-stated
+    the code they were checking, and a copy of the logic agrees with itself
+    however wrong it is.
+    """
+
+    def test_editing_a_processor_that_reads_no_source_data_still_imports_it(self, tmp_path):
+        """The reported crash: edit VRE_PECD, rebuild the workbook from nothing.
+
+        VRE_PECD has no demand_grid and declares no requires_source_data, so it
+        is the one processor whose edit reaches the workbook without asking for
+        a single source frame on the way.
+        """
+        specs = {"PV": dict(VRE_SPEC), "District heating demand": dict(DH_SPEC)}
+        settle_cache(make_manager(tmp_path, timeseries_specs=specs),
+                     stale_processors=("VRE_PECD",))
+
+        manager = make_manager(tmp_path, timeseries_specs=specs)
+        manager.run()
+
+        assert not manager.full_rerun, "a stale processor hash is a granular rerun"
+        assert manager.rebuild_bb_excel, "a changed processor reaches the workbook"
+        assert manager.reimport_source_excels, (
+            "the workbook is built from df_unitdata, df_nodedata and four more "
+            "frames that stay empty until SourceDataPipeline.run() is called"
+        )
+
+    def test_a_settled_cache_rebuilds_nothing(self, tmp_path):
+        """The control: without it the assertions above pass on a full rerun."""
+        specs = {"PV": dict(VRE_SPEC), "District heating demand": dict(DH_SPEC)}
+        settle_cache(make_manager(tmp_path, timeseries_specs=specs))
+
+        manager = make_manager(tmp_path, timeseries_specs=specs)
+        manager.run()
+
+        assert not manager.full_rerun
+        assert not manager.any_timeseries_changed
+        assert not manager.rebuild_bb_excel
+        assert not manager.reimport_source_excels
 
 
 class TestSourceExcelsAreLoadedForDeclaringProcessors:
