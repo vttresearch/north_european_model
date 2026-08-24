@@ -57,6 +57,9 @@ links to it.
   calculation from outdoor temperature, why `TWh/year` is a normal-year figure and no
   single climate year reproduces it, what a zero hour would mean, and which countries
   can be built.
+- [Electricity demand timeseries](docs/elec-demand-timeseries.md) — how a TYNDP profile
+  becomes each node's hourly demand, why `Constant_share` is blank, which countries and
+  climate years exist, and what the parquet cache proves before it is trusted.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

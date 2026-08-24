@@ -30,9 +30,13 @@ REQUIRED_KWARGS = {
         "input_folder", "country_codes", "start_year", "end_year",
         "df_annual_demands", "demand_grid",
     ),
+    # Same row as DH_demand_fromTemperature, for the same reasons. scenario_year
+    # used to choose between the 2030 and 2040 workbooks and has nothing left to
+    # choose now that only one is read; the scenario year still reaches the
+    # output through the whitelisted demand rows.
     "elec_demand_TYNDP2024": (
         "input_folder", "country_codes", "start_year", "end_year",
-        "df_annual_demands", "scenario_year",
+        "df_annual_demands", "demand_grid",
     ),
     "hydro_inflow_MAF2019": (
         "input_folder", "country_codes", "start_year", "end_year",
