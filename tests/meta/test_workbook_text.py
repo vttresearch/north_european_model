@@ -45,17 +45,25 @@ class TestParsing:
         assert not any("fixture comment" in str(cell) for row in sheets["unitdata"] for cell in row)
 
     def test_a_hash_row_survives_because_the_pipeline_gives_it_meaning(self):
-        """``#`` is the pipeline's comment marker, not the fixture's.
+        """``##`` is the pipeline's ignore marker, not the fixture's.
 
-        normalize_dataframe drops rows whose cells start with '#'
-        (source_data_loader.py:201-208). If the fixture format ate them, that
-        behaviour would be untestable -- which is the main reason '//' is the
-        fixture comment.
+        ``read_input_excels`` and ``normalize_dataframe`` drop rows carrying it.
+        If the fixture format ate those rows, that behaviour would be untestable
+        -- which is the main reason '//' is the fixture comment.
         """
         sheets = parse_workbook_text(
-            "[unitdata]\nCountry | capacity\n#note   | 1\nFI      | 2\n"
+            "[unitdata]\nCountry | capacity\n##note  | 1\nFI      | 2\n"
         )
-        assert sheets["unitdata"][1] == ["#note", 1]
+        assert sheets["unitdata"][1] == ["##note", 1]
+
+    def test_a_single_hash_row_survives_too(self):
+        # A single '#' is ordinary data to the pipeline now -- '#REF!' and
+        # '# of units' both start with one -- so the fixture must not treat it
+        # as special either.
+        sheets = parse_workbook_text(
+            "[unitdata]\nCountry | capacity\n#REF!   | 1\nFI      | 2\n"
+        )
+        assert sheets["unitdata"][1] == ["#REF!", 1]
 
     def test_blank_marker_emits_an_all_blank_row(self):
         # The reader truncates a sheet at the first fully-empty row, so this has

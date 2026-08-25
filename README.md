@@ -3,6 +3,7 @@
 This repository contains the North European energy system model. The model is built for the Backbone modelling framework. 
 
 This readme has the following main sections
+- [Documentation](#documentation)
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
 - [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
 - [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
@@ -38,6 +39,39 @@ Ikäheimo, J., Lindroos, T.J., Purhonen, A., Rämä, M., Hiltunen, P., and Harri
 ## Support
 
 Contact the authors.
+
+
+## Documentation
+
+Pages in [docs/](docs/). Add a new page here as well as in the folder, or nothing
+links to it.
+
+- [Source workbook conventions](docs/source-workbook-conventions.md) — how the builder
+  reads the Excel files in `src_files/data_files/`: marking rows and columns as not
+  input, where a sheet ends, what happens to a cell that should be a number and is not,
+  and how `method` combines rows from several files.
+- [Timeseries](docs/timeseries.md) — how the build turns any hourly data source into
+  Backbone input: what a processor is responsible for and what the shared pipeline does,
+  what climate years and windows are, why a zero is the hard case, and what is checked
+  before anything is written. Start here, then read the page for the source you care
+  about.
+- [Hydro data](docs/hydro.md) — the four hydro types and what they simplify away, which
+  file supplies which number and in what unit, which seasonal limits are not built and
+  why, and how gaps in the PECD data are repaired or refused.
+- [District heating demand timeseries](docs/dh-demand-timeseries.md) — the whole
+  calculation from outdoor temperature, why `TWh/year` is a normal-year figure and no
+  single climate year reproduces it, what a zero hour would mean, and which countries
+  can be built.
+- [Electricity demand timeseries](docs/elec-demand-timeseries.md) — how a TYNDP profile
+  becomes each node's hourly demand, why `Constant_share` is blank, which countries and
+  climate years exist, and what the parquet cache proves before it is trusted.
+- [Wind and solar timeseries](docs/vre-timeseries.md) — what a PECD download decides and
+  why the CSV cannot tell you, why one folder may hold only one download, how a node is
+  given one of several PECD zones, and what a zero capacity factor means.
+
+For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
+in the Backbone repository. For anyone changing the pipeline rather than the data,
+`tests/README.md` carries the NA/zero boundary map.
 
 
 ## Installing Backbone and the North European Model
@@ -244,9 +278,9 @@ You can run Backbone either directly from the created output folder or by copyin
 
 ### Choosing VRE processor
 
-Current `config_NT2030.ini` is using PECD timeseries, but old MAF2019 processor is still available. It is not recommended to edit config files stored in GIT, but instead take a copy, rename it, and edit your own file.
+Current config files use PECD timeseries through the `VRE_PECD` processor. It is not recommended to edit config files stored in GIT, but instead take a copy, rename it, and edit your own file.
 
-Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The default configuration for new PECD processors for onshore wind looks like this:
+Timeseries processors are selected and configured in the `timeseries_specs = {}` dictionary in config files. The configuration for onshore wind in `config_NT2030.ini` looks like this:
 
 	'wind_onshore': {
 		'processor_name': 'VRE_PECD',
@@ -254,26 +288,16 @@ Timeseries processors are selected and configured in the `timeseries_specs = {}`
 		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
 		'custom_column_value': {'flow': 'onshore'},
 		'gdx_name_suffix': 'wind_onshore',
-		'calculate_average_year': True,
 		'rounding_precision': 5,
-		'input_file': 'PECD-onshore/',   # folder, not file
-		'attached_grid': 'elec'
+		'input_sub_folder': 'PECD-onshore/',   # folder, not file
+		'attached_grid': 'elec',
+		'is_input_data_dependent': False,
+		'annual_summary': 'avg',
 	},
 
+The keys each spec accepts are documented in the comment block above `timeseries_specs` in any shipped config file.
 
-and the old configuration for the MAF2019 processor for PV would like this:
-
-	'PV': {
-		'processor_name': 'VRE_MAF2019',
-		'bb_parameter': 'ts_cf',
-  		'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
-		'custom_column_value': {'flow': 'PV'},
-		'gdx_name_suffix': 'PV',
-		'calculate_average_year': True,
-		'rounding_precision': 5,
-		'input_file': 'PECD-MAF2019-wide-PV.csv',
-		'attached_grid': 'elec'
-	},
+**The older `VRE_MAF2019` processor has been removed.** A config still naming it will fail to load that processor and write no timeseries for it. Switch the spec to `VRE_PECD` as above; its `PECD-MAF2019-wide-*.csv` inputs are no longer read by anything.
 
 
 

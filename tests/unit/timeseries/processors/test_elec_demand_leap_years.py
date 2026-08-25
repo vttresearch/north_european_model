@@ -42,6 +42,7 @@ def _processor(start_year=2014, end_year=2014):
         end_year=end_year,
         df_annual_demands=pd.DataFrame(),
         scenario_year=2030,
+        demand_grid="elec",
         logger=FakeLogger(),
     )
 

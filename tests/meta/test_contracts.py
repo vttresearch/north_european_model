@@ -168,7 +168,11 @@ class TestCatalogue:
         assert has(lambda v: isinstance(v, str) and v.strip().lower() == "nan")
         assert has(lambda v: isinstance(v, bool))
         assert has(lambda v: isinstance(v, datetime))
-        assert has(lambda v: isinstance(v, str) and v.startswith("#"))
+        # Both halves of the hash story: the ignore marker, and a single '#'
+        # that is *not* a marker -- the two used to be the same character, which
+        # is how a broken formula came to delete its own row.
+        assert has(lambda v: isinstance(v, str) and v.startswith("##"))
+        assert has(lambda v: isinstance(v, str) and v.startswith("#") and not v.startswith("##"))
         assert has(lambda v: isinstance(v, str) and "_" in v)
         assert has(lambda v: isinstance(v, str) and v.lower() == "all")
         assert has(lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0)

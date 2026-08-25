@@ -1,9 +1,14 @@
 # All folders except
 /*/
+!/docs/
 !/src/
 !/src_files/
 !/tests/
 !/.spinetoolbox/
+
+# Documentation pages are shared. Name a page here to keep it local instead --
+# a draft, or something that has not earned a link from README.md yet.
+/docs/Migration guide.md
 
 # toolbox stuff
 /.spinetoolbox/items

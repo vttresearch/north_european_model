@@ -3,10 +3,11 @@
 // Exists to cover the transformations that happen before any pipeline logic
 // runs, and that are invisible in the output unless you know to look:
 //
-//   * a '#' row is a comment and is dropped        (normalize_dataframe)
-//   * a blank row truncates the sheet              (read_input_excels)
+//   * a '##' cell marks its row as not input       (read_input_excels)
+//   * a blank row truncates the sheet, and says so (read_input_excels)
 //   * a 'note' column is dropped entirely          (read_input_excels)
-//   * a blank column header is dropped             (read_input_excels)
+//   * a blank column header is dropped, and says so if it is
+//     inside the table rather than past its end    (read_input_excels)
 //   * a value containing '_' drops its row         (drop_underscore_values)
 //   * '_output1' is stripped from numeric columns  (normalize_dataframe)
 //   * an unknown method warns and becomes 'replace'
@@ -31,11 +32,17 @@ Country | Grid | Scenario | Year | nodeBalance
 FI      | elec | all      | 1    | 1
 
 // The 'Note' column and the blank-header column must both vanish. The blank
-// header is the empty field between Year and capacity_output1.
+// header is the empty field between Year and capacity_output1, and it sits
+// *inside* the table, so it is the reported case rather than the silent one.
+//
+// The '##' is in unit_name_prefix rather than Country deliberately: every other
+// field of that row is valid, so the row can only disappear because the marker
+// was honoured. Put '##' in Country and the whitelist would drop the row anyway,
+// and the test would pass without the rule working at all.
 [unitdata]
 Country | Generator_ID | unit_name_prefix | Scenario | Year | | capacity_output1 | Note | method
 FI      | keeper       |                  | all      | 1    | | 100              | survives this run | replace
-#FI     | commented    |                  | all      | 1    | | 111              | dropped: comment row | replace
+FI      | commented    | ## parked        | all      | 1    | | 111              | dropped: '##' marks the row | replace
 FI      | underscored  | has_underscore   | all      | 1    | | 122              | dropped: '_' in a value | replace
 FI      | methodless   |                  | all      | 1    | | 133              | unknown method coerced | frobnicate
 FI      | keeper       | scen             | test     | 2030 | | 144              | explicit scenario+year | replace

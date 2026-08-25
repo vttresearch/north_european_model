@@ -303,6 +303,13 @@ class SourceDataPipeline:
                 level="info"
             )
 
+        # Both node-bearing frames are now filtered the same way -- same
+        # blacklists, same whitelists -- so what they say about the node set can
+        # be compared.
+        data_loader.report_node_disagreements(
+            self.df_nodedata, self.df_demanddata, self.logger
+        )
+
         # Convert all empty cells to pd.NA across every output DataFrame.
         # Object columns may contain empty strings from normalization; replace them.
         # Float64 NaN values are already represented as pd.NA by the nullable dtype.

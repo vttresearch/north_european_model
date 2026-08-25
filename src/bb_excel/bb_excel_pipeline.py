@@ -170,6 +170,22 @@ class BBExcelPipeline:
         'slackCost',
     ]
 
+    # The numeric columns of the two source frames that carry no PARAM_* block of
+    # their own. Without these, nothing coerced them and a stray string reached
+    # inputData.xlsx as a text cell -- see _coerce_numeric_dtypes.
+    PARAM_EMISSION = [
+        'price',
+    ]
+
+    PARAM_USERCONSTRAINT = [
+        'value',
+    ]
+
+    #: Emission factor columns on nodedata are named by their emission rather than
+    #: listed: create_p_nEmission derives the emission from the suffix of every
+    #: 'emission_XX' column it finds, so the set is open-ended by design.
+    EMISSION_COLUMN_PREFIX = 'emission_'
+
     # Default values for parameters that must not fall back to zero.
     # Applied per-connection in create_p_gnu_io so that every input/output
     # connection (not just _output1) receives the correct non-zero default.
@@ -1747,6 +1763,29 @@ class BBExcelPipeline:
 
         Returns:
         - DataFrame with fake MultiIndex structure
+
+        Dtypes stop meaning anything from here on
+        ----------------------------------------
+        The inserted header row holds parameter *names* -- strings -- in every
+        parameter column. So after this call every parameter column is ``object``
+        by construction, no matter what it held before, and that propagates to the
+        ``*_flat`` frames that drop_fake_MultiIndex derives from it.
+
+        This is the one place in the pipeline where ``object`` does **not** mean
+        "no assumption has been made" (the all-NA rule in utils.py) and does not
+        mean "something unparseable got in". It is simply what a sheet looks like
+        once a text header row has been pushed into it.
+
+        Two consequences worth knowing before touching anything downstream of this:
+
+        - ``is_numeric_dtype`` on a ``*_flat`` frame answers nothing useful, which
+          is why the comparisons in add_storage_starts and
+          create_p_gnBoundaryPropertiesForStates guard with ``isinstance`` or
+          ``pd.notna`` rather than trusting the column.
+        - The numeric gate is deliberately **not** applied to the result. Every
+          parameter column here legitimately mixes a name with numbers, which is
+          exactly the shape gate_xlsx_frame exists to report; running it would
+          flag every sheet in the workbook.
         """
         # Identify parameter columns (those not in dimensions)
         all_columns = list(df.columns)
@@ -1999,6 +2038,15 @@ class BBExcelPipeline:
         param_unit columns that carry a connection suffix trigger a warning and are left
         untouched (ignored downstream).
 
+        Coercion is silent here, and that is deliberate rather than an oversight: by
+        the time a frame reaches this method, utils.gate_xlsx_frame has already
+        reported and blanked every cell that looked like a number and was not, at the
+        one place source workbooks are read. What is left for this to catch is a value
+        that was never numeric in appearance either -- 'unknown' in a capacity column --
+        which no content rule can distinguish from a legitimate label. Reporting it
+        here would name a column rather than a cell and would fire on frames the user
+        cannot act on, so the value becomes NA and the run carries on.
+
         Must be called after _normalize_unitdata_columns() so that param_gnu columns
         already carry explicit connection suffixes.
         """
@@ -2041,12 +2089,38 @@ class BBExcelPipeline:
         self.df_transferdata = df
 
         # --- 3) df_nodedata + df_demanddata: PARAM_GN + PARAM_GN_BOUNDARY_TYPES ---
+        # 'emission_XX' is included by prefix rather than by name: create_p_nEmission
+        # discovers those columns the same way, and it compares each value with
+        # `value > 0` -- which is a TypeError, not a bad number, if a string reaches
+        # it. That was the most likely crash in the whole builder.
         _gn = {p.lower() for p in self.PARAM_GN}
         _gn_boundary = {p.lower() for p in self.PARAM_GN_BOUNDARY_TYPES}
         for attr in ('df_nodedata', 'df_demanddata'):
             df = getattr(self, attr).copy()
             for col in df.columns:
-                if col.lower() in _gn or col.lower() in _gn_boundary:
+                col_l = col.lower()
+                if (col_l in _gn
+                        or col_l in _gn_boundary
+                        or col_l.startswith(self.EMISSION_COLUMN_PREFIX)):
+                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
+            setattr(self, attr, df)
+
+        # --- 4) df_emissiondata + df_userconstraintdata ---
+        # Neither frame was coerced at all before. Their value columns are copied
+        # straight into the output sheets, so anything non-numeric in them was
+        # written to inputData.xlsx as a *text* cell -- which GDXXRW then reads as
+        # a set label rather than a number, with no Python-side error anywhere.
+        for attr, params in (
+            ('df_emissiondata', self.PARAM_EMISSION),
+            ('df_userconstraintdata', self.PARAM_USERCONSTRAINT),
+        ):
+            df = getattr(self, attr, None)
+            if df is None or df.empty:
+                continue
+            df = df.copy()
+            wanted = {p.lower() for p in params}
+            for col in df.columns:
+                if col.lower() in wanted:
                     df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
             setattr(self, attr, df)
 

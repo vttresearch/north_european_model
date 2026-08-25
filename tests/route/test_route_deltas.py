@@ -132,13 +132,17 @@ class TestEditsThatMustChangeNothing:
         assert_delta(workbook_delta(base, variant), expect_no_change=True)
 
     def test_editing_a_commented_row_is_a_no_op(self, tmp_path, reader_rules_base):
+        # Selected by the marker itself: the row carries '## parked' in
+        # unit_name_prefix, and every other field of it is valid. Selecting on a
+        # field that is *also* invalid would make this pass whether or not the
+        # marker still works.
         base = reader_rules_base
         variant = _sheets(
             tmp_path,
             "variant",
             workbook_text_with(READER_RULES, sheet="unitdata",
                                header="capacity_output1", value=999,
-                               where={"Country": "#FI"}),
+                               where={"unit_name_prefix": "## parked"}),
         )
 
         assert_delta(workbook_delta(base, variant), expect_no_change=True)

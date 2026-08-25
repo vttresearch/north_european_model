@@ -23,17 +23,28 @@ PROCESSOR_DIR = pathlib.Path("src/timeseries/processors")
 
 #: processor name -> the kwargs it refuses to start without.
 REQUIRED_KWARGS = {
+    # No scenario_year: the demand rows reach it already whitelisted to the
+    # scenario year, so it had nothing to do with it. demand_grid instead, which
+    # it writes into every output row.
     "DH_demand_fromTemperature": (
         "input_folder", "country_codes", "start_year", "end_year",
-        "df_annual_demands", "scenario_year",
+        "df_annual_demands", "demand_grid",
     ),
+    # Same row as DH_demand_fromTemperature, for the same reasons. scenario_year
+    # used to choose between the 2030 and 2040 workbooks and has nothing left to
+    # choose now that only one is read; the scenario year still reaches the
+    # output through the whitelisted demand rows.
     "elec_demand_TYNDP2024": (
         "input_folder", "country_codes", "start_year", "end_year",
-        "df_annual_demands", "scenario_year",
+        "df_annual_demands", "demand_grid",
     ),
-    "hydro_inflow_MAF2019": ("input_folder", "country_codes", "start_year", "end_year"),
+    "hydro_inflow_MAF2019": (
+        "input_folder", "country_codes", "start_year", "end_year",
+        "df_nodedata",
+    ),
     "hydro_storage_limits_MAF2019": (
         "input_folder", "country_codes", "start_year", "end_year",
+        "df_nodedata",
     ),
     "VRE_PECD": (
         "input_folder", "country_codes", "start_year", "end_year", "attached_grid",
@@ -48,8 +59,13 @@ SAMPLE_VALUES = {
     "start_year": 2014,
     "end_year": 2015,
     "df_annual_demands": pd.DataFrame({"grid": ["elec"], "node": ["FI_elec"], "twh/year": [1.0]}),
+    "df_nodedata": pd.DataFrame({
+        "country": ["FI"], "grid": ["reservoir"], "node": ["FI_reservoir"],
+        "upwardlimit": pd.array([1000.0], dtype="Float64"),
+    }),
     "scenario_year": 2030,
     "attached_grid": "elec",
+    "demand_grid": "dheat",
 }
 
 

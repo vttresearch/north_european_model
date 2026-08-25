@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -7,6 +8,27 @@ import src.utils as utils
 from src.infrastructure.logger import IterationLogger
 
 FilterValue = list[str] | list[int]
+
+
+#: pandas' rename for a repeated header: the second 'capacity' becomes
+#: 'capacity.1', the third 'capacity.2'. A column genuinely called 'eff.1' in the
+#: spreadsheet matches this too, which is why the base name has to be present in
+#: the same sheet before anything is concluded.
+_RENAMED_DUPLICATE = re.compile(r"^(?P<base>.+)\.(?P<n>\d+)$")
+
+
+def _has_no_header(col) -> bool:
+    """Whether a column's header cell was left empty in the spreadsheet.
+
+    pandas names such a column ``Unnamed: 7`` after its position, so the two
+    spellings -- a genuinely blank label and pandas' stand-in for one -- mean the
+    same thing and are tested together. Shared by the reporting and the dropping
+    below so they cannot disagree about which columns they are talking about.
+    """
+    return (
+        col is None
+        or (isinstance(col, str) and (col.strip() == "" or col.lower().startswith("unnamed:")))
+    )
 
 
 def read_input_excels(
@@ -24,10 +46,26 @@ def read_input_excels(
 
     Cleaning steps
     --------------
+    - Drop columns whose header starts with ``##``: the author's own working columns.
+      Applied first, so a helper table beside the real one is never validated as input.
     - Drop columns whose header is empty/whitespace or auto-generated as 'Unnamed: x'.
-    - Optionally drop any column named 'note' (any casing).
+      One sitting *inside* the table rather than past its end is warned about first; one
+      past the end is the scratch area and is silent. A sheet where no column has a
+      header at all is an error, not an empty result.
+    - Report a header used twice. pandas renames the repeat to 'capacity.1', which
+      nothing reads, so the column is never used. Reported, never merged: the sheet
+      gives no basis for choosing which value wins.
+    - Optionally drop any column named exactly 'note' (any casing). Superseded by the
+      ``##`` marker above, which is not limited to one name or one column per sheet;
+      kept because shipped workbooks still rely on it, and because a note containing an
+      underscore would otherwise reach ``drop_underscore_values`` and delete its row.
     - Truncate the DataFrame at the first fully empty row (drop that row and all below).
-      An "empty" cell is NA or a string consisting only of whitespace.
+      An "empty" cell is NA or a string consisting only of whitespace. Warned about only
+      when non-empty rows are discarded; trailing blank rows are how every sheet ends.
+    - Drop rows carrying ``##`` in any cell, evaluated after the column drops so that
+      scratch text in a helper column cannot delete a row of the real table.
+    - Report and blank cells that should hold a number but do not, and cells holding an
+      Excel error value, via ``utils.gate_xlsx_frame``.
 
     Parameters
     ----------
@@ -81,13 +119,77 @@ def read_input_excels(
                 )
                 continue
 
-            # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
-            # Consider empty if None, whitespace-only, or header starts with 'unnamed:' (case-insensitive).
-            empty_title_cols = [
+            # --- Drop columns the author marked as not the model's ---
+            # '##' in a header is the column counterpart of '##' in a data row:
+            # one marker, one meaning, and it has to be typed deliberately.
+            #
+            # It runs before everything below it on purpose. A helper table
+            # parked to the right of the real one is scratch work -- half-built
+            # formulas, intermediate sums, the occasional #DIV/0! -- and the
+            # numeric gate a few lines down would otherwise report all of it as
+            # broken input. Dropping first also means a blank spacer column
+            # between the two tables has nothing named to its right any more, so
+            # it reads as the end of the sheet rather than a hole in it.
+            ignored_cols = [
                 c for c in df.columns
-                if c is None
-                or (isinstance(c, str) and (c.strip() == "" or c.lower().startswith("unnamed:")))
+                if str(c).strip().startswith(utils.IGNORE_MARKER)
             ]
+            if ignored_cols:
+                df = df.drop(columns=ignored_cols, errors="ignore")
+
+            # --- A sheet with no headers at all cannot be read ---
+            # Almost always a blank row above the table: the reader takes row 1
+            # as the header, so every column comes back unnamed, all of them are
+            # dropped below, and a frame with no columns has every row read as
+            # empty -- which truncates the sheet to nothing. Silently, and
+            # looking exactly like a sheet that was legitimately empty.
+            if df.columns.size and not any(not _has_no_header(c) for c in df.columns):
+                logger.log_status(
+                    f"[{file_name}:{sheet}] No column has a header, so nothing on the sheet "
+                    f"can be identified. The usual cause is a blank row above the header row. "
+                    f"The sheet is skipped.",
+                    level="error"
+                )
+                continue
+
+            # --- Drop columns with empty titles (incl. 'Unnamed: x') ---
+            # A header left blank means "not part of the table", and past the
+            # last named column that is exactly what it is: the scratch area to
+            # the right. One with a named column still to its right is a
+            # different thing -- a hole in the table, usually a header someone
+            # deleted -- and the values under it are being discarded. The header
+            # cannot be recovered, so the column goes either way; the difference
+            # is whether anyone is told.
+            #
+            # Ordering note: '##' columns were dropped above, so a spacer between
+            # the real table and a declared helper block has nothing named to its
+            # right by now and stays silent, as intended.
+            cols = list(df.columns)
+            last_named = max(
+                (i for i, c in enumerate(cols) if not _has_no_header(c)),
+                default=-1,
+            )
+            holes = [
+                (i, int(df[c].notna().sum()))
+                for i, c in enumerate(cols)
+                if _has_no_header(c) and i < last_named
+            ]
+            if holes:
+                carrying = [f"column {i + 1} ({n} values)" for i, n in holes if n]
+                empty = [f"column {i + 1}" for i, n in holes if not n]
+                detail = "; ".join(filter(None, [
+                    ", ".join(carrying),
+                    ", ".join(empty),
+                ]))
+                logger.log_status(
+                    f"[{file_name}:{sheet}] {len(holes)} column(s) without a header sit inside "
+                    f"the table rather than past its end: {detail}. Their headers cannot be "
+                    f"recovered, so they are dropped. Give each a header, or mark it "
+                    f"'{utils.IGNORE_MARKER}' if it is working material.",
+                    level="warn"
+                )
+
+            empty_title_cols = [c for c in cols if _has_no_header(c)]
             if empty_title_cols:
                 df = df.drop(columns=empty_title_cols, errors="ignore")
 
@@ -97,6 +199,39 @@ def read_input_excels(
                 if note_cols:
                     df = df.drop(columns=note_cols, errors="ignore")
 
+            # --- Report a header used twice ---
+            # Excel allows two columns to carry the same header; pandas does not,
+            # and renames the second 'capacity' to 'capacity.1'. Nothing reads
+            # that name, so the column is simply never used, silently.
+            #
+            # Reported rather than merged. Merging would have to decide which of
+            # the two values wins, or how to combine them, and the sheet gives no
+            # basis for either -- a wrong answer chosen automatically is worse
+            # than a right question asked out loud. The file and sheet are still
+            # known here, which is what makes the question answerable.
+            #
+            # After the '##' drop above, or every helper block would report
+            # itself: those columns are all headed '##', so pandas numbers them
+            # '##.1', '##.2' and they look exactly like repeated headers.
+            present = {str(c) for c in df.columns}
+            repeated: Dict[str, List[str]] = {}
+            for col in df.columns:
+                match = _RENAMED_DUPLICATE.match(str(col))
+                if match and match.group("base") in present:
+                    repeated.setdefault(match.group("base"), []).append(col)
+            if repeated:
+                detail = "; ".join(
+                    f"'{base}' repeated {len(dups)} time(s), ignoring "
+                    + ", ".join(f"{c} ({int(df[c].notna().sum())} values)" for c in dups)
+                    for base, dups in repeated.items()
+                )
+                logger.log_status(
+                    f"[{file_name}:{sheet}] Duplicate column header(s): {detail}. Only the "
+                    f"first column of each name is read. Give the others their own name, "
+                    f"or mark them '{utils.IGNORE_MARKER}' if they are working material.",
+                    level="warn"
+                )
+
             # --- Truncate at the first fully empty row ---
             # Treat empty strings/whitespace as NA, then find first all-NA row.
             _tmp = df.replace(r"^\s*$", pd.NA, regex=True)
@@ -104,7 +239,41 @@ def read_input_excels(
 
             if row_is_empty.any():
                 first_empty_pos = row_is_empty.values.argmax()  # position (0-based) of first True
+
+                # Same rule as for columns, on the other axis. Trailing blank
+                # rows are simply where the table stops and are silent -- every
+                # sheet has them. A blank row with real rows still below it is a
+                # spacer someone used mid-table, and everything under it is being
+                # thrown away.
+                below = row_is_empty.iloc[first_empty_pos:]
+                discarded = int((~below).sum())
+                if discarded:
+                    logger.log_status(
+                        f"[{file_name}:{sheet}] An empty row at row {first_empty_pos + 2} ends "
+                        f"the table, so {discarded} row(s) below it are not read. An empty row "
+                        f"is where a sheet stops, not a separator inside it. Remove it, or mark "
+                        f"the rows below '{utils.IGNORE_MARKER}' if they are working material.",
+                        level="warn"
+                    )
+
                 df = df.iloc[:first_empty_pos]  # drop the empty row and everything below
+
+            # --- Drop rows the author marked as not the model's ---
+            # After the column drops above, deliberately: a '##' typed as free
+            # text in a helper column must not delete a real row of the table.
+            # Before the gate, for the same reason the column drop is -- a marked
+            # row is working material and its half-finished numbers are not
+            # something to report.
+            ignored_rows = utils.ignored_row_mask(df)
+            if ignored_rows.any():
+                df = df[~ignored_rows]
+
+            # --- Gate: report cells that should be numbers and are not ---
+            # Placed here because this is the only route source workbooks take,
+            # so no future reader can forget it. It runs before the comment-row
+            # rule in normalize_dataframe, which means an Excel error value is
+            # reported rather than being deleted along with its row.
+            df = utils.gate_xlsx_frame(df, f"{file_name}:{sheet}", logger)
 
             # Optionally add provenance columns
             if add_source_cols:
@@ -138,9 +307,11 @@ def normalize_dataframe(
     1) Lower-cases all column names.
     2) Lower-case column values (lowercase_col_values): lower-cases selected identifier-like columns (e.g. 'scenario').
     3) Remove leading and trailing whitespace from string columns.
-    3b) Drop comment rows: rows where any non-underscore-prefixed column contains a string
-       starting with ``#`` are silently removed. Use this to annotate or section off rows
-       in the source Excel (e.g. put ``# section header`` in the scenario column).
+    3b) Drop ignored rows: rows where any non-underscore-prefixed column contains a string
+       starting with ``##`` are silently removed. Use this to annotate or section off rows
+       in the source Excel (e.g. put ``## section header`` in the scenario column). A
+       single ``#`` is ordinary data -- it is how every Excel error value starts, and a
+       broken formula used to delete its own row.
     4) 'method' column: ensures existence; trims/lower-cases values; unknown methods
        are warned and coerced to 'replace' against `allowed_methods`.
     5) Missing/empties: treat empty strings as NA.
@@ -198,12 +369,11 @@ def normalize_dataframe(
         if pd.api.types.is_string_dtype(df_out[col]) or pd.api.types.is_object_dtype(df_out[col]):
             df_out[col] = df_out[col].map(lambda x: x.strip() if isinstance(x, str) else x)
 
-    # 3b) Drop comment rows: any row where a non-underscore column has a string cell starting with '#'
-    data_cols = [c for c in df_out.columns if not str(c).startswith("_")]
-    comment_mask = df_out[data_cols].apply(
-        lambda row: any(isinstance(v, str) and v.startswith("#") for v in row),
-        axis=1,
-    )
+    # 3b) Drop rows the author marked with '##' in any cell.
+    # read_input_excels has normally done this already, before the numeric gate;
+    # repeating it is idempotent and is what makes the rule hold for callers that
+    # build a frame themselves rather than reading a workbook.
+    comment_mask = utils.ignored_row_mask(df_out)
     if comment_mask.any():
         df_out = df_out[~comment_mask].reset_index(drop=True)
 
@@ -221,8 +391,14 @@ def normalize_dataframe(
         method = method.where(~method.isin(unknown_vals), "replace")
     df_out["method"] = method
 
-    # 5) Treat empty strings as NA
-    df_out = df_out.replace({"": pd.NA})
+    # 5) Treat empty strings as NA.
+    # where(~eq) rather than replace(): replace() also tries to downcast the
+    # result, which pandas has deprecated and which emits a FutureWarning as soon
+    # as an object column is left holding only numbers -- exactly what happens
+    # when a comment row is dropped from a two-row sheet. The downcast was never
+    # wanted here in any case, since standardize_df_dtypes decides every dtype on
+    # the next line.
+    df_out = df_out.where(~df_out.eq(""), pd.NA)
 
     # 6) dtype conversions (empty→object, numeric strings→Float64)
     df_out = utils.standardize_df_dtypes(df_out)
@@ -1204,3 +1380,84 @@ def filter_nonzero_numeric_rows(
 
     numeric_cols = df.select_dtypes(include='number').columns.difference(exclude)
     return df[df[numeric_cols].sum(axis=1) != 0]
+
+
+#: A grid is only cross-checked once this share of its demand nodes already have
+#: a nodedata row. Below it the grid is taken to be one nodedata does not
+#: describe at all -- electricity and hydrogen nodes carry no nodedata row today,
+#: and the day someone adds a single one of them, every other node of that grid
+#: must not suddenly be reported as missing.
+NODE_COVERAGE_THRESHOLD = 0.5
+
+
+def report_node_disagreements(
+    df_nodedata: pd.DataFrame,
+    df_demanddata: pd.DataFrame,
+    logger: IterationLogger | None = None,
+    ) -> None:
+    """
+    Report a node that one of nodedata and demanddata knows about and the other does not.
+
+    This is the check for a node name that came out of a mistyped cell. A node is
+    built as ``country_grid[_node_suffix]``, so a wrong ``country`` produces a
+    plausible-looking node that exists nowhere else -- ``NOS0_dheat_HKI`` from a
+    row meaning ``FI00``. Nothing downstream can see it: the workbook builder
+    unions the node names from every source, so the invented node simply becomes
+    a Backbone node with a balance penalty and no supply, and the real one loses
+    its demand.
+
+    Neither a hardcoded list of node names nor a duplicate check can find that.
+    A suffix is legitimately reused across grids (``HKI`` for electricity and for
+    heat) and across countries (industrial steam is added to all of them). What
+    is *not* legitimate is a node that only one of the two tables has heard of,
+    within a grid the other one describes.
+
+    That last clause is the whole trick, and ``NODE_COVERAGE_THRESHOLD`` is where
+    it lives: a grid nodedata does not describe produces no findings, so plain
+    balance nodes stay silent while ``dheat``, ``steam`` and the hydro grids are
+    checked.
+
+    Reports only, and never asserts which cause it is. A mistyped cell is one
+    cause; the other is a demand row written as ``0``, which
+    ``filter_nonzero_numeric_rows`` drops as empty, so it arrives here looking
+    exactly like a row nobody wrote. Both leave a node the model carries with
+    nothing to serve, and telling them apart needs the workbook, so no row is
+    dropped and the message names both.
+    """
+    if logger is None or df_nodedata.empty or df_demanddata.empty:
+        return
+    for df in (df_nodedata, df_demanddata):
+        if 'grid' not in df.columns or 'node' not in df.columns:
+            return
+
+    def nodes_by_grid(df):
+        pairs = df[['grid', 'node']].dropna()
+        grouped = {}
+        for grid, node in zip(pairs['grid'].astype(str), pairs['node'].astype(str)):
+            grouped.setdefault(grid.strip().lower(), set()).add(node.strip())
+        return grouped
+
+    described = nodes_by_grid(df_nodedata)
+    demanded = nodes_by_grid(df_demanddata)
+
+    for grid in sorted(set(described) & set(demanded)):
+        in_nodedata, in_demanddata = described[grid], demanded[grid]
+        covered = len(in_demanddata & in_nodedata) / len(in_demanddata)
+        if covered < NODE_COVERAGE_THRESHOLD:
+            continue
+
+        for missing_from, present_in, names in (
+            ("nodedata", "demanddata", sorted(in_demanddata - in_nodedata)),
+            ("demanddata", "nodedata", sorted(in_nodedata - in_demanddata)),
+        ):
+            if not names:
+                continue
+            logger.log_status(
+                f"{len(names)} '{grid}' node(s) appear in {present_in} but not in "
+                f"{missing_from}: {', '.join(names)}. Every other '{grid}' node is in "
+                f"both. Either a country, grid or node_suffix cell is mistyped -- which "
+                f"does not fail, it invents a node name that looks real and silently "
+                f"takes another node's data -- or the row is absent on purpose, "
+                f"including a demand row written as 0, which is dropped as empty.",
+                level="warn",
+            )

@@ -52,6 +52,7 @@ codebase's history lives at the seam. This table is what the suite is organised 
 | 2 | within source merging | `pd.NA` ≠ `0` | same | `merge_row_by_row` truth table (`:884-909`) | specified |
 | 3 | source DataFrames → BB Excel builder | `pd.NA` ≠ `0` | `0 = NA = None = not set` | `fill_all_na` / `fill_numeric_na` (`utils.py:107,119`) | specified |
 | 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns (`bb_excel_pipeline.py:332`) | specified |
+| 4b | BB frame → fake-MultiIndex sheet | dtype is meaningful | every parameter column is `object` | `create_fake_MultiIndex` inserts a text header row | specified |
 | 5 | processor `process()` → `main_result` | NaN = no data | NaN = no data | validation in `ProcessorRunner` | specified |
 | 6 | `main_result` → climate windows → forecasts | NaN = no data | NaN = no data | nothing — gaps pass through | specified |
 | 7 | window DataFrame → GDX | NaN = no data | GAMS: `0 = empty` | `GDX_exchange.prepare_values_for_gdx` | specified |
@@ -100,6 +101,75 @@ It would become the GAMS set element `''`, so it is rejected rather than filled 
 reported, because it means something upstream is broken rather than merely incomplete.
 
 Row 8 is still unspecified and remains open.
+
+### Boundary 4b: after the fake MultiIndex, dtype means nothing
+
+`create_fake_MultiIndex` pushes a row of parameter **names** into the sheet, so every
+parameter column below it is `object` whatever it held before — and so is every `*_flat`
+frame derived from it. This is the one place where `object` does not mean "no assumption
+has been made" and does not mean something unparseable got in.
+
+It is also why the numeric gate is not applied there: a column that legitimately mixes a
+name with numbers is precisely the shape the gate reports, so running it would flag every
+sheet in the workbook.
+
+### Read, check, then process
+
+Every source data type runs in that order: `read_input_excels` (which gates the sheet),
+`normalize_dataframe`, `drop_underscore_values` — and only then `expand_all_country`, the
+blacklists, `apply_whitelist` and `merge_row_by_row`.
+
+The order is the point, not an accident. The whitelist drops rows for a scenario, year or
+country this run does not cover. If it ran first, a malformed cell in one of those rows
+would disappear as merely irrelevant and never be reported, and the author would discover
+it only when they ran the scenario that does use it. Judging a row's *form* before its
+*relevance* is what makes a build's complaints complete.
+
+This masking is not hypothetical: a route test asserting that a `#`-prefixed row was
+treated as a comment went on passing after the marker moved to `##`, because the row's
+country was `#FI` and the whitelist rejected it anyway. Nothing in the test could tell the
+two reasons apart, so it would have stayed green indefinitely — it surfaced only because a
+neighbouring assertion about warnings failed. `TestFormalityIsJudgedBeforeRelevance` in
+`route/test_route_reader_rules.py` now pins the pipeline order behaviourally.
+
+The one check that deliberately runs late is `merge_unittypedata_into_unitdata`'s unmatched
+`generator_id` report: it is a cross-reference rather than a property of the row, so it
+should only speak about rows the run actually uses.
+
+### `##` is what the author declares is not input
+
+One marker, two placements: in a **data row** it skips the row, in a **column header** it
+skips the column. Both are dropped in `read_input_excels` *before* the numeric gate, so a
+helper table beside the real one — half-built formulas, `#DIV/0!`, pasted values — is never
+validated as input.
+
+Order matters and is asserted: columns are dropped first, so `##` written as free text in a
+helper column cannot delete the row of the real table it happens to line up with.
+
+The marker used to be a single `#`. Every Excel error value starts with one, so a broken
+formula read as a comment and deleted its own row silently.
+
+### Boundary 1 rejects a cell that should be a number and is not
+
+`read_input_excels` runs `utils.gate_xlsx_frame` over every sheet. A column holding **both**
+real numbers and values that look like numbers but do not parse (`1,000.0`, `100 MW`,
+`(500)`) has those cells reported at `level="error"` and set to `pd.NA`.
+
+Blanking rather than interpreting is the point: `1.000` is a thousand to one author and one
+to another, and the cell does not say which. Blanking also lets `standardize_df_dtypes` type
+the column `Float64` by itself, which is what stops one bad cell demoting a whole column to
+`object` — the failure that dropped every row of a sheet through
+`filter_nonzero_numeric_rows`, and stopped the `_output1` rename from firing.
+
+The rule is *starts with a digit after any sign or currency symbol*, not *contains a digit*:
+the weaker test blanked `chp1` out of an identifier column. A purely textual value in a
+numeric column (`unknown` in `capacity`) is deliberately **not** caught — no content-only
+rule can tell it from a label.
+
+Generated input takes the opposite decision. `BaseProcessor.read_input_csv` refuses the file
+outright, because a generator does not make isolated typos and blanking would manufacture a
+column of zeros. It also treats a `ParserWarning` as fatal, which is the only way to catch an
+unquoted thousands separator shifting every column of a CSV.
 
 ### The all-NA rule
 

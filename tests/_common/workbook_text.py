@@ -61,8 +61,9 @@ from openpyxl import Workbook, load_workbook
 #: Marker for a deliberately blank spreadsheet row.
 BLANK_ROW = "<<blank>>"
 
-#: Fixture comment prefix. Distinct from '#', which is meaningful *to the
-#: pipeline* and must therefore survive into the workbook.
+#: Fixture comment prefix. Distinct from '##', which is meaningful *to the
+#: pipeline* -- it is how an author marks a row or column as not being input --
+#: and must therefore survive into the workbook rather than being eaten here.
 COMMENT_PREFIX = "//"
 
 WORKBOOK_SUFFIX = ".wb.txt"
