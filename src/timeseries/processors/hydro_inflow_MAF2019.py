@@ -328,12 +328,18 @@ class hydro_inflow_MAF2019(BaseProcessor):
         situations. The caller records the first as information; this one is a
         warning, because a zone with rows that yields no inflow is inconsistent
         with itself.
+
+        "Carries nothing" is `sum() > 0` rather than `sum() != 0`, and the same
+        test decides both what is reported and what is dropped. Inflow is
+        declared non-negative, so a negative total is not a column with content:
+        it is a column whose content is wrong, and reporting it as empty while
+        writing it anyway would be the worst of both.
         """
-        empty = [c for c in result_df.columns if not result_df[c].sum() > 0]
-        for node in empty:
+        keep = result_df.sum() > 0
+        for node in result_df.columns[~keep]:
             if not any(node == n for n, _, _ in self.unbuilt_nodes):
                 self.unbuilt_nodes.append((node, reason, "warn"))
-        return result_df.loc[:, result_df.sum() != 0]
+        return result_df.loc[:, keep]
 
     def _report_year_change_outliers(self, weekly_series, label):
         """Name a year change that is a gross outlier in this node's own weeks.

@@ -113,7 +113,7 @@ class TimeseriesPipeline:
         return specs
 
 
-    def _declared_source_data(self, processor_spec: dict) -> tuple[str, ...]:
+    def _declared_source_data(self, processor_spec: dict) -> tuple[str, ...] | None:
         """
         Read ``requires_source_data`` off a processor class without running it.
 
@@ -121,21 +121,31 @@ class TimeseriesPipeline:
         whether the processor may be *skipped* -- and a cache written by an
         earlier run in a different output folder is the wrong authority for that.
 
-        Any failure returns an empty tuple. A module that will not import is
-        ProcessorRunner's to report, and it does so naming the file.
+        ``None`` means the question could not be answered, and is not the same as
+        ``()``. An empty tuple licenses a copy from the reference folder; a module
+        that will not import licenses nothing, so returning ``()`` for it would
+        turn a broken processor into a silently copied one. The caller runs it
+        instead, and ProcessorRunner reports the import failure naming the file.
+
+        This executes the module, and ProcessorRunner executes it again a moment
+        later. That is accepted rather than cached: a processor module is class
+        and constant definitions, so the second execution costs a few
+        milliseconds and observes nothing.
         """
         try:
             module_spec = importlib.util.spec_from_file_location(
                 processor_spec["name"], Path(processor_spec["file"])
             )
             if module_spec is None or module_spec.loader is None:
-                return ()
+                return None
             module = importlib.util.module_from_spec(module_spec)
             module_spec.loader.exec_module(module)
             processor_cls = getattr(module, processor_spec["name"], None)
+            if processor_cls is None:
+                return None
             return tuple(getattr(processor_cls, "requires_source_data", ()) or ())
         except Exception:
-            return ()
+            return None
 
 
     def _create_other_demands(
@@ -446,6 +456,15 @@ class TimeseriesPipeline:
                     continue
 
                 declared = self._declared_source_data(proc)
+                if declared is None:
+                    self.logger.log_status(
+                        f"'{human_name}' is configured is_input_data_dependent: false, but "
+                        f"{proc['file']} could not be read to find out whether it needs "
+                        f"source data. Running it instead of copying, so that the reason "
+                        f"is reported rather than hidden behind a copied file.",
+                        level="warn"
+                    )
+                    continue
                 if declared:
                     self.logger.log_status(
                         f"'{human_name}' is configured is_input_data_dependent: false, but "
