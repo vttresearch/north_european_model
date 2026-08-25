@@ -50,6 +50,11 @@ links to it.
   reads the Excel files in `src_files/data_files/`: marking rows and columns as not
   input, where a sheet ends, what happens to a cell that should be a number and is not,
   and how `method` combines rows from several files.
+- [Timeseries](docs/timeseries.md) — how the build turns any hourly data source into
+  Backbone input: what a processor is responsible for and what the shared pipeline does,
+  what climate years and windows are, why a zero is the hard case, and what is checked
+  before anything is written. Start here, then read the page for the source you care
+  about.
 - [Hydro data](docs/hydro.md) — the four hydro types and what they simplify away, which
   file supplies which number and in what unit, which seasonal limits are not built and
   why, and how gaps in the PECD data are repaired or refused.

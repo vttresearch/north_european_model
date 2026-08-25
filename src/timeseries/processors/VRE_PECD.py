@@ -12,13 +12,12 @@ from src.timeseries.timeseries_helpers import summarise
 
 #: The 22 underscore-separated fields of a PECD file name, in order.
 #:
-#: Several of these names are read off position and context rather than off a
-#: published schema -- `statistic`, `correction`, `origin` and `scenario` in
-#: particular are inferences. That costs less than it looks like it should,
-#: because nothing below depends on knowing what a field *means*: the checks ask
-#: only whether two files agree on it. A name that turns out to be wrong
-#: misleads a reader of the build log; a field left out of the comparison would
-#: let a genuine difference through unseen, which is worse.
+#: Several names are read off position and context rather than a published
+#: schema -- `statistic`, `correction`, `origin` and `scenario` are inferences.
+#: That costs little, because nothing below depends on what a field *means*: the
+#: checks ask only whether two files agree on it. A wrong name misleads a reader
+#: of the build log; a field left out of the comparison would let a genuine
+#: difference through unseen, which is worse.
 FILENAME_FIELDS = (
     "resolution_class", "dataset", "provider", "source_grid",
     "technology", "technology_detail", "product", "spatial_level",
@@ -35,10 +34,10 @@ SELECTION_FIELDS = tuple(
     if field not in ("window_start", "window_end")
 )
 
-#: The subset worth naming in a one-line log entry: the four fields that differ
-#: between the shipped 4.1 files and a 4.2 download, plus hub height. The other
-#: seventeen are constant across every PECD file this project has seen, and
-#: printing them buries the ones that vary.
+#: The subset worth naming in a one-line log entry: the four that differ between
+#: a 4.1 and a 4.2 download, plus hub height. The other seventeen are constant
+#: across every PECD file this project has seen, and printing them buries the
+#: ones that vary.
 REPORTED_FIELDS = (
     "pecd_version", "physical_model", "technology_variant", "regridding",
     "hub_height",
@@ -64,11 +63,9 @@ class PecdFile:
     checked as a whole -- which download it came from, which hours it claims --
     before a single value is loaded.
 
-    Kept as a record rather than collapsed to a "folder is consistent" boolean
-    on purpose. The selection a file came from logically belongs to the scenario
-    being modelled (old-fleet profiles for a historical year, future turbines
-    for 2040), and making it follow the scenario year is intended work. That
-    will need this object; a boolean would have to be written twice.
+    A record rather than a "folder is consistent" boolean, because making the
+    selection follow the scenario year is intended work and will need this
+    object. See the open items in docs/vre-timeseries.md.
     """
 
     path: str
@@ -100,47 +97,19 @@ class VRE_PECD(BaseProcessor):
     Capacity factors for wind and solar, from a folder of PECD CSV files.
 
     One instance serves all three specs -- PV, onshore, offshore -- which differ
-    only in the folder they are pointed at and the `flow` they write. See
-    `docs/vre-timeseries.md`.
+    only in the folder they are pointed at and the `flow` they write.
 
-    What this processor cannot know
-    -------------------------------
-    A PECD download is a set of roughly ten choices -- technology variant,
-    turbine class, regridding, physical model -- and **none of them is written
-    into the CSV body**. The file name is the only record. Two files from
-    different downloads have the same columns on the same hourly index and
-    differ only in their values, so a folder holding both produces one series
-    silently concatenated from two.
+    A PECD download is roughly ten choices, and **none of them is written into
+    the CSV body**: the file name is the only record, and two files from
+    different downloads carry the same columns on the same hourly index. That is
+    what most of this file is about -- `_describe_file` reads the name and the
+    comment block, `_warn_blended_selection` says when a folder holds more than
+    one. Whether a capacity factor is *right* is not asked anywhere here; that
+    is a question about the scenario, and belongs to input data validation.
 
-    Hence `_describe_file`, which reads the name and the comment block, and
-    `_warn_blended_selection`, which says so when a folder holds more than one.
-    It warns rather than refuses: the files are well-formed, and nothing here
-    knows which download the scenario wanted -- only that today's arrangement,
-    one configured folder per spec, cannot have meant both at once.
-
-    Whether a capacity factor is *right* is not asked anywhere in this file.
-    That is a question about the scenario, and it belongs to input data
-    validation.
-
-    Which zone a node gets
-    ----------------------
-    PECD's wind zones are finer than this model's nodes, so a code like `FR00`
-    matches no column and has to be resolved by prefix -- and where several
-    zones match, the one with the highest total is taken. That is a modelling
-    decision, not a lookup: the chosen zone's capacity factor sits well above
-    the mean of the zones it beat. It is kept because capacity is built at good
-    sites rather than at average ones, and it is *reported* every run so that it
-    is a decision someone can see rather than one buried in a prefix.
-
-    Zeros
-    -----
-    A zero capacity factor is an ordinary statement -- a calm hour, or midnight
-    for PV -- so unlike a heat demand node there is no per-hour zero alarm here;
-    it would fire on hundreds of correct hours and teach people to ignore
-    warnings. Two narrower checks replace it: a *series* that could not be built
-    at all (`_report_coverage`), and a single flat hour wedged between two
-    ordinary ones (`_report_isolated_dropouts`), which is what a dropped value
-    would look like.
+    docs/vre-timeseries.md is the documentation and carries the reasoning: what
+    a download decides, why the best of several zones wins, and why a zero hour
+    is ordinary here where it is an alarm for heat demand.
 
     Parameters
     ----------
@@ -159,25 +128,21 @@ class VRE_PECD(BaseProcessor):
         Written into the output columns it names; `flow` is the one used here.
     """
 
-    # A capacity factor is a fraction of installed capacity, so it cannot leave
-    # [0, 1] whatever the weather did. Declared once for all three specs (PV,
-    # onshore, offshore) that share this class. See BaseProcessor.
+    #: A capacity factor is a fraction of installed capacity, so it cannot leave
+    #: [0, 1] whatever the weather did.
     value_range = (0.0, 1.0)
     value_sign = "non_negative"
 
     #: How far above the written floor both neighbours must sit before a flat
     #: hour between them is called a dropout. A modelling choice: the source
-    #: rounds to five decimals, so a genuine calm spell produces long runs of
-    #: values a hair above zero, and any rule that ignores magnitude fires on
-    #: hundreds of them. The *floor* is not a constant -- it comes from the
-    #: user's `cutoff_below`; see `_written_floor`.
+    #: rounds to five decimals, so any rule that ignores magnitude fires on
+    #: hundreds of ordinary calm hours. The *floor* is not a constant -- it comes
+    #: from the user's `cutoff_below`; see `_written_floor`.
     ISOLATED_DROPOUT_MULTIPLIER = 5.0
 
     def __init__(self, **kwargs):
-        # Initialize base class
         super().__init__(**kwargs)
 
-        # List of required parameters
         required_params = [
             'input_folder',
             'country_codes',
@@ -186,28 +151,24 @@ class VRE_PECD(BaseProcessor):
             'attached_grid'
         ]
 
-        # Check if all required parameters are present
         missing_params = [param for param in required_params if param not in kwargs]
         if missing_params:
             raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
 
-        # Unpack required parameters
         for param in required_params:
             setattr(self, param, kwargs.get(param))
 
-        # Optional parameters. The scaling default is 1 here and not only in
-        # config_reader: a processor constructed directly -- by a test, or by
-        # any caller not going through the config -- used to arrive with None,
-        # and `None != 1` sent it into the scaling branch to multiply by it.
+        # The scaling default is 1 here and not only in config_reader: a caller
+        # not going through the config arrives with None, and `None != 1` sends
+        # it into the scaling branch to multiply by it.
         scaling_factor = kwargs.get('scaling_factor')
         self.scaling_factor = 1 if scaling_factor is None else scaling_factor
         self.custom_column_value = kwargs.get('custom_column_value') or {}
 
-        # ProcessorRunner applies both of these to the `value` column after this
-        # processor returns, so together they decide whether a small capacity
-        # factor survives as a number or reaches GAMS as a zero.
-        # _report_isolated_dropouts needs them to test what will actually be
-        # written rather than what this processor happens to hold.
+        # ProcessorRunner applies both to the `value` column after this processor
+        # returns, so together they decide whether a small capacity factor
+        # survives as a number or reaches GAMS as a zero. _report_isolated_dropouts
+        # needs them to test what will actually be written.
         try:
             self.rounding_precision = int(kwargs.get('rounding_precision') or 0)
         except (TypeError, ValueError):
@@ -218,7 +179,6 @@ class VRE_PECD(BaseProcessor):
         except (TypeError, ValueError):
             self.cutoff_below = None
 
-        # Derive full-year date boundaries from integer year values
         self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
         self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
@@ -233,9 +193,8 @@ class VRE_PECD(BaseProcessor):
         """Read the leading `#` comment block and the column line beneath it.
 
         PECD writes about fifty comment lines of metadata as `## Key` followed
-        by `### Value`, then the real header row. The processor used to count
-        past this block without looking at it, which is where the version,
-        the unit and the declared date range were being thrown away.
+        by `### Value`, then the real header row. It carries the version, the
+        unit and the declared date range.
 
         `utf-8-sig` rather than the platform default: these files are written
         elsewhere and a byte-order mark would otherwise turn the first `#` into
@@ -245,9 +204,8 @@ class VRE_PECD(BaseProcessor):
         -------
         tuple[int, dict, tuple]
             The index of the real header row, the `## Key` -> `### Value` pairs,
-            and the column names as split from the header line. The columns are
-            used only to resolve candidates before reading; `read_input_csv`
-            remains the authority and is checked against them.
+            and the column names split from the header line. The columns only
+            resolve candidates before reading; `read_input_csv` is the authority.
         """
         metadata = {}
         key = None
@@ -263,9 +221,9 @@ class VRE_PECD(BaseProcessor):
                 stripped = line.rstrip("\n")
                 depth = len(stripped) - len(stripped.lstrip("#"))
                 text = stripped[depth:].strip()
-                # Only the first value under a key is taken. Deeper levels
-                # belong to nested blocks (a point of contact has a name and a
-                # mail address under it) and are not metadata about the data.
+                # Only the first value under a key. Deeper levels belong to
+                # nested blocks -- a point of contact has a name and a mail
+                # address under it -- and are not metadata about the data.
                 if depth == 2:
                     key = text
                 elif depth == 3 and key is not None and key not in metadata:
@@ -306,18 +264,17 @@ class VRE_PECD(BaseProcessor):
         """Everything about one file that is not its data, or None.
 
         A file that cannot be described is skipped and said so, rather than
-        included on the grounds that it might be fine. That fallback is what let
-        a file from another dataset into the folder unnoticed -- and since the
-        name is the only record of which download a file came from, a name this
-        cannot read is a file whose provenance is unknown.
+        included on the grounds that it might be fine. The name is the only
+        record of which download a file came from, so a name this cannot read is
+        a file whose provenance is unknown.
         """
         fields, reason = self._parse_filename(path)
         if fields is None:
             self.logger.log_status(
-                f"Skipping '{os.path.basename(path)}': it {reason}. The file name is the "
-                f"only record of which PECD download a file came from, so a name that "
-                f"cannot be read is a file whose provenance is unknown. Rename it to the "
-                f"PECD convention, or move it out of {self.csv_folder}.",
+                f"Skipping '{os.path.basename(path)}': it {reason}. The name is the only "
+                f"record of which PECD download a file came from, so one that cannot be read "
+                f"is a file whose provenance is unknown. Rename it to the PECD convention, "
+                f"or move it out of {self.csv_folder}.",
                 level="warn",
             )
             return None
@@ -361,10 +318,9 @@ class VRE_PECD(BaseProcessor):
     def _check_header_agrees_with_name(self, described):
         """Compare the comment block against the file name.
 
-        Both describe the same file, so a disagreement means one of them has
-        been edited -- most often a file renamed by hand to fit a folder it does
-        not belong in. Reported, not acted on: which of the two to believe is
-        not something this can decide.
+        Both describe the same file, so a disagreement means one has been edited
+        -- most often a file renamed by hand to fit a folder it does not belong
+        in. Reported, not acted on: which to believe is not decidable here.
         """
         unit = described.metadata.get("Unit")
         if unit is not None and unit.replace(" ", "") != "MW/MW":
@@ -401,8 +357,8 @@ class VRE_PECD(BaseProcessor):
         """Say once which download the folder holds.
 
         A build is only reproducible from its log if the log says what went into
-        it, and for this processor that is not the file names -- it is the ten
-        or so choices those names encode. One line, at info level, every run.
+        it, and here that is not the file names but the ten or so choices they
+        encode. One line, at info level, every run.
         """
         selections = {}
         for pecd in described:
@@ -421,16 +377,11 @@ class VRE_PECD(BaseProcessor):
     def _warn_blended_selection(self, described):
         """Say when one folder holds files from more than one download.
 
-        Not a refusal. The files are well-formed, and nothing here knows which
-        download the scenario wanted -- the choice belongs to the scenario and
-        is currently made by pointing at a folder, so a folder holding two is
+        Not a refusal: the files are well-formed, and a folder holding two is
         under-specified rather than wrong. Expect this to become conditional
         once the selection follows the scenario year, which is why it must not
-        harden into a refusal now.
-
-        What it costs to miss is the point: two downloads carry the same
-        columns on the same hourly index, so the series is concatenated with a
-        step at the seam and no other symptom.
+        harden into a refusal now. What it costs to miss is a series concatenated
+        from two downloads, with a step at the seam and no other symptom.
         """
         selections = {}
         for pecd in described:
@@ -444,9 +395,8 @@ class VRE_PECD(BaseProcessor):
             if len({group[0].selection[i] for group in groups}) > 1
         ]
         # Named in REPORTED_FIELDS order rather than file-name order, so that
-        # `pecd_version` leads. It sits fourth of the four fields that differ
-        # between a 4.1 and a 4.2 download, and it is the one a reader needs;
-        # left in positional order it is the one the list truncation drops.
+        # `pecd_version` leads. It is the field a reader needs, and it sits last
+        # of the four in positional order -- exactly where truncation drops it.
         rank = {field: i for i, field in enumerate(REPORTED_FIELDS)}
         differing.sort(key=lambda field: (rank.get(field, len(rank)), field))
 
@@ -465,8 +415,8 @@ class VRE_PECD(BaseProcessor):
         """Say when the folder's technology is not the one the spec writes.
 
         The spec's `flow` and the folder are configured separately, so a PV
-        download in the onshore folder is a two-line edit away at all times. The
-        values would be written out as onshore wind and look entirely ordinary.
+        download in the onshore folder is always a two-line edit away, and its
+        values would be written as onshore wind and look entirely ordinary.
         """
         if not self.flow:
             return
@@ -488,12 +438,10 @@ class VRE_PECD(BaseProcessor):
     def _reject_overlapping_windows(self, selected):
         """Refuse a folder in which two files cover the same hour.
 
-        The one refusal in this processor, and it is a different kind of thing
-        from a blended selection. There is no reading under which a user meant
-        two files to describe the same hour: the compile loop below writes them
-        one after the other, so whichever the file system happened to list last
-        would win, silently and unrepeatably. The usual cause is a download
-        unpacked into the wrong folder.
+        The one refusal in this processor, unlike a blended selection: there is
+        no reading under which a user meant two files to describe the same hour,
+        and the compile loop writes them one after the other, so whichever the
+        file system listed last would win, silently and unrepeatably.
         """
         ordered = sorted(selected, key=lambda p: (p.window_start, p.name))
         clashes = []
@@ -525,9 +473,8 @@ class VRE_PECD(BaseProcessor):
         """Which columns could serve each configured country code.
 
         Exact match first, then the first of the 4-, 3- and 2-letter prefixes
-        that matches anything. Resolution depends on column *names* only, so it
-        is settled before any values are read and does not depend on which file
-        was listed first.
+        that matches anything. Depends on column *names* only, so it is settled
+        before any values are read and cannot depend on file order.
 
         Returns
         -------
@@ -550,18 +497,17 @@ class VRE_PECD(BaseProcessor):
     def _choose_columns(self, df, resolved, all_columns):
         """Pick one column per country code: the one with the largest total.
 
-        The policy, stated plainly because the code cannot: where PECD splits a
-        country into zones finer than this model's nodes, the node gets the
-        *best* of them rather than an average of them. Capacity is built at good
-        sites, so the best zone is the closer approximation -- but it is an
-        approximation, and the report below says by how much.
+        Where PECD splits a country into zones finer than this model's nodes, the
+        node gets the *best* of them rather than an average -- a modelling
+        decision, argued in "Which zone a node gets" in docs/vre-timeseries.md, and
+        reported below so its size is visible.
 
         Two things are decided here rather than earlier. The totals are taken
         over the whole configured climate window, so the winner does not change
         when `bb_timeseries_start` moves. And a candidate with no values at all
-        is dropped before the comparison, because the sum of an all-NaN column
-        is 0.0 and it would otherwise merely lose rather than be excluded --
-        indistinguishable from a zone that is genuinely calm.
+        is dropped before the comparison: the sum of an all-NaN column is 0.0,
+        which would merely lose rather than be excluded, indistinguishable from
+        a zone that is genuinely calm.
         """
         mapping = {}
         reports = []
@@ -606,12 +552,11 @@ class VRE_PECD(BaseProcessor):
 
         The lift over the candidate mean is the number that matters. A code
         resolved to a single column has no choice to report and is left out; a
-        code that picked one of eleven is stating a modelling assumption, and
-        the size of it belongs in the log rather than in someone's memory.
+        code that picked one of eleven is stating a modelling assumption whose
+        size belongs in the log rather than in someone's memory.
 
-        Only the largest few are named. The whole table is in
-        `docs/vre-timeseries.md`, and a log line carrying ten of them is one
-        nobody reads -- the biggest lifts are the ones worth arguing with.
+        Only the largest few are named -- they are the ones worth arguing with,
+        and the whole table is in docs/vre-timeseries.md.
         """
         chosen_from_several = [r for r in reports if len(r[5]) > 1]
         if chosen_from_several:
@@ -633,14 +578,9 @@ class VRE_PECD(BaseProcessor):
             )
 
         # A prefix is arithmetic rather than a choice: 'FR0' cannot see FR10 to
-        # FR15, so six of France's fifteen onshore zones are not candidates for
-        # anything. Nothing else in the pipeline can notice that, because the
-        # column is simply never looked at.
-        #
-        # Zones claimed by another configured code are not reported. NOM1 and
-        # NON1 both start with 'NO', but they are their own nodes rather than
-        # zones NOS0 is missing out on, and listing them would bury the handful
-        # of genuinely orphaned columns in noise.
+        # FR15. Nothing else in the pipeline can notice, because the column is
+        # simply never looked at. Zones claimed by another configured code are
+        # left out -- NOM1 is its own node, not a zone NOS0 is missing out on.
         spoken_for = {c for _, candidates in resolved.values() for c in candidates}
         orphaned = sorted(
             c for c in all_columns
@@ -648,9 +588,8 @@ class VRE_PECD(BaseProcessor):
             and any(c.startswith(code[:2]) for code in resolved)
         )
         if orphaned:
-            # Grouped by country rather than listed: ten column names is a line
-            # nobody reads, while "ES 3, FR 6, UK 1" is the same information in
-            # a form that fits, and says which countries to go and look at.
+            # Grouped by country: "ES 3, FR 6, UK 1" fits on the line where ten
+            # column names do not, and says which countries to go and look at.
             by_country = {}
             for column in orphaned:
                 by_country[column[:2]] = by_country.get(column[:2], 0) + 1
@@ -679,11 +618,10 @@ class VRE_PECD(BaseProcessor):
     def _written_floor(self):
         """The smallest magnitude that survives to GAMS as a number.
 
-        `cutoff_below` is the user's to set, and 0.05 is as legitimate as the
-        0.01 shipped today, so this is read from the spec rather than written
-        into the code -- a literal would make the dropout check quietly wrong
-        for exactly the person who tuned the parameter. With no cutoff set, the
-        floor is whatever `rounding_precision` leaves behind.
+        `cutoff_below` is the user's to set, so it is read from the spec rather
+        than written into the code: a literal would make the dropout check
+        quietly wrong for exactly the person who tuned the parameter. With no
+        cutoff set, the floor is whatever `rounding_precision` leaves behind.
         """
         if self.cutoff_below is not None and self.cutoff_below > 0:
             return float(self.cutoff_below)
@@ -706,20 +644,15 @@ class VRE_PECD(BaseProcessor):
         """Report a single flat hour sitting between two ordinary ones.
 
         There is no per-hour zero alarm in this processor, because a zero
-        capacity factor is an ordinary thing to say -- midnight for PV, a calm
-        hour for wind. What is not ordinary is one empty hour with real
-        generation on both sides of it, which is what a dropped value looks
-        like.
+        capacity factor is an ordinary thing to say. What is not ordinary is one
+        empty hour with real generation on both sides of it, which is what a
+        dropped value looks like. The magnitude test is what makes this quiet
+        enough to be worth reading -- see the zeros section of
+        docs/vre-timeseries.md.
 
-        The magnitude test is what makes this quiet enough to be worth reading.
-        The source rounds to five decimals, so a real calm spell produces long
-        runs of values a hair above zero and any rule that ignores magnitude
-        fires on hundreds of them. Requiring both neighbours to sit well clear
-        of the floor leaves only the cases where something really was lost.
-
-        Reports and changes nothing. What the surviving cases actually are is
-        not yet known well enough to write a repair rule, and a wrong repair
-        here is invisible afterwards.
+        Reports and changes nothing. What the surviving cases actually are is not
+        yet known well enough to write a repair rule, and a wrong repair here is
+        invisible afterwards.
         """
         if df.empty:
             return
@@ -735,9 +668,9 @@ class VRE_PECD(BaseProcessor):
             neighbours_high = (
                 (series.shift(1) > threshold) & (series.shift(-1) > threshold)
             )
-            # `shift` leaves NaN at each end, and NaN > threshold is False, so
-            # the first and last hour are never flagged -- correct, since
-            # neither has two neighbours to be wedged between.
+            # `shift` leaves NaN at each end and NaN > threshold is False, so the
+            # first and last hour are never flagged -- correct, since neither has
+            # two neighbours to be wedged between.
             flagged = empty & neighbours_high
             if flagged.any():
                 findings.append((node, int(flagged.sum()), series.index[flagged][0]))
@@ -761,11 +694,10 @@ class VRE_PECD(BaseProcessor):
     def _report_coverage(self, built_codes):
         """Say once what was built and what was not.
 
-        The zero that matters for a capacity factor is not an hour, it is a
-        whole series: a code that finds no column produces no `ts_cf` rows at
-        all, and the unit attached to that node can never generate for the
-        entire run. That is indistinguishable, downstream, from a unit nobody
-        asked for.
+        The zero that matters for a capacity factor is not an hour but a whole
+        series: a code that finds no column produces no `ts_cf` rows at all, and
+        the unit on that node can never generate for the entire run --
+        downstream, indistinguishable from a unit nobody asked for.
         """
         self.logger.log_status(
             f"Capacity factors built for {len(built_codes)} of "
@@ -775,10 +707,9 @@ class VRE_PECD(BaseProcessor):
         if not self.unbuilt_codes:
             return
 
-        # Grouped by reason, because the reason is what a reader acts on and
-        # every code usually shares one. The codes are named in full here even
-        # past the list limit: this is the actionable line, and a node with no
-        # profile at all is exactly what someone has to go and look up.
+        # Grouped by reason, which is what a reader acts on and what the codes
+        # usually share. Names stay in full even past the list limit: a node with
+        # no profile at all is exactly what someone has to go and look up.
         by_reason = {}
         for code, reason in sorted(self.unbuilt_codes):
             by_reason.setdefault(reason, []).append(code)
@@ -812,16 +743,25 @@ class VRE_PECD(BaseProcessor):
         self.csv_folder = self.input_folder
         empty = pd.DataFrame(columns=['flow', 'node', 'time', 'value'])
 
+        nothing_built = (
+            f"No '{self.flow or self.attached_grid}' capacity factors will be built, so "
+            f"units on those nodes cannot generate."
+        )
+
         if not os.path.isdir(self.csv_folder):
             self.logger.log_status(
-                f"The folder {self.csv_folder} does not exist.", level="warn"
+                f"The folder {self.csv_folder} does not exist. {nothing_built} "
+                f"Check input_sub_folder, and see the README for where to download the files.",
+                level="warn",
             )
             return empty
 
         csv_files = sorted(glob.glob(os.path.join(self.csv_folder, "*.csv")))
         if not csv_files:
             self.logger.log_status(
-                f"No CSV files found in {self.csv_folder}.", level="warn"
+                f"No CSV files found in {self.csv_folder}. {nothing_built} "
+                f"See the README for where to download them.",
+                level="warn",
             )
             return empty
 
@@ -831,7 +771,7 @@ class VRE_PECD(BaseProcessor):
         if not described:
             self.logger.log_status(
                 f"None of the {len(csv_files)} file(s) in {self.csv_folder} could be "
-                f"identified as PECD data.",
+                f"identified as PECD data. {nothing_built}",
                 level="warn",
             )
             return empty
@@ -845,13 +785,14 @@ class VRE_PECD(BaseProcessor):
             if not (d.window_end < self.start_date or d.window_start > self.end_date)
         ]
         self.logger.log_status(
-            f"Using {len(selected)} files within date range from the found "
-            f"{len(csv_files)} files..."
+            f"Using {len(selected)} of {len(csv_files)} file(s); the rest fall outside "
+            f"{self.start_date:%Y-%m-%d} to {self.end_date:%Y-%m-%d}."
         )
         if not selected:
             self.logger.log_status(
                 f"No PECD file in '{self.csv_folder}' covers {self.start_date:%Y-%m-%d} "
-                f"to {self.end_date:%Y-%m-%d}.",
+                f"to {self.end_date:%Y-%m-%d}. {nothing_built} Check climate_data against "
+                f"the years the folder holds.",
                 level="warn",
             )
             return empty
@@ -871,7 +812,6 @@ class VRE_PECD(BaseProcessor):
         for code, column in mapping.items():
             summary_df[code] = df_candidates[column]
 
-        # Apply logit-normal scaling if scaling_factor differs from 1
         if self.scaling_factor != 1:
             self.logger.log_status(f"Applying logit scaling with factor {self.scaling_factor}...")
             for col in summary_df.columns:
@@ -879,18 +819,17 @@ class VRE_PECD(BaseProcessor):
 
         self._report_isolated_dropouts(summary_df)
 
-        # Rename country columns to indicate the attached grid
+        # A country code becomes a node only here, by taking the spec's grid.
         summary_df.rename(
             columns={code: f"{code}_{self.attached_grid}" for code in mapping},
             inplace=True,
         )
 
-        # Secondary result is None for this processor
         self.secondary_result = None
 
         self.logger.log_status("Time series built.", level="info")
 
-        # Convert to long format: [flow, node, time, value]
+        # Long format, with the spec's flow written into every row.
         result = summary_df.reset_index(names='time')
         result = result.melt(id_vars=['time'], var_name='node', value_name='value')
         result['flow'] = self.flow
@@ -932,25 +871,14 @@ class VRE_PECD(BaseProcessor):
 
     def _read_and_process_csv(self, pecd, keep, master_index):
         """
-        Read one PECD CSV and return its candidate columns on the master index.
+        Read one PECD CSV and return its `keep` columns on the master index.
 
-        Parameters
-        ----------
-        pecd : PecdFile
-            The described file; its `header_row` is already known.
-        keep : list of str
-            The candidate columns to extract.
-        master_index : pd.Index
-            The complete date range index.
-
-        Returns
-        -------
-        pd.DataFrame or None
+        Returns None for a file that cannot be used, having said why.
         """
         # A single unreadable file is skipped with a warning, but malformed
         # numbers are not: these files are machine-generated, so one bad value
-        # means the producer changed format and every other file in the folder is
-        # suspect too. SourceDataError therefore propagates instead of skipping.
+        # means the producer changed format and every other file in the folder
+        # is suspect too. SourceDataError propagates instead of skipping.
         try:
             df_csv = self.read_input_csv(
                 pecd.path, skiprows=pecd.header_row, encoding="utf-8-sig"
@@ -958,7 +886,11 @@ class VRE_PECD(BaseProcessor):
         except SourceDataError:
             raise
         except Exception as e:
-            self.logger.log_status(f"Error reading file {pecd.path}: {e}", level="warn")
+            self.logger.log_status(
+                f"Unable to read '{pecd.name}': {e}. Skipping the file, so the climate "
+                f"year(s) it covers have no capacity factors.",
+                level="warn",
+            )
             return None
 
         if 'Date' not in df_csv.columns:
@@ -996,8 +928,6 @@ class VRE_PECD(BaseProcessor):
 
         present = [c for c in keep if c in df_csv.columns]
         df_temp = df_csv[present]
-
-        # Filter rows to only include indices from the master date range
         return df_temp[df_temp.index.isin(master_index)]
 
     def _read_and_compile_input_CSVs(self, selected):
@@ -1005,11 +935,9 @@ class VRE_PECD(BaseProcessor):
         Compile the selected PECD files into one frame of candidate columns.
 
         Every column that could serve a configured country code is carried until
-        the end, and the winner is chosen from the assembled whole. That is the
-        difference from reading the mapping off the first file: the first file
-        is one climate year, and a year is not a statement about which zone a
-        country's capacity sits in. The old behaviour made the choice move when
-        the configured window moved, with nothing said about it.
+        the end, and the winner is chosen from the assembled whole. Reading the
+        mapping off the first file instead would decide it from one climate year,
+        and move it whenever the configured window moved.
 
         Returns
         -------

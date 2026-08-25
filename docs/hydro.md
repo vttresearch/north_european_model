@@ -1,12 +1,31 @@
 # Hydro data
 
 How hydro reaches the model: what the four types mean, which file supplies which
-number, what is known to be missing, and what the builder does about it.
+number, what is known to be missing, and what the builder does about it. Two
+processors are involved — `hydro_inflow_MAF2019` for inflow and
+`hydro_storage_limits_MAF2019` for seasonal storage limits.
 
-Read [The four types](#the-four-types) once. The rest is reference for when a
-build log mentions a hydro node and you want to know whether to worry.
+This describes what the build does **today**, from the sources available today.
+Hydro is the part of this model where the data is least settled: several shapes
+in the processors exist only to fit the quirks of whichever database was
+available, `hydroUpd` v2 is coming, and this page will change with them. See
+[Timeseries](timeseries.md) for the parts shared by every source.
 
-## Quick reference
+## One minute summary
+
+- **Pan-European data simplifies hydro to four types** — reservoir,
+  run-of-river, open-loop and closed-loop pumped storage. The simplification is
+  accepted, not believed.
+- **`nodedata` decides what exists.** A hydro node absent from it is absent from
+  the model, and the build says nothing about it. Both processors gate on that.
+- **Seasonal storage limits exist for two of the four types**, and the rest run on a
+  flat `upwardLimit` deliberately rather than by mistake. The build names them
+  every run.
+- **The PECD files have holes, and the builder repairs or refuses them by rule:**
+  one missing week or day is interpolated, anything longer needs a person, and
+  the decisions already taken are listed in the code with their magnitudes.
+- **`capacity` always means unit power in MW.** Reservoir *size* is an energy, in
+  MWh, and lives in `nodedata.upwardLimit`.
 
 | Quantity | Comes from | Unit |
 |---|---|---|
@@ -16,6 +35,83 @@ build log mentions a hydro node and you want to know whether to worry.
 | daily run-of-river | `PECD-hydro-daily-ror-generation.csv` | GWh/day → MWh/h |
 | seasonal fill limits | `PECD-hydro-weekly-reservoir-levels.csv` | ratio 0–1, scaled to MWh |
 | Norwegian psOpen limits | `PEMMDB_NO*_Hydro Inflow_SOR 20.xlsx` | ratio 0–1, scaled to MWh |
+
+## Contents
+
+- [The four types](#the-four-types)
+- [Which nodes get built](#which-nodes-get-built)
+- [What is not built, and why](#what-is-not-built-and-why)
+- [Where the PECD files come from](#where-the-pecd-files-come-from)
+- [Gaps in the source data, and what the builder does](#gaps-in-the-source-data-and-what-the-builder-does)
+- [Minimum generation](#minimum-generation)
+- [Known open items](#known-open-items)
+- [Some caveats from cross-checking the data](#some-caveats-from-cross-checking-the-data)
+- [Where hydro is defined](#where-hydro-is-defined)
+
+## The four types
+
+Pan-European datasets simplify hydro to four types, and this project follows that
+convention:
+
+| Type | Inflow | Storage | Pumping | Grid |
+|---|---|---|---|---|
+| Reservoir | yes | yes | no | `reservoir` |
+| Run-of-river | yes | no | no | `ror` |
+| Pumped storage, open loop | yes | yes | yes | `psOpen` |
+| Pumped storage, closed loop | no | yes | yes | `psClosed` |
+
+The simplification is accepted, not believed. Run-of-river really does hold
+somewhere between a few hours and a couple of days of storage; the convention
+gives it none.
+
+**National data does not sit still inside these four boxes.** Norwegian hydro is
+psOpen in one database, reservoir in another, and a mixture of psOpen, psClosed
+and reservoir in a third. Several shapes in the processors exist only to fit the
+quirks of the source that was available, and neither side of that bargain was
+written down until this page. If something in `hydro_inflow_MAF2019` or
+`hydro_storage_limits_MAF2019` looks arbitrary, that is usually why.
+
+`hydroUpd-v1.xlsx` is a more complete database than PECD in several respects, and
+a v2 is coming.
+
+## Which nodes get built
+
+`nodedata` is the statement of what the model has. By the time a processor sees
+the frame, the source workflow has already applied its scenario, year and country
+filtering, so a node absent from it is absent from the model — not missing, not
+broken, and not something to report. Both hydro processors gate on that.
+
+The gate is **presence of the row**, and for inflow it is only presence. Inflow
+describes water arriving, which happens whether or not the workbook records a
+reservoir size, so an `upwardLimit` left blank or zero by oversight must not
+cascade into a node reaching GAMS with no inflow at all. The storage limits are
+the opposite case and do additionally require a usable `upwardLimit`, because a
+fill limit is a fraction of a size and there is nothing to express without one.
+That distinction is the whole reason the two are separate tests.
+
+Before the gate, `hydro_inflow_MAF2019` built the cross product of every country
+code and every hydro type and then reported on all of it: 37 lines about 35 nodes
+that do not exist, burying the two that do. It now names what it built, and the
+only nodes it reports are the ones the model has and the source cannot fill —
+`CH00_psOpen` and `FR00_psOpen` on the shipped configuration.
+
+## What is not built, and why
+
+Seasonal fill limits exist for two of the four types:
+
+- **`reservoir`** for every zone with rows in the weekly levels CSV.
+- **`psOpen`** for the three Norwegian zones only, from the PEMMDB workbooks.
+- **`psOpen` elsewhere, and `psClosed` anywhere: not built.** PECD carries no
+  weekly levels for them.
+
+Those nodes are not broken and are not being skipped by mistake. They use the
+constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
+seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
+run so their absence from the time series is stated rather than discovered.
+
+Whether that is the right treatment is discussed in
+[the caveats](#some-caveats-from-cross-checking-the-data), which is also where the
+evidence against conjuring a profile for them sits.
 
 ## Where the PECD files come from
 
@@ -52,69 +148,6 @@ MWh. The two used to be confused because a now-deleted
 the storage-limits processor scaled its ratios by that file rather than by the
 node's own `upwardLimit` — the same number, maintained twice, with nothing able
 to tell whether the two had drifted apart.
-
----
-
-## The four types
-
-Pan-European datasets simplify hydro to four types, and this project follows that
-convention:
-
-| Type | Inflow | Storage | Pumping | Grid |
-|---|---|---|---|---|
-| Reservoir | yes | yes | no | `reservoir` |
-| Run-of-river | yes | no | no | `ror` |
-| Pumped storage, open loop | yes | yes | yes | `psOpen` |
-| Pumped storage, closed loop | no | yes | yes | `psClosed` |
-
-The simplification is accepted, not believed. Run-of-river really does hold
-somewhere between a few hours and a couple of days of storage; the convention
-gives it none.
-
-**National data does not sit still inside these four boxes.** Norwegian hydro is
-psOpen in one database, reservoir in another, and a mixture of psOpen, psClosed
-and reservoir in a third. Several shapes in the processors exist only to fit the
-quirks of the source that was available, and neither side of that bargain was
-written down until this page. If something in `hydro_inflow_MAF2019` or
-`hydro_storage_limits_MAF2019` looks arbitrary, that is usually why.
-
-`hydroUpd-v1.xlsx` is a more complete database than PECD in several respects, and
-a v2 is coming.
-
-## What is not built, and why
-
-Seasonal fill limits exist for two of the four types:
-
-- **`reservoir`** for every zone with rows in the weekly levels CSV.
-- **`psOpen`** for the three Norwegian zones only, from the PEMMDB workbooks.
-- **`psOpen` elsewhere, and `psClosed` anywhere: not built.** PECD carries no
-  weekly levels for them.
-
-Those nodes are not broken and are not being skipped by mistake. They use the
-constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
-seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
-run so their absence from the time series is stated rather than discovered.
-
-## Which nodes get built
-
-`nodedata` is the statement of what the model has. By the time a processor sees
-the frame, the source workflow has already applied its scenario, year and country
-filtering, so a node absent from it is absent from the model — not missing, not
-broken, and not something to report. Both hydro processors gate on that.
-
-The gate is **presence of the row**, and for inflow it is only presence. Inflow
-describes water arriving, which happens whether or not the workbook records a
-reservoir size, so an `upwardLimit` left blank or zero by oversight must not
-cascade into a node reaching GAMS with no inflow at all. The storage limits are
-the opposite case and do additionally require a usable `upwardLimit`, because a
-fill limit is a fraction of a size and there is nothing to express without one.
-That distinction is the whole reason the two are separate tests.
-
-Before the gate, `hydro_inflow_MAF2019` built the cross product of every country
-code and every hydro type and then reported on all of it: 37 lines about 35 nodes
-that do not exist, burying the two that do. It now names what it built, and the
-only nodes it reports are the ones the model has and the source cannot fill —
-`CH00_psOpen` and `FR00_psOpen` on the shipped configuration.
 
 ## Gaps in the source data, and what the builder does
 
@@ -226,7 +259,7 @@ and 0.0386. A column with that vocabulary would have written 0.0004. They are
 dropped values, and they are treated as such.
 
 If a future dataset genuinely means zero here, the multi-week run will warn and
-the decision gets made deliberately — which is the point of the register below.
+the decision gets made deliberately — which is the point of the register above.
 
 ### The Norwegian pump-storage zeros
 
@@ -254,20 +287,6 @@ weeks of 9.3 and 20.3, then a smooth ramp of 21.4, 32.1, 42.9 into the melt at
 53.6 — and adds roughly 100 GWh to each affected year. Far too little to move any
 conclusion about those years; they remain dry and remain difficult. What it
 removes is a discontinuity the solver has no reason to be handed.
-
-## Where hydro is defined
-
-- `src_files/data_files/hydroUpd-v1.xlsx` — `nodedata` (reservoir sizes, spill,
-  balance penalties), `unitdata` (turbining and pumping power), and
-  `userconstraintdata` (minimum-generation constraints). Listed after
-  `TYNDP-2024_National_Trends.xlsx` in the config, so its rows win.
-- `src_files/data_files/unittypedata_compilation.xlsx` — maps each hydro
-  `Generator_ID` to its unit type, grids and efficiency, which is what turns
-  `AT00 / Run-of-River` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.
-- `src/timeseries/processors/hydro_inflow_MAF2019.py` — inflow for all three
-  inflow-bearing types.
-- `src/timeseries/processors/hydro_storage_limits_MAF2019.py` — seasonal fill
-  limits, scaled by `nodedata.upwardLimit`.
 
 ## Minimum generation
 
@@ -346,3 +365,28 @@ work during the article above and ended without a general answer. An assumption
 here might happen to be right, but there is not enough knowledge behind it to
 tell — and a plausible invented profile is harder to catch later than an
 obviously flat one.
+
+## Where hydro is defined
+
+- `src_files/data_files/hydroUpd-v1.xlsx` — `nodedata` (reservoir sizes, spill,
+  balance penalties), `unitdata` (turbining and pumping power), and
+  `userconstraintdata` (minimum-generation constraints). Listed after
+  `TYNDP-2024_National_Trends.xlsx` in the config, so its rows win.
+- `src_files/data_files/unittypedata_compilation.xlsx` — maps each hydro
+  `Generator_ID` to its unit type, grids and efficiency, which is what turns
+  `AT00 / Run-of-River` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.
+- `src/timeseries/processors/hydro_inflow_MAF2019.py` — inflow for all three
+  inflow-bearing types.
+- `src/timeseries/processors/hydro_storage_limits_MAF2019.py` — seasonal fill
+  limits, scaled by `nodedata.upwardLimit`.
+
+## See also
+
+- [Timeseries](timeseries.md) — the shared pipeline: climate years, windows,
+  forecast branches, and what is checked before anything is written
+- [Wind and solar timeseries](vre-timeseries.md) — the other PECD-fed part of the
+  model, and where a zero is ordinary rather than a gap
+- [District heating demand timeseries](dh-demand-timeseries.md) — where a zero
+  hour is an alarm, and why the rule differs from this one
+- [Source workbook conventions](source-workbook-conventions.md) — how
+  `hydroUpd-v1.xlsx` and its neighbours are read and combined

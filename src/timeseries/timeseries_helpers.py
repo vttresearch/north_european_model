@@ -18,16 +18,13 @@ LOG_LIST_LIMIT = 3
 def summarise(items, limit: int = LOG_LIST_LIMIT) -> str:
     """Render a list for a log line: the first few, then how many are left.
 
-    A build prints a handful of report lines per processor and a person has to
-    be able to read them at a glance. The full lists -- every country code,
-    every zone choice, every node that could not be built -- belong in the
-    documentation pages, because a log line carrying one of them in full is a
-    line nobody reads and the warning next to it gets skipped too.
+    A log line carrying a full list is a line nobody reads, and the warning next
+    to it gets skipped too. The full lists belong in the documentation pages.
 
-    Callers order `items` most-interesting-first, since that is what survives
-    the truncation. Where the whole list is what a reader has to act on -- the
-    nodes that were *not* built, rather than the ones that were -- name it in
-    full and do not call this.
+    Callers order `items` most-interesting-first, since that is what survives the
+    truncation. Where the whole list is what a reader has to act on -- the nodes
+    that were *not* built, rather than the ones that were -- name it in full and
+    do not call this.
     """
     items = [str(item) for item in items]
     if len(items) <= limit:
@@ -38,19 +35,15 @@ def summarise(items, limit: int = LOG_LIST_LIMIT) -> str:
 def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     """Which nodes with these name endings does the model actually contain?
 
-    ``nodedata`` is the statement of what exists. By the time a processor sees the
-    frame the source workflow has already applied its scenario, year and country
-    filtering, so a node absent from it is absent from the model -- not missing,
-    not broken, and not something to report. A country dropped from the run takes
-    its hydro nodes with it, and the processor should fall silent about them
-    rather than describe them as gaps.
+    ``nodedata`` is the statement of what exists. The source workflow has already
+    applied its scenario, year and country filtering by the time a processor sees
+    the frame, so a node absent from it is absent from the model -- not missing,
+    not broken, and not something to report.
 
-    Presence is the whole test. Whether a node's parameters are *usable* is a
-    separate question, and it belongs to whichever processor needs them: inflow
-    describes a node and needs nothing else, while a fill limit is a fraction of a
-    reservoir size and is meaningless without one. Keeping the two apart is what
-    stops an ``upwardLimit`` that is blank or zero -- which may simply be an
-    oversight in the workbook -- from cascading into "this node has no inflow".
+    Presence is the whole test. Whether a node's parameters are *usable* belongs
+    to whichever processor needs them, which is what stops a blank
+    ``upwardLimit`` from cascading into "this node has no inflow". See "Which
+    nodes get built" in docs/hydro.md.
 
     Returns an empty set when the frame or its ``node`` column is missing, which
     callers must read as "cannot tell" rather than "nothing exists".
@@ -72,19 +65,18 @@ def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
 
 def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
     """
-    Collect domain values from a processor result for JSON caching and cross-processor accumulation.
+    Collect domain values from a processor result, for the cache and for
+    accumulation across processors.
 
-    Produces a dict that serializes directly to JSON and can be merged across processors.
-
-    Final compilation and normalization of domain names happens downstream when the Excel output
-    is assembled.
+    Serializes directly to JSON and merges across processors. Compiling and
+    normalizing the domain names happens downstream, when the Excel is assembled.
 
     Parameters:
     - df: pandas.DataFrame containing possible domain columns
     - possible_domains: list of domain column names to check in df
 
     Returns:
-    - dict[str, list]: dictionary of domain -> unique values (unsorted)
+    - dict[str, list]: domain -> unique values, unsorted
     """
     result = {}
 
@@ -99,19 +91,17 @@ def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list
 
 def collect_domain_pairs_for_cache(df, domain_pairs: list[list[str]]) -> dict[str, list[tuple]]:
     """
-    Collect domain value pairs from a processor result for JSON caching and cross-processor accumulation.
+    Collect domain value pairs from a processor result, alongside the domains.
 
-    Produces a dict that serializes directly to JSON and can be merged across processors.
-
-    Possible domain pairs is additional information needed in addition to domains, to avoid
-    generating input excel data for non-existent domain pairs.
+    The pairs are what stop the Excel from being generated for combinations that
+    do not exist -- the domains on their own would imply the cross product.
 
     Parameters:
     - df: pandas.DataFrame containing the domain columns
     - domain_pairs: list of domain pair lists, e.g. [['grid', 'node'], ['flow', 'node']]
 
     Returns:
-    - dict[str, list[tuple]]: mapping from pair key like 'grid_node' to unique domain tuples
+    - dict[str, list[tuple]]: pair key like 'grid_node' -> unique domain tuples
     """
     result = {}
 
@@ -142,26 +132,19 @@ def update_import_timeseries_inc(
     **kwargs: Any
     ) -> None:
     """
-    Updates the import_timeseries.inc file by generating a GAMS code block that imports
-    parameter data from GDX files. The function looks for matching GDX files in the output folder
-    based on specified parameter names and patterns, then creates the necessary GAMS code to load
-    parameters from these files.
+    Append a GAMS block to import_timeseries.inc that loads one parameter's GDX.
 
     Args:
-        output_folder (str): Directory path where GDX files are located and where import_timeseries.inc will be created/updated
-        file_suffix (str, optional): Specific suffix for the GDX file. If None, searches for files with standard patterns
-        **kwargs: Additional parameters including:
-            - bb_parameter (str): Name of the Backbone parameter to import
-            - gdx_name_suffix (str): Suffix to be used in the GDX filename
-
-    Returns:
-        None: Writes content to import_timeseries.inc file in the output_folder
+        output_folder (str): where the GDX files are and where the .inc is written
+        file_suffix (str, optional): suffix of a specific GDX. If None, the two
+            standard patterns are searched for instead -- one file, or one per
+            climate year.
+        **kwargs: bb_parameter (str), the Backbone parameter to import, and
+            gdx_name_suffix (str), the rest of the GDX filename.
     """
-    # Prepare required parameters
     bb_parameter = kwargs.get('bb_parameter')
     gdx_name_suffix = kwargs.get('gdx_name_suffix')
 
-    # If file_suffix flag is True, search for the specific file.
     if file_suffix is not None:
         filename = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx')
         if os.path.exists(filename):
@@ -170,14 +153,13 @@ def update_import_timeseries_inc(
             raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx not found in {output_folder}.")
 
     else:
-        # Check for the two patterns in the output_folder
-        # Pattern a: a single file: f'{bb_parameter}_{gdx_name_suffix}.gdx'
+        # One file for the whole run...
         file_a = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}.gdx')
         if os.path.exists(file_a):
             matching_files = file_a
             file_suffix = None
         else:
-            # Pattern b: multiple files, e.g., f'{bb_parameter}_{gdx_name_suffix}_{yr}.gdx' where yr is four digit integer, e.g. 2014
+            # ...or one per climate year, which GAMS picks by %climateYear%.
             pattern_b = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}_[0-9][0-9][0-9][0-9].gdx')
             matching_files = glob.glob(pattern_b)
             if matching_files:
@@ -187,14 +169,11 @@ def update_import_timeseries_inc(
         raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}.gdx or {bb_parameter}_{gdx_name_suffix}_year.gdx not found in {output_folder}.")
 
 
-    # --- build text_block ---
-    # Creating a text block with a specific structure to read GDX to Backbone
     if file_suffix is None:
         gdx_name = f"{bb_parameter}_{gdx_name_suffix}.gdx"
     else:
         gdx_name = f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx"
 
-    # Constructing text block content:
     text_block = "\n".join([
         f"$ifthen exist '%input_dir%/{gdx_name}'",
         f"    // If {gdx_name} exists, load input data",
@@ -206,23 +185,19 @@ def update_import_timeseries_inc(
     ]) + "\n"
 
 
-    # --- write text_block only if not already present ---
-    # Define the output file path
     output_file = os.path.join(output_folder, 'import_timeseries.inc')
 
-    # Read existing content (or empty string if file doesn't exist)
     try:
         with open(output_file, 'r') as f:
             existing = f.read()
     except FileNotFoundError:
         existing = ''
 
-    # Append only if the exact block isn't already in the file
+    # Appended, so the file accumulates one block per parameter across calls --
+    # hence the check that this exact block is not in it already.
     if text_block not in existing:
         with open(output_file, 'a') as f:
             f.write(text_block)
-    else:
-        pass
 
 
 def order_timeseries_for_labelling(
@@ -236,9 +211,9 @@ def order_timeseries_for_labelling(
 
     t-labels are assigned by row position within each group, so this ordering
     *is* the labelling: sort by group then time, and row n of a group becomes
-    t{n+1}. Both the ordering and the group ids are returned because every
-    consumer needs them together and recomputing either is expensive -- the sort
-    and the ``ngroup`` cost about a second each on a nine-million-row parameter.
+    t{n+1}. Both are returned because every consumer needs them together, and
+    the sort and the ``ngroup`` cost about a second each on a nine-million-row
+    parameter.
 
     Parameters
     ----------
@@ -259,10 +234,9 @@ def order_timeseries_for_labelling(
 
     Notes
     -----
-    With no `group_dims` the frame is still sorted by time. That case used to
-    skip sorting entirely and then hand out t-labels in whatever order the
-    processor happened to return, which is not a defensible thing to do with a
-    label that means "hour n of the window".
+    With no `group_dims` the frame is still sorted by time. Skipping the sort
+    would hand out t-labels in whatever order the processor happened to return,
+    which is not defensible for a label meaning "hour n of the window".
 
     ``ngroup`` returns -1 for rows whose grouping key is missing, and
     ``sort_values`` puts those rows last, so they arrive as one trailing
@@ -333,34 +307,31 @@ def find_time_axis_defects(
 
     Requires `sorted_df` and `group_ids` from a single call to
     :func:`order_timeseries_for_labelling`; it reads them positionally and does
-    not re-sort. Pure numpy over already-ordered data: no groupby, no per-group
-    Python loop, so a nine-million-row parameter costs tens of milliseconds
-    rather than the second and a half a ``duplicated()`` on the same frame does.
+    not re-sort. Pure numpy over already-ordered data, so a nine-million-row
+    parameter costs tens of milliseconds rather than the second and a half a
+    ``duplicated()`` on the same frame does.
 
     Two independent things have to hold, and neither implies the other:
 
-    - **within a group**, consecutive rows differ by exactly one `step`. That
-      one comparison proves no repeats, no sub-`step` rows, no holes, and
-      monotonic time all at once -- a repeat gives a difference of zero, a
-      hole gives more than one.
+    - **within a group**, consecutive rows differ by exactly one `step`. That one
+      comparison proves no repeats, no sub-`step` rows, no holes and monotonic
+      time all at once: a repeat gives a difference of zero, a hole more than one.
     - **across groups**, every group starts and ends at the same timestamp.
-      Groups can each be internally perfect and still cover different spans,
-      and then they disagree about what a given t-label means.
+      Groups can each be internally perfect and still cover different spans, and
+      then they disagree about what a given t-label means.
 
-    Why any of it matters: ``split_timeseries_to_climate_windows`` labels by row
-    position. A hole does not leave a hole in the labels -- it pulls every later
-    hour of that group one label earlier, for the rest of the window. Nothing
-    downstream can detect that, because the numbers are all perfectly plausible
-    and merely attached to the wrong hours. For a model whose value is largely
-    the correlation between countries, a silent one-hour offset between two of
-    them is not a small error.
+    Why it matters: ``split_timeseries_to_climate_windows`` labels by row
+    position, so a hole does not leave a hole in the labels -- it pulls every
+    later hour of that group one label earlier, for the rest of the window. The
+    numbers stay perfectly plausible and are merely attached to the wrong hours,
+    and for a model whose value is largely the correlation between countries, a
+    silent one-hour offset between two of them is not a small error.
 
     `step` is a parameter rather than a hard-coded hour because the checker has
-    no reason to know the pipeline's business. The hourly assumption lives in
-    ``split_timeseries_to_climate_windows``, whose window is ``bb_ts_length * 24``
-    labels. At a one-hour step, 00:00 and 00:15 land in the same bucket and are
-    reported as a duplicate -- which is the intent: the pipeline cannot label
-    sub-hourly data, so it must not accept it silently.
+    no reason to know the pipeline's business; the hourly assumption lives in
+    ``split_timeseries_to_climate_windows``. At a one-hour step, 00:00 and 00:15
+    land in the same bucket and are reported as a duplicate -- which is the
+    intent, since the pipeline cannot label sub-hourly data.
 
     Returns
     -------
@@ -383,9 +354,9 @@ def find_time_axis_defects(
         col = pd.to_datetime(col, errors="coerce")
     times = col.to_numpy(dtype="datetime64[ns]")
 
-    # First, because a NaT makes every comparison below meaningless: it would
-    # read as an integer near the bottom of the int64 range and manufacture a
-    # gap of about 292 years next to it.
+    # First, because a NaT makes every comparison below meaningless: it reads as
+    # an integer near the bottom of the int64 range, manufacturing a gap of about
+    # 292 years next to it.
     nat = np.isnat(times)
     if nat.any():
         return TimeAxisReport(
@@ -441,9 +412,9 @@ def find_incomplete_climate_windows(
 
     The one hazard a whole-frame time-axis check cannot see: data can be a
     flawless grid and still not reach the end of the requested window, in which
-    case the window is simply short and every label in it is still correct.
-    Once :func:`find_time_axis_defects` has passed, ``expected_rows`` is exact
-    (``bb_ts_length * 24 * n_groups``), so this is one ``len()`` per year.
+    case the window is short and every label in it is still correct. Once
+    :func:`find_time_axis_defects` has passed, ``expected_rows`` is exact, so
+    this is one ``len()`` per year.
     """
     if expected_rows <= 0:
         return {}
@@ -468,11 +439,8 @@ def split_timeseries_to_climate_windows(
     and assign Backbone t-labels.
 
     A climate window for year Y starts at {Y}-{bb_ts_start} 00:00 and spans
-    bb_ts_length * 24 consecutive hours.  One output DataFrame is produced for
-    every year in valid_climate_years for which the data covers a complete window.
-    valid_climate_years is computed in run() from the config start/end years and
-    bb_ts_start/bb_ts_length, so only years that can start a full window with the
-    available data are included.
+    bb_ts_length * 24 consecutive hours. One output DataFrame per year in
+    valid_climate_years that the data covers a complete window for.
 
     Parameters
     ----------
@@ -487,15 +455,15 @@ def split_timeseries_to_climate_windows(
     bb_ts_length : int
         Window length in days.
     valid_climate_years : list of int
-        Years for which to extract windows.
+        Years for which to extract windows. Computed in run() from the config,
+        so only years that can start a full window are in it.
     group_ids : np.ndarray, optional
         Group ids from :func:`order_timeseries_for_labelling`. Supplying them
         asserts that `df` is **already** ordered by ``group_dims + ['time']``
         and that the ids align with it positionally -- both must come from the
-        same call. Omit it and this function does the ordering itself, which is
-        what every caller did before the check was added; it exists so
-        ``ProcessorRunner``, which has to order the frame anyway to verify the
-        time axis, does not pay for a second sort.
+        same call. Omit it and this function orders the frame itself. It exists
+        so that ``ProcessorRunner``, which has to order the frame anyway to
+        verify the time axis, does not pay for a second sort.
 
     Returns
     -------
@@ -506,8 +474,6 @@ def split_timeseries_to_climate_windows(
         weather branch).
     """
     dims = list(bb_parameter_dimensions)
-
-    # Grouping dimensions exclude f and t
     group_dims = [c for c in dims if c not in {"f", "t"}]
 
     max_hours = bb_ts_length * 24
@@ -515,12 +481,12 @@ def split_timeseries_to_climate_windows(
     final_cols = dims + ["value"]
     out: Dict[int, pd.DataFrame] = {}
 
-    # Sort and group ids come once, before the per-year loop. A mask applied to
-    # a pre-sorted DataFrame yields an already-sorted subset, and group_ids[mask]
-    # correctly identifies group boundaries in that subset.
+    # Sort and group ids come once, before the per-year loop: a mask applied to a
+    # pre-sorted frame yields an already-sorted subset, and group_ids[mask] still
+    # identifies the group boundaries in it.
     if group_ids is None:
         df, group_ids = order_timeseries_for_labelling(df, group_dims=group_dims)
-    time_np = df["time"].to_numpy()  # numpy datetime64 for fast per-year masking
+    time_np = df["time"].to_numpy()
 
     for yr in valid_climate_years:
         window_start = pd.Timestamp(f"{yr}-{bb_ts_start}")
@@ -528,17 +494,16 @@ def split_timeseries_to_climate_windows(
         mask = (time_np >= window_start.to_datetime64()) & (time_np <= window_end.to_datetime64())
         df_yr = df[mask].copy()
 
-        # Skipping start years for which there is not enough data for the whole climate window
+        # A year with no data at all cannot start a window.
         if len(df_yr) == 0:
             continue
 
-        # group_ids[mask] reuses the pre-computed group structure; no re-sort or re-groupby needed.
         # With no grouping dimensions the ids are all zero, which marks a single
         # group and reduces the row numbering below to a plain arange -- so there
         # is no second code path to keep in agreement with this one.
         group_changes = np.diff(group_ids[mask], prepend=-1) != 0
 
-        # Fast row numbering within groups
+        # Row number within each group, which is the t-label minus one.
         row_nums = np.arange(len(df_yr))
         row_nums -= np.repeat(
             row_nums[group_changes],
@@ -570,152 +535,115 @@ def calculate_climatological_forecasts(
     round_precision: int = 0,
     ) -> pd.DataFrame:
     """
-    Build stochastic forecast timeseries for Backbone from long-term climatological statistics.
+    Build Backbone forecast branches from long-term climatological statistics.
 
-    Backbone can represent uncertainty via multiple forecast branches (f-index). This
-    function creates forecast data by computing quantiles of the input timeseries
-    across all available climate years, so each branch reflects a different statistical
-    outcome drawn from the long-term climatological data provided in the input dataframe.
+    Each f-branch is a quantile of the input timeseries taken across all climate
+    years, so it reflects a different statistical outcome rather than a different
+    forecast run. ``forecast_quantiles`` decides how many and which: keys are
+    f-labels, values are probabilities, so ``{'f01': 0.5, 'f02': 0.1}`` gives a
+    median branch and a lowest-10% one.
 
-    The caller controls how many forecasts to create and which quantile each represents via
-    ``forecast_quantiles`` from the config file. Keys are Backbone f-labels and values are
-    quantile probabilities (0..1). For example ``{'f01': 0.5, 'f02': 0.1, 'f03': 0.9}``
-    creates three forecast branches where f01 is the median, f02 the lowest 10%,
-    and f03 the highest 90% of values.
-
-    These values are calculated and stored only once because they are the same for every climate window.
+    Computed once, because the result is the same for every climate window.
 
     Algorithm
     ---------
-    For every combination of the non-f/t dimension columns (e.g. grid, node):
+    Per combination of the non-f/t dimension columns:
 
-    1. Compute the requested quantiles across all years at each hour-of-year position
-       (1..8760). Leap-day hours are excluded so that the statistics are always aligned
-       on a common 8760-hour calendar.
-    2. Map the resulting quantile values onto the output climate window
-       (``bb_ts_start`` + ``bb_ts_length`` * 24 hours), using hour-of-year as the key.
-       Windows longer than one calendar year are tiled correctly.
-    3. Assign Backbone t-labels (t000001..) starting from the first hour of the climate
-       window and f-labels from ``quantile_map``.
+    1. Quantiles across all years at each hour-of-year position (1..8760).
+       Leap-day hours are excluded so the statistics align on one calendar.
+    2. Map those onto the output window by hour-of-year, tiling correctly when
+       the window is longer than a calendar year.
+    3. Assign t-labels from the first hour of the window and f-labels from
+       ``forecast_quantiles``.
 
-    Input requirements
-    ------------------
-    - Long-format DataFrame with the dimension columns from ``bb_parameter_dimensions``
-      excluding 't' and 'f' which are absent from the intermediate format, plus ``time``
-      (datetime) and ``value``. The columns are guarded beforehand.
-    - Data must cover more than one climate year (checked before calling this function).
+    Input is the same long format the processors return, plus the guarantee --
+    checked by the caller -- that it covers more than one climate year.
 
     Returns
     -------
     pd.DataFrame
-        Single-year long-format DataFrame with columns ``bb_parameter_dimensions + ['value']``.
-        The dataframe must contain the same t labels than timeseries produced in split_timeseries_to_climate_windows.
-        The dataframe contains f column with defined quantile headers.
+        Single-year long format ``bb_parameter_dimensions + ['value']``, carrying
+        the same t-labels as ``split_timeseries_to_climate_windows`` produces.
     """
 
     dim_cols = [col for col in bb_parameter_dimensions if col not in ("f", "t")]
 
-    # ---- Create helper columns ----
-    # Fast hour_of_year: avoid datetime arithmetic, use dayofyear + hour.
+    # hour_of_year from dayofyear + hour, avoiding datetime arithmetic.
     time = input_df["time"]
     day_of_year = time.dt.dayofyear.to_numpy()
     hour = time.dt.hour.to_numpy()
     hour_of_year = (day_of_year - 1) * 24 + hour + 1
 
-    # copy() first: this used to write 'hour_of_year' into the caller's frame,
-    # so main_result silently gained a column that ProcessorRunner then carried
-    # on using for domain collection and the annual summary.
+    # copy() first: writing 'hour_of_year' into the caller's frame would leave
+    # main_result with an extra column that ProcessorRunner goes on to use for
+    # domain collection and the annual summary.
     input_df = input_df.copy()
     input_df["hour_of_year"] = hour_of_year.astype(np.int32)
 
-    # Only process hours up to 8760 (ignore extra hours from leap years)
+    # Leap-day hours dropped, so every year contributes the same 8760 positions.
     input_df = input_df[input_df["hour_of_year"] <= 8760]
 
-    # ---- Quantile computation ----
-    # Vectorized quantile computation:
-    # Group by the additional dimensions and 'hour_of_year' then compute the quantiles.
-    # Always computed over the full 8760-hour calendar year regardless of bb_ts_length.
+    # Over the full calendar year regardless of bb_ts_length: the window is cut
+    # from these statistics afterwards, not built into them.
     q_values = list(forecast_quantiles.values())
 
     df_quant = (
         input_df
         .groupby(dim_cols + ["hour_of_year"], observed=True)["value"]
         .quantile(q_values)
-        # quantile with sequence -> MultiIndex with a 'quantile' level
+        # A sequence of quantiles gives a MultiIndex with a 'quantile' level.
         .rename_axis(index=dim_cols + ["hour_of_year", "quantile"])
         .reset_index()
     )
-    # df_quant now has columns: dim_cols..., 'hour_of_year', 'quantile', 'value'
 
-    # ---- Build window reference sequence ----
-    # Generate the sequence of hour_of_year positions (1..8760) that correspond
-    # to each hour in the output window.  Use a fixed non-leap reference year (2001)
-    # so that the sequence wraps correctly across calendar year boundaries.
+    # Which hour_of_year each position in the output window corresponds to. The
+    # reference year is a fixed non-leap one, so the sequence wraps correctly
+    # across a calendar year boundary.
     ref_start = pd.Timestamp(f"2001-{bb_ts_start}")
     ref_times = pd.date_range(ref_start, periods=bb_ts_length * 24, freq='h')
     ref_hoy = ((ref_times.dayofyear - 1) * 24 + ref_times.hour + 1).astype(np.int32)
-    # Safety clip (should not be needed for non-leap 2001/2002, but guards edge cases)
     ref_hoy = np.clip(ref_hoy, 1, 8760)
 
-    # t-labels for the full window length
     t_labels_arr = np.array(['t' + str(i + 1).zfill(6) for i in range(bb_ts_length * 24)])
 
-    # Window dimension DataFrame: one row per window position
+    # One row per window position.
     window_df = pd.DataFrame({
         "hour_of_year": ref_hoy,
         "t": t_labels_arr,
     })
 
-    # ---- Build full grid (Cartesian product) ----
-    # Unique combinations of all dimension columns
     unique_dims = input_df[dim_cols].drop_duplicates()
-
-    # Quantiles as in quantile_map (order preserved)
     quantiles_df = pd.DataFrame({"quantile": q_values})
 
-    # Cross join: unique_dims x window_df x quantiles_df
+    # Every dimension combination x window position x quantile.
     full_grid = (
         unique_dims
         .merge(window_df, how="cross")
         .merge(quantiles_df, how="cross")
     )
 
-    # Merge the computed quantile results using hour_of_year as the lookup key.
-    # Multiple window positions can share the same hour_of_year (e.g. when tiling
-    # the average year for bb_ts_length > 365).
+    # hour_of_year is the lookup key, and several window positions can share one
+    # when bb_ts_length > 365 tiles the average year.
     df_full = full_grid.merge(
         df_quant,
         on=dim_cols + ["hour_of_year", "quantile"],
         how="left",
     )
 
-    # ---- Prepare final DataFrame, categorize ----
-    # 't' is already set from window_df
     df_full["t"] = df_full["t"].astype("category")
-
-    # Map quantile probability -> f label
     df_full["f"] = df_full["quantile"].map({v: k for k, v in forecast_quantiles.items()})
     df_full["f"] = df_full["f"].astype("category")
 
-    # Missing quantile values are deliberately left as NaN.
-    #
-    # The merge above is a LEFT join onto the full (dims x window x quantile)
-    # grid, so any window hour with no climatological data lands here as NaN --
-    # for example when the source data does not span a whole calendar year but
-    # the requested window does. Filling silently with 0 turned "no climatology
-    # for this hour" into "a forecast of exactly zero", which is a real value the
-    # optimiser will act on, with nothing in the log to say so.
-    #
-    # GDX_exchange.prepare_values_for_gdx performs the conversion instead, and
-    # reports how many entries it converted. GAMS still receives 0; the
-    # difference is that the run now says so.
+    # Missing quantile values are deliberately left as NaN. The merge above is a
+    # LEFT join onto the full grid, so a window hour with no climatology behind
+    # it lands here empty -- and filling it with 0 would turn "no climatology"
+    # into "a forecast of exactly zero", which the optimiser acts on.
+    # GDX_exchange.prepare_values_for_gdx does the conversion instead, and counts
+    # it: GAMS still receives 0, but the run says so.
     if round_precision is not None:
         df_full["value"] = df_full["value"].round(round_precision)
 
-    # Reorder columns to match bb_parameter_dimensions plus 'value'
-    df_final = df_full[bb_parameter_dimensions + ["value"]]
-
-    return df_final
+    return df_full[bb_parameter_dimensions + ["value"]]
 
 
 @dataclass(frozen=True)
@@ -761,14 +689,13 @@ def complete_native_grid(
 
     The order is the point. At native resolution a missing week is one step from
     its neighbours and interpolates cleanly; scattered onto an hourly index it is
-    168 steps, and whether it gets bridged depends on an interpolation limit. Fill
-    first and upsample second, and the hourly pass never has to reach across a gap
-    it cannot close -- so it cannot leave the holes that reach GAMS as zeros.
+    168 steps, and whether it gets bridged depends on an interpolation limit.
+    Fill first and upsample second, and the hourly pass never has to reach across
+    a gap it cannot close.
 
-    Only single-slot gaps are filled. Anything longer is left alone and counted:
-    two consecutive missing weeks is no longer a repair, it is an invention, and
-    the person adopting a new data source should decide what it ought to be rather
-    than discover later that this function decided for them.
+    Only single-slot gaps are filled. Anything longer is left alone and counted,
+    because bridging it is invention rather than repair and the person adopting a
+    data source should be the one deciding.
 
     Parameters
     ----------
@@ -785,11 +712,9 @@ def complete_native_grid(
         allowed to empty, which is an ordinary thing for a series to say.
     isolated_zero_is_missing : bool
         Applies only when ``zero_is_missing`` is False. A legitimate zero arrives
-        as a *stretch*: a season during which the reservoir may empty. One zero
-        wedged between two non-zero neighbours is not that, it is a dropped value
-        wearing a plausible costume, and it is treated as a gap. SE04's weekly
-        pattern is the case in point -- a two-week run at weeks 46-47 that is real,
-        and a lone zero at week 15 between 0.001 and 0.015 that is not.
+        as a *stretch* -- a season during which the reservoir may empty. One zero
+        wedged between two non-zero neighbours is a dropped value wearing a
+        plausible costume, and is treated as a gap.
 
     Returns
     -------
@@ -834,10 +759,9 @@ def complete_native_grid(
         filled[singles] = interpolated[singles]
 
         # A single slot at the very end has nothing after it to interpolate
-        # towards, and limit_area='inside' deliberately refuses to guess. It is
-        # still a single-slot gap though, so it is still repaired -- by carrying
-        # the previous value forward, which is all a one-step persistence
-        # assumption amounts to. Escalating this would be noise.
+        # towards, and limit_area='inside' refuses to guess. It is still a
+        # single-slot gap, so it is still repaired -- by carrying the previous
+        # value forward, which is what one-step persistence amounts to.
         trailing = singles & filled.isna()
         if trailing.any():
             filled[trailing] = marked.ffill()[trailing]

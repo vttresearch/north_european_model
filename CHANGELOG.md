@@ -1,5 +1,9 @@
 # Changelog -- North European Energy System Model
 
+## 2026-08-25
+- timeseries: how the build turns any hourly data source into Backbone input is now documented, see [docs/timeseries.md](docs/timeseries.md).
+- timeseries: build log messages name what was affected and what to do about it; nodes that could not be built are grouped by reason.
+
 ## 2026-08-24
 - electricity demand: every scenario year now reads `elec_2030_National_Trends.xlsx`; the 2040 profiles are not used, because they contain hours of negative demand. Improved checks and warnings, documentation added, see [docs/elec-demand-timeseries.md](docs/elec-demand-timeseries.md).
 - VRE: Improved checks and warnings, documentation added, see [docs/vre-timeseries.md](docs/vre-timeseries.md).

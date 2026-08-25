@@ -1,14 +1,17 @@
 # Electricity demand timeseries
 
-Hourly `ts_influx` for the `elec` grid, built by scaling a TYNDP 2024 demand
-profile to each node's annual energy. One profile per country, 35 climate years in
-every shipped config, negative MWh/h. The surprise is that a single climate year is
-**not** meant to reproduce the `TWh/year` you typed into the demand table — see
-below.
+Hourly `ts_influx` for the `elec` grid, built by `elec_demand_TYNDP2024` by
+scaling a TYNDP 2024 demand profile to each node's annual energy. One profile per
+country, 35 climate years in every shipped config, negative MWh/h.
 
-## Summary
+This describes what the build does **today**, with the TYNDP 2024 workbook it
+reads today. The choice of source, and the decision to use only its 2030 sheets,
+are current positions rather than settled ones — both are open questions below.
+See [Timeseries](timeseries.md) for the parts shared by every source.
 
-- **`TWh/year` is a normal-year figure.** The build matches it as a multi-year
+## One minute summary
+
+- **`TWh/year` is a normal-year demand.** The build matches it as a multi-year
   mean; individual climate years land between 95% and 107% of it. That is the
   point of running 35 of them, not a bug.
 - **`Constant_share` is blank for every electricity node, deliberately.** The
@@ -32,6 +35,19 @@ below.
 | which countries are read | `elec_demand_TYNDP2024.ALLOWED_COUNTRIES` | — |
 
 Output is `ts_influx` on grid `elec`, negative, in MWh/h.
+
+## Contents
+
+- [The calculation](#the-calculation)
+- [What `TWh/year` means](#what-twhyear-means)
+- [Why `Constant_share` is blank](#why-constant_share-is-blank)
+- [Which countries and which climate years](#which-countries-and-which-climate-years)
+- [Zero hours](#zero-hours)
+- [Only the 2030 workbook is used](#only-the-2030-workbook-is-used)
+- [The source has no leap years](#the-source-has-no-leap-years)
+- [The parquet cache](#the-parquet-cache)
+- [What this does not model](#what-this-does-not-model)
+- [Where the electricity demand timeseries is defined](#where-the-electricity-demand-timeseries-is-defined)
 
 ## The calculation
 
@@ -81,6 +97,26 @@ double-count.
 The case for setting one is a load the projection does not know about — a large
 datacenter build-out, say — where a flat addition is the honest way to express it.
 
+## Which countries and which climate years
+
+**Countries.** `ALLOWED_COUNTRIES` in the processor is the list the cache is built
+for — a hard gate, not a preference. The workbook holds many more zones, and this
+is the set that has been checked by hand. A configured country outside it is
+reported at warning level and its node is alarmed about as empty; the rest of the
+build is unaffected. Widening the tuple is a deliberate act, and it invalidates
+the cache so the new country is actually read.
+
+**Climate years.** Coverage is **ragged, per country and per workbook**. In the
+2030 workbook most countries run 1982–2019 while AT00, ES00, FR00 and SE01–SE04
+stop at 2016; the 2040 workbook disagrees about which. `climate_data = 1982-2016`
+in every shipped config is exactly the intersection.
+
+That raggedness is data, not a defect, so it is judged only against what a run
+asks for. A country missing 2017 is nothing to a 1982–2016 build. A country
+missing a year *inside* the requested range is not built at all, and is named —
+because the alternative is a full year of fabricated zeros that every downstream
+check passes.
+
 ## Zero hours
 
 Backbone reads a zero as "not set", so a node whose demand is zero for an hour is
@@ -108,11 +144,11 @@ A zero in the *source* is treated the same way. A climate year whose every hour 
 zero is a gap the workbook spelled with a number instead of a blank, and it is
 refused rather than scaled.
 
-## Only the 2030 workbook is used — including for 2040
+## Only the 2030 workbook is used
 
-`elec_2040_National_Trends.xlsx` exists and is **deliberately not read**. Every
-scenario year takes the 2030 profile *shape* and scales it to its own
-`TWh/year`, so a 2040 run gets 2040 magnitudes on 2030 hourly shapes.
+Including for 2040. `elec_2040_National_Trends.xlsx` exists and is **deliberately
+not read**. Every scenario year takes the 2030 profile *shape* and scales it to
+its own `TWh/year`, so a 2040 run gets 2040 magnitudes on 2030 hourly shapes.
 
 The reason is that the 2040 workbook contains hours of **negative** demand, which
 the 2030 one does not. A negative demand becomes a *positive* `ts_influx` —
@@ -141,7 +177,8 @@ flag for the approach, there may be a good reason for it, and finding out belong
 with the data's authors. Neither option available without them is honest: clipping
 to zero replaces a known quantity with "not set", and clipping to a positive floor
 invents 74 GWh/year of demand SE04 does not have. Using the shape that has no
-negatives, and saying so, is what the build does instead.
+negatives, and saying so, is what the build does instead — and it is the current
+answer, not the intended final one.
 
 The trade is that a 2040 run does not get 2040's *shape* — the electrification and
 demand-profile changes TYNDP projects between the two years are not represented.
@@ -167,26 +204,6 @@ The flat term divides by a nominal 8760 for the same reason. Left alone
 deliberately: both effects are far inside the precision of the demand projections
 themselves. `DH_demand_fromTemperature` uses the identical divisor, so the two
 would have to change together.
-
-## Which countries and which climate years
-
-**Countries.** `ALLOWED_COUNTRIES` in the processor is the list the cache is built
-for — a hard gate, not a preference. The workbook holds many more zones, and this
-is the set that has been checked by hand. A configured country outside it is
-reported at warning level and its node is alarmed about as empty; the rest of the
-build is unaffected. Widening the tuple is a deliberate act, and it invalidates
-the cache so the new country is actually read.
-
-**Climate years.** Coverage is **ragged, per country and per workbook**. In the
-2030 workbook most countries run 1982–2019 while AT00, ES00, FR00 and SE01–SE04
-stop at 2016; the 2040 workbook disagrees about which. `climate_data = 1982-2016`
-in every shipped config is exactly the intersection.
-
-That raggedness is data, not a defect, so it is judged only against what a run
-asks for. A country missing 2017 is nothing to a 1982–2016 build. A country
-missing a year *inside* the requested range is not built at all, and is named —
-because the alternative is a full year of fabricated zeros that every downstream
-check passes.
 
 ## The parquet cache
 
@@ -221,10 +238,14 @@ lets a test or demo folder ship a 69 MB cache without a 282 MB workbook; the bui
 says once that it could not confirm freshness. With neither present, electricity
 demand is skipped with a warning and the rest of the build continues.
 
-## What is not modelled
+## What this does not model
+
+Each of these is a limit of the current source and method rather than a decision
+to defend. Any of them would be worth revisiting given a better source.
 
 - **No sub-country profiles.** One profile per bidding zone; a country split into
   regions gives each the same shape.
+- **No 2040 profile shape**, for the reason above — the largest known gap here.
 - **No price response** and no demand-side flexibility here — that belongs to the
   units and storages connected to the node.
 - **No efficiency or electrification trend within a climate range.** `TWh/year` is
@@ -248,6 +269,8 @@ demand is skipped with a warning and the rest of the build continues.
 
 ## See also
 
+- [Timeseries](timeseries.md) — the shared pipeline: climate years, windows,
+  forecast branches, and what is checked before anything is written
 - [District heating demand timeseries](dh-demand-timeseries.md) — the same
   calculation driven by temperature, and the opposite zero problem
 - [Source workbook conventions](source-workbook-conventions.md) — how the demand

@@ -1,14 +1,29 @@
 # Wind and solar timeseries
 
-How the hourly `ts_cf` series for onshore wind, offshore wind and solar PV are
-built from a folder of PECD files you downloaded yourself.
+Hourly `ts_cf` for onshore wind, offshore wind and solar PV, built by `VRE_PECD`
+from a folder of PECD files you download yourself. One processor serves all
+three; they differ only in which folder they read and which flow they write.
 
-Read [What a download decides](#what-a-download-decides) before you fetch new
-data. It is the part no file records, and the part the build cannot check for
-you. The rest is reference for when a build log mentions a VRE node and you want
-to know whether to worry.
+This describes what the build does **today**, with the PECD releases available
+today. The dataset is actively changing under us — 4.1 has been deprecated and
+4.2 is not the same numbers — so treat this page as a snapshot of the current
+arrangement rather than a fixed contract. See [Timeseries](timeseries.md) for the
+parts shared by every source.
 
-## Quick reference
+## One minute summary
+
+- **The CSV does not say which download it came from.** Roughly ten choices are
+  made when fetching, and none is written into the data. The file name is the
+  only record, so the build reads it and prints the selection it found.
+- **Read [What a download decides](#what-a-download-decides) before fetching new
+  data.** It is the part no file records and the part the build cannot check.
+- **One folder, one download.** Mixing two produces a series joined at a step of
+  tens of percent, with no other symptom. The build warns; overlapping hours it
+  refuses outright.
+- **Where several PECD zones match a node, the highest-output one wins.** That is
+  a modelling decision, not a lookup, and the build prints its size every run.
+- **A zero capacity factor is ordinary** — midnight for PV, a calm hour for wind
+  — so there is no per-hour zero alarm here, unlike district heating.
 
 | Quantity | Comes from | Unit |
 |---|---|---|
@@ -20,10 +35,18 @@ to know whether to worry.
 | mean shift, optional | `scaling_factor` | multiplier, default 1 |
 
 Output is `ts_cf` on flows `PV`, `onshore` and `offshore`, one series per node.
+`src_files/timeseries/PECD-PV`, `PECD-onshore` and `PECD-offshore` each hold 40
+files, one per climate year 1980–2019.
 
-The three shipped specs differ only in the folder they read and the flow they
-write. `src_files/timeseries/PECD-PV`, `PECD-onshore` and `PECD-offshore` each
-hold 40 files, one per climate year 1980–2019.
+## Contents
+
+- [What a download decides](#what-a-download-decides)
+- [Which zone a node gets](#which-zone-a-node-gets)
+- [Which countries can be built](#which-countries-can-be-built)
+- [Zeros and holes](#zeros-and-holes)
+- [What this does not model](#what-this-does-not-model)
+- [Known open items](#known-open-items)
+- [Where the VRE timeseries is defined](#where-the-vre-timeseries-is-defined)
 
 ## What a download decides
 
@@ -173,7 +196,10 @@ Nothing is repaired. What these hours actually are is not yet understood well
 enough to write a repair rule, and a wrong repair here would be invisible
 afterwards.
 
-## What is not modelled
+## What this does not model
+
+Each of these is a limit of the current arrangement rather than a decision to
+defend. Any of them would be worth revisiting given better data or a reason.
 
 - **No capacity weighting inside a country.** One zone's profile serves the
   whole node; the other zones' output is discarded rather than blended.
@@ -189,6 +215,10 @@ afterwards.
 
 ## Known open items
 
+- **The move to PECD4.2.** 4.1 is deprecated. The shipped folders are still 4.1,
+  and adopting 4.2 is a change of technology assumption rather than a refresh —
+  see [above](#why-it-matters-more-than-a-version-bump). Both will exist in the
+  wild for a while, which is why the build reports which one it read.
 - **The selection belongs to the scenario, not to the installation.** Old-fleet
   profiles for a historical year, future turbines for 2040 — today both are
   chosen by editing `input_sub_folder`, so a multi-year run uses one fleet for
@@ -210,6 +240,8 @@ afterwards.
 
 ## See also
 
+- [Timeseries](timeseries.md) — the shared pipeline: climate years, windows,
+  forecast branches, and what is checked before anything is written
 - [Hydro data](hydro.md) — the other PECD-fed part of the model, and what its
   gaps are repaired with
 - [District heating demand timeseries](dh-demand-timeseries.md) — where a zero

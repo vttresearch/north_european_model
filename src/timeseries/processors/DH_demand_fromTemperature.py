@@ -9,40 +9,14 @@ class DH_demand_fromTemperature(BaseProcessor):
     """
     District heating demand for each node, from one temperature series per country.
 
-    The calculation is deliberately simple, and worth stating in full because
-    nothing else in the pipeline says it: take the trailing 24-hour mean outdoor
-    temperature, subtract it from a 17 C balance point, clip the negatives away,
-    normalise so the mean year sums to one, and split each node's annual energy
-    into a weather-driven and a flat part. See `docs/dh-demand-timeseries.md`.
+    Trailing 24-hour mean outdoor temperature, subtracted from a 17 C balance
+    point and clipped at zero, normalised so the mean climate year sums to one,
+    then split per node into a weather-driven and a flat part.
 
-    What `twh/year` means
-    ---------------------
-    The demand table's annual figure is a **weather-normalised "normal year"**
-    value, not the energy any particular year actually consumed -- and that holds
-    for a historical row too: a 2015 entry must be a weather-corrected 2015
-    demand, not what the meters recorded that year.
-
-    That contract is what makes the normalisation below correct rather than
-    merely deliberate. Normalising across the whole climate range makes the
-    multi-year mean equal the table figure while letting each climate year run
-    above or below it, which is exactly what a normal-year input means.
-    Normalising per year instead would force every climate year to the same
-    total and delete the variability this processor exists to produce.
-
-    Zeros
-    -----
-    Two zeros live in here and they mean opposite things.
-
-    A `0` in the temperature file is 0 C -- an ordinary December in Finland, and
-    a temperature at which there is certainly district heating demand. It must be
-    preserved, which is why `complete_native_grid` is called with both of its
-    "a zero is a dropped value" flags off.
-
-    A `0` in the output is impossible. A heat network's hot water and losses do
-    not stop, and the flat `constant_share` term alone forbids it. Every way this
-    processor can fail ends as a NaN column that becomes a plausible-looking zero
-    at the GDX gate, so `_check_no_zero_hours` alarms about any hour that comes
-    out empty. On sound data it says nothing.
+    `docs/dh-demand-timeseries.md` is the documentation and carries the reasoning
+    -- what `twh/year` means, why the normalisation spans the whole climate range
+    rather than each year, why an output zero is an alarm, and which countries
+    can be built. Read it before changing anything here.
 
     Parameters
     ----------
@@ -57,46 +31,34 @@ class DH_demand_fromTemperature(BaseProcessor):
     demand_grid : str
         The grid written into the output, e.g. `dheat`.
 
-    `scenario_year` and `exclude_nodes` arrive in the kwargs and are deliberately
-    not read. Both are applied upstream in `SourceDataPipeline` -- the demand rows
-    are whitelisted by scenario year and blacklisted by node before they get here,
-    and filtering again would be a second place to keep in step.
+    `scenario_year` and `exclude_nodes` also arrive in the kwargs and are
+    deliberately not read: SourceDataPipeline has already applied both, and
+    filtering again would be a second place to keep in step.
     """
 
-    #: Demand is written as negative `ts_influx`, so every value belongs at or
-    #: below zero. No value_range to go with it: the meaningful bound is each
-    #: network's own peak MW, which no class-level tuple can state, and a maximum
-    #: of 0.0 would only restate the sign.
+    #: Demand is written as negative `ts_influx`. No value_range to go with it:
+    #: the meaningful bound is each network's own peak MW, which no class-level
+    #: tuple can state, and a maximum of 0.0 would only restate the sign.
     value_sign = "non_positive"
 
     #: Outdoor temperature above which no space heating is needed. A modelling
-    #: parameter, not a tuning constant -- it and SMOOTHING_HOURS between them
-    #: decide the shape of every heat demand series in the model.
+    #: choice, not a tuning constant.
     BALANCE_POINT_C = 17.0
 
     #: Length of the trailing mean that stands in for building thermal mass.
     SMOOTHING_HOURS = 24
 
-    #: Divisor for the flat share. Deliberately the nominal year rather than the
-    #: real one: `twh/year` is a normal-year figure, so a leap year receives
-    #: 24/8760 more of its constant part than nominal, about 0.02% of the annual
-    #: total. `elec_demand_TYNDP2024` uses the identical formula, so the two have
-    #: to move together or not at all. See docs/dh-demand-timeseries.md.
+    #: Divisor for the flat share, deliberately the nominal year rather than the
+    #: real one. `elec_demand_TYNDP2024` uses the identical formula, so the two
+    #: have to move together or not at all.
     HOURS_PER_YEAR = 8760
 
     TWH_TO_MWH = 1e6
 
     def __init__(self, **kwargs_processor):
-        """
-        Initialize the processor.
-
-        Required kwargs: input_folder, country_codes, start_year, end_year,
-        df_annual_demands, demand_grid.
-        """
-        # Initialize base class
+        """Initialize the processor. Required kwargs are listed below."""
         super().__init__(**kwargs_processor)
 
-        # List of required parameters
         required_params = [
             'input_folder',
             'country_codes',
@@ -106,14 +68,12 @@ class DH_demand_fromTemperature(BaseProcessor):
             'demand_grid',
         ]
 
-        # Check if all required parameters are present
         missing_params = [param for param in required_params if param not in kwargs_processor]
         if missing_params:
             raise ValueError(f"Missing required parameters: {', '.join(missing_params)}")
 
-        # Unpack required parameters. Named one by one rather than through
-        # setattr: the attributes are then visible to a reader and to a checker,
-        # which is worth six lines.
+        # Named one by one rather than through setattr, so that the attributes
+        # are visible to a reader and to a checker.
         self.input_folder      = kwargs_processor['input_folder']
         self.country_codes     = kwargs_processor['country_codes']
         self.start_year        = kwargs_processor['start_year']
@@ -122,35 +82,31 @@ class DH_demand_fromTemperature(BaseProcessor):
         self.demand_grid       = kwargs_processor['demand_grid']
 
         # ProcessorRunner rounds the output to this many decimals after the
-        # processor returns, so it is what decides whether a small value survives
-        # as a number or reaches GAMS as a zero. _check_no_zero_hours needs it.
+        # processor returns, so it decides whether a small value survives as a
+        # number or reaches GAMS as a zero. _check_no_zero_hours needs it.
         try:
             self.rounding_precision = int(kwargs_processor.get('rounding_precision') or 0)
         except (TypeError, ValueError):
             self.rounding_precision = 0
 
-        # Derive full-year date boundaries from integer year values
         self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
         self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # The rolling mean needs SMOOTHING_HOURS - 1 hours before the first
         # output hour, and no more. Derived rather than hardcoded so that the
-        # coverage check below states the actual requirement: with a hardcoded
-        # two days a run starting at the temperature file's own first year loses
-        # its first 24 hours to an unfilled window, silently.
+        # coverage check states the actual requirement: hardcoding two days
+        # silently costs a run its first 24 hours when the temperature file
+        # starts at the same year as the run.
         self.warmup = pd.Timedelta(self.SMOOTHING_HOURS - 1, unit="h")
 
-        # build input file path
-        # The current source file Temperature.csv has hourly data from 1980-01-01 to 2019-12-31
-        # data is for countries AT,BE,CH,DE,DK,EE,FI,FR,GB,LT,LV,NL,NO,PL,SE,ES
         self.temperature_file = os.path.join(self.input_folder, 'Temperature.csv')
 
         #: (label, reason, level) for everything that could not be built, said
         #: once at the end rather than as it happens.
         self.unbuilt_nodes = []
 
-        #: country -> why that country has no usable profile, filled while
-        #: reading and expanded to node names when reporting.
+        #: country -> why it has no usable profile, expanded to node names when
+        #: reporting.
         self.country_problems = {}
 
         #: node -> its constant_share, so the zero-hour alarm can name the cause
@@ -174,15 +130,11 @@ class DH_demand_fromTemperature(BaseProcessor):
         """
         Read Temperature.csv and return it indexed by exactly the hours needed.
 
-        Nothing here raises. A file that cannot be used at all returns None and
-        the run continues with no district heating demand; a file that is merely
-        damaged is repaired where that is honest, reported where it is not, and
-        handed on with holes left as NaN so the per-country pass can see them.
-
-        The one exception is `read_input_csv`, which refuses a file whose numbers
-        or field count are wrong. That is pre-existing base-class behaviour: a
-        generated file with a malformed number has changed format, and blanking
-        the cell would fabricate data rather than lose it.
+        A file that cannot be used at all returns None and the run continues with
+        no district heating demand; a merely damaged one is repaired where that
+        is honest, reported where it is not, and handed on with holes left as NaN
+        for the per-country pass to see. The only raise comes from
+        `read_input_csv`, and it means the file has changed format.
 
         Returns
         -------
@@ -192,8 +144,7 @@ class DH_demand_fromTemperature(BaseProcessor):
         try:
             df = self.read_input_csv(self.temperature_file)
         except SourceDataError:
-            # Already reported in detail by the reader, and it means the file has
-            # changed format. Let it stop the processor.
+            # Reported in detail by the reader. Let it stop the processor.
             raise
         except (FileNotFoundError, OSError) as e:
             self.logger.log_status(
@@ -216,9 +167,8 @@ class DH_demand_fromTemperature(BaseProcessor):
             )
             return None
 
-        # errors='coerce' rather than the default: read_input_csv checks columns
-        # that look numeric and cannot see a malformed timestamp string, so this
-        # is the only place a bad date can be caught instead of raising.
+        # errors='coerce': read_input_csv only checks columns that look numeric,
+        # so a malformed timestamp is caught here or nowhere.
         stamps = pd.to_datetime(df[time_col], errors='coerce')
         unparsed = stamps.isna()
         if unparsed.any():
@@ -258,8 +208,8 @@ class DH_demand_fromTemperature(BaseProcessor):
                 level="warn",
             )
 
-        # Reindexing is what turns 'row absent' into 'value NaN', which is the
-        # form the per-country completion below can act on.
+        # Reindexing turns 'row absent' into 'value NaN', the form the
+        # per-country completion below can act on.
         return df.reindex(required)
 
     def _temperature_column(self, country, columns_by_code):
@@ -267,15 +217,10 @@ class DH_demand_fromTemperature(BaseProcessor):
         The temperature column for a country code, or None.
 
         The rule is the first two characters -- 'FI00' -> 'FI', 'NOS0' -> 'NO',
-        'DKW1' -> 'DK'. Deliberately a rule rather than a lookup table: splitting
-        a country into regions produces codes the temperature file has never
-        seen, and 'EE00' becoming 'EE01' and 'EE02' then costs nothing.
-
-        The price is that a code whose first two letters are not the file's own
-        are not resolved -- 'UK00' looks for 'UK' where the file says 'GB'. That
-        is reported rather than aliased: an alias table is a modelling assumption
-        the reader cannot see, and the countries it would cover ('ITN1', 'PT00')
-        have no temperature data under any name.
+        'DKW1' -> 'DK' -- so splitting a country into regions costs nothing. The
+        price is that 'UK00' looks for 'UK' where the file says 'GB'; that is
+        reported rather than aliased, for the reasons in "Which countries can be
+        built" in docs/dh-demand-timeseries.md.
         """
         return columns_by_code.get(str(country)[:2].strip().upper())
 
@@ -286,11 +231,10 @@ class DH_demand_fromTemperature(BaseProcessor):
         Returns (series, None) when the country can be built and (None, reason)
         when it cannot.
 
-        Both of `complete_native_grid`'s zero flags are off here, and that is the
-        one place this caller diverges from the hydro ones. A zero in a reservoir
-        level is a dropped value wearing a plausible costume; a zero here is 0 C,
-        which is an ordinary winter hour everywhere in the run. Treating it as
-        missing would silently discard every freezing hour in Europe.
+        Both of `complete_native_grid`'s zero flags are off here, the one place
+        this caller diverges from the hydro ones: a zero in a reservoir level is
+        a dropped value wearing a plausible costume, but a zero here is 0 C, an
+        ordinary winter hour everywhere in the run.
         """
         if series is None or series.dropna().empty:
             return None, "the temperature file holds no values for it"
@@ -307,8 +251,8 @@ class DH_demand_fromTemperature(BaseProcessor):
             return None, "the temperature file holds no values for it"
 
         # complete_native_grid drops everything before the first real value --
-        # right for a weekly record that simply begins later, wrong here, where
-        # the warm-up hours are exactly the ones most likely to be absent.
+        # right for a record that simply begins later, wrong for the warm-up
+        # hours, which are the ones most likely to be absent.
         head_gap = int((required < filled.index[0]).sum())
         if head_gap:
             return None, (
@@ -340,8 +284,8 @@ class DH_demand_fromTemperature(BaseProcessor):
         """A column by case-folded name, or None.
 
         `merge_row_by_row` compares headers case-insensitively and keeps the
-        first spelling it saw, so the case of a column here is decided by whichever
-        workbook was read first. Looking it up folded is the only stable way.
+        first spelling it saw, so the case here is decided by whichever workbook
+        was read first. Looking it up folded is the only stable way.
         """
         for col in df.columns:
             if str(col).strip().lower() == name:
@@ -353,11 +297,9 @@ class DH_demand_fromTemperature(BaseProcessor):
         Group the demand rows by case-folded country code.
 
         Case folding happens here and only here. It used to happen twice with
-        different answers: `process` filtered the country list case-sensitively
-        while `build_demands` matched case-insensitively, so a workbook cell
-        reading 'fi00' -- which the source-side whitelist accepts and passes
-        through with its own spelling -- was dropped before the tolerant matcher
-        ever saw it.
+        different answers -- `process` filtering the country list case-sensitively
+        while `build_demands` matched folded -- so a workbook cell reading 'fi00'
+        was dropped before the tolerant matcher ever saw it.
 
         Returns
         -------
@@ -390,6 +332,8 @@ class DH_demand_fromTemperature(BaseProcessor):
             )
             return None
 
+        # Optional, unlike the three above: an absent constant_share becomes 0.0
+        # in build_demands, which is legal and alarmed about as a zero hour.
         share_col = self._column(df, 'constant_share')
 
         grouped = {}
@@ -413,11 +357,10 @@ class DH_demand_fromTemperature(BaseProcessor):
         """
         Hourly heating profile per country: max(0, BALANCE_POINT_C - 24h mean).
 
-        A country that cannot be built keeps a column of NaN -- which the GDX
-        gate turns into zeros, exactly as before this check existed -- and its
-        reason is recorded for `_report_coverage` and alarmed about by
-        `_check_no_zero_hours`. The column is kept rather than dropped so that
-        the node still appears in the output it was asked to produce.
+        A country that cannot be built keeps a column of NaN, which the GDX gate
+        turns into zeros; its reason is recorded for `_report_coverage` and
+        alarmed about by `_check_no_zero_hours`. The column is kept rather than
+        dropped so that the node still appears in the output it was asked for.
 
         Parameters
         ----------
@@ -463,10 +406,9 @@ class DH_demand_fromTemperature(BaseProcessor):
                 df_heating_profile[country] = np.nan
                 continue
 
-            # Trailing mean, so the profile at any hour reflects the day leading
-            # up to it rather than that instant. min_periods is the full window:
-            # the warm-up hours in `required` are there precisely so that the
-            # first output hour has one.
+            # Trailing mean, so the profile reflects the day leading up to an
+            # hour rather than that instant. min_periods is the full window --
+            # the warm-up hours in `required` exist to fill the first one.
             rolling_avg = filled.rolling(
                 window=self.SMOOTHING_HOURS, min_periods=self.SMOOTHING_HOURS
             ).mean()
@@ -479,21 +421,19 @@ class DH_demand_fromTemperature(BaseProcessor):
         """
         Scale each country's profile so the *mean* year sums to 1.
 
-        Across the whole climate range, not within each year. That is what makes
-        the built demand equal the table's normal-year figure on average while
-        letting a cold year run above it and a mild year below -- see the class
-        docstring. How far a year departs from the mean is a property of the
-        weather and of the node, so the run measures its own range and prints it
-        rather than this claiming one; `docs/dh-demand-timeseries.md` records what it
-        came to when that page was written.
+        Across the whole climate range, not within each year -- see "What
+        TWh/year means" in docs/dh-demand-timeseries.md. How far a year
+        departs from the mean is a property of the weather and of the node, so
+        the run measures its own range and prints it rather than this claiming
+        one.
 
         The year count is the number of calendar years in the index, not the
         number holding at least one positive hour. The old rule inflated demand
         whenever data was partial: a year with a single positive hour counted as
-        a whole year while the sum only covered the hours present, so the scale
-        came out too large and *every* year received more energy than the table
-        said. A country reaching here now has a complete series, so this states
-        the intended rule directly instead of approximating it.
+        a whole year while the sum covered only the hours present, so *every*
+        year received more energy than the table said. A country reaching here
+        now has a complete series, so this states the intended rule directly
+        instead of approximating it.
         """
         for country in processed_countries:
             if country not in df_profiles.columns:
@@ -503,9 +443,8 @@ class DH_demand_fromTemperature(BaseProcessor):
                 continue
 
             if s.isna().any():
-                # Unreachable: get_temperature_profile only emits a complete
-                # column or an all-NaN one. Said out loud rather than assumed,
-                # because the guarantee lives in another method.
+                # Unreachable: get_temperature_profile emits a complete column or
+                # an all-NaN one. Guarded because that promise is made elsewhere.
                 self.logger.log_status(
                     f"{country}: heating profile has {int(s.isna().sum())} hour(s) with no "
                     f"value after the temperature series was proved complete. "
@@ -542,21 +481,20 @@ class DH_demand_fromTemperature(BaseProcessor):
 
         A row that cannot be used -- an unusable `twh/year`, a `constant_share`
         outside [0, 1] -- costs that one node and is reported. It used to raise,
-        which ProcessorRunner caught at whole-processor level, so one bad cell
+        and ProcessorRunner catches at whole-processor level, so one bad cell
         cost every node in the run its time series.
         """
         columns = {}
         claimed_by = {}
-        # Remembered so the zero-hour alarm can name the cause it most often has.
         self.node_shares = {}
 
         for country in processed_countries:
             profile = df_profiles_norm.get(country)
             problem = self.country_problems.get(country)
             if profile is None and problem is None:
-                # Unreachable: get_temperature_profile emits a column per country
-                # either way. Guarded rather than trusted, because the alternative
-                # to a stated reason here is a TypeError further down.
+                # Unreachable: a column exists per country either way. Guarded
+                # because the alternative is a TypeError further down rather
+                # than a stated reason.
                 problem = "no heating profile was produced for it"
 
             for row in rows_by_country.get(str(country).strip().lower(), []):
@@ -623,17 +561,15 @@ class DH_demand_fromTemperature(BaseProcessor):
         """
         Alarm about any hour of any node that comes out with no demand.
 
-        A district heating network has no reason to consume nothing in June any
-        more than in December: hot water and network losses continue, and the
-        flat `constant_share` term alone forbids a zero. So every zero here is a
-        symptom -- a country with no temperature data, a `twh/year` that is not a
-        number, a `constant_share` of zero -- and every one of them would
-        otherwise reach GAMS looking exactly like a modelled summer.
+        Every zero here is a symptom -- a country with no temperature data, a
+        `twh/year` that is not a number, a `constant_share` of zero -- and every
+        one would otherwise reach GAMS looking exactly like a modelled summer.
+        See the zero hours section of docs/dh-demand-timeseries.md.
 
-        The test is against what will actually be *written*. ProcessorRunner
-        rounds to `rounding_precision` after this returns, so a node whose hourly
-        demand is 0.4 MWh/h leaves here non-zero and arrives at GAMS as nothing.
-        NaN counts as zero for the same reason: the GDX gate fills it with one.
+        The test is against what will actually be *written*: ProcessorRunner
+        rounds to `rounding_precision` after this returns, so a node at 0.4 MWh/h
+        leaves here non-zero and arrives at GAMS as nothing. NaN counts as zero
+        for the same reason, the GDX gate filling it with one.
 
         Reported at error level and never raised -- one line per node, because a
         broken node has hundreds of thousands of bad hours.
@@ -673,15 +609,12 @@ class DH_demand_fromTemperature(BaseProcessor):
 
         Split by whether the user can act on it. A configured country with no
         district heating rows at all is information -- most of a run's countries
-        have none, and saying so per country would drown the log. A node someone
-        wrote a demand row for and that could not be built is a warning: that row
-        is a request, and the node will otherwise sit in the model with a balance
-        penalty and nothing to serve.
+        have none. A node someone wrote a demand row for and that could not be
+        built is a warning: that row is a request, and the node will otherwise
+        sit in the model with a balance penalty and nothing to serve.
         """
-        built = sorted(built_nodes)
         self.logger.log_status(
-            f"District heating demand built for {len(built)} node(s): "
-            f"{', '.join(built) if built else 'none'}.",
+            f"District heating demand built for {len(built_nodes)} node(s).",
             level="info",
         )
 
@@ -689,10 +622,19 @@ class DH_demand_fromTemperature(BaseProcessor):
             entries = sorted((n, r) for n, r, lvl in self.unbuilt_nodes if lvl == level)
             if not entries:
                 continue
-            detail = ', '.join(f"{node} ({reason})" for node, reason in entries)
+            # Grouped by reason, which is what a reader acts on and what the
+            # nodes usually share. Names stay in full: a node reaching GAMS as
+            # zero demand is exactly what someone has to go and look up.
+            by_reason = {}
+            for node, reason in entries:
+                by_reason.setdefault(reason, []).append(node)
+            detail = '; '.join(
+                f"{', '.join(nodes)}: {reason}"
+                for reason, nodes in sorted(by_reason.items())
+            )
             self.logger.log_status(
-                f"No district heating demand time series for {len(entries)} node(s): "
-                f"{detail}. These reach GAMS as zero demand.",
+                f"No district heating demand for {len(entries)} node(s) -- {detail}. "
+                f"These reach GAMS as zero demand.",
                 level=level,
             )
 
@@ -700,11 +642,10 @@ class DH_demand_fromTemperature(BaseProcessor):
         """
         State the normal-year property once, with this run's own numbers.
 
-        Anyone who compares a single climate year against the workbook's
-        `twh/year` will find a mismatch. It is not one -- the table figure is a
-        weather-normalised normal year, and the spread below is the whole point
-        of running 35 of them -- but nothing else says so, and the question comes
-        back every time.
+        Anyone comparing a single climate year against the workbook's `twh/year`
+        will find a mismatch. It is not one -- the table figure is a
+        weather-normalised normal year -- but nothing else in a build log says
+        so, and the question comes back every time.
         """
         usable = [n for n in built_nodes if n in df_demands.columns]
         if df_demands.empty or not usable:
@@ -712,7 +653,7 @@ class DH_demand_fromTemperature(BaseProcessor):
 
         # Per node against its own mean, not summed across nodes first: a warm
         # year in one country offsets a cold one in another, and the total would
-        # report a spread of nothing while every individual node swung by a fifth.
+        # report no spread while every individual node swung by a fifth.
         totals = df_demands[usable].groupby(df_demands.index.year).sum()
         if len(totals) < 2:
             return
@@ -746,9 +687,8 @@ class DH_demand_fromTemperature(BaseProcessor):
         if rows_by_country is None:
             return pd.DataFrame(columns=['grid', 'node', 'time', 'value'])
 
-        # The config is the authority on country-code spelling everywhere else in
-        # the pipeline, so it is here too: iterate it, and look the demand rows up
-        # case-folded.
+        # The config is the authority on country-code spelling, here as
+        # everywhere else: iterate it, look the demand rows up case-folded.
         processed_countries = [
             code for code in self.country_codes
             if str(code).strip().lower() in rows_by_country
@@ -788,12 +728,11 @@ class DH_demand_fromTemperature(BaseProcessor):
         self._report_coverage(built_nodes)
         self._report_climate_spread(out_df, built_nodes)
 
-        # Set secondary result if needed
         self.secondary_result = None
 
         self.logger.log_status("Demand time series built.", level="info")
 
-        # Convert to long format: [grid, node, time, value]
+        # Long format, and negated on the way out: demand is a negative ts_influx.
         result = out_df.reset_index(names='time')
         result = result.melt(id_vars=['time'], var_name='node', value_name='value')
         result['value'] = -result['value']

@@ -1,17 +1,29 @@
 # District heating demand timeseries
 
-How the hourly `ts_influx` series for the `dheat` grid is built from outdoor
-temperature. The calculation is short enough to state in full, and this page does
-that, because everything surprising about the result follows from how simple it is.
+Hourly `ts_influx` for the `dheat` grid, built from outdoor temperature by
+`DH_demand_fromTemperature`. The calculation is short enough to state in full,
+and everything surprising about the result follows from how simple it is.
 
-Only the timeseries. Where the annual demand figures come from, and the heat
-generation capacity that serves them, are not covered here.
+This describes what the build does **today**. The temperature-driven approach is
+the current one rather than a settled one — it is crude on purpose, and a better
+source or a better method would replace it and this page together. See
+[Timeseries](timeseries.md) for the parts shared by every source.
 
-Read [What `TWh/year` means](#what-twhyear-means) before you put a number in the
-demand table. The rest is reference for when a build log mentions a heat node and
-you want to know whether to worry.
+## One minute summary
 
-## Quick reference
+- **`TWh/year` in the input data is the demand for a weather-normalised year.** The
+  build matches it as a multi-year mean; each climate year lands above or below.
+  Getting this wrong biases every scenario built from that row, and nothing
+  downstream can detect it.
+- **`Constant_share` is iterated to 0.3** based on how well the formula repeats annual demands and known public hourly profiles.
+- **Four steps, no more:** smooth the temperature over a 24h window, subtract it from a
+  balance point, normalise, scale to each node's annual energy.
+- **A zero hour is a defect, not a summer.** Hot water and network losses do not
+  stop, so the build alarms about any node that comes out empty.
+- **The physics is one national temperature per country.** No per-city weather,
+  no hot-water seasonality, no wind or solar gain.
+- **Only countries `Temperature.csv` covers can be built**, and the column is
+  found by the country code's first two letters.
 
 | Quantity | Comes from | Unit |
 |---|---|---|
@@ -22,6 +34,17 @@ you want to know whether to worry.
 | smoothing window | `DH_demand_fromTemperature.SMOOTHING_HOURS` | hours |
 
 Output is `ts_influx` on grid `dheat`, negative, in MWh/h.
+
+## Contents
+
+- [The calculation](#the-calculation)
+- [What `TWh/year` means](#what-twhyear-means)
+- [Which countries can be built](#which-countries-can-be-built)
+- [Constant share](#Constant-share)
+- [Leap years](#leap-years)
+- [Node names and exclusions](#node-names-and-exclusions)
+- [What this does not model](#what-this-does-not-model)
+- [Where the district heating timeseries is defined](#where-the-district-heating-timeseries-is-defined)
 
 ## The calculation
 
@@ -84,7 +107,28 @@ range it produced.
 Normalising per year instead would force every climate year to the same total and
 delete exactly the variation that running 35 of them is for.
 
-## Zero hours
+## Which countries can be built
+
+The temperature column for a country is its code's **first two letters** —
+`FI00` → `FI`, `NOS0` → `NO`, `DKW1` → `DK`. A rule rather than a lookup table,
+so that splitting a country into regions costs nothing: `EE00` becoming `EE01`
+and `EE02` needs no code change at all.
+
+`Temperature.csv` carries AT, BE, CH, DE, DK, EE, ES, FI, FR, GB, LT, LV, NL, NO,
+PL, SE. Two consequences:
+
+- **`UK00` finds no column**, because the file says `GB`. There is deliberately no
+  alias table: an alias is a modelling assumption the reader cannot see, and it
+  would not help `ITN1`, `ITCN`, `ITCS` or `PT00`, which have no temperature data
+  under any name. A demand row for such a country is reported at warning level,
+  its node is alarmed about as empty, and the rest of the build is unaffected.
+- A country with no demand rows at all is normal — most of a run's countries have
+  no district heating — and is reported at info level, never as a warning.
+
+Widening this means finding temperature data for the missing countries, not
+editing the rule.
+
+## Constant share
 
 For part of every year the 24-hour mean sits at or above 17 °C, and the
 weather-driven term is exactly zero. Measured over 1982–2016:
@@ -118,42 +162,11 @@ from a node whose demand was never built — and every way this processor can fa
 produces the second while looking like the first.
 
 So the build **alarms about any hour of any node that comes out empty**, naming
-the node and the hour count. On the data that ships today it says nothing: across
-a whole climate year there is not one zero, and the smallest hourly value is
-42 MWh/h. Anything it does say is real.
+the node and the hour count. The check passes on the data that ships today: there are no zero demand hours. The smallest hourly value is 42 MWh/h.
 
 The check tests what will actually be *written*, not what the processor holds: the
 output is rounded to whole MWh afterwards, so a node whose every hour is below
 0.5 MWh/h would reach GAMS as nothing at all.
-
-## Which countries can be built
-
-The temperature column for a country is its code's **first two letters** —
-`FI00` → `FI`, `NOS0` → `NO`, `DKW1` → `DK`. A rule rather than a lookup table,
-so that splitting a country into regions costs nothing: `EE00` becoming `EE01`
-and `EE02` needs no code change at all.
-
-`Temperature.csv` carries AT, BE, CH, DE, DK, EE, ES, FI, FR, GB, LT, LV, NL, NO,
-PL, SE. Two consequences:
-
-- **`UK00` finds no column**, because the file says `GB`. There is deliberately no
-  alias table: an alias is a modelling assumption the reader cannot see, and it
-  would not help `ITN1`, `ITCN`, `ITCS` or `PT00`, which have no temperature data
-  under any name. A demand row for such a country is reported at warning level,
-  its node is alarmed about as empty, and the rest of the build is unaffected.
-- A country with no demand rows at all is normal — most of a run's countries have
-  no district heating — and is reported at info level, never as a warning.
-
-## What is not modelled
-
-- **No hot water seasonality.** The flat share is flat: same in January as in July.
-- **No per-city temperature.** The eight Finnish nodes share one national series,
-  so Helsinki and Rovaniemi have identically shaped demand and differ only in size.
-- **No wind, humidity or solar gain.** Dry-bulb temperature only.
-- **No behavioural response** to price, and no demand-side flexibility here — that
-  belongs to the units and storages connected to the node.
-- **No efficiency trend within a climate range.** `TWh/year` is per scenario year;
-  the 35 climate years around it all use the same figure.
 
 ## Leap years
 
@@ -184,6 +197,23 @@ The builder reports a heat node that appears in `demanddata` but not in
 catches a mistyped country cell, and it is why a one-off industrial node needs a
 row in both.
 
+## What this does not model
+
+Each of these is a known limit of the current method rather than a decision to
+defend. Any of them would be worth revisiting given a better source.
+
+- **No hot water seasonality.** The flat share is flat: same in January as in July.
+- **No per-city temperature.** The eight Finnish nodes share one national series,
+  so Helsinki and Rovaniemi have identically shaped demand and differ only in size.
+- **No wind, humidity or solar gain.** Dry-bulb temperature only.
+- **No behavioural response** to price, and no demand-side flexibility here — that
+  belongs to the units and storages connected to the node.
+- **No efficiency trend within a climate range.** `TWh/year` is per scenario year;
+  the 35 climate years around it all use the same figure.
+- **No measured load data anywhere in the chain.** The whole series is derived
+  from temperature and one annual figure, and nothing validates it against what
+  a network actually consumed.
+
 ## Where the district heating timeseries is defined
 
 - `src_files/data_files/demanddata_DH_own_projection.xlsx` — `demanddata_dh`
@@ -200,11 +230,11 @@ row in both.
 
 ## See also
 
+- [Timeseries](timeseries.md) — the shared pipeline: climate years, windows,
+  forecast branches, and what is checked before anything is written
 - [Electricity demand timeseries](elec-demand-timeseries.md) — the same
   calculation driven by a TYNDP profile instead of temperature
 - [Source workbook conventions](source-workbook-conventions.md) — how the demand
   sheets are read and combined
-- [Hydro data](hydro.md) — the same treatment for the other timeseries-heavy part
-  of the model
 - [Wind and solar timeseries](vre-timeseries.md) — where a zero is ordinary rather
   than an alarm, and why the rule differs from this one
