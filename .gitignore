@@ -3,6 +3,7 @@
 !/src/
 !/src_files/
 !/.spinetoolbox/
+!/plot scripts/
 
 #toolbox stuff
 /.spinetoolbox/items
