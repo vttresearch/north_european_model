@@ -1,4 +1,4 @@
-"""The GAMS import include file.
+"""The GAMS import include file, and the unitdata gate beside it.
 
 ``update_import_timeseries_inc`` appends a ``$gdxin`` block to the file Backbone
 reads. It is called once per processor per run and must be idempotent -- a
@@ -7,9 +7,13 @@ duplicated block would load the same parameter twice.
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from src.timeseries.timeseries_helpers import update_import_timeseries_inc
+from src.timeseries.timeseries_helpers import (
+    nodes_needing_flow,
+    update_import_timeseries_inc,
+)
 
 
 class TestUpdateImportTimeseriesInc:
@@ -89,3 +93,51 @@ class TestUpdateImportTimeseriesInc:
                 tmp_path, file_suffix="forecasts",
                 bb_parameter="ts_influx", gdx_name_suffix="elec",
             )
+
+
+class TestNodesNeedingFlow:
+    """Which nodes the model attaches a unit of a given flow to.
+
+    The gate that keeps a VRE processor from building -- and then complaining
+    about -- a capacity factor nobody reads. `flow` reaches unitdata from
+    unittypedata, and the merge has already applied this run's scenario, year and
+    country filtering, so what is in the frame is what the model has.
+    """
+
+    @staticmethod
+    def _frame(rows):
+        return pd.DataFrame(rows, columns=["unit", "flow", "node_output1"])
+
+    def test_a_node_with_a_unit_of_that_flow_is_named(self):
+        frame = self._frame([("w1", "onshore", "FI00_elec")])
+        assert nodes_needing_flow(frame, "onshore") == {"FI00_elec"}
+
+    def test_another_flow_does_not_count(self):
+        """An empty set, not None: the model was asked and has no such unit."""
+        frame = self._frame([("w1", "offshore", "FI00_elec")])
+        assert nodes_needing_flow(frame, "onshore") == set()
+
+    def test_the_comparison_ignores_case_and_padding(self):
+        frame = self._frame([("w1", " Onshore ", "FI00_elec")])
+        assert nodes_needing_flow(frame, "onshore") == {"FI00_elec"}
+
+    def test_input_nodes_do_not_count(self):
+        """A flow says what the weather produces, so a fuel node is not it."""
+        frame = pd.DataFrame(
+            [("w1", "onshore", "FI00_elec", "FI00_gas")],
+            columns=["unit", "flow", "node_output1", "node_input1"],
+        )
+        assert nodes_needing_flow(frame, "onshore") == {"FI00_elec"}
+
+    @pytest.mark.parametrize("frame", [
+        None,
+        pd.DataFrame(),
+        pd.DataFrame([("w1", "FI00_elec")], columns=["unit", "node_output1"]),
+    ])
+    def test_cannot_tell_is_none_so_the_caller_fails_open(self, frame):
+        """Distinct from the empty set, which is a real answer meaning "none"."""
+        assert nodes_needing_flow(frame, "onshore") is None
+
+    def test_no_flow_asked_for_is_also_cannot_tell(self):
+        frame = self._frame([("w1", "onshore", "FI00_elec")])
+        assert nodes_needing_flow(frame, "") is None

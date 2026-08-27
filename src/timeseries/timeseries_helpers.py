@@ -63,6 +63,49 @@ def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     }
 
 
+def nodes_needing_flow(df_unitdata, flow: str) -> set | None:
+    """Which nodes does the model attach units of this ``flow`` to?
+
+    A capacity factor series is read by Backbone only through a unit: no unit of
+    that flow on a node means the series is inert, and its absence means nothing.
+    ``unitdata`` is where the question is answered -- ``flow`` arrives on it from
+    ``unittypedata``, and the merge has already applied this run's scenario, year
+    and country filtering, including a row removed by ``method: remove``.
+
+    Output connections only. A unit's flow describes what it takes from the
+    weather to produce, so a fuel node on the input side is not a node that needs
+    a capacity factor.
+
+    ``None`` means the question could not be asked -- no frame, no ``flow``
+    column, no node column, or no flow to look for -- and is a different answer
+    from the empty set, which says the model has no unit of this flow at all.
+    Callers fail open on ``None`` the way `nodes_present_in_nodedata` does, and
+    build nothing on the empty set.
+    """
+    if df_unitdata is None or getattr(df_unitdata, "empty", True) or not flow:
+        return None
+
+    columns = {str(c).lower(): c for c in df_unitdata.columns}
+    flow_col = columns.get('flow')
+    node_cols = [
+        original for lowered, original in columns.items()
+        if lowered.startswith('node_output') or lowered == 'node'
+    ]
+    if flow_col is None or not node_cols:
+        return None
+
+    wanted = str(flow).strip().lower()
+    rows = df_unitdata[
+        df_unitdata[flow_col].astype('string').str.strip().str.lower() == wanted
+    ]
+    return {
+        str(node)
+        for column in node_cols
+        for node in rows[column]
+        if not pd.isna(node) and str(node).strip()
+    }
+
+
 def update_import_timeseries_inc(
     output_folder: str | Path,
     file_suffix: Optional[str] = None,

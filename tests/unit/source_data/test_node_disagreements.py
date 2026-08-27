@@ -61,8 +61,8 @@ class TestBothDirections:
 
         ``filter_nonzero_numeric_rows`` drops an all-zero row, so a node whose
         demand is deliberately zero arrives looking exactly like one nobody
-        wrote. Claiming "mistyped" sends the reader hunting for a typo that is
-        not there.
+        wrote. Naming either cause sends the reader hunting for the wrong thing,
+        so the message names the node and the two tables and stops there.
         """
         nodedata = frame(*dheat("FI00", "SE03", "PL00", "AT00"))
         demanddata = frame(*dheat("FI00", "SE03", "PL00"))
@@ -70,8 +70,10 @@ class TestBothDirections:
         report_node_disagreements(nodedata, demanddata, logger)
 
         message = logger.warnings[0]
-        assert "mistyped" in message
-        assert "on purpose" in message and "written as 0" in message
+        assert "AT00_dheat" in message
+        assert "nodedata" in message and "demanddata" in message
+        for cause in ("mistyped", "typo", "on purpose", "written as 0"):
+            assert cause not in message
 
     def test_agreeing_tables_say_nothing(self):
         nodes = frame(*dheat("FI00", "SE03", "PL00"))

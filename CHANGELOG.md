@@ -26,6 +26,14 @@ not build and why, and has a documentation page of its own.
   [docs/timeseries.md](docs/timeseries.md)
 - A `node`, `grid` or `flow` a processor builds data for that the source data
   does not have is reported.
+- wind and solar: capacity factors are built only for the nodes `unitdata`
+  attaches a unit of that flow to. [docs/vre-timeseries.md](docs/vre-timeseries.md)
+- The build reports what needs acting on rather than what happened: an absence
+  the source workbooks already state is silent, and what the rules handled is a
+  line of counts. [docs/timeseries.md](docs/timeseries.md)
+- `is_input_data_dependent` is retired and a timeseries processor is never copied
+  between scenario folders; a config still setting it is ignored, and a
+  multi-scenario build costs about a minute more per scenario.
 
 ## Source workbooks
 

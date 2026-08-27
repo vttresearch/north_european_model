@@ -77,9 +77,6 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
     scenario_alternatives3 = config['scenario_alternatives3']
     scenario_alternatives4 = config['scenario_alternatives4']
 
-    # Reference folder for copying input-data-independent timeseries between iterations
-    reference_ts_folder = None
-
     for scenario, year, alt1, alt2, alt3, alt4 in product(
         scenarios, scenario_years,
         scenario_alternatives, scenario_alternatives2,
@@ -193,14 +190,9 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 cache_manager=cache_manager,
                 source_data_pipeline=source_data_pipeline,
                 logger=logger,
-                reference_ts_folder=reference_ts_folder,
                 scenario_year=year,
             ))
             ts_contributions = ts_pipeline.run()
-
-            # Set reference folder for subsequent iterations to enable copy optimization
-            if reference_ts_folder is None:
-                reference_ts_folder = output_folder
         else:
             logger.log_status(
                 "Timeseries results are up-to-date. Loading from cache.",
@@ -321,11 +313,10 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         # If previous log exist, add its contents to a "Previous logs" section
         if log_path.exists():
             logger.log_status("Previous logs found and added to current log", level="info")
-            logger.log_status("Previous logs",
-                       level="none",
-                       add_empty_line_before=True,
-                       section_start_length=90,
-                       print_to_screen=False)
+            # Straight into the message list rather than through log_status: this
+            # is a separator inside the file, and printing it would announce on
+            # screen that a file is about to be concatenated.
+            logger.messages.append("\n---     Previous logs " + "-" * 68)
             with open(log_path, "r", encoding="utf-8") as f:
                 previous_logs = f.read().splitlines()
             logger.messages.extend(previous_logs)

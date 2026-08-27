@@ -440,11 +440,18 @@ class TestCountrySetTolerance:
         assert ratio.round(6).nunique() == 1
         assert ratio.iloc[0] == pytest.approx(3.0)
 
-    def test_a_configured_country_with_no_demand_rows_is_information_not_a_warning(self, clean_folder):
+    def test_a_configured_country_with_no_demand_rows_is_not_mentioned(self, clean_folder):
+        """Spain has no district heating. Saying so every run only worries people.
+
+        The workbooks are the statement of what the model contains, so a country
+        with no rows is an answer rather than an absence -- see "What a build
+        says" in docs/timeseries.md.
+        """
         _, logger = build(
             clean_folder, demands(row("FI00", "FI00_dheat")), countries=["FI00", "SE01", "NOS0"]
         )
-        logger.assert_logged("SE01", level="info")
+        logger.assert_not_logged("SE01")
+        logger.assert_not_logged("NOS0")
         logger.assert_clean()
 
     def test_no_country_has_demand_rows_at_all(self, clean_folder):

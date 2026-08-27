@@ -146,7 +146,6 @@ class TestValidateTimeseriesSpecs:
         entry = out["pv"]
         assert entry["rounding_precision"] == 0
         assert entry["gdx_name_suffix"] == ""
-        assert entry["is_input_data_dependent"] is True
         assert entry["cutoff_below"] is None
 
     def test_does_not_overwrite_values_the_user_set(self):

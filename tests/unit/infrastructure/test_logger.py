@@ -17,7 +17,8 @@ def _logger(**kwargs) -> IterationLogger:
 
 
 def _log(logger, message, level="none"):
-    logger.log_status(message, level=level, print_to_screen=False)
+    """Log a line. pytest captures the print; the assertions read `messages`."""
+    logger.log_status(message, level=level)
 
 
 class TestErrorAndWarningCounting:
@@ -120,7 +121,7 @@ class TestElapsedTime:
         assert "min" not in quiet.messages[0]
 
         loud = IterationLogger(print_all_elapsed_times=True)
-        loud.log_status("msg", print_to_screen=False)
+        loud.log_status("msg")
         assert "min" in loud.messages[0]
 
 

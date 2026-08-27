@@ -123,6 +123,11 @@ class hydro_inflow_MAF2019(BaseProcessor):
         # (node, reason, level) triples for _report_coverage to say once.
         self.unbuilt_nodes = []
 
+        # Node names only: what the run says about these is how many there were,
+        # and nothing about any one of them. See _report_repairs.
+        self.repaired_nodes = set()
+        self.year_change_outliers = set()
+
         self.model_nodes = self._model_hydro_nodes()
 
     def _model_hydro_nodes(self):
@@ -155,15 +160,17 @@ class hydro_inflow_MAF2019(BaseProcessor):
         return not self.model_nodes or node in self.model_nodes
 
     def _report_grid(self, report, unit):
-        """Say what the grid needed, and warn only when it is still not whole."""
+        """Note what the grid needed, and warn only when it is still not whole.
+
+        A repaired single-slot gap is counted for _report_repairs rather than
+        described here: it is the rule working. A run that is still open is the
+        opposite -- it asks someone about one node, so it stays where it happens
+        and keeps the series size, which is what that decision turns on.
+        """
         if report.n_missing == 0:
             return
         if report.ok:
-            self.logger.log_status(
-                f"{report.label}: {report.n_autofilled} single-{unit} gap(s) interpolated "
-                f"({report.twh_per_year:.2f} TWh/year series).",
-                level="info"
-            )
+            self.repaired_nodes.add(report.label)
             return
         self.logger.log_status(
             f"{report.label}: {report.n_left} {unit}(s) have no usable value and were left "
@@ -266,7 +273,7 @@ class hydro_inflow_MAF2019(BaseProcessor):
                     )
                     continue
                 series = self._complete_and_report(series, col_name, standard_weeks, "week")
-                self._report_year_change_outliers(series, col_name)
+                self._note_year_change_outlier(series, col_name)
                 result_df[col_name] = self._cast_to_hourly(series, full_index, standard_weeks)
 
         return self._drop_empty_columns(result_df, "all inflow came out as zero")
@@ -341,15 +348,16 @@ class hydro_inflow_MAF2019(BaseProcessor):
                 self.unbuilt_nodes.append((node, reason, "warn"))
         return result_df.loc[:, keep]
 
-    def _report_year_change_outliers(self, weekly_series, label):
-        """Name a year change that is a gross outlier in this node's own weeks.
+    def _note_year_change_outlier(self, weekly_series, label):
+        """Mark a node whose year change is a gross outlier in its own weeks.
 
         Weeks 52 and 1 are seven days apart like any other pair, so the change
         between them is one sample of the same weekly distribution and is usually
         unremarkable. Nothing is smoothed here: a large change at New Year is
-        weather, and inventing a gentler one would be a lie. It is reported so
-        that a data refresh which makes the seam anomalous is visible rather than
-        absorbed, which is the job ACCEPTED_LONG_RUNS does for gaps.
+        weather, and inventing a gentler one would be a lie. The node is marked so
+        that a data refresh which makes the seam anomalous shows up in the count
+        rather than being absorbed, which is the job ACCEPTED_LONG_RUNS does for
+        gaps.
         """
         series = weekly_series.dropna()
         if len(series) < 3:
@@ -367,24 +375,38 @@ class hydro_inflow_MAF2019(BaseProcessor):
             return
 
         years = sorted(by_year)
-        outliers = []
         for earlier, later in zip(years, years[1:]):
             if later != earlier + 1:
                 continue
             jump = abs(by_year[later].iloc[0] - by_year[earlier].iloc[-1])
             if jump > threshold:
-                outliers.append((later, jump))
-        if not outliers:
-            return
+                self.year_change_outliers.add(label)
+                return
 
-        detail = ', '.join(f"{year} ({jump:.0f} MWh/h)" for year, jump in outliers)
-        self.logger.log_status(
-            f"{label}: the week 52 to week 1 change is more than "
-            f"{self.YEAR_CHANGE_OUTLIER_MULTIPLIER:g} times this node's own 95th-percentile "
-            f"weekly change at {len(outliers)} year change(s): {detail}. Left as the source "
-            f"has it -- a large change at New Year is weather, not a seam.",
-            level="info"
-        )
+    def _report_repairs(self):
+        """One short line of counts for everything the rules handled on their own.
+
+        A single-slot gap filled, a run interpolated because ACCEPTED_LONG_RUNS
+        says so, and a large year change left alone are all outcomes of decisions
+        already taken, and on the shipped data they are the same ten nodes every
+        run. Named and reasoned about per node they were ten paragraphs -- longer
+        than everything else the processor says, and the surest way to stop a
+        reader noticing the line that is new.
+
+        So counts, and nothing else. Which nodes and why is in ACCEPTED_LONG_RUNS
+        and in docs/hydro.md, where it stays put between runs. A gap that is
+        *not* covered by a rule is the opposite case and keeps its own warning,
+        with the node and the series size in it.
+        """
+        parts = []
+        if self.repaired_nodes:
+            parts.append(f"Gaps interpolated at {len(self.repaired_nodes)} node(s)")
+        if self.year_change_outliers:
+            parts.append(
+                f"{len(self.year_change_outliers)} large year change(s) left as they are"
+            )
+        if parts:
+            self.logger.log_status(f"{', '.join(parts)}.", level="info")
 
     def _report_coverage(self, built_nodes):
         """
@@ -421,23 +443,20 @@ class hydro_inflow_MAF2019(BaseProcessor):
             )
 
     def _complete_and_report(self, series, label, standard_index, unit):
-        """Complete one native-resolution series and say what that took.
+        """Complete one native-resolution series and note what that took.
 
         Single-slot gaps are repaired here. A longer run is left alone and warned
         about unless it appears in ACCEPTED_LONG_RUNS: bridging two or more slots
-        is invention rather than repair, so a person decides.
+        is invention rather than repair, so a person decides. Either repair only
+        adds the node to the count _report_repairs states; the warning is the one
+        that describes itself.
         """
         filled, report = complete_native_grid(
             series, standard_index, label=label, zero_is_missing=True
         )
         if not report.ok and label in self.ACCEPTED_LONG_RUNS:
             filled = filled.interpolate(method='time', limit_area='inside').ffill()
-            self.logger.log_status(
-                f"{label}: {report.n_left} {unit}(s) with no usable value interpolated over, "
-                f"longest run {report.longest_run_left}. Accepted rather than escalated: "
-                f"{self.ACCEPTED_LONG_RUNS[label]}.",
-                level="info"
-            )
+            self.repaired_nodes.add(label)
             return filled.dropna()
         self._report_grid(report, unit)
         return filled.dropna()
@@ -558,6 +577,7 @@ class hydro_inflow_MAF2019(BaseProcessor):
         # Both were built on the same hourly index.
         summary_df = pd.concat([reservoir_all, ror_all], axis=1)
 
+        self._report_repairs()
         self._report_coverage(list(summary_df.columns))
 
         # Long format. The grid is the node name's own suffix, which is what the

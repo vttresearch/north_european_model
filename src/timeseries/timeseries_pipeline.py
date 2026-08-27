@@ -1,16 +1,16 @@
 """
 Timeseries pipeline -- orchestration of timeseries processor execution.
 
-``TimeseriesPipeline.run()`` decides which processors need to execute, runs or
-copies them, handles demand grids that have no explicit processor, and writes
-the GDX outputs and GAMS include directives Backbone needs. What a processor
-must return, and what happens to it, is in ``timeseries_processor.py``.
+``TimeseriesPipeline.run()`` decides which processors need to execute, runs them,
+handles demand grids that have no explicit processor, and writes the GDX outputs
+and GAMS include directives Backbone needs. What a processor must return, and
+what happens to it, is in ``timeseries_processor.py``.
 
 What the pipeline accumulates across processors
 -----------------------------------------------
 One thing: **contributions to the source data tables**, ``{table name:
-DataFrame}``, stacked across every spec that ran or was copied. They are merged
-into ``SourceDataPipeline``'s frames after this phase, and the Excel builder then
+DataFrame}``, stacked across every spec that ran. They are merged into
+``SourceDataPipeline``'s frames after this phase, and the Excel builder then
 reads those frames and nothing else.
 
 Most processors contribute nothing at all. A node, a grid or a flow the model
@@ -27,18 +27,12 @@ directive appended to ``import_timeseries.inc``.
 """
 
 from pathlib import Path
-import importlib.util
-import shutil
-import glob as glob_module
-import pickle
 import pandas as pd
-import src.json_exchange as json_exchange
 import src.source_data.source_data_contributions as source_data_contributions
 from src.infrastructure.cache_manager import CacheManager
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
 from src.timeseries.timeseries_processor import ProcessorRunner
-from src.timeseries.timeseries_helpers import update_import_timeseries_inc
 
 
 class TimeseriesPipeline:
@@ -52,7 +46,6 @@ class TimeseriesPipeline:
         self.output_folder = inputs.output_folder
         self.cache_manager = inputs.cache_manager
         self.source_data_pipeline = inputs.source_data_pipeline
-        self.reference_ts_folder = inputs.reference_ts_folder
         self.scenario_year = inputs.scenario_year
         self.logger = inputs.logger
         self.df_annual_demands = inputs.source_data_pipeline.df_demanddata
@@ -104,41 +97,6 @@ class TimeseriesPipeline:
             specs.append(enriched_spec)
 
         return specs
-
-
-    def _declared_source_data(self, processor_spec: dict) -> tuple[str, ...] | None:
-        """
-        Read ``requires_source_data`` off a processor class without running it.
-
-        From the class rather than from the cache, because the answer decides
-        whether the processor may be *skipped* -- and a cache written by an
-        earlier run in a different output folder is the wrong authority for that.
-
-        ``None`` means the question could not be answered, and is not the same as
-        ``()``. An empty tuple licenses a copy from the reference folder; a module
-        that will not import licenses nothing, so returning ``()`` for it would
-        turn a broken processor into a silently copied one. The caller runs it
-        instead, and ProcessorRunner reports the import failure naming the file.
-
-        This executes the module, and ProcessorRunner executes it again a moment
-        later. That is accepted rather than cached: a processor module is class
-        and constant definitions, so the second execution costs a few
-        milliseconds and observes nothing.
-        """
-        try:
-            module_spec = importlib.util.spec_from_file_location(
-                processor_spec["name"], Path(processor_spec["file"])
-            )
-            if module_spec is None or module_spec.loader is None:
-                return None
-            module = importlib.util.module_from_spec(module_spec)
-            module_spec.loader.exec_module(module)
-            processor_cls = getattr(module, processor_spec["name"], None)
-            if processor_cls is None:
-                return None
-            return tuple(getattr(processor_cls, "requires_source_data", ()) or ())
-        except Exception:
-            return None
 
 
     def _influx_for_grids_without_a_processor(
@@ -241,124 +199,12 @@ class TimeseriesPipeline:
         return all_demand_grids - processed_grids
 
 
-    def _copy_processor_from_reference(self, processor_spec: dict) -> dict:
-        """
-        Reuse an input-data-independent processor's outputs instead of running it.
-
-        Everything the processor would have produced has to come across, not just
-        the GDX files: the secondary result, the domain caches and the processor
-        hash all have consumers that cannot tell a copy from a run, and a
-        half-copied processor looks to the next build like one that half failed.
-        The numbered steps below are those four things.
-
-        Missing pieces are warnings rather than errors, and the run continues on
-        whatever did arrive.
-
-        Returns
-        -------
-        dict
-            This spec's contributions to the source data tables, as the reference
-            cache holds them. Empty if it made none, which is the usual case.
-        """
-        spec = processor_spec["spec"]
-        processor_name = processor_spec["name"]
-        human_name = processor_spec["human_name"]
-        bb_parameter = spec.get("bb_parameter")
-        gdx_name_suffix = spec.get("gdx_name_suffix")
-
-        self.logger.log_status(f"{human_name}", section_start_length=45)
-
-        if self.reference_ts_folder is None:
-            self.logger.log_status(
-                "No reference folder configured. Cannot copy.",
-                level="warn"
-            )
-            return {}
-
-        ref_folder = Path(self.reference_ts_folder)
-
-        if not ref_folder.exists():
-            self.logger.log_status(
-                f"Reference folder {ref_folder} does not exist. Cannot copy.",
-                level="warn"
-            )
-            return {}
-
-        # 1. Copy GDX files
-        fname_base = f"{bb_parameter}_{gdx_name_suffix}" if gdx_name_suffix else f"{bb_parameter}"
-        pattern = str(ref_folder / f"{fname_base}*.gdx")
-        gdx_files = glob_module.glob(pattern)
-
-        copied_count = 0
-        for gdx_file in gdx_files:
-            dest = Path(self.output_folder) / Path(gdx_file).name
-            shutil.copy2(gdx_file, dest)
-            copied_count += 1
-
-        if not copied_count:
-            # Return rather than fall through, since the message promises no
-            # output: the include-file update below asks for a GDX by name and
-            # raises when it is not there, so carrying on would kill the build
-            # one line after saying the run continues.
-            self.logger.log_status(
-                f"No {fname_base}*.gdx in the reference folder {ref_folder}, so there is "
-                f"nothing to copy and this processor produces no output.",
-                level="warn"
-            )
-            return {}
-
-        self.logger.log_status(
-            f"Copied {copied_count} GDX file(s) from the reference folder.", level="info"
-        )
-
-        # 2. Update import_timeseries.inc for this processor
-        bb_kwargs = {"bb_parameter": bb_parameter, "gdx_name_suffix": gdx_name_suffix}
-        update_import_timeseries_inc(self.output_folder, **bb_kwargs)
-
-        # The same three conditions ProcessorRunner uses to decide whether to
-        # *write* a forecast file, including the empty-forecast_quantiles one --
-        # a deterministic run has no branches, so there is no _forecasts.gdx to
-        # register and update_import_timeseries_inc raises rather than shrugging.
-        dims = spec.get("bb_parameter_dimensions", [])
-        has_forecasts = (
-            "f" in dims
-            and "t" in dims
-            and any(d not in ("f", "t") for d in dims)
-            and bool(self.config["forecast_quantiles"])
-        )
-        if has_forecasts:
-            update_import_timeseries_inc(self.output_folder, file_suffix="forecasts", **bb_kwargs)
-
-        # 3. Copy this spec's contributions to the source data tables
-        frames = {}
-        ref_frames_file = ref_folder / "cache" / "processor_frames.pkl"
-        if ref_frames_file.exists():
-            with open(ref_frames_file, "rb") as f:
-                frames = pickle.load(f).get(human_name, {})
-        if frames:
-            self.cache_manager.save_processor_frames(human_name, frames)
-            self.logger.log_status(
-                f"Copied {len(frames)} source data contribution(s) from the reference folder.",
-                level="info",
-            )
-
-        # 4. Copy the processor hash, so this cache agrees the copy is current
-        ref_hash_file = ref_folder / "cache" / "processor_hashes.json"
-        if ref_hash_file.exists():
-            ref_hashes = json_exchange.load_json(ref_hash_file)
-            if processor_name in ref_hashes:
-                self.cache_manager.save_processor_hash(processor_name, ref_hashes[processor_name])
-
-        return frames
-
-
     def run(self) -> dict[str, pd.DataFrame]:
         """
         Execute the full timeseries processing pipeline.
 
         The numbered sections below are the workflow: decide what to run, run it,
-        copy what can be copied from a reference folder instead, and give the
-        demand grids no processor claims a constant influx.
+        and give the demand grids no processor claims a constant influx.
 
         Returns
         -------
@@ -395,56 +241,11 @@ class TimeseriesPipeline:
             if needs_rerun:
                 processors_to_rerun.add(human_name)
 
-        # A processor that declares requires_source_data is input-data-dependent
-        # by construction: its frames are whitelisted per scenario, year and
-        # country, so a copy from another scenario's folder would be that
-        # scenario's answer wearing this one's name. The declaration overrides
-        # the config, not the other way round.
-        processors_to_copy = set()
-        if self.reference_ts_folder and Path(self.reference_ts_folder) != Path(self.output_folder):
-            timeseries_specs_raw = self.config["timeseries_specs"]
-            for proc in self.processors:
-                human_name = proc["human_name"]
-                if human_name not in processors_to_rerun:
-                    continue
-                spec = timeseries_specs_raw.get(human_name, {})
-                if spec.get('is_input_data_dependent', True):
-                    continue
-
-                declared = self._declared_source_data(proc)
-                if declared is None:
-                    self.logger.log_status(
-                        f"'{human_name}' is configured is_input_data_dependent: false, but "
-                        f"{proc['file']} could not be read to find out whether it needs "
-                        f"source data. Running it instead of copying, so that the reason "
-                        f"is reported rather than hidden behind a copied file.",
-                        level="warn"
-                    )
-                    continue
-                if declared:
-                    self.logger.log_status(
-                        f"'{human_name}' is configured is_input_data_dependent: false, but "
-                        f"{proc['name']} declares it needs source data ({', '.join(declared)}), "
-                        f"which is scenario-specific. Running it instead of copying. "
-                        f"Set is_input_data_dependent: true in the config to silence this.",
-                        level="warn"
-                    )
-                    continue
-
-                processors_to_copy.add(human_name)
-                processors_to_rerun.discard(human_name)
-
         self.logger.log_status(
             f"Need to run {len(processors_to_rerun)} timeseries processor(s): "
             f"{', '.join(sorted(processors_to_rerun)) if processors_to_rerun else 'none'}",
             level="info"
         )
-        if processors_to_copy:
-            self.logger.log_status(
-                f"{len(processors_to_copy)} processor(s) will be copied from reference folder: "
-                f"{', '.join(sorted(processors_to_copy))}",
-                level="info"
-            )
 
         # Said once here rather than per processor: every processor reaches the
         # same answer, and a window longer than a year is the usual cause.
@@ -495,16 +296,6 @@ class TimeseriesPipeline:
 
                 result = runner.run()
                 contributions[result.human_name] = result.frames
-
-        # --- 3b. Copy input-data-independent processors from reference folder ---
-        if processors_to_copy:
-            copy_iter = (p for p in self.processors if p['human_name'] in processors_to_copy)
-
-            for processor in copy_iter:
-                self.logger.log_status(f"Copying: {processor['name']}", level="run", add_empty_line_before=True)
-
-                contributions[processor["human_name"]] = self._copy_processor_from_reference(processor)
-
 
         # --- 4. Demand grids with no processor of their own ---
         self.logger.log_status(f"Remaining timeseries actions", level="run", section_start_length=45, add_empty_line_before=True)

@@ -106,8 +106,10 @@ Seasonal fill limits exist for two of the four types:
 
 Those nodes are not broken and are not being skipped by mistake. They use the
 constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
-seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
-run so their absence from the time series is stated rather than discovered.
+seasonal profile, and the build says nothing about them: they are the same nodes
+every run, and this list is where they are named. What *is* reported is a node
+left with no bound by either route — that check lives in the workbook builder,
+which can see the constants as well as the series, and it names the node.
 
 How a node ends up on one side or the other is written into the input Excel
 rather than inferred. `nodedata`'s `upwardLimit` and `downwardLimit` columns are
@@ -205,6 +207,10 @@ What is in it today:
 | `NOS0_psOpen` | 5 weeks in 1995 | [neighbouring zones contradict the zeros](#the-norwegian-pump-storage-zeros); ~100 GWh |
 | `NON1_psOpen` | 4 weeks, 1984 and 1987 | as above; ~100 GWh |
 | `SE04_reservoir downwardLimit` | 2 weeks | the only multi-week zero run in the level data |
+
+A build says only how many nodes needed a repair of either kind — the same
+handful every run, and this table is where they are named. A run that no entry
+covers is the exception and warns with its node and its series size.
 
 ### The year change
 

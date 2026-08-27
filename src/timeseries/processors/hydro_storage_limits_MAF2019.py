@@ -5,7 +5,6 @@ from src.timeseries.processors.base_processor import BaseProcessor, SourceDataEr
 from src.timeseries.timeseries_helpers import (
     complete_native_grid,
     nodes_present_in_nodedata,
-    summarise,
 )
 
 
@@ -19,8 +18,9 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
     happens anywhere in this processor.
 
     Only ``_reservoir`` and the three Norwegian ``_psOpen`` zones get limits at
-    all -- a property of the source data rather than a decision -- and
-    ``process()`` names the rest per run. docs/hydro.md is the documentation and
+    all -- a property of the source data rather than a decision. The rest keep
+    the constant bounds nodedata gives them, and are not reported per run because
+    they are the same nodes every time. docs/hydro.md is the documentation and
     carries the reasoning: what is not built and why, why the year-change tail is
     blended, and why a recorded zero counts as a gap.
 
@@ -105,8 +105,12 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         self.norway_codes = ['NOS0', 'NOM1', 'NON1']
 
         # (node, boundary type, blend length in weeks) per rewritten tail, filled
-        # by _bound_year_change_step and summarised at the end of process().
+        # by _bound_year_change_step and counted at the end of process().
         self.blended_patterns: set = set()
+
+        # Nodes whose weekly pattern had a gap the rules closed on their own.
+        # Counted, not named: see _report_repairs.
+        self.repaired_nodes: set = set()
 
         # (node, reason, level) for what could not be built, said once at the end
         # rather than as it happens: a country set that only partly overlaps the
@@ -347,18 +351,9 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
                     ))
                     return None
                 filled = filled.interpolate(method='time', limit_area='inside').ffill().bfill()
-                self.logger.log_status(
-                    f"{label}: run of {report.longest_run_left} week(s) with no usable value "
-                    f"interpolated over. Accepted rather than escalated: "
-                    f"{self.ACCEPTED_LONG_RUNS[label]}.",
-                    level="info"
-                )
+                self.repaired_nodes.add(node)
             elif report.n_autofilled:
-                self.logger.log_status(
-                    f"{label}: {report.n_autofilled} single-week gap(s) in the level pattern "
-                    f"interpolated.",
-                    level="info"
-                )
+                self.repaired_nodes.add(node)
             repaired[header] = filled.reindex(standard)
 
         out = pd.DataFrame(
@@ -490,57 +485,67 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         result_df = self.merge_bounds(df_lowerBound, df_upperBound, minvariable, maxvariable)
         return result_df
 
-    def _report_coverage(self, node_sizes, built_nodes):
-        """
-        Say once what was built and what was not, instead of leaving it to be noticed.
+    def _report_repairs(self):
+        """One short line of counts for what the rules handled on their own.
 
-        Split by whether the user can do anything about it. A zone the source data
-        does not cover is information -- most countries in a run have no reservoir.
-        A node that has ratios but no size, or that came out all zero, is a
-        warning: something in the input data is inconsistent with itself.
+        A single-week hole closed, a run interpolated because ACCEPTED_LONG_RUNS
+        says so, and a year-change tail blended are all outcomes of decisions
+        already taken, and they are the same handful of series every run. Each
+        used to explain itself in full every time, which is how a reader stops
+        reading. The reasoning is in ACCEPTED_LONG_RUNS, in
+        _bound_year_change_step and in docs/hydro.md, where it stays put; a gap
+        that no rule covers keeps its own warning naming the node.
+        """
+        parts = []
+        if self.repaired_nodes:
+            parts.append(f"Gaps interpolated at {len(self.repaired_nodes)} node(s)")
+        if self.blended_patterns:
+            parts.append(
+                f"year-change tail blended in {len(self.blended_patterns)} pattern(s)"
+            )
+        if parts:
+            self.logger.log_status(f"{', '.join(parts)}.", level="info")
+
+    def _report_coverage(self, built_nodes):
+        """
+        Say once what was built, and warn only where the input data contradicts
+        itself.
+
+        A zone PECD carries no weekly levels for -- every non-Norwegian `psOpen`,
+        every `psClosed`, and a handful of reservoirs -- is not an absence to
+        report: the node keeps the constant bounds nodedata gives it, which is a
+        complete answer, and the same nodes would be named every run. A node with
+        ratios but no size, or one whose bounds all come out zero, is the
+        opposite: something a person has to fix. See "What a build says" in
+        docs/timeseries.md, and "What is not built, and why" in docs/hydro.md for
+        which nodes those are.
+
+        The build's own check that a node ends up bounded by *neither* route is
+        in ``add_storage_start_values``, which sees the constants as well.
         """
         self.logger.log_status(
             f"Storage limits built for {len(built_nodes)} node(s).",
             level="info"
         )
 
-        for level in ("warn", "info"):
-            entries = sorted((n, r) for n, r, lvl in self.unbuilt_nodes if lvl == level)
-            if not entries:
-                continue
-            # Grouped by reason, which is what a reader acts on and what the
-            # nodes usually share. Names stay in full: a node left on constant
-            # bounds is exactly what someone has to go and look up.
-            by_reason = {}
-            for node, reason in entries:
-                by_reason.setdefault(reason, []).append(node)
-            detail = '; '.join(
-                f"{', '.join(nodes)}: {reason}"
-                for reason, nodes in sorted(by_reason.items())
-            )
-            self.logger.log_status(
-                f"No storage limits for {len(entries)} node(s) -- {detail}. "
-                f"These keep whatever constant bounds nodedata gives them.",
-                level=level
-            )
-
-        # Nodes this processor never even attempts, because PECD carries no
-        # weekly levels for them: constant-bounded by construction rather than by
-        # failure. Worth stating, because the node exists and its absence from the
-        # time series otherwise looks like a bug.
-        never_attempted = sorted(
-            node for node in node_sizes
-            if (node.endswith(self.suffix_open)
-                and node[:-len(self.suffix_open)] not in self.norway_codes)
-            or node.endswith(self.suffix_closed)
+        entries = sorted((n, r) for n, r, lvl in self.unbuilt_nodes if lvl == "warn")
+        if not entries:
+            return
+        # Grouped by reason, which is what a reader acts on and what the nodes
+        # usually share. Names stay in full: an inconsistent row is exactly what
+        # someone has to go and look up.
+        by_reason = {}
+        for node, reason in entries:
+            by_reason.setdefault(reason, []).append(node)
+        detail = '; '.join(
+            f"{', '.join(nodes)}: {reason}"
+            for reason, nodes in sorted(by_reason.items())
         )
-        if never_attempted:
-            self.logger.log_status(
-                f"{len(never_attempted)} pumped storage node(s) have no weekly level data in "
-                f"PECD and are not built here: {summarise(never_attempted)}. "
-                f"See docs/hydro.md.",
-                level="info"
-            )
+        self.logger.log_status(
+            f"No storage limits for {len(entries)} node(s) -- {detail}. "
+            f"These keep whatever constant bounds nodedata gives them.",
+            level="warn"
+        )
 
     def process(self) -> pd.DataFrame:
         """
@@ -643,22 +648,8 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
             self.unbuilt_nodes.append((node, "all bounds came out as zero", "warn"))
         summary_df = summary_df.loc[:, summary_df.sum() > 0]
 
-        self._report_coverage(node_sizes, list(summary_df.columns))
-
-        # The blend length is the point: it is the smallest that brings the year
-        # change within an ordinary weekly step, so a long one says the source
-        # profile is far from cyclic rather than that the code tried hard.
-        if self.blended_patterns:
-            series_list = ', '.join(
-                f"{col} ({btype}, {weeks} week{'s' if weeks > 1 else ''})"
-                for col, btype, weeks in sorted(self.blended_patterns)
-            )
-            self.logger.log_status(
-                f"Blended the last weeks of {len(self.blended_patterns)} weekly pattern(s) so the "
-                f"year change is no larger a step than the profile makes inside the year: "
-                f"{series_list}. Week 1 is unchanged in every case.",
-                level="info"
-            )
+        self._report_repairs()
+        self._report_coverage(list(summary_df.columns))
 
         # Which (node, boundary type) pairs ended up with a series, stated as a
         # boundarydata contribution.
@@ -686,8 +677,6 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         self.frames['boundarydata'] = pd.DataFrame(
             rows, columns=['grid', 'node', 'param_gnboundarytypes', 'usetimeseries']
         )
-
-        self.logger.log_status("Hydro storage limit time series built.", level="info")
 
         # Long format. The grid is the node name's own suffix, which is what the
         # three suffix_* constants put there.

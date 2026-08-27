@@ -30,12 +30,18 @@ class IterationLogger:
                    level: str = "none",
                    section_start_length: int = 0,
                    add_empty_line_before: bool = False,
-                   add_empty_line_after: bool = False,
-                   print_to_screen: bool = True) -> None:
+                   add_empty_line_after: bool = False) -> None:
         """
-        Log a formatted status message with emoji prefix and optional console print.
+        Log a formatted status message with emoji prefix, and print it.
 
         If print_all_elapsed_times is True, prepends elapsed time since iteration start.
+
+        Every message goes to the screen. There used to be a `print_to_screen`
+        flag that could send one to `messages` alone: only one caller ever used
+        it, for a separator, and a flag that can hide a warning from the person
+        watching the build is worth more as a removed option than as an unused
+        one. A caller that wants a line in the log file and not on the screen
+        appends to `messages` itself, which says so plainly.
 
         Parameters:
             message (str): The message to log.
@@ -43,7 +49,6 @@ class IterationLogger:
             section_start_length (int): If > 0, format as a section header padded to this length.
             add_empty_line_before (bool): Print a blank line before the message.
             add_empty_line_after (bool): Print a blank line after the message.
-            print_to_screen (bool): Whether to print immediately to stdout.
         """
         prefix = {
             "info": "✓",
@@ -77,8 +82,7 @@ class IterationLogger:
         if level == "error":
             self._error_log.append(formatted)
 
-        if print_to_screen:
-            print(formatted)
+        print(formatted)
 
     @property
     def warnings(self) -> list[str]:

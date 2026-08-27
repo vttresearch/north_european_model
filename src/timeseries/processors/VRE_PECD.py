@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
-from src.timeseries.timeseries_helpers import summarise
+from src.timeseries.timeseries_helpers import nodes_needing_flow, summarise
 
 
 #: The 22 underscore-separated fields of a PECD file name, in order.
@@ -133,12 +133,26 @@ class VRE_PECD(BaseProcessor):
     value_range = (0.0, 1.0)
     value_sign = "non_negative"
 
-    #: How far above the written floor both neighbours must sit before a flat
-    #: hour between them is called a dropout. A modelling choice: the source
+    #: unitdata answers which nodes have a unit of this flow, and Backbone reads a
+    #: capacity factor only through such a unit. Without it this processor built a
+    #: series for every configured country and then warned about the ones PECD
+    #: could not fill -- AT00 and CH00 offshore on the shipped data, where the
+    #: workbook removes the unit and nobody ordered anything. See _needed_nodes.
+    requires_source_data = ('unitdata',)
+
+    #: How hard both neighbours must be blowing before a flat hour between them
+    #: is called a dropout, as a capacity factor. A modelling choice: the source
     #: rounds to five decimals, so any rule that ignores magnitude fires on
-    #: hundreds of ordinary calm hours. The *floor* is not a constant -- it comes
-    #: from the user's `cutoff_below`; see `_written_floor`.
-    ISOLATED_DROPOUT_MULTIPLIER = 5.0
+    #: hundreds of ordinary calm hours.
+    #:
+    #: This used to be a multiple of the written floor, which made it follow the
+    #: user's `cutoff_below` -- and at five times a 0.01 cutoff it still reported
+    #: a dozen hours every build that nobody ever acted on. Half of nameplate on
+    #: both sides is what a dropped value looks like, and unlike a multiple it
+    #: stays inside the [0, 1] a capacity factor lives in whatever the cutoff is.
+    #: Which hours count as *empty* still follows `cutoff_below`, in
+    #: `_written_floor`, because that is what will actually reach GAMS as zero.
+    ISOLATED_DROPOUT_NEIGHBOUR = 0.5
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -182,8 +196,35 @@ class VRE_PECD(BaseProcessor):
         self.start_date = pd.Timestamp(f"{self.start_year}-01-01")
         self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
-        #: (code, reason) for every configured country that got no series.
+        #: (code, reason) for every country that needs this flow and got no series.
         self.unbuilt_codes = []
+
+        self.df_unitdata = kwargs.get('df_unitdata')
+        self.needed_codes = self._needed_codes()
+
+    def _needed_codes(self):
+        """The configured country codes that have a unit of this flow.
+
+        Backbone reads a capacity factor only through a unit, so a series for a
+        node with no such unit is inert: building it costs a column in the GDX
+        and, worse, makes "PECD has nothing for this code" look like a problem
+        when nobody asked for anything. Austria has no offshore wind, and a build
+        that says so every run teaches its reader to skip the line that matters.
+
+        ``None`` from `nodes_needing_flow` is "cannot tell" -- no unitdata, no
+        `flow` column, or a spec that writes no flow at all -- and every
+        configured code is kept, which is what this processor did before. A spec
+        with no `attached_grid` cannot name the node it would compare against, so
+        it counts as the same answer. An empty set is a different one: the model
+        has no unit of this flow, and nothing is built.
+        """
+        needed = nodes_needing_flow(self.df_unitdata, self.flow)
+        if needed is None or not self.attached_grid:
+            return list(self.country_codes)
+        return [
+            code for code in self.country_codes
+            if f"{code}_{self.attached_grid}" in needed
+        ]
 
     # ------------------------------------------------------------------
     # Describing a folder before reading any of it
@@ -470,7 +511,7 @@ class VRE_PECD(BaseProcessor):
     # ------------------------------------------------------------------
 
     def _resolve_candidates(self, columns):
-        """Which columns could serve each configured country code.
+        """Which columns could serve each country code that needs this flow.
 
         Exact match first, then the first of the 4-, 3- and 2-letter prefixes
         that matches anything. Depends on column *names* only, so it is settled
@@ -483,7 +524,7 @@ class VRE_PECD(BaseProcessor):
             absent, and `_report_coverage` names them.
         """
         resolved = {}
-        for code in self.country_codes:
+        for code in self.needed_codes:
             if code in columns:
                 resolved[code] = ("exact", [code])
                 continue
@@ -494,7 +535,7 @@ class VRE_PECD(BaseProcessor):
                     break
         return resolved
 
-    def _choose_columns(self, df, resolved, all_columns):
+    def _choose_columns(self, df, resolved):
         """Pick one column per country code: the one with the largest total.
 
         Where PECD splits a country into zones finer than this model's nodes, the
@@ -511,9 +552,8 @@ class VRE_PECD(BaseProcessor):
         """
         mapping = {}
         reports = []
-        ignored_empty = []
 
-        for code in self.country_codes:
+        for code in self.needed_codes:
             if code not in resolved:
                 self.unbuilt_codes.append((code, "no matching PECD column"))
                 continue
@@ -529,76 +569,35 @@ class VRE_PECD(BaseProcessor):
                 )))
                 continue
 
-            empty = [c for c in present if c not in usable]
-            if empty:
-                ignored_empty.append(f"{code} ({summarise(empty)})")
-
+            # An empty candidate is dropped without a word. It changes nothing --
+            # the code still gets a column, and which zones PECD ships empty is
+            # not the reader's to fix.
             means = {c: float(df[c].mean()) for c in usable}
             chosen = max(usable, key=lambda c: float(df[c].sum()))
             mapping[code] = chosen
             reports.append((code, tier, chosen, means, candidates, usable))
 
-        if ignored_empty:
-            self.logger.log_status(
-                f"Empty candidate column(s) ignored, not compared: "
-                f"{summarise(ignored_empty)}.",
-                level="info",
-            )
-        self._report_zone_choices(reports, all_columns, resolved)
+        self._report_zone_choices(reports)
         return mapping
 
-    def _report_zone_choices(self, reports, all_columns, resolved):
-        """Say which zone each node was given, and what that choice was worth.
+    def _report_zone_choices(self, reports):
+        """Say how many nodes were given the best of several zones, and warn about
+        a borrowed one.
 
-        The lift over the candidate mean is the number that matters. A code
-        resolved to a single column has no choice to report and is left out; a
-        code that picked one of eleven is stating a modelling assumption whose
-        size belongs in the log rather than in someone's memory.
+        Taking the best rather than the average is a modelling assumption, so the
+        count is worth a line -- it moves when the download or the country set
+        does. Which node took which zone, and by how much, is the table in
+        "Which zone a node gets" in docs/vre-timeseries.md, where it stays put
+        instead of being retyped into every build log.
 
-        Only the largest few are named -- they are the ones worth arguing with,
-        and the whole table is in docs/vre-timeseries.md.
+        Zones no code can reach by prefix are not reported at all: prefix
+        matching is arithmetic, the same zones are unreachable every run, and
+        nothing about them asks the reader to do anything.
         """
         chosen_from_several = [r for r in reports if len(r[5]) > 1]
         if chosen_from_several:
-            def lift(entry):
-                _, _, chosen, means, _, _ = entry
-                average = sum(means.values()) / len(means)
-                return means[chosen] / average - 1 if average > 0 else 0.0
-
-            ranked = sorted(chosen_from_several, key=lift, reverse=True)
-            detail = summarise(
-                f"{code}->{chosen} {lift(entry):+.0%}"
-                for entry in ranked
-                for code, _, chosen, _, _, _ in [entry]
-            )
             self.logger.log_status(
-                f"{len(chosen_from_several)} node(s) take the best of several PECD zones "
-                f"(lift over the candidate mean): {detail}.",
-                level="info",
-            )
-
-        # A prefix is arithmetic rather than a choice: 'FR0' cannot see FR10 to
-        # FR15. Nothing else in the pipeline can notice, because the column is
-        # simply never looked at. Zones claimed by another configured code are
-        # left out -- NOM1 is its own node, not a zone NOS0 is missing out on.
-        spoken_for = {c for _, candidates in resolved.values() for c in candidates}
-        orphaned = sorted(
-            c for c in all_columns
-            if c not in spoken_for
-            and any(c.startswith(code[:2]) for code in resolved)
-        )
-        if orphaned:
-            # Grouped by country: "ES 3, FR 6, UK 1" fits on the line where ten
-            # column names do not, and says which countries to go and look at.
-            by_country = {}
-            for column in orphaned:
-                by_country[column[:2]] = by_country.get(column[:2], 0) + 1
-            detail = ", ".join(
-                f"{country} {count}" for country, count in sorted(by_country.items())
-            )
-            self.logger.log_status(
-                f"{len(orphaned)} PECD zone(s) unreachable by prefix matching, never used: "
-                f"{detail}.",
+                f"{len(chosen_from_several)} node(s) take the best of several PECD zones.",
                 level="info",
             )
 
@@ -658,7 +657,9 @@ class VRE_PECD(BaseProcessor):
             return
 
         floor = self._written_floor()
-        threshold = self.ISOLATED_DROPOUT_MULTIPLIER * floor
+        # max, so that a cutoff above the neighbour level cannot make an hour
+        # count as both empty and a neighbour worth reporting.
+        threshold = max(self.ISOLATED_DROPOUT_NEIGHBOUR, floor)
         written = self._as_written(df)
 
         findings = []
@@ -694,14 +695,19 @@ class VRE_PECD(BaseProcessor):
     def _report_coverage(self, built_codes):
         """Say once what was built and what was not.
 
+        Counted against the codes that *need* this flow rather than every
+        configured country: a country with no unit of this technology is not
+        missing a series, and never was.
+
         The zero that matters for a capacity factor is not an hour but a whole
-        series: a code that finds no column produces no `ts_cf` rows at all, and
-        the unit on that node can never generate for the entire run --
-        downstream, indistinguishable from a unit nobody asked for.
+        series: a code that needs the flow and finds no column produces no
+        `ts_cf` rows at all, and the unit on that node can never generate for the
+        entire run -- downstream, indistinguishable from a unit nobody asked for.
+        That is the case this warns about.
         """
         self.logger.log_status(
             f"Capacity factors built for {len(built_codes)} of "
-            f"{len(self.country_codes)} country code(s).",
+            f"{len(self.needed_codes)} country code(s).",
             level="info",
         )
         if not self.unbuilt_codes:
@@ -733,7 +739,7 @@ class VRE_PECD(BaseProcessor):
     def process(self) -> pd.DataFrame:
         """
         Read a folder of PECD CSV files into one hourly capacity factor series
-        per configured country code.
+        per country code that has a unit of this flow.
 
         Returns
         -------
@@ -747,6 +753,17 @@ class VRE_PECD(BaseProcessor):
             f"No '{self.flow or self.attached_grid}' capacity factors will be built, so "
             f"units on those nodes cannot generate."
         )
+
+        # Before the folder is even listed: a run whose units never use this flow
+        # has nothing to read the series, and reading a PECD download to build one
+        # is minutes spent on a column Backbone will not open.
+        if not self.needed_codes:
+            self.logger.log_status(
+                f"No unit uses the '{self.flow or self.attached_grid}' flow, so nothing "
+                f"is built.",
+                level="info",
+            )
+            return empty
 
         if not os.path.isdir(self.csv_folder):
             self.logger.log_status(
@@ -801,11 +818,11 @@ class VRE_PECD(BaseProcessor):
         # this processor". Deliberately before anything is read.
         self._reject_overlapping_windows(selected)
 
-        df_candidates, resolved, columns = self._read_and_compile_input_CSVs(selected)
+        df_candidates, resolved, _columns = self._read_and_compile_input_CSVs(selected)
         if df_candidates is None:
             return empty
 
-        mapping = self._choose_columns(df_candidates, resolved, columns)
+        mapping = self._choose_columns(df_candidates, resolved)
         self._report_coverage(mapping)
 
         summary_df = pd.DataFrame(index=df_candidates.index)
@@ -824,8 +841,6 @@ class VRE_PECD(BaseProcessor):
             columns={code: f"{code}_{self.attached_grid}" for code in mapping},
             inplace=True,
         )
-
-        self.logger.log_status("Time series built.", level="info")
 
         # Long format, with the spec's flow written into every row.
         result = summary_df.reset_index(names='time')

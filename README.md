@@ -291,7 +291,6 @@ Timeseries processors are selected and configured in the `timeseries_specs = {}`
 		'rounding_precision': 5,
 		'input_sub_folder': 'PECD-onshore/',   # folder, not file
 		'attached_grid': 'elec',
-		'is_input_data_dependent': False,
 		'annual_summary': 'avg',
 	},
 

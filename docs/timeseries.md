@@ -41,6 +41,7 @@ has its own page, and those pages come and go as the data sources do.
 - [Forecast branches](#forecast-branches)
 - [Why zero is the hard case](#why-zero-is-the-hard-case)
 - [What the runner checks before it writes](#what-the-runner-checks-before-it-writes)
+- [What a build says](#what-a-build-says)
 - [What a processor contributes besides the series](#what-a-processor-contributes-besides-the-series)
 - [What is cached, and what forces a rebuild](#what-is-cached-and-what-forces-a-rebuild)
 - [Adding a source](#adding-a-source)
@@ -92,7 +93,7 @@ writing a GDX.
 config: timeseries_specs
         │
         ▼
-  TimeseriesPipeline      decides, per source: run it, copy it, or skip it
+  TimeseriesPipeline      decides, per source: run it or leave last run's output
         │
         ▼
   ProcessorRunner         once per source
@@ -238,6 +239,41 @@ link. That is the same union the input Excel builds its `grid` and `node` sheets
 from, so a value this warning names is genuinely one nothing else in the model
 mentions.
 
+## What a build says
+
+A build log is read by someone who wants to know whether anything needs their
+attention. Everything else in it is cost, and a page of standing text is worse
+than cost: it is what teaches a reader to skip the line that is new.
+
+So the rule, for every message this pipeline writes:
+
+1. **A warning asks the reader to change something.** If there is nothing they
+   can do about it, it is not a warning, whatever its tone.
+2. **Absence is not a defect.** The source workbooks are the statement of what
+   the model contains. A country with no district heating, a zone with no
+   reservoir, a landlocked country with no offshore wind — the build says nothing
+   at all. Spain has no district heating and never will; a line saying so every
+   run only makes its reader wonder what they did wrong.
+3. **Partial or contradictory data earns a line.** The model has the node or the
+   unit, and the data for it is missing or inconsistent: a node in `nodedata` but
+   not in `demanddata`, a hydro node with no inflow anywhere in the source, a unit
+   whose `flow` has no capacity factor series. That is the case worth
+   interrupting someone for, and it is the case the checks are shaped around.
+4. **Expected and handled costs counts, not names, and never reasons.** A repair
+   the rules made, a decision taken once and recorded in code, a check that found
+   what it always finds — one short line per processor, and the names and the
+   reasoning stay in this documentation where they do not have to be retyped into
+   every log. `Gaps interpolated at 7 node(s), 3 large year change(s) left as
+   they are.` is a whole build's worth of hydro repairs.
+5. **Progress lines carry the run.** `Validating and curing processor output...`
+   is the shape to copy: it says all normal and nothing else, and it is a fine
+   summary of a thousand lines of code that found nothing to report.
+
+The same rule governs what a *check* is worth adding. A test that fires on
+correct data every run is not a strict check, it is a broken one — the isolated
+capacity-factor dropout test has a threshold precisely so that it stays silent on
+weather and speaks on dropped values.
+
 ## What a processor contributes besides the series
 
 Most processors return the time series and nothing else. A node, a grid or a flow
@@ -273,17 +309,15 @@ merged is ever cached, so the input Excel is rebuilt from the source workbooks
 plus those contributions every time — which is what makes a partial rerun, where
 most sources did not execute, describe the same model as a full one.
 
-A processor may also be **copied instead of run**. A source that does not depend
-on the scenario — weather does not care which scenario year is being modelled —
-takes `is_input_data_dependent: false` in its spec, and a multi-scenario build
-then copies its GDX, its contributions and its hash from the first output folder
-rather than repeating the work.
-
-With one override: a processor that declares it needs merged source data is
-scenario-dependent whatever the config says, because the frames it receives are
-filtered per scenario, year and country. A copy from another scenario's folder
-would be that scenario's answer wearing this one's name. The code takes the
-processor's declaration over the config, and says so when the two disagree.
+Every processor is scenario-dependent, and a multi-scenario build runs each of
+them per scenario. A build used to copy the weather-driven ones from the first
+output folder on the grounds that weather does not care which scenario year is
+modelled — but what gets *built* does: the VRE processors read `unitdata` to
+learn which nodes have a unit of their flow, and that is filtered per scenario,
+year and country. A copy from another scenario's folder would be that scenario's
+answer wearing this one's name. The copying, its `is_input_data_dependent` spec
+key and the checks that guarded it are gone; a second scenario costs about a
+minute more.
 
 ## Adding a source
 

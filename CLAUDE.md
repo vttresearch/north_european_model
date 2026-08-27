@@ -82,6 +82,19 @@ enforced by `tests/_common/contracts.py` and swept over every loader function.
 - **After logger init** (pipeline phases): never raise -- log a warning and continue with a safe default.
 
 
+## What a build says
+
+A warning asks the reader to change something; if there is nothing they can do, it is not
+one. **Absence is not a defect** -- the source workbooks state what the model contains, so
+a country with no district heating or no offshore wind is silent. What earns a line is
+*partial* data: the model has the node or unit and the data for it is missing or
+contradictory. Everything expected and handled costs counts, not names, and never reasons
+-- one short line per processor, with the names and the reasoning in the documentation
+page. A check that fires on correct data every run is not strict, it is broken.
+
+The full rule, with examples, is "What a build says" in `docs/timeseries.md`.
+
+
 ## Working inside the Backbone checkout
 
 This project is installed inside a Backbone checkout, so the parent directory `../` is

@@ -127,9 +127,29 @@ def write_pecd(
     return path
 
 
+def unitdata(*pairs: tuple[str, str]) -> pd.DataFrame:
+    """A merged-unitdata frame carrying (flow, node) per unit.
+
+    ``flow`` arrives on unitdata from unittypedata, and the node from the unit's
+    output connection -- which is the pair `nodes_needing_flow` reads. A unit the
+    workbook removes (`method: remove`, or a row of zeros) is simply not here by
+    the time a processor sees the frame.
+    """
+    return pd.DataFrame({
+        "unit": [f"{node}_{flow}" for flow, node in pairs],
+        "flow": [flow for flow, _ in pairs],
+        "grid_output1": ["elec"] * len(pairs),
+        "node_output1": [node for _, node in pairs],
+    })
+
+
 def build(folder: Path, *, codes=("FI00",), start=2013, end=2013,
-          flow="onshore", cutoff=0.01, precision=5):
-    """Run the processor over a folder and return (result, logger)."""
+          flow="onshore", cutoff=0.01, precision=5, df_unitdata=None):
+    """Run the processor over a folder and return (result, logger).
+
+    ``df_unitdata`` left out means "cannot tell", and every configured code is
+    built -- see `VRE_PECD._needed_codes`.
+    """
     logger = FakeLogger()
     processor = VRE_PECD(
         input_folder=str(folder),
@@ -141,6 +161,7 @@ def build(folder: Path, *, codes=("FI00",), start=2013, end=2013,
         rounding_precision=precision,
         cutoff_below=cutoff,
         scaling_factor=1,
+        df_unitdata=df_unitdata,
         logger=logger,
     )
     return processor.process(), logger
@@ -340,30 +361,37 @@ class TestChoosingAZone:
         write_pecd(tmp_path, 2013, {"FR01": 0.10, "FR02": 0.40})
         write_pecd(tmp_path, 2014, {"FR01": 0.10, "FR02": 0.40})
 
-        result, logger = build(tmp_path, codes=["FR00"], start=2012, end=2014)
+        result, _ = build(tmp_path, codes=["FR00"], start=2012, end=2014)
 
-        logger.assert_logged("FR00->FR02", level="info")
+        # FR02's 0.10/0.40/0.40, not FR01's 0.40/0.10/0.10.
         assert result["value"].mean() == pytest.approx(0.30, abs=1e-3)
 
-    def test_the_choice_and_its_size_are_reported(self, tmp_path):
-        write_pecd(tmp_path, 2013, {"FR01": 0.40, "FR02": 0.20, "FR03": 0.15})
-        _, logger = build(tmp_path, codes=["FR00"])
+    def test_the_choice_is_counted_but_not_itemised(self, tmp_path):
+        """A modelling assumption worth a number; which zone won is in the docs.
 
-        logger.assert_logged("take the best of several PECD zones", level="info")
-        logger.assert_logged("FR00->FR01", level="info")
+        The per-node lift used to be listed here every run and never changed --
+        see "What a build says" in docs/timeseries.md.
+        """
+        write_pecd(tmp_path, 2013, {"FR01": 0.40, "FR02": 0.20, "FR03": 0.15})
+        result, logger = build(tmp_path, codes=["FR00"])
+
+        logger.assert_logged("1 node(s) take the best of several PECD zones", level="info")
+        logger.assert_not_logged("FR00->")
+        assert result["value"].mean() == pytest.approx(0.40, abs=1e-3)
 
     def test_a_candidate_with_no_values_cannot_win_by_summing_to_zero(self, tmp_path):
         """An all-NaN column sums to 0.0, so it only *loses* the comparison.
 
         That is indistinguishable from a zone that is genuinely calm, and a
-        partially empty column is biased down by the same mechanism.
+        partially empty column is biased down by the same mechanism. Excluded
+        silently: it changes nothing, and which zones PECD ships empty is not
+        the reader's to fix.
         """
         write_pecd(tmp_path, 2013, {"FR01": None, "FR02": 0.25})
         result, logger = build(tmp_path, codes=["FR00"])
 
-        logger.assert_logged("Empty candidate column(s) ignored", level="info")
-        logger.assert_logged("FR01", level="info")
         assert result["value"].mean() == pytest.approx(0.25, abs=1e-3)
+        logger.assert_not_logged("FR01")
 
     def test_a_code_whose_candidates_are_all_empty_is_not_built(self, tmp_path):
         write_pecd(tmp_path, 2013, {"FR01": None, "FR02": None})
@@ -379,23 +407,19 @@ class TestChoosingAZone:
 
         logger.assert_logged("first two letters", level="warn")
 
-    def test_zones_no_prefix_can_reach_are_named(self, tmp_path):
+    def test_a_zone_no_prefix_can_reach_is_simply_not_used(self, tmp_path):
         """A prefix is arithmetic: 'FR0' cannot see FR10.
 
-        Nothing else in the pipeline can notice, because the column is simply
-        never looked at.
+        The same zones are unreachable every run and nothing about them asks the
+        reader to act, so this is silent -- how prefix matching resolves is in
+        docs/vre-timeseries.md. What must not happen is FR10 winning a
+        comparison it was never in.
         """
         write_pecd(tmp_path, 2013, {"FR01": 0.3, "FR10": 0.9})
-        _, logger = build(tmp_path, codes=["FR00"])
+        result, logger = build(tmp_path, codes=["FR00"])
 
-        logger.assert_logged("unreachable by prefix matching", level="info")
-
-    def test_another_nodes_zone_is_not_called_orphaned(self, tmp_path):
-        """``SE02`` is its own node, not a zone ``SE01`` is missing out on."""
-        write_pecd(tmp_path, 2013, {"SE01": 0.3, "SE02": 0.4})
-        _, logger = build(tmp_path, codes=["SE01", "SE02"])
-
-        logger.assert_not_logged("unreachable by prefix matching")
+        assert result["value"].mean() == pytest.approx(0.3, abs=1e-3)
+        logger.assert_not_logged("FR10")
 
 
 class TestSayingWhatWasNotBuilt:
@@ -419,6 +443,70 @@ class TestSayingWhatWasNotBuilt:
         logger.assert_logged("Capacity factors built for 1", level="info")
 
 
+class TestUnitdataDecidesWhatIsNeeded:
+    """Backbone reads a capacity factor only through a unit of that flow.
+
+    Austria has no offshore wind: its `Offshore Wind` row is zero capacity and
+    `method: remove`, so the merged unitdata has no such unit. Warning that PECD
+    has no offshore column for AT00 was therefore a warning about a unit nobody
+    ordered -- printed every run, actionable by no one, and exactly the kind of
+    line that teaches a reader to skip the next one.
+    """
+
+    def test_a_code_with_no_unit_of_this_flow_is_not_built_or_mentioned(self, tmp_path):
+        write_pecd(tmp_path, 2013, {"FI00": 0.3, "AT00": 0.2})
+        result, logger = build(
+            tmp_path, codes=["FI00", "AT00"],
+            df_unitdata=unitdata(("onshore", "FI00_elec")),
+        )
+
+        assert set(result["node"]) == {"FI00_elec"}
+        logger.assert_not_logged("AT00")
+        logger.assert_clean()
+
+    def test_a_code_that_needs_the_flow_and_has_no_column_still_warns(self, tmp_path):
+        """The typo case: offshore wind ordered where the source has no zone."""
+        write_pecd(tmp_path, 2013, {"FI00": 0.3})
+        _, logger = build(
+            tmp_path, codes=["FI00", "AT00"],
+            df_unitdata=unitdata(("onshore", "FI00_elec"), ("onshore", "AT00_elec")),
+        )
+
+        logger.assert_logged("AT00", level="warn")
+        logger.assert_logged("cannot generate", level="warn")
+
+    def test_a_unit_of_another_flow_does_not_count(self, tmp_path):
+        write_pecd(tmp_path, 2013, {"FI00": 0.3, "AT00": 0.2})
+        result, _ = build(
+            tmp_path, codes=["FI00", "AT00"], flow="onshore",
+            df_unitdata=unitdata(("onshore", "FI00_elec"), ("offshore", "AT00_elec")),
+        )
+
+        assert set(result["node"]) == {"FI00_elec"}
+
+    def test_no_unitdata_builds_every_configured_code(self, tmp_path):
+        """Cannot tell is not nothing: an unreadable workbook must not empty the run."""
+        write_pecd(tmp_path, 2013, {"FI00": 0.3, "AT00": 0.2})
+        result, _ = build(tmp_path, codes=["FI00", "AT00"], df_unitdata=pd.DataFrame())
+
+        assert set(result["node"]) == {"FI00_elec", "AT00_elec"}
+
+    def test_a_flow_no_unit_uses_reads_nothing_at_all(self, tmp_path):
+        """Answered before the folder is listed, so a whole PECD read is skipped.
+
+        The folder here does not exist, which would be a warning on any path that
+        got as far as looking at it.
+        """
+        result, logger = build(
+            tmp_path / "absent", codes=["FI00"], flow="offshore",
+            df_unitdata=unitdata(("onshore", "FI00_elec")),
+        )
+
+        assert result.empty
+        logger.assert_logged("No unit uses the 'offshore' flow", level="info")
+        logger.assert_clean()
+
+
 class TestIsolatedDropouts:
     """One flat hour between two ordinary ones -- reported, never repaired."""
 
@@ -435,11 +523,23 @@ class TestIsolatedDropouts:
 
     def test_a_flat_hour_between_two_windy_ones_is_reported(self, tmp_path):
         write_pecd(tmp_path, 2013,
-                   {"FI00": self._series(2013, {100: (0.0, 0.5)})})
+                   {"FI00": self._series(2013, {100: (0.0, 0.7)})})
         _, logger = build(tmp_path)
 
         logger.assert_logged("isolated empty hour", level="warn")
         logger.assert_logged("Values unchanged", level="warn")
+
+    def test_a_hole_between_two_ordinary_hours_is_not_reported(self, tmp_path):
+        """The bar is half of nameplate, and 0.3 on both sides is just weather.
+
+        At five times the written floor this fired on the shipped data every
+        build and nobody ever acted on it, which is what a warning must not do.
+        """
+        write_pecd(tmp_path, 2013,
+                   {"FI00": self._series(2013, {100: (0.0, 0.3)})})
+        _, logger = build(tmp_path)
+
+        logger.assert_not_logged("isolated empty hour")
 
     def test_a_calm_spell_is_not_reported(self, tmp_path):
         """The reason the magnitude test exists.
@@ -460,7 +560,7 @@ class TestIsolatedDropouts:
 
     def test_the_values_reach_the_output_unchanged(self, tmp_path):
         write_pecd(tmp_path, 2013,
-                   {"FI00": self._series(2013, {100: (0.0, 0.5)})})
+                   {"FI00": self._series(2013, {100: (0.0, 0.7)})})
         result, _ = build(tmp_path)
 
         at_dropout = result.loc[
@@ -468,13 +568,16 @@ class TestIsolatedDropouts:
         ]
         assert float(at_dropout.iloc[0]) == 0.0
 
-    def test_the_threshold_follows_cutoff_below(self, tmp_path):
+    def test_what_counts_as_empty_follows_cutoff_below(self, tmp_path):
         """``cutoff_below`` is the user's to set, so it cannot be a literal.
 
         The second dropout sits at 0.02: above the shipped 0.01 cutoff, so it is
         an ordinary small value and not a dropout at all -- and below a 0.05
         cutoff, which zeroes it before GAMS ever sees it. A hard-coded 0.01
         would be quietly wrong for exactly the user who tuned the parameter.
+
+        The neighbour bar does *not* follow it, and must not: fifty times a 0.05
+        cutoff asks for a capacity factor of 2.5, which nothing can reach.
         """
         write_pecd(tmp_path, 2013, {
             "FI00": self._series(2013, {100: (0.0, 0.6), 200: (0.02, 0.6)}),

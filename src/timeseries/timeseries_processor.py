@@ -685,7 +685,12 @@ class ProcessorRunner:
                 parameter_name=bb_parameter,
                 parameter_dimensions=spec.get("bb_parameter_dimensions"),
             )
-            self.logger.log_status(f"Forecast data GDX written to {forecast_gdx_path}", level="info")                    
+            # The file name, not the path: the output folder is stated once at the
+            # top of the run, and seven absolute paths repeat it seven times.
+            self.logger.log_status(
+                f"Forecast data written to {os.path.basename(forecast_gdx_path)}",
+                level="info",
+            )
 
             update_import_timeseries_inc(
                 self.output_folder,

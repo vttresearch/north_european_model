@@ -1144,38 +1144,37 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
     def _report_coverage(self, built_nodes):
         """
-        Say once what was built and what was not, instead of leaving it to be noticed.
+        Say once what was built, and warn about every row that asked for a node
+        and did not get one.
 
-        Split by whether the user can act on it. A configured country with no
-        electricity demand rows at all is information. A node someone wrote a
-        demand row for and that could not be built is a warning: that row is a
-        request, and the node will otherwise sit in the model with a balance
-        penalty and nothing to serve.
+        Only that second half is worth a line. A demand row is a request, and a
+        node it fails to build sits in the model with a balance penalty and
+        nothing to serve. A country with no rows at all is the opposite case and
+        says nothing -- see "What a build says" in docs/timeseries.md.
         """
         self.logger.log_status(
             f"Electricity demand built for {len(built_nodes)} node(s).",
             level="info",
         )
 
-        for level in ("warn", "info"):
-            entries = sorted((n, r) for n, r, lvl in self.unbuilt_nodes if lvl == level)
-            if not entries:
-                continue
-            # Grouped by reason, which is what a reader acts on and what the
-            # nodes usually share. Names stay in full: a node reaching GAMS as
-            # zero demand is exactly what someone has to go and look up.
-            by_reason = {}
-            for node, reason in entries:
-                by_reason.setdefault(reason, []).append(node)
-            detail = '; '.join(
-                f"{', '.join(nodes)}: {reason}"
-                for reason, nodes in sorted(by_reason.items())
-            )
-            self.logger.log_status(
-                f"No electricity demand for {len(entries)} node(s) -- {detail}. "
-                f"These reach GAMS as zero demand.",
-                level=level,
-            )
+        entries = sorted((n, r) for n, r, lvl in self.unbuilt_nodes if lvl == "warn")
+        if not entries:
+            return
+        # Grouped by reason, which is what a reader acts on and what the nodes
+        # usually share. Names stay in full: a node reaching GAMS as zero demand
+        # is exactly what someone has to go and look up.
+        by_reason = {}
+        for node, reason in entries:
+            by_reason.setdefault(reason, []).append(node)
+        detail = '; '.join(
+            f"{', '.join(nodes)}: {reason}"
+            for reason, nodes in sorted(by_reason.items())
+        )
+        self.logger.log_status(
+            f"No electricity demand for {len(entries)} node(s) -- {detail}. "
+            f"These reach GAMS as zero demand.",
+            level="warn",
+        )
 
     def _report_climate_spread(self, df_demands, built_nodes):
         """
@@ -1183,8 +1182,9 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
         Anyone comparing a single climate year against the workbook's `twh/year`
         will find a mismatch. It is not one -- the table figure is a
-        weather-normalised normal year -- but nothing else in a build log says
-        so, and the question comes back every time.
+        weather-normalised normal year -- and the two numbers here say so in the
+        only way that changes between runs. Why is in
+        docs/elec-demand-timeseries.md, not in the log.
         """
         usable = [n for n in built_nodes if n in df_demands.columns]
         if df_demands.empty or not usable:
@@ -1203,10 +1203,8 @@ class elec_demand_TYNDP2024(BaseProcessor):
         ratios = totals[usable] / means[usable]
 
         self.logger.log_status(
-            f"Annual electricity demand matches the workbook's normal-year twh/year as a "
-            f"{len(totals)}-year mean; individual climate years range "
-            f"{ratios.min().min():.0%} to {ratios.max().max():.0%} of it. "
-            f"A single-year build is not meant to reproduce the table figure.",
+            f"Climate years span {ratios.min().min():.0%}-{ratios.max().max():.0%} of the "
+            f"workbook's normal-year twh/year ({len(totals)}-year mean).",
             level="info",
         )
 
@@ -1231,14 +1229,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
             code for code in self.country_codes
             if str(code).strip().lower() in rows_by_country
         ]
-        no_rows = [c for c in self.country_codes if c not in processed_countries]
-        if no_rows:
-            self.logger.log_status(
-                f"No {self.demand_grid} demand rows for {len(no_rows)} configured "
-                f"country(-ies), which therefore have no time series here: "
-                f"{', '.join(map(str, no_rows))}.",
-                level="info",
-            )
+        # A configured country with no demand row of this grid is not an absence
+        # to report: the workbooks are the statement of what the model contains.
+        # Nothing is said unless *no* country has one, which is a build that
+        # produces nothing.
         if not processed_countries:
             self.logger.log_status(
                 f"No configured country has any {self.demand_grid} demand row. "
@@ -1262,8 +1256,6 @@ class elec_demand_TYNDP2024(BaseProcessor):
         self._check_no_zero_hours(out_df)
         self._report_coverage(built_nodes)
         self._report_climate_spread(out_df, built_nodes)
-
-        self.logger.log_status("Demand time series built.", level="info")
 
         # Long format, and negated on the way out: demand is a negative ts_influx.
         result = out_df.reset_index(names='time')
