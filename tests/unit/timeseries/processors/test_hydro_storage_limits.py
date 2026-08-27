@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.source_data.source_data_contributions import CONTRIBUTION_KEYS
 from src.timeseries.processors.hydro_storage_limits_MAF2019 import (
     hydro_storage_limits_MAF2019,
 )
@@ -428,7 +429,7 @@ class TestOutputContract:
             df_nodedata=nodedata(XX00_reservoir=1_000_000.0),
         )
 
-    def test_the_secondary_result_lists_node_and_boundary_type(self, tmp_path):
+    def _contribution(self, tmp_path):
         folder = tmp_path / "timeseries"
         write_levels(folder, {"XX00": {}})
         processor = hydro_storage_limits_MAF2019(
@@ -440,9 +441,38 @@ class TestOutputContract:
             logger=FakeLogger(),
         )
         processor.run_processor()
-        secondary = processor.secondary_result
-        assert list(secondary.columns) == ["node", "param_gnBoundaryTypes", "average_value"]
-        assert set(secondary["param_gnBoundaryTypes"]) == {"upwardLimit", "downwardLimit"}
+        return processor.frames["boundarydata"]
+
+    def test_it_states_which_boundaries_came_from_a_series(self, tmp_path):
+        """The one thing about its own output this processor has to say.
+
+        Nothing downstream can work it out: p_gnBoundaryProperties needs
+        useTimeseries rather than the node's nodedata constant, and while
+        changes.inc turns that flag off again for a series that proves flat,
+        nothing ever turns it on.
+        """
+        contribution = self._contribution(tmp_path)
+
+        assert set(contribution["param_gnboundarytypes"]) == {"upwardLimit", "downwardLimit"}
+        assert set(contribution["usetimeseries"]) == {1}
+
+    def test_the_contribution_is_keyed_the_way_the_boundary_table_is(self, tmp_path):
+        # Without the key the merge has nothing to match on, and the flag would
+        # be dropped at the contribution gate rather than reaching the workbook.
+        contribution = self._contribution(tmp_path)
+
+        assert set(CONTRIBUTION_KEYS["boundarydata"]) <= set(contribution.columns)
+        assert set(contribution["grid"]) == {"reservoir"}
+
+    def test_it_says_nothing_about_the_constant(self, tmp_path):
+        """The flag is the claim; the number stays the workbook's.
+
+        A constant here would be a second opinion on the reservoir size the
+        processor read *from* nodedata to build the series in the first place.
+        """
+        contribution = self._contribution(tmp_path)
+
+        assert "constant" not in contribution.columns
 
 
 class TestDeclarations:

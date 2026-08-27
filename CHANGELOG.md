@@ -19,6 +19,13 @@ not build and why, and has a documentation page of its own.
 - wind and solar: [docs/vre-timeseries.md](docs/vre-timeseries.md)
 - `VRE_MAF2019` and `hydro_mingen_limits_MAF2019` removed. A config still naming
   either writes no timeseries for it; switch to `VRE_PECD`.
+- Demand grids with no processor of their own get a constant `influx` instead of
+  a flat timeseries; `ts_influx_other_demands.gdx` is no longer written.
+- A processor contributes to the source data tables instead of returning a
+  secondary result; the `secondary_output_name` spec field is retired.
+  [docs/timeseries.md](docs/timeseries.md)
+- A `node`, `grid` or `flow` a processor builds data for that the source data
+  does not have is reported.
 
 ## Source workbooks
 
@@ -37,6 +44,13 @@ not build and why, and has a documentation page of its own.
   columns are dropped, always keeping one.
 - storage starts: a node with no determinable start level is reported. It was
   already left unbounded, but `boundStart=1` and a 0 reference made it look bound.
+- Node state boundaries are read from one table, and it states whether each one
+  is a constant or a timeseries instead of that following from where it came
+  from. [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- The hydro reservoir start level is written by `changes.inc` alone; the input
+  excel's provisional value is no longer meant to be the one used.
+- `useTimeSeries` and `storageValueUseTimeSeries` spelled `useTimeseries` and
+  `storageValueUseTimeseries`, following Backbone.
 
 ## Test suite
 

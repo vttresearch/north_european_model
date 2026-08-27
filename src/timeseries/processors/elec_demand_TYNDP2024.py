@@ -1263,8 +1263,6 @@ class elec_demand_TYNDP2024(BaseProcessor):
         self._report_coverage(built_nodes)
         self._report_climate_spread(out_df, built_nodes)
 
-        self.secondary_result = None
-
         self.logger.log_status("Demand time series built.", level="info")
 
         # Long format, and negated on the way out: demand is a negative ts_influx.

@@ -250,7 +250,7 @@ class TestDeclarationsOfIntent:
             tmp_path, "value_range = (0.0, 1.0)", values="[1.0] * 47 + [1.5]"
         )
         run.logger.assert_no_errors()
-        assert run.result.ts_domains
+        run.logger.assert_logged("Processing completed")
 
     def test_a_malformed_declaration_is_reported_not_obeyed(self, tmp_path):
         """A processor author who writes the attribute wrongly should hear about

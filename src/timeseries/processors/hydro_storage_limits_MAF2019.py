@@ -34,8 +34,10 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
     Returns:
         main_result (pd.DataFrame): long format
             ['grid', 'node', 'param_gnBoundaryTypes', 'time', 'value'].
-        secondary_result (pd.DataFrame): the valid
-            (node, boundary type, average_value) combinations.
+        frames['boundarydata'] (pd.DataFrame): one row per (grid, node, boundary
+            type) that got a series, stating usetimeseries. Without it the
+            workbook would write the node's nodedata constant instead and
+            Backbone would never look at the series.
     """
 
     #: Bounds are stored energy, which cannot be negative.
@@ -658,27 +660,32 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
                 level="info"
             )
 
-        # Which nodes ended up with timeseries-format limits, for BBExcelPipeline
-        # to write p_gnBoundaryProperties correctly.
-        mask = summary_df > 0
-        has_data = mask.groupby(level='param_gnBoundaryTypes').sum() > 0
+        # Which (node, boundary type) pairs ended up with a series, stated as a
+        # boundarydata contribution.
+        #
+        # This is the one thing about its own output the processor has to say out
+        # loud, and nothing downstream can work it out: p_gnBoundaryProperties
+        # needs useTimeseries rather than useConstant for these, and while
+        # changes.inc turns that flag *off* again for a series that proves to be
+        # flat, nothing ever turns it on. The GDX alone cannot say it either --
+        # by the time Backbone reads it, the workbook has already decided.
+        has_data = (summary_df > 0).groupby(level='param_gnBoundaryTypes').sum() > 0
 
-        combinations_with_data = []
+        rows = []
         for boundary_type in summary_df.index.get_level_values('param_gnBoundaryTypes').unique():
-            boundary_data = summary_df.xs(boundary_type, level='param_gnBoundaryTypes')
-
             for node in summary_df.columns:
                 if has_data.loc[boundary_type, node]:
-                    positive_values = boundary_data[node][boundary_data[node] > 0]
-                    avg_value = positive_values.mean() if len(positive_values) > 0 else 0
-                    combinations_with_data.append((node, boundary_type, avg_value))
+                    rows.append({
+                        # The grid is the node name's own suffix, as below.
+                        'grid': node.split('_')[1],
+                        'node': node,
+                        'param_gnboundarytypes': boundary_type,
+                        'usetimeseries': 1,
+                    })
 
-        ts_hydro_storage_limits = pd.DataFrame(
-            combinations_with_data,
-            columns=['node', 'param_gnBoundaryTypes', 'average_value']
+        self.frames['boundarydata'] = pd.DataFrame(
+            rows, columns=['grid', 'node', 'param_gnboundarytypes', 'usetimeseries']
         )
-
-        self.secondary_result = ts_hydro_storage_limits
 
         self.logger.log_status("Hydro storage limit time series built.", level="info")
 

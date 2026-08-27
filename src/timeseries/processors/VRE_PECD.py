@@ -825,8 +825,6 @@ class VRE_PECD(BaseProcessor):
             inplace=True,
         )
 
-        self.secondary_result = None
-
         self.logger.log_status("Time series built.", level="info")
 
         # Long format, with the spec's flow written into every row.

@@ -558,8 +558,6 @@ class hydro_inflow_MAF2019(BaseProcessor):
         # Both were built on the same hourly index.
         summary_df = pd.concat([reservoir_all, ror_all], axis=1)
 
-        self.secondary_result = None
-
         self._report_coverage(list(summary_df.columns))
 
         # Long format. The grid is the node name's own suffix, which is what the

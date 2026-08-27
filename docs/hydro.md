@@ -109,6 +109,22 @@ constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
 seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
 run so their absence from the time series is stated rather than discovered.
 
+How a node ends up on one side or the other is written into the input Excel
+rather than inferred. `nodedata`'s `upwardLimit` and `downwardLimit` columns are
+constants, and the processor states separately which nodes got a series instead;
+the input Excel writes `useTimeseries` for those and `useConstant` for the rest.
+Backbone reverses the first decision by itself for a series that turns out to be
+flat — `changes.inc` converts it back to a constant, because a constant is much
+faster to carry — but nothing reverses it the other way, so the processor's claim
+is what makes the seasonal profiles reachable at all.
+
+The **starting level** of each reservoir is not decided here. The input Excel
+writes a provisional one, and `changes.inc` then recomputes it for every `psOpen`
+and `reservoir` node from the maximum of that node's own upwardLimit series. That
+rule needs a rewrite of its own — as written it cannot express a run starting and
+ending in summer — so nothing in the build depends on the provisional number
+beyond it being above zero.
+
 Whether that is the right treatment is discussed in
 [the caveats](#some-caveats-from-cross-checking-the-data), which is also where the
 evidence against conjuring a profile for them sits.

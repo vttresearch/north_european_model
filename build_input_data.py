@@ -10,11 +10,11 @@ from itertools import product
 import src.infrastructure.config_reader as config_reader
 from src.infrastructure.cache_manager import CacheManager
 from src.infrastructure.logger import IterationLogger
+from src.source_data.source_data_contributions import apply_contributions, combine_contributions
 from src.source_data.source_data_inputs import SourceDataPipelineInputs
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
 from src.timeseries.timeseries_pipeline import TimeseriesPipeline
-from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
 from src.utils import parse_sys_args, force_utf8_output
@@ -196,7 +196,7 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 reference_ts_folder=reference_ts_folder,
                 scenario_year=year,
             ))
-            ts_results = ts_pipeline.run()
+            ts_contributions = ts_pipeline.run()
 
             # Set reference folder for subsequent iterations to enable copy optimization
             if reference_ts_folder is None:
@@ -206,13 +206,17 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 "Timeseries results are up-to-date. Loading from cache.",
                 level="skip"
             )
-            # Load cached results
-            ts_results = TimeseriesPipelineOutput(
-                secondary_results=cache_manager.load_all_secondary_results(),
-                ts_domains=cache_manager.load_dict_from_cache("all_ts_domains.json"),
-                ts_domain_pairs=cache_manager.load_dict_from_cache("all_ts_domain_pairs.json"),
+            ts_contributions = combine_contributions(
+                list(cache_manager.load_processor_frames().values())
             )
         timeseries_run_successfully = (logger.error_count == error_count_before_ts)
+
+        # What the timeseries phase had to say about the source data tables goes
+        # into them here, once, before anything reads them. Not inside
+        # SourceDataPipeline.run(): the frames it builds are what the processors
+        # *read*, and folding their own output back in before they run would feed
+        # them their own answers.
+        apply_contributions(source_data_pipeline, ts_contributions, logger)
 
         # --- 2.5. Backbone Input Excel building phase ---
 
@@ -228,7 +232,6 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 cache_manager=cache_manager,
                 logger=logger,
                 source_data=source_data_pipeline,
-                ts_results=ts_results
             )
 
             builder = BBExcelPipeline(excel_context)

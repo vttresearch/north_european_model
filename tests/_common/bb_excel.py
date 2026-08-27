@@ -1,9 +1,9 @@
 """Constructing a ``BBExcelPipeline`` for method-level tests.
 
-``BBExcelPipeline.__init__`` only reads six DataFrames off ``source_data`` and
-three dicts off ``ts_results``, and touches no disk until ``run()`` writes the
-workbook. So its ``create_*`` / ``fill_*`` methods can be exercised directly on
-hand-made frames, without building an input folder or an Excel file.
+``BBExcelPipeline.__init__`` only reads seven DataFrames off ``source_data`` and
+touches no disk until ``run()`` writes the workbook. So its ``create_*`` /
+``fill_*`` methods can be exercised directly on hand-made frames, without
+building an input folder or an Excel file.
 
 ``cache_manager`` is stored and never read, so it stays None -- which also
 avoids CacheManager's mkdir-on-construction and its CWD-relative source hashing.
@@ -21,13 +21,14 @@ from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
 from tests._common.fixtures import FakeLogger, make_config
 
-#: The six frames BBExcelPipeline.__init__ reads off source_data.
+#: The frames BBExcelPipeline.__init__ reads off source_data.
 SOURCE_FRAMES = (
     "df_emissiondata",
     "df_nodedata",
     "df_transferdata",
     "df_unitdata",
     "df_demanddata",
+    "df_boundarydata",
     "df_userconstraintdata",
 )
 
@@ -36,7 +37,6 @@ def make_pipeline(
     *,
     logger: FakeLogger | None = None,
     config: dict | None = None,
-    ts_results: Any = None,
     **source_frames: pd.DataFrame,
 ) -> BBExcelPipeline:
     """A pipeline whose source frames are whatever the test supplies.
@@ -50,12 +50,6 @@ def make_pipeline(
     source = SimpleNamespace(
         **{name: source_frames.get(name, pd.DataFrame()) for name in SOURCE_FRAMES}
     )
-    if ts_results is None:
-        from src.timeseries.timeseries_results import TimeseriesPipelineOutput
-
-        ts_results = TimeseriesPipelineOutput(
-            secondary_results={}, ts_domains={}, ts_domain_pairs={}
-        )
 
     return BBExcelPipeline(
         BBExcelInputs(
@@ -66,7 +60,6 @@ def make_pipeline(
             cache_manager=None,
             logger=logger or FakeLogger(),
             source_data=source,
-            ts_results=ts_results,
         )
     )
 

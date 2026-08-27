@@ -49,7 +49,7 @@ def _p_gn_with_no_pairs() -> pd.DataFrame:
         pd.DataFrame(),
         pd.DataFrame(),
         pd.DataFrame(),
-        {},
+        pd.DataFrame(),
     )
 
 

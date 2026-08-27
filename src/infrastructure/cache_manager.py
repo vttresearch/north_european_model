@@ -31,15 +31,16 @@ class CacheManager:
     """
     CacheManager handles the saving and loading of critical run information to enable
     partial pipeline execution and smart caching. It manages configuration hashes,
-    input data hashes, processor-specific hashes, and secondary results generated during
-    timeseries processing.
+    input data hashes, processor-specific hashes, and the contributions the
+    timeseries phase made to the source data tables.
 
     Attributes:
         cache_folder (Path): Directory where all cache files are stored.
         config_hash_file (Path): Path to store the hash of the config file.
         input_data_hash_file (Path): Path to store hashes of input Excel files.
         processor_hash_file (Path): Path to store hashes of processor modules.
-        secondary_results_folder (Path): Directory where secondary results are stored per processor.
+        processor_frames_file (Path): Pickle holding each spec's contributions to
+            the source data tables, exactly as its processor returned them.
     """
 
     # Source code file groups monitored for changes.
@@ -56,11 +57,18 @@ class CacheManager:
         Path("./src/utils.py"),
         Path("./src/hash_utils.py"),
         Path("./src/json_exchange.py"),
+        # Every stage reads Backbone's parameter names and defaults from here,
+        # so a change to one of them can move any output.
+        Path("./src/backbone_params.py"),
+        # And which table declares which dimension, which decides what the build
+        # reports about a value nothing declares.
+        Path("./src/source_workbook_shape.py"),
     ]
     _SOURCE_PIPELINE_FILES = [
         Path("./src/source_data/source_data_pipeline.py"),
         Path("./src/source_data/source_data_loader.py"),
         Path("./src/source_data/source_data_inputs.py"),
+        Path("./src/source_data/source_data_contributions.py"),
     ]
     _TS_PIPELINE_FILES = [
         # Processors are hashed individually by ProcessorRunner, but only the
@@ -94,7 +102,7 @@ class CacheManager:
         Returns True if:
         - Full rerun is requested
         - Any specific processor has changed
-        - BB Excel needs to be rebuilt (requires ts_domains data)
+        - BB Excel needs to be rebuilt (it reads what the processors contributed)
         """
         return (
             self.full_rerun 
@@ -116,8 +124,7 @@ class CacheManager:
         self.input_data_hash_file = self.cache_folder / "input_data_hashes.json"
         self.processor_hash_file = self.cache_folder / "processor_hashes.json"
         self.processor_requirements_file = self.cache_folder / "processor_requirements.json"
-        self.secondary_results_folder = self.cache_folder / "secondary_results"
-        self.secondary_results_folder.mkdir(exist_ok=True)
+        self.processor_frames_file = self.cache_folder / "processor_frames.pkl"
 
         self.input_file_folder = Path(input_folder) / "data_files"
         self.config = config
@@ -155,8 +162,7 @@ class CacheManager:
             shutil.rmtree(self.cache_folder, ignore_errors=True)
 
         self.cache_folder.mkdir(parents=True, exist_ok=True)
-        self.secondary_results_folder.mkdir(parents=True, exist_ok=True)
-  
+
 
 
 
@@ -456,99 +462,44 @@ class CacheManager:
 
     def load_dict_from_cache(self, filename: str):
         """
-        Load a dictionary from the cache folder under the given filename,
-        reconstructing any sets or list-of-tuples that were serialized as JSON arrays.
-    
+        Load a dictionary from the cache folder under the given filename.
+
         Args:
             filename (str): Name of the JSON file (e.g. "my_cache.json").
-    
+
         Returns:
-            dict: The data with outer lists converted back into sets or list-of-tuples.
+            dict: The parsed contents, or {} if the file is missing or unreadable.
         """
         file_path = Path(self.cache_folder) / filename
         try:
-            raw = json_exchange.load_json(file_path)  # returns a dict with JSON types
-        except:
+            return json_exchange.load_json(file_path)
+        except Exception:
             return {}
-    
-        reconstructed = {}
-        for key, val in raw.items():
-            if isinstance(val, list):
-                # case 1: list-of-2-lists → list-of-tuples
-                if all(isinstance(item, list) and len(item) == 2 for item in val):
-                    reconstructed[key] = [tuple(item) for item in val]
-                else:
-                    # assume list of scalars → set
-                    reconstructed[key] = set(val)
-            else:
-                # leave anything else untouched
-                reconstructed[key] = val
-    
-        return reconstructed
 
 
     def merge_dict_to_cache(self, data: dict, filename: str):
         """
         Merge new data into the existing cache entry (if any), then save the result.
 
-        - For set-valued keys: union old and new.
-        - For pair-valued keys: append any new pairs (preserving order).
-        - For any other types or brand-new keys: overwrite/take new.
-
-        A pair collection is matched by what it holds, not by its container.
-        The round trip through JSON is not type-preserving: a set of tuples is
-        saved as an array of arrays and comes back from ``load_dict_from_cache``
-        as a *list* of tuples. Requiring a list on both sides therefore matched
-        the two ends of that round trip against each other and never fired --
-        so ``all_ts_domain_pairs.json`` took the overwrite branch and lost the
-        pairs of every processor that did not run. ``all_ts_domains.json`` was
-        unaffected: scalars come back as a set, which is what the pipeline
-        passes in.
+        Key by key: a set-valued key unions, anything else takes the new value.
+        The only caller left is ``general_flags.json``, whose values are flags.
 
         Args:
-            data (dict): New data to merge (values as sets or collections of pairs).
+            data (dict): New data to merge.
             filename (str): Name of the JSON cache file.
         """
-        def is_pair_collection(value) -> bool:
-            return (
-                isinstance(value, (list, set))
-                and bool(value)
-                and all(isinstance(t, tuple) and len(t) == 2 for t in value)
-            )
-
-        # 1) Load existing (or get empty dict if none)
         try:
             merged = self.load_dict_from_cache(filename)
         except (FileNotFoundError, json.JSONDecodeError):
             merged = {}
 
-        # 2) Merge in new values
         for key, new_val in data.items():
             old_val = merged.get(key)
-            if old_val is None:
-                # brand new key
-                merged[key] = new_val
-            elif isinstance(old_val, set) and isinstance(new_val, set):
+            if isinstance(old_val, set) and isinstance(new_val, set):
                 merged[key] = old_val.union(new_val)
-            elif is_pair_collection(old_val) and is_pair_collection(new_val):
-                # Append uniques. The cached order is kept and new pairs arrive
-                # in a fixed order, so a run that adds nothing rewrites the file
-                # byte for byte rather than reshuffling it. Sorted by str() to
-                # stay deterministic whatever the pair members turn out to be:
-                # they come from DataFrame columns, and a set that mixed str
-                # with a number would make a plain sort raise mid-build.
-                combined = list(old_val)
-                seen = set(combined)
-                for tup in sorted(new_val, key=str):
-                    if tup not in seen:
-                        seen.add(tup)
-                        combined.append(tup)
-                merged[key] = combined
             else:
-                # fallback: overwrite
                 merged[key] = new_val
 
-        # 3) Save back to cache
         self._save_dict_to_cache(merged, filename)
 
 
@@ -605,46 +556,44 @@ class CacheManager:
         return json_exchange.load_json(self.processor_requirements_file)
 
 
-    def save_secondary_result(self, processor_name: str, data, secondary_result_name: str):
+    def load_processor_frames(self) -> dict:
         """
-        Save a secondary result under a named key inside a processor's result file.
-    
-        Args:
-            processor_name (str): Name of the processor.
-            data: Data to serialize and save.
-            secondary_result_name (str): Key name for the secondary result.
-        """
-        path = self.secondary_results_folder / f"{processor_name}.pkl"
-
-        # Save under the named secondary result
-        processor_results = {}
-        processor_results[secondary_result_name] = data
-    
-        with open(path, "wb") as f:
-            pickle.dump(processor_results, f)
-
-
-    def load_all_secondary_results(self) -> dict:
-        """
-        Load all secondary results from cache and flatten them into {secondary_result_name: result}.
+        Every spec's contributions to the source data tables, as last produced.
 
         Returns:
-            dict: {secondary_result_name: result}
+            dict: ``{human_name: {table name: DataFrame}}``. Empty if nothing has
+            been cached yet.
         """
-        secondary_results = {}
-        if not self.secondary_results_folder.exists():
-            return secondary_results
+        if not self.processor_frames_file.exists():
+            return {}
+        with open(self.processor_frames_file, "rb") as f:
+            return pickle.load(f)
 
-        for pkl_file in self.secondary_results_folder.glob("*.pkl"):
-            with open(pkl_file, "rb") as f:
-                processor_results = pickle.load(f)
 
-            # Flatten: {secondary_result_name: result}
-            for secondary_result_name, result in processor_results.items():
-                secondary_results[secondary_result_name] = result
+    def save_processor_frames(self, human_name: str, frames: dict):
+        """
+        Record one spec's contributions, replacing whatever it said last time.
 
-        return secondary_results
-    
+        Keyed by the spec's ``timeseries_specs`` name rather than by the
+        processor's: three specs share ``VRE_PECD``, and a file named after the
+        processor had them overwrite each other's answers.
+
+        **What goes in is what the processor returned.** Never a merged or melted
+        table: the merge into the source frames is recomputed from workbooks plus
+        this file on every build, so a partial rerun -- where most specs did not
+        run at all -- reads exactly the same as a full one. A cache holding
+        half-merged tables could not offer that.
+
+        Args:
+            human_name (str): The spec's key in timeseries_specs.
+            frames (dict): ``{table name: DataFrame}``, already validated.
+        """
+        stored = self.load_processor_frames()
+        stored[human_name] = frames
+        with open(self.processor_frames_file, "wb") as f:
+            pickle.dump(stored, f)
+
+
 
     def _save_all_source_code_hashes(self):
         """
@@ -811,8 +760,9 @@ class CacheManager:
         # Determine if BB input excel needs to be rebuilt.
         #
         # any_timeseries_changed belongs here because processor output reaches the
-        # workbook, not just the GDX: a secondary result drives create_p_gn,
-        # create_p_gnBoundaryPropertiesForStates and add_storage_starts. Individual
+        # workbook, not just the GDX: a processor's contribution to the source
+        # data tables drives create_p_gn, create_p_gnBoundaryPropertiesForStates
+        # and add_storage_starts. Individual
         # processor files are hashed by ProcessorRunner and deliberately kept out of
         # _TS_PIPELINE_FILES, so editing one used to rerun the timeseries phase and
         # leave inputData.xlsx describing the previous run's series -- stale against

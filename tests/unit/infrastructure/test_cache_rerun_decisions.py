@@ -2,8 +2,8 @@
 
 Two decisions here used to be wrong in ways a build could not show you.
 
-A processor's output does not stop at the GDX -- a secondary result feeds
-``create_p_gn``, ``create_p_gnBoundaryPropertiesForStates`` and
+A processor's output does not stop at the GDX -- its contributions to the source
+data tables feed ``create_p_gn``, ``create_p_gnBoundaryPropertiesForStates`` and
 ``add_storage_starts``. Processor files are hashed individually by
 ``ProcessorRunner`` and deliberately kept out of ``_TS_PIPELINE_FILES``, so
 editing one used to re-run the timeseries phase while leaving
@@ -120,7 +120,7 @@ class TestRebuildBBExcelFollowsTheTimeseries:
             or manager.any_timeseries_changed
         )
         assert rebuild, (
-            "a processor's secondary result feeds p_gn and "
+            "a processor's contribution to the source data tables feeds p_gn and "
             "p_gnBoundaryPropertiesForStates; leaving the workbook alone makes it "
             "stale against the GDX written in the same run"
         )

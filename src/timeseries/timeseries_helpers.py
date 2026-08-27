@@ -63,69 +63,6 @@ def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     }
 
 
-def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
-    """
-    Collect domain values from a processor result, for the cache and for
-    accumulation across processors.
-
-    Serializes directly to JSON and merges across processors. Compiling and
-    normalizing the domain names happens downstream, when the Excel is assembled.
-
-    Parameters:
-    - df: pandas.DataFrame containing possible domain columns
-    - possible_domains: list of domain column names to check in df
-
-    Returns:
-    - dict[str, list]: domain -> unique values, unsorted
-    """
-    result = {}
-
-    for domain in possible_domains:
-        if domain in df.columns:
-            unique_values = df[domain].dropna().unique()
-            if len(unique_values) > 0:
-                result[domain] = list(unique_values)
-
-    return result
-
-
-def collect_domain_pairs_for_cache(df, domain_pairs: list[list[str]]) -> dict[str, list[tuple]]:
-    """
-    Collect domain value pairs from a processor result, alongside the domains.
-
-    The pairs are what stop the Excel from being generated for combinations that
-    do not exist -- the domains on their own would imply the cross product.
-
-    Parameters:
-    - df: pandas.DataFrame containing the domain columns
-    - domain_pairs: list of domain pair lists, e.g. [['grid', 'node'], ['flow', 'node']]
-
-    Returns:
-    - dict[str, list[tuple]]: pair key like 'grid_node' -> unique domain tuples
-    """
-    result = {}
-
-    for pair in domain_pairs:
-        if not isinstance(pair, list) or len(pair) != 2:
-            raise ValueError("Each domain pair must be a list of exactly two domain names")
-
-        domain1, domain2 = pair
-
-        # Skip pair if any column is missing
-        if domain1 not in df.columns or domain2 not in df.columns:
-            continue
-
-        # Extract and deduplicate
-        pairs_df = df[[domain1, domain2]].drop_duplicates()
-        pair_key = f"{domain1}_{domain2}"
-        new_pairs = list(pairs_df.itertuples(index=False, name=None))
-
-        if new_pairs:
-            result[pair_key] = new_pairs
-
-    return result
-
-
 def update_import_timeseries_inc(
     output_folder: str | Path,
     file_suffix: Optional[str] = None,

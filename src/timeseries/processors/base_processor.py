@@ -80,9 +80,21 @@ class BaseProcessor(ABC):
     main_result : pd.DataFrame or None
         Primary output, set by `run_processor()`. Do not modify directly.
 
-    secondary_result : Any or None
-        Optional secondary output (metadata, statistics, intermediate results),
-        set in `process()` if needed.
+    frames : dict of str to pd.DataFrame
+        Contributions to the source data tables, filled in `process()` if the
+        processor has something to say that is not a time series. Keys are table
+        names without the `df_` prefix -- the same names `requires_source_data`
+        uses, so a processor reads and writes `nodedata` by one name.
+
+        Most processors contribute nothing: a node, a grid and a flow the model
+        already knows about need no announcing, and the workbooks name them
+        already. What does need saying is a fact the workbooks cannot hold --
+        `hydro_storage_limits_MAF2019` contributes a `boundarydata` row stating
+        that a node's upwardLimit comes from a series rather than a constant,
+        because nothing downstream can work that out from the GDX.
+
+        The rules the contribution is checked against, and what happens when two
+        producers describe the same row, are in `source_data_contributions`.
     """
 
     #: See "Declarations of intent" above.
@@ -101,7 +113,7 @@ class BaseProcessor(ABC):
         """
         self.logger = kwargs.get('logger')
         self.main_result: Optional[pd.DataFrame] = None
-        self.secondary_result: Optional[Any] = None
+        self.frames: dict[str, pd.DataFrame] = {}
 
     # ------------------------------------------------------------------
     # Reading input files
@@ -239,9 +251,8 @@ class BaseProcessor(ABC):
         """
         Main processing logic - must be implemented by subclasses.
 
-        May set `self.secondary_result`, and may use `self.logger.log_status()`
-        to record progress. Exceptions should propagate; the caller logs them and
-        recovers.
+        May fill `self.frames`, and may use `self.logger.log_status()` to record
+        progress. Exceptions should propagate; the caller logs them and recovers.
 
         Returns
         -------
@@ -268,6 +279,6 @@ class BaseProcessor(ABC):
 
         return ProcessorOutput(
             main_result=self.main_result,
-            secondary_result=self.secondary_result,
+            frames=self.frames,
         )
 

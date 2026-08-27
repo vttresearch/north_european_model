@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment
 from openpyxl.worksheet.table import Table, TableStyleInfo
+import src.backbone_params as backbone_params
 import src.utils as utils
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
 
@@ -53,173 +54,31 @@ class BBExcelPipeline:
     upperLimitCapacityRatio were guarded and the third crashed the build.
     """
 
-    PARAM_GNU = [
-        'isActive',
-        'capacity',
-        'conversionCoeff',
-        'useInitialGeneration',
-        'initialGeneration',
-        'maxRampUp',
-        'maxRampDown',
-        'rampPenalty',
-        'rampUpPenalty',
-        'rampDownPenalty',
-        'rampUpCost',
-        'rampDownCost',
-        'upperLimitCapacityRatio',
-        'unitSize',
-        'invCosts',
-        'annuityFactor',
-        'invEnergyCost',
-        'fomCosts',
-        'vomCosts',
-        'inertia',
-        'unitSizeMVA',
-        'availabilityCapacityMargin',
-        'startCostCold',
-        'startCostWarm',
-        'startCostHot',
-        'startFuelConsCold',
-        'startFuelConsWarm',
-        'startFuelConsHot',
-        'shutdownCost',
-        'delay',
-        'cb',
-        'cv',
-    ]
+    # Backbone's parameter vocabulary, its non-zero defaults and the two naming
+    # conventions the source workbooks use all live in src/backbone_params.py,
+    # so that the source-data and timeseries stages can read them too -- a stage
+    # that needs to know whether 'upwardlimit' is a parameter name cannot import
+    # this class to find out. Kept as attributes here because the methods below
+    # read them off self, and because that is what a reader looking for
+    # "which parameters does p_gnu_io have" expects to find.
+    PARAM_GNU = backbone_params.PARAM_GNU
+    PARAM_UNIT = backbone_params.PARAM_UNIT
+    PARAM_GNN = backbone_params.PARAM_GNN
+    PARAM_GN = backbone_params.PARAM_GN
+    PARAM_GN_BOUNDARY_TYPES = backbone_params.PARAM_GN_BOUNDARY_TYPES
+    PARAM_GN_BOUNDARY_PROPERTIES = backbone_params.PARAM_GN_BOUNDARY_PROPERTIES
+    PARAM_EMISSION = backbone_params.PARAM_EMISSION
+    PARAM_USERCONSTRAINT = backbone_params.PARAM_USERCONSTRAINT
 
-    PARAM_UNIT = [
-        'isActive',
-        'isSource',
-        'isSink',
-        'fixedFlow',
-        'availability',
-        'unitCount',
-        'useInitialOnlineStatus',
-        'initialOnlineStatus',
-        'startColdAfterXhours',
-        'startWarmAfterXhours',
-        'rampSpeedToMinLoad',
-        'rampSpeedFromMinLoad',
-        'minOperationHours',
-        'minShutdownHours',
-        'eff00',
-        'eff01',
-        'opFirstCross',
-        'op00',
-        'op01',
-        'useTimeseries',
-        'useTimeseriesAvailability',
-        'investMIP',
-        'maxUnitCount',
-        'minUnitCount',
-        'becomeAvailable',
-        'becomeUnavailable',
-    ]
+    EMISSION_COLUMN_PREFIX = backbone_params.EMISSION_COLUMN_PREFIX
 
-    PARAM_GNN = [
-        'isActive',
-        'transferCap',
-        'availability',
-        'variableTransCost',
-        'transferLoss',
-        'rampLimit',
-        'diffCoeff',
-        'diffLosses',
-        'transferCapInvLimit',
-        'investMIP',
-        'invCost',
-        'annuityFactor',
-    ]
+    PARAM_GNU_DEFAULTS = backbone_params.PARAM_GNU_DEFAULTS
+    PARAM_UNIT_DEFAULTS = backbone_params.PARAM_UNIT_DEFAULTS
+    PARAM_GNN_DEFAULTS = backbone_params.PARAM_GNN_DEFAULTS
+    PARAM_GN_DEFAULTS = backbone_params.PARAM_GN_DEFAULTS
 
-    PARAM_GN = [
-        'isActive',
-        'nodeBalance',
-        'usePrice',
-        'energyStoredPerUnitOfState',
-        'selfDischargeLoss',
-        'boundStart',
-        'boundStartOfSamples',
-        'boundStartAndEnd',
-        'boundStartToEnd',
-        'boundEnd',
-        'boundEndOfSamples',
-        'boundAll',
-        'boundSumOverInterval',
-        'capacityMargin',
-        'storageValueUseTimeSeries',
-        'influx',
-        'price',
-    ]
-
-    PARAM_GN_BOUNDARY_TYPES = [
-        'upwardLimit',
-        'downwardLimit',
-        'reference',
-        'balancePenalty',
-        'maxSpill',
-        'downwardSlack01',
-    ]
-
-    # The parameter block of p_gnBoundaryPropertiesForStates. The boundary
-    # *types* above are dimension values on that sheet; these are its columns.
-    PARAM_GN_BOUNDARY_PROPERTIES = [
-        'useConstant',
-        'constant',
-        'useTimeSeries',
-        'slackCost',
-    ]
-
-    # The numeric columns of the two source frames that carry no PARAM_* block of
-    # their own. Without these, nothing coerced them and a stray string reached
-    # inputData.xlsx as a text cell -- see _coerce_numeric_dtypes.
-    PARAM_EMISSION = [
-        'price',
-    ]
-
-    PARAM_USERCONSTRAINT = [
-        'value',
-    ]
-
-    #: Emission factor columns on nodedata are named by their emission rather than
-    #: listed: create_p_nEmission derives the emission from the suffix of every
-    #: 'emission_XX' column it finds, so the set is open-ended by design.
-    EMISSION_COLUMN_PREFIX = 'emission_'
-
-    # Default values for parameters that must not fall back to zero.
-    # Applied per-connection in create_p_gnu_io so that every input/output
-    # connection (not just _output1) receives the correct non-zero default.
-    PARAM_GNU_DEFAULTS = {
-        'isActive':        1,
-        'conversionCoeff': 1,
-    }
-
-    # Applied per-unit in create_p_unit.
-    PARAM_UNIT_DEFAULTS = {
-        'isActive':     1,
-        'availability': 1,
-        'eff00':        1,
-        'op00':         1,
-    }
-
-    # Applied in create_p_gnn after building the output DataFrame.
-    PARAM_GNN_DEFAULTS = {
-        'isActive':     1,
-        'availability': 1,
-    }
-
-    # Applied in create_p_gn after building the output DataFrame.
-    PARAM_GN_DEFAULTS = {
-        'isActive': 1,
-    }
-
-    # p_userconstraint(group, uc1, uc2, uc3, uc4, param_userconstraint): the four
-    # uc slots are optional selectors, but an unused one must carry the literal
-    # '-' rather than a blank. inc/1e_inputs.gms aborts the run otherwise -- it
-    # checks per parameter type that the slots it does not use are sameAs '-',
-    # e.g. "should be '-' for <param> multiplier: (grid, node, '-', '-')".
-    UC_DIMENSION_COLUMNS = ['1st dimension', '2nd dimension', '3rd dimension', '4th dimension']
-    UC_UNUSED_DIMENSION = '-'
+    UC_DIMENSION_COLUMNS = backbone_params.UC_DIMENSION_COLUMNS
+    UC_UNUSED_DIMENSION = backbone_params.UC_UNUSED_DIMENSION
 
     def __init__(self, context: BBExcelInputs) -> None:
 
@@ -231,7 +90,10 @@ class BBExcelPipeline:
         self.config = context.config
         self.country_codes = self.config["country_codes"]
 
-        # From InputDataPipeline
+        # The source data tables are the only data channel into this class.
+        # Whatever the timeseries phase had to say about a node has already been
+        # merged into them (source_data_contributions.apply_contributions), so
+        # nothing here needs to know which stage a row came from.
         self.source_data = context.source_data
         # Global
         self.df_emissiondata = self.source_data.df_emissiondata
@@ -240,33 +102,9 @@ class BBExcelPipeline:
         self.df_transferdata = self.source_data.df_transferdata
         self.df_unitdata =     self.source_data.df_unitdata
         self.df_demanddata =   self.source_data.df_demanddata
+        self.df_boundarydata = self.source_data.df_boundarydata
         # Custom
         self.df_userconstraintdata = self.source_data.df_userconstraintdata
-
-        # From TimeseriesPipeline
-        self.ts_results = context.ts_results
-
-        # unpack ts_domains and ts_domain_pairs
-        self.ts_domains = self.ts_results.ts_domains
-        self.ts_domain_pairs = self.ts_results.ts_domain_pairs
-
-        # Extract timeseries data with single dot access
-        self.ts_storage_limits = {
-            key: value 
-            for key, value in self.ts_results.secondary_results.items() 
-            if key is not None and key.startswith("ts_storage_limits")
-        }
-        mingen_vars = {
-            key: value 
-            for key, value in self.ts_results.secondary_results.items() 
-            if key is not None and key.startswith("mingen_nodes")
-        }
-        self.mingen_nodes = [
-            item
-            for sublist in mingen_vars.values() or []
-            if isinstance(sublist, list)
-            for item in sublist
-        ]
 
         # Define the merged output file
         self.output_file = os.path.join(self.output_folder, 'inputData.xlsx')
@@ -821,17 +659,15 @@ class BBExcelPipeline:
         p_gnn_flat: pd.DataFrame,
         df_nodedata: pd.DataFrame,
         df_demanddata: pd.DataFrame,
-        ts_domain_pairs: dict[str, list]
         ) -> pd.DataFrame:
         """
-        Collect all unique (grid, node) pairs from ts_domain_pairs, df_demanddata,
-        df_nodedata, p_gnu_io_flat, and both ends of every transfer link in p_gnn_flat.
-        """
-        if 'grid_node' in ts_domain_pairs:
-            ts_grid_node = pd.DataFrame(ts_domain_pairs['grid_node'], columns=['grid', 'node'])
-        else:
-            ts_grid_node = pd.DataFrame(columns=['grid', 'node'])
+        Collect all unique (grid, node) pairs from df_demanddata, df_nodedata,
+        p_gnu_io_flat, and both ends of every transfer link in p_gnn_flat.
 
+        A node that exists only because a timeseries processor built a series
+        for it arrives through df_nodedata like any other: the processor
+        contributes the (grid, node) row and the merge folds it in.
+        """
         pairs_demanddata = df_demanddata[['grid', 'node']] if not df_demanddata.empty else pd.DataFrame(columns=['grid', 'node'])
         pairs_nodedata   = df_nodedata[['grid', 'node']]   if not df_nodedata.empty   else pd.DataFrame(columns=['grid', 'node'])
         pairs_gnu        = p_gnu_io_flat[['grid', 'node']] if not p_gnu_io_flat.empty else pd.DataFrame(columns=['grid', 'node'])
@@ -844,12 +680,78 @@ class BBExcelPipeline:
             if 'to_node' in p_gnn_flat.columns:
                 pairs_gnn.append(p_gnn_flat[['grid', 'to_node']].rename(columns={'to_node': 'node'}))
 
-        parts = [p for p in [ts_grid_node, pairs_demanddata, pairs_nodedata, pairs_gnu] + pairs_gnn if not p.empty]
+        parts = [p for p in [pairs_demanddata, pairs_nodedata, pairs_gnu] + pairs_gnn if not p.empty]
         return (
             pd.concat(parts, ignore_index=True).drop_duplicates(ignore_index=True)
             if parts else pd.DataFrame(columns=['grid', 'node'])
         )
 
+
+    #: The boundary types that imply a state variable. A node with only a
+    #: maxSpill or a balancePenalty is not a storage: those say what may leave
+    #: it and what an imbalance costs, not how much it holds.
+    STATE_BOUNDARY_TYPES = ('upwardLimit', 'downwardLimit', 'reference')
+
+    def _nodes_with_a_state_boundary(self, df_boundarydata: pd.DataFrame) -> set:
+        """Nodes whose state is bounded, however the bound is given.
+
+        A constant above zero and a time series count the same: both say the
+        node holds something. Zero does not -- ``0`` is "not set" by the time a
+        boundary reaches this class, so an all-zero limit is silence.
+        """
+        if df_boundarydata is None or df_boundarydata.empty:
+            return set()
+        if 'param_gnboundarytypes' not in df_boundarydata.columns:
+            return set()
+
+        rows = df_boundarydata[
+            df_boundarydata['param_gnboundarytypes'].isin(self.STATE_BOUNDARY_TYPES)
+        ]
+        if rows.empty:
+            return set()
+
+        # Either property column may be absent: a table built only from
+        # contributions carries what the processors stated and nothing else.
+        blank = pd.Series(pd.NA, index=rows.index, dtype='object')
+        from_series = rows.get('usetimeseries', blank).map(lambda v: pd.notna(v) and v == 1)
+        from_constant = pd.to_numeric(rows.get('constant', blank), errors='coerce') > 0
+        return set(rows.loc[from_series | from_constant, 'node'])
+
+    def _boundaries_by_node(self, df_boundarydata: pd.DataFrame) -> dict:
+        """``{(grid, node, type): {'usetimeseries': bool, 'constant': value}}``.
+
+        Built once so that the per-node loops below can ask a question rather
+        than scan the table again for every boundary type.
+
+        ``usetimeseries`` is reduced to a plain bool here, because the column is
+        ``Float64`` when something set it and all-NA ``object`` when nothing did
+        -- and ``pd.NA == 1`` is neither True nor False, it raises when a caller
+        puts it in an ``if``. Either property column may be absent entirely: a
+        table built only from contributions carries what the processors stated
+        and nothing else.
+        """
+        if df_boundarydata is None or df_boundarydata.empty:
+            return {}
+        if not {'grid', 'node', 'param_gnboundarytypes'} <= set(df_boundarydata.columns):
+            return {}
+
+        blank = pd.Series(pd.NA, index=df_boundarydata.index, dtype='object')
+        use_series = df_boundarydata.get('usetimeseries', blank)
+        constants = df_boundarydata.get('constant', blank)
+
+        return {
+            (grid, node, boundary_type): {
+                'usetimeseries': bool(pd.notna(flag) and flag == 1),
+                'constant': constant,
+            }
+            for grid, node, boundary_type, flag, constant in zip(
+                df_boundarydata['grid'],
+                df_boundarydata['node'],
+                df_boundarydata['param_gnboundarytypes'],
+                use_series,
+                constants,
+            )
+        }
 
     def create_p_gn(
         self,
@@ -857,7 +759,7 @@ class BBExcelPipeline:
         p_gnu_io_flat: pd.DataFrame,
         df_nodedata: pd.DataFrame,
         df_demanddata: pd.DataFrame,
-        ts_storage_limits: dict[str, pd.DataFrame],
+        df_boundarydata: pd.DataFrame,
         ) -> pd.DataFrame:
         """
         Creates p_gn from pre-collected (grid, node) pairs.
@@ -873,9 +775,10 @@ class BBExcelPipeline:
                 - usePrice: inferred if 'price' column is non-empty in df_nodedata
                 - nodeBalance: inferred for demand grids or when nodedata is present
                 - energyStoredPerUnitOfState: read from df_nodedata when provided;
-                  otherwise inferred from upwardLimit / downwardLimit / reference in
-                  df_nodedata, ts_storage_limits, or upperLimitCapacityRatio in
-                  p_gnu_io_flat — deduced storage nodes default to 1; price nodes
+                  otherwise inferred from an upwardLimit / downwardLimit / reference
+                  boundary in df_boundarydata — set by a constant or by a time
+                  series, it makes no difference — or from upperLimitCapacityRatio
+                  in p_gnu_io_flat. Deduced storage nodes default to 1; price nodes
                   and non-storage balance nodes default to 0.
 
         Remaining param_gn:
@@ -894,11 +797,10 @@ class BBExcelPipeline:
             if not df_demanddata.empty else set()
         )
 
-        # Collect nodes that have storage limit time series
-        ts_storage_nodes = set()
-        for df in ts_storage_limits.values():
-            if 'node' in df.columns and 'param_gnBoundaryTypes' in df.columns:
-                ts_storage_nodes.update(df['node'].unique())
+        # Nodes carrying a state boundary that implies a state variable. The
+        # spill limits and balancePenalty are deliberately not in that set: a
+        # node can have a maximum spill rate without storing anything.
+        storage_bound_nodes = self._nodes_with_a_state_boundary(df_boundarydata)
 
         # --- Process each (grid, node) pair ---
         for _, pair in unique_gn_pairs.iterrows():
@@ -953,20 +855,11 @@ class BBExcelPipeline:
             # and only for non-price nodes
             if energyStoredPerUnitOfState is None and not usePrice:
 
-                # 1) node in ts_storage_limits
-                if not energyStoredPerUnitOfState and node in ts_storage_nodes:
+                # 1) the node has an upwardLimit, downwardLimit or reference
+                if node in storage_bound_nodes:
                     energyStoredPerUnitOfState = 1
 
-                # 2) upwardlimit / downwardlimit / reference present and > 0
-                if not node_data.empty:
-                    for col in ['upwardlimit', 'downwardlimit', 'reference']:
-                        if col in node_data.columns:
-                            val = node_data[col].iloc[0]
-                            if pd.notna(val) and val > 0:
-                                energyStoredPerUnitOfState = 1
-                                break
-
-                # 3) upperLimitCapacityRatio defined in p_gnu_io_flat for any of the units. 
+                # 2) upperLimitCapacityRatio defined in p_gnu_io_flat for any of the units.
                 # check over sum is acceptable as upperLimitCapacityRatio is always positive
                 if not energyStoredPerUnitOfState and not p_gnu_io_flat.empty and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns:
                     if p_gnu_io_flat.loc[p_gnu_io_flat['node'] == node, 'upperLimitCapacityRatio'].sum() > 0:
@@ -1043,32 +936,45 @@ class BBExcelPipeline:
     def create_p_gnBoundaryPropertiesForStates(
         self,
         p_gn_flat: pd.DataFrame,
-        df_nodedata: pd.DataFrame,
-        ts_storage_limits: dict[str, pd.DataFrame]
+        df_boundarydata: pd.DataFrame,
         ) -> pd.DataFrame:
         """
         Creates a DataFrame that defines boundary properties for nodes in an energy grid system.
 
-        This function generates boundary properties for nodes that have balance requirements
-        or energy storage capabilities. It processes both constant values from df_nodedata
-        and time series data provided in ts_storage_limits.
+        Reads ``df_boundarydata`` and nothing else. That table already carries
+        every boundary the model has, whether the workbook wrote it as a constant
+        column on nodedata or a timeseries processor contributed it, so this
+        function no longer knows -- or needs to know -- which stage a row came
+        from.
+
+        Which flag reaches the sheet
+        ---------------------------
+        Backbone treats ``useConstant`` and ``useTimeseries`` as one either/or
+        property (``useConstantOrTimeseries`` in inc/1a_definitions.gms), so
+        exactly one of them is written per row. **A time series wins.** That
+        single choice is the whole of the precedence rule, which used to be
+        implicit in the order two data sources were consulted in.
+
+        The other direction is a workbook's to take: the contribution merge fills
+        only where the workbook said nothing, so ``usetimeseries = 0`` written by
+        hand survives a processor claiming otherwise, and the constant is used.
+
+        A constant of zero writes nothing: ``0`` is "not set" by the time a value
+        reaches this class, and Backbone reads it the same way.
 
         Parameters:
         -----------
         p_gn_flat : DataFrame containing node configurations.
             Must include columns: 'grid', 'node', 'nodeBalance', 'energyStoredPerUnitOfState'
 
-        df_nodedata : DataFrame containing node input data specifications.
-            Must include columns: 'grid', 'node', and may include boundary values like
-            'upwardlimit', 'downwardlimit', etc. (PARAM_GN_BOUNDARY_TYPES).
-
-        ts_storage_limits
+        df_boundarydata : long-format boundary table with columns 'grid', 'node',
+            'param_gnboundarytypes' and the lowercased param_gnBoundaryProperties.
 
         Returns:
         --------
         DataFrame
             A fake-multi-indexed DataFrame with dimensions ['grid', 'node', 'param_gnBoundaryTypes']
-            and param_gnBoundaryProperties ['useConstant', 'constant', 'useTimeSeries', 'slackCost'].
+            and param_gnBoundaryProperties ['useConstant', 'constant', 'useTimeseries', 'slackCost'].
             Fake multi-index is a compromise between many aspects, see create_fake_MultiIndex()
             Defines boundary constraints for nodes in the energy system.
         """
@@ -1084,18 +990,9 @@ class BBExcelPipeline:
         # Initialize an empty list to collect all rows for the output DataFrame
         rows = []
 
-        # Create a lookup dictionary to quickly find average values for node-boundary type combinations
-        # Format: {(node, param_gnBoundaryTypes): average_value}
-        ts_node_boundaryTypes = {}
-
-        # Process all time series data frames to populate the lookup dictionary
-        for _, df in ts_storage_limits.items():
-            # Verify the DataFrame has all required columns before processing
-            if all(col in df.columns for col in ['node', 'param_gnBoundaryTypes', 'average_value']):
-                # Extract (node, param_gnBoundaryTypes, average_value) tuples and add to dictionary
-                for _, row in df[['node', 'param_gnBoundaryTypes', 'average_value']].iterrows():
-                    node_boundaryType = (row['node'], row['param_gnBoundaryTypes'])
-                    ts_node_boundaryTypes[node_boundaryType] = row['average_value']
+        # {(node, param_gnBoundaryTypes): row}, so the loop below can ask about a
+        # node's boundaries without scanning the table once per boundary type.
+        boundaries = self._boundaries_by_node(df_boundarydata)
 
         # Process each node in the system that requires balance constraints
         for _, gn_row in p_gn_flat.iterrows():
@@ -1105,55 +1002,31 @@ class BBExcelPipeline:
                 grid = gn_row['grid']
                 node = gn_row['node']
 
-                # Find the corresponding row in df_nodedata where both grid and node match
-                node_row = None
-                if not df_nodedata.empty:
-                    mask = (df_nodedata['grid'] == grid) & (df_nodedata['node'] == node)
-                    if mask.any():
-                        node_row = df_nodedata[mask].iloc[0]
-
                 # Process each boundary type for this node
                 for p_type in self.PARAM_GN_BOUNDARY_TYPES:
+                    boundary = boundaries.get((grid, node, p_type))
+                    if boundary is None:
+                        continue
 
-                    # Check if there's a constant value in node configuration
-                    value = node_row.get(p_type.lower(), None) if node_row is not None else None
-
-                    # Time series data takes precedence over constant values
-                    if (node, p_type) in ts_node_boundaryTypes:
-                        # Create entry for time series-based boundary         
-                        row_dict = {
+                    if boundary['usetimeseries']:
+                        rows.append({
                             'grid':                     grid,
                             'node':                     node,
                             'param_gnBoundaryTypes':    p_type,
-                            'useTimeSeries':            1,
-                        }
-                        rows.append(row_dict)  
+                            'useTimeseries':            1,
+                        })
+                        continue
 
-                        ## Special case: For downwardLimit with time series, create a slack variable
-                        ## to allow minor violations with a smaller penalty
-                        #if p_type == 'downwardLimit':
-                        #    row_dict = {
-                        #        'grid':                     grid,
-                        #        'node':                     node,
-                        #        'param_gnBoundaryTypes':    'downwardSlack01',
-                        #        'useConstant':              1,
-                        #        # Scale down the average value and round it
-                        #        'constant':                 round(ts_node_boundaryTypes[(node, p_type)]/1000, 0),
-                        #        'slackCost':                1000 # Fixed penalty cost for violations
-                        #    }
-                        #    rows.append(row_dict)      
-
-                    # If no time series but we have a non-zero constant value, use it
-                    elif isinstance(value, (int, float)) and value > 0:
-                        row_dict = {
+                    value = boundary['constant']
+                    if isinstance(value, (int, float)) and value > 0:
+                        rows.append({
                             'grid':                     grid,
                             'node':                     node,
                             'param_gnBoundaryTypes':    p_type,
                             'useConstant':              1,
-                            'constant':                 value
-                        }
-                        rows.append(row_dict)
-                
+                            'constant':                 value,
+                        })
+
             # Additional check for storage nodes
             isStorage = gn_row.get('energyStoredPerUnitOfState', 0)
             if isStorage and isStorage > 0:
@@ -1192,38 +1065,37 @@ class BBExcelPipeline:
     def add_storage_starts(
         self, p_gn: pd.DataFrame, 
         p_gnBoundaryPropertiesForStates: pd.DataFrame, 
-        p_gnu_io_flat: pd.DataFrame, 
-        ts_storage_limits: dict[str, pd.DataFrame]
+        p_gnu_io_flat: pd.DataFrame,
+        df_boundarydata: pd.DataFrame
         ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Adds storage start values to nodes with energy storage capabilities. 
+        Adds storage start values to nodes with energy storage capabilities.
         Converts p_gn and p_gnBoundaryPropertiesForStates to flat versions by removing the fake multi-index.
         Adds p_gn('boundStart') and p_gnBoundaryPropertiesForStates('reference') for storage nodes
         Recreates the fake multi-index
 
+        The number this writes is provisional for hydro
+        ----------------------------------------------
+        ``changes.inc`` recomputes the reference of every ``psOpen`` and
+        ``reservoir`` node from the *maximum* of its upwardLimit series, gated on
+        ``boundStart = 1`` and a reference above zero. So for those nodes what
+        matters here is that both gates are passed, not what the value is. The
+        rule below is what the other storages -- batteries, closed pumped hydro,
+        gas tanks -- actually get, and it is due a rewrite of its own: as written
+        it cannot express a run that starts and ends in summer.
+
         Parameters:
             p_gn: DataFrame with columns ['grid', 'node'] and possibly 'energyStoredPerUnitOfState'
             p_gnBoundaryPropertiesForStates: DataFrame with columns ['grid', 'node', 'param_gnBoundaryTypes', 'param_gnBoundaryProperties']
-            ts_storage_limits
+            df_boundarydata: long-format boundary table, for the node's upwardLimit
 
         Returns:
             tuple: (p_gn, p_gnBoundaryPropertiesForStates) with updated values
         """
         if p_gn.empty or p_gnBoundaryPropertiesForStates.empty:
             return(p_gn, p_gnBoundaryPropertiesForStates)
-        
-        # Create a lookup dictionary to quickly find average values for node-boundary type combinations
-        # Format: {(node, param_gnBoundaryTypes): average_value}
-        ts_node_boundaryTypes = {}
 
-        # Process all time series data frames to populate the lookup dictionary
-        for _, df in ts_storage_limits.items():
-            # Verify the DataFrame has all required columns before processing
-            if all(col in df.columns for col in ['node', 'param_gnBoundaryTypes', 'average_value']):
-                # Extract (node, param_gnBoundaryTypes, average_value) tuples and add to dictionary
-                for _, row in df[['node', 'param_gnBoundaryTypes', 'average_value']].iterrows():
-                    node_boundaryType = (row['node'], row['param_gnBoundaryTypes'])
-                    ts_node_boundaryTypes[node_boundaryType] = row['average_value']
+        boundaries = self._boundaries_by_node(df_boundarydata)
 
         # Get a flat versions without the fake multi-index
         p_gn_flat = self.drop_fake_MultiIndex(p_gn)
@@ -1243,28 +1115,24 @@ class BBExcelPipeline:
         # Process each storage node
         for grid, node in storage_gn:
 
-            # 1) calculate start_value based on the timeseries upwardLimit
-            start_value = ts_node_boundaryTypes.get((node, 'upwardLimit'), 0)
+            # 1) the node's own upwardLimit, as df_boundarydata has it.
+            # Read from the table rather than from the sheet built above,
+            # because the sheet carries no constant on a row that resolved to
+            # useTimeseries -- and a node whose limit comes from a series is
+            # exactly the case that needs a start level.
+            start_value = 0
+            upward_limit = boundaries.get((grid, node, 'upwardLimit'))
+            if upward_limit is not None:
+                constant = upward_limit['constant']
+                if pd.notna(constant) and isinstance(constant, (int, float)) and constant > 0:
+                    start_value = constant
 
-            # 2) check if there's a constant value in p_gnBoundaryPropertiesForStates_flat
-            if start_value == 0:
-                # Find rows that match our criteria
-                mask = ((p_gnBoundaryPropertiesForStates_flat['grid'] == grid) & 
-                       (p_gnBoundaryPropertiesForStates_flat['node'] == node) &
-                       (p_gnBoundaryPropertiesForStates_flat['param_gnBoundaryTypes'] == 'upwardLimit'))
-
-                # Check if any matching rows exist and have constant values > 0
-                if any(mask) and 'constant' in p_gnBoundaryPropertiesForStates_flat.columns:
-                    constant_values = p_gnBoundaryPropertiesForStates_flat.loc[mask, 'constant']
-                    if not constant_values.empty and constant_values.iloc[0] > 0:
-                        start_value = constant_values.iloc[0]
-
-            # 3) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
+            # 2) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
             # The column is absent whenever no unit in the whole model sets it:
             # drop_empty_parameter_columns removes an all-empty PARAM_GNU column
-            # from p_gnu_io, and this is reached exactly when sources 1 and 2
-            # found nothing, so a storage node declared any other way used to
-            # reach it and die on a bare KeyError.
+            # from p_gnu_io, and this is reached exactly when source 1 found
+            # nothing, so a storage node declared any other way used to reach it
+            # and die on a bare KeyError.
             if (start_value == 0
                     and not p_gnu_io_flat.empty
                     and 'upperLimitCapacityRatio' in p_gnu_io_flat.columns):
@@ -1563,17 +1431,14 @@ class BBExcelPipeline:
     def create_p_userconstraint(
         self,
         uc_data: pd.DataFrame,
-        p_gnu_io_flat: pd.DataFrame,
-        mingen_nodes: list[str],
         ) -> pd.DataFrame:
         """
         Creates the parameter DataFrame `p_userConstraint` defining user constraints.
 
-        The function combines:
-          1. Predefined user-constraint data from `uc_data` (added directly as-is,
-             with case-insensitive column handling).
-          2. Dynamically generated user-constraint rules based on `mingen_nodes`,
-             linking nodes to units in `p_gnu_io_flat`.
+        Every constraint comes from `uc_data`, with case-insensitive column
+        handling. A processor that wants one of its own contributes rows to
+        df_userconstraintdata like any other producer; there is no second,
+        builder-generated source.
 
         Parameters
         ----------
@@ -1582,12 +1447,7 @@ class BBExcelPipeline:
             Expected logical columns (case-insensitive):
             ['group', '1st dimension', '2nd dimension', '3rd dimension',
              '4th dimension', 'parameter', 'value'].
-        p_gnu_io_flat : pd.DataFrame
-            Flattened DataFrame mapping grids, nodes, and units with columns
-            ['grid', 'node', 'unit', 'input_output'].
-        mingen_nodes : list[str]
-            List of node names for which minimum-generation user constraints
-            should be created.
+
         Returns
         -------
         pd.DataFrame
@@ -1625,37 +1485,6 @@ class BBExcelPipeline:
 
             if not uc_data_aligned.empty:
                 frames.append(uc_data_aligned)
-
-        # ---- Phase 2: generate rows for mingen_nodes ----
-        generated_rows = []
-        for node in mingen_nodes:
-            row_gnu = p_gnu_io_flat[
-                (p_gnu_io_flat['node'] == node) &
-                (p_gnu_io_flat['input_output'] == 'input')
-            ]
-            group_UC = f"UC_{node}"
-
-            unused = self.UC_UNUSED_DIMENSION
-            for _, r in row_gnu.iterrows():
-                generated_rows.append({
-                    'group': group_UC,
-                    '1st dimension': r['grid'],
-                    '2nd dimension': node,
-                    '3rd dimension': r['unit'],
-                    '4th dimension': unused,
-                    'parameter': "v_gen",
-                    'value': -1,
-                })
-
-            # group-level rows
-            generated_rows += [
-                {'group': group_UC, '1st dimension': unused, '2nd dimension': unused, '3rd dimension': unused, '4th dimension': unused, 'parameter': "GT",             'value': -1},
-                {'group': group_UC, '1st dimension': "userconstraintRHS", '2nd dimension': unused, '3rd dimension': unused, '4th dimension': unused, 'parameter': "ts_groupPolicy", 'value': 1},
-                {'group': group_UC, '1st dimension': unused, '2nd dimension': unused, '3rd dimension': unused, '4th dimension': unused, 'parameter': "penalty",        'value': 2000},
-            ]
-
-        if generated_rows:
-            frames.append(pd.DataFrame.from_records(generated_rows, columns=expected_cols))
 
         # ---- Finalize without ever concatenating with an empty frame ----
         if frames:
@@ -2105,6 +1934,22 @@ class BBExcelPipeline:
                     df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
             setattr(self, attr, df)
 
+        # --- 3b) df_boundarydata: the properties, not the types ---
+        # The boundary type is a dimension value here rather than a column name,
+        # so what needs coercing is the parameter block. Its 'constant' column is
+        # a copy of a nodedata cell taken before the loop above could reach it,
+        # which is the case this covers: 'unknown' in an upwardlimit column
+        # would otherwise be compared with 0 and raise.
+        # A property nothing set is left alone rather than typed Float64: an
+        # all-NA column is object, and that is what says no assumption has been
+        # made about it.
+        _gn_boundary_properties = {p.lower() for p in self.PARAM_GN_BOUNDARY_PROPERTIES}
+        df = self.df_boundarydata.copy()
+        for col in df.columns:
+            if col.lower() in _gn_boundary_properties and not df[col].isna().all():
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
+        self.df_boundarydata = df
+
         # --- 4) df_emissiondata + df_userconstraintdata ---
         # Neither frame was coerced at all before. Their value columns are copied
         # straight into the output sheets, so anything non-numeric in them was
@@ -2199,38 +2044,29 @@ class BBExcelPipeline:
 
         # Collect unique (grid, node) pairs — covers units, transfers, nodedata, demanddata, timeseries
         unique_gn_pairs = self._collect_gn_pairs(
-            p_gnu_io_flat, p_gnn_flat, self.df_nodedata, self.df_demanddata, self.ts_domain_pairs
+            p_gnu_io_flat, p_gnn_flat, self.df_nodedata, self.df_demanddata
         )
 
         # grid and node domains follow directly from unique_gn_pairs
-        grid_vals = unique_gn_pairs['grid'].dropna().tolist()
-        if self.ts_domains is not None and 'grid' in self.ts_domains:
-            grid_vals.extend(self.ts_domains['grid'])
-        grid = self.compile_domain_df(grid_vals, 'grid')
-
-        node_vals = unique_gn_pairs['node'].dropna().tolist()
-        if self.ts_domains is not None and 'node' in self.ts_domains:
-            node_vals.extend(self.ts_domains['node'])
-        node = self.compile_domain_df(node_vals, 'node')
+        grid = self.compile_domain_df(unique_gn_pairs['grid'].dropna().tolist(), 'grid')
+        node = self.compile_domain_df(unique_gn_pairs['node'].dropna().tolist(), 'node')
 
         # p_gn
         p_gn = self.create_p_gn(unique_gn_pairs, p_gnu_io_flat, self.df_nodedata,
-                                self.df_demanddata, self.ts_storage_limits)
+                                self.df_demanddata, self.df_boundarydata)
 
         # Create flat version for easier use in other functions
         p_gn_flat = self.drop_fake_MultiIndex(p_gn)
 
         # node based input tables
-        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(p_gn_flat,
-                                                                                      self.df_nodedata,
-                                                                                      self.ts_storage_limits)
-        p_userconstraint = self.create_p_userconstraint(self.df_userconstraintdata,
-                                                        p_gnu_io_flat,
-                                                        self.mingen_nodes)
+        p_gnBoundaryPropertiesForStates = self.create_p_gnBoundaryPropertiesForStates(
+            p_gn_flat, self.df_boundarydata
+        )
+        p_userconstraint = self.create_p_userconstraint(self.df_userconstraintdata)
 
         # add storage start levels to p_gn and p_gnBoundaryPropertiesForStates
-        (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates, 
-                                                                          p_gnu_io_flat, self.ts_storage_limits)
+        (p_gn, p_gnBoundaryPropertiesForStates) = self.add_storage_starts(p_gn, p_gnBoundaryPropertiesForStates,
+                                                                          p_gnu_io_flat, self.df_boundarydata)
         p_gn_flat = self.drop_fake_MultiIndex(p_gn)
 
         # emission based input tables
@@ -2246,8 +2082,6 @@ class BBExcelPipeline:
 
         # flow
         flow_vals = flowUnit['flow'].dropna().tolist() if 'flow' in flowUnit.columns else []
-        if self.ts_domains is not None and 'flow' in self.ts_domains:
-            flow_vals.extend(self.ts_domains['flow'])
         flow = self.compile_domain_df(flow_vals, 'flow')
 
         # group
@@ -2255,8 +2089,6 @@ class BBExcelPipeline:
         for df in [p_userconstraint, ts_emissionPriceChange, gnGroup]:
             if 'group' in df.columns:
                 group_vals.extend(df['group'].dropna().tolist())
-        if self.ts_domains is not None and 'group' in self.ts_domains:
-            group_vals.extend(self.ts_domains['group'])
         group = self.compile_domain_df(group_vals, 'group')
 
         # emission

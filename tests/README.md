@@ -56,7 +56,7 @@ codebase's history lives at the seam. This table is what the suite is organised 
 | 5 | processor `process()` → `main_result` | NaN = no data | NaN = no data | validation in `ProcessorRunner` | specified |
 | 6 | `main_result` → climate windows → forecasts | NaN = no data | NaN = no data | nothing — gaps pass through | specified |
 | 7 | window DataFrame → GDX | NaN = no data | GAMS: `0 = empty` | `GDX_exchange.prepare_values_for_gdx` | specified |
-| 8 | `secondary_result` → `BBExcelPipeline` | ? | consumed by `p_gn` / storage limits | nothing | **UNSPECIFIED** |
+| 8 | processor `frames` → source `df_*` | `pd.NA` ≠ `0` | `pd.NA` ≠ `0`; all-NA column → `object` | `merge_contribution` (`source_data_contributions.py`) | specified |
 
 **`0 = NA = None` governs written GDX files too, not only `inputData.xlsx`.** The GAMS
 convention begins at boundary 7 and nowhere earlier.
@@ -100,7 +100,35 @@ Dimension values are different from measurements: a missing one is a **broken ke
 It would become the GAMS set element `''`, so it is rejected rather than filled — and that *is*
 reported, because it means something upstream is broken rather than merely incomplete.
 
-Row 8 is still unspecified and remains open.
+### Boundary 8: what a processor may add to a source table
+
+A processor returns `main_result` plus **contributions** — frames named after the
+source data tables — and they are merged into those tables once the timeseries phase
+is over, so `BBExcelPipeline` reads one set of tables and never asks which stage
+produced a row.
+
+This used to be three routes with three cache formats, and it was unspecified because
+nothing said what could travel them: a `secondary_result` was whatever a processor
+felt like returning, re-keyed by a config field and picked back up by a string prefix
+match. What is specified now:
+
+- **the same conventions on both sides.** `pd.NA` ≠ `0` — this is the *source* side of
+  the pipeline, not the GAMS side — and an all-NA column is `object`.
+- **the workbook wins.** A contribution fills only where the source frame said nothing,
+  the same precedence `merge_unittypedata_into_unitdata` uses. That is what lets a
+  workbook override a processor rather than the other way round.
+- **nothing else moves.** A column no contribution mentions keeps the exact dtype the
+  source stage gave it, and existing rows keep their order. Only the columns actually
+  written to are re-typed, because re-standardising the whole frame would re-decide
+  dtypes on data nothing touched.
+- **a key is a key.** A blank value in a key column is refused, not filled — it would
+  become the GAMS set element `''`, same reasoning as a blank dimension at boundary 5.
+- **only raw contributions are cached.** The cache holds what a processor returned and
+  never a merged or melted table; every derivation is recomputed from
+  `workbooks + cache` on each build, so a partial rerun reads the same as a full one.
+
+A refusal costs the contribution alone. The time series was never in question, so the
+GDX is still written and the run continues.
 
 ### Boundary 4b: after the fake MultiIndex, dtype means nothing
 

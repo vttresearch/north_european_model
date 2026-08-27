@@ -104,7 +104,6 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'custom_column_value': None,
     'gdx_name_suffix': '',
     'rounding_precision': 0,
-    'secondary_output_name': None,
     'input_sub_folder': '',
     'attached_grid': '',
     'is_input_data_dependent': True,
