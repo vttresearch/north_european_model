@@ -31,14 +31,22 @@ from src.timeseries.timeseries_pipeline import TimeseriesPipeline
 from tests._common.fixtures import FakeLogger, make_config
 
 
-def make_manager(tmp_path: Path) -> CacheManager:
+def make_manager(tmp_path: Path, specs: dict | None = None) -> CacheManager:
+    """A manager over `tmp_path`.
+
+    `specs` names the entries of ``timeseries_specs``; the values are never read
+    by anything under test. The default is the fixture's empty dict, which
+    `load_processor_frames` reads as "no config to prune against" and so leaves
+    every cached spec alone -- which is what lets the tests below save under
+    whatever name reads clearly.
+    """
     output = tmp_path / "output"
     output.mkdir(parents=True, exist_ok=True)
     (tmp_path / "input" / "data_files").mkdir(parents=True, exist_ok=True)
     return CacheManager(
         input_folder=tmp_path / "input",
         output_folder=output,
-        config=make_config(),
+        config=make_config(**({"timeseries_specs": specs} if specs else {})),
         logger=FakeLogger(),
     )
 
@@ -179,3 +187,80 @@ class TestOnlyRawContributionsAreStored:
         stored = manager.load_processor_frames()
         assert list(stored) == ["a"]
         assert list(stored["a"]["nodedata"].columns) == ["grid", "node", "influx"]
+
+
+class TestASpecThatLeftTheConfig:
+    """Nothing else prunes this file.
+
+    Removing or renaming a `timeseries_specs` entry is not one of the full-rerun
+    causes in ``CacheManager.run`` -- it checks topology, climate, forecasts, code
+    hashes and the previous run's failures, not the spec set -- so an entry that
+    is not dropped here is an entry that reaches the input excel forever.
+    """
+
+    def test_its_contribution_is_dropped(self, tmp_path):
+        manager = make_manager(tmp_path, specs={"kept": {}, "removed": {}})
+        manager.save_processor_frames("kept", {"boundarydata": boundary("FI")})
+        manager.save_processor_frames("removed", {"boundarydata": boundary("SE")})
+
+        after = make_manager(tmp_path, specs={"kept": {}}).load_processor_frames()
+
+        assert set(after) == {"kept"}
+
+    def test_and_the_drop_is_recorded(self, tmp_path):
+        manager = make_manager(tmp_path, specs={"removed": {}})
+        manager.save_processor_frames("removed", {"boundarydata": boundary("SE")})
+
+        shorter = make_manager(tmp_path, specs={"kept": {}})
+        shorter.load_processor_frames()
+
+        shorter.logger.assert_logged("removed")
+
+    def test_the_shorter_dict_is_what_gets_written_back(self, tmp_path):
+        manager = make_manager(tmp_path, specs={"kept": {}, "removed": {}})
+        manager.save_processor_frames("kept", {"boundarydata": boundary("FI")})
+        manager.save_processor_frames("removed", {"boundarydata": boundary("SE")})
+
+        shorter = make_manager(tmp_path, specs={"kept": {}})
+        shorter.save_processor_frames("kept", {"boundarydata": boundary("FI")})
+
+        assert set(make_manager(tmp_path).load_processor_frames()) == {"kept"}
+
+    def test_a_config_naming_no_specs_prunes_nothing(self, tmp_path):
+        """An empty ``timeseries_specs`` is "cannot tell", not "none of them"."""
+        manager = make_manager(tmp_path)
+        manager.save_processor_frames("hydro storage limits", {"boundarydata": boundary("FI")})
+
+        assert set(make_manager(tmp_path).load_processor_frames()) == {"hydro storage limits"}
+
+
+class TestACacheThatCannotBeRead:
+    """It is read once per processor, from inside ProcessorRunner.run, so raising
+    would take the whole build down rather than cost it its warm start."""
+
+    def test_it_reads_as_empty_rather_than_raising(self, tmp_path):
+        manager = make_manager(tmp_path)
+        manager.save_processor_frames("hydro storage limits", {"boundarydata": boundary("FI")})
+        manager.processor_frames_file.write_bytes(b"not a pickle")
+
+        assert make_manager(tmp_path).load_processor_frames() == {}
+
+    def test_and_says_so(self, tmp_path):
+        manager = make_manager(tmp_path)
+        manager.processor_frames_file.write_bytes(b"not a pickle")
+        manager.load_processor_frames()
+
+        manager.logger.assert_logged("processor_frames.pkl", level="warn")
+
+    def test_a_later_save_starts_the_file_over(self, tmp_path):
+        manager = make_manager(tmp_path)
+        manager.processor_frames_file.write_bytes(b"not a pickle")
+        manager.save_processor_frames("hydro storage limits", {"boundarydata": boundary("FI")})
+
+        assert set(make_manager(tmp_path).load_processor_frames()) == {"hydro storage limits"}
+
+    def test_no_temporary_file_is_left_behind(self, tmp_path):
+        manager = make_manager(tmp_path)
+        manager.save_processor_frames("hydro storage limits", {"boundarydata": boundary("FI")})
+
+        assert not list(manager.cache_folder.glob("*.tmp"))

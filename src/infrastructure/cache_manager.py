@@ -13,9 +13,11 @@ cause a full rerun and flush the previous cache.
 """
 
 import json
+import os
 from pathlib import Path
 import src.hash_utils as hash_utils
 import src.json_exchange as json_exchange
+import src.utils as utils
 import pickle
 import shutil
 
@@ -562,14 +564,51 @@ class CacheManager:
         """
         Every spec's contributions to the source data tables, as last produced.
 
+        A spec that has left ``timeseries_specs`` is dropped on the way out, and
+        `save_processor_frames` then writes the shorter dict back. Nothing else
+        prunes this file: removing or renaming a spec is not one of the full-rerun
+        causes in `run`, so without this its last contribution would keep reaching
+        the input excel -- a deleted hydro_storage_limits going on writing
+        useTimeseries for nodes no processor builds a series for any more.
+
         Returns:
             dict: ``{human_name: {table name: DataFrame}}``. Empty if nothing has
             been cached yet.
         """
         if not self.processor_frames_file.exists():
             return {}
-        with open(self.processor_frames_file, "rb") as f:
-            return pickle.load(f)
+        try:
+            with open(self.processor_frames_file, "rb") as f:
+                stored = pickle.load(f)
+        except Exception as e:
+            # A cache that cannot be read is a cache that is not there. It is read
+            # again inside save_processor_frames, once per processor, so raising
+            # here would take the whole build down from inside ProcessorRunner.run
+            # -- which nothing catches -- rather than costing the run its warm
+            # start. Reachable from an interrupted write or a pickle written by a
+            # different pandas.
+            self.logger.log_status(
+                f"Could not read {self.processor_frames_file.name} ({e}). Treating it "
+                f"as empty; every processor that does not run this time contributes "
+                f"nothing to the input excel. Re-run to rebuild it.",
+                level="warn",
+            )
+            return {}
+        if not isinstance(stored, dict):
+            return {}
+
+        # `or stored` so that a config with no specs at all -- or one whose specs
+        # could not be read -- keeps what is there rather than clearing it.
+        current = self.config.get("timeseries_specs") or stored
+        departed = [name for name in stored if name not in current]
+        if departed:
+            self.logger.log_status(
+                f"Dropped the cached contributions of {len(departed)} timeseries spec(s) "
+                f"no longer in the config: {utils.summarise(departed)}.",
+                level="info",
+            )
+            stored = {name: f for name, f in stored.items() if name not in departed}
+        return stored
 
 
     def save_processor_frames(self, human_name: str, frames: dict):
@@ -592,8 +631,15 @@ class CacheManager:
         """
         stored = self.load_processor_frames()
         stored[human_name] = frames
-        with open(self.processor_frames_file, "wb") as f:
+
+        # Written beside the target and moved into place, because this is a
+        # read-modify-write of one file holding every spec's answer: a torn write
+        # would lose all of them, not just this one. os.replace is atomic on
+        # Windows as well.
+        temporary = self.processor_frames_file.with_suffix(".pkl.tmp")
+        with open(temporary, "wb") as f:
             pickle.dump(stored, f)
+        os.replace(temporary, self.processor_frames_file)
 
 
 
