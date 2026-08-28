@@ -1,11 +1,4 @@
-"""Domain caching and the GAMS import include file.
-
-``collect_domains_for_cache`` / ``collect_domain_pairs_for_cache`` gather what a
-processor produced so later stages know which (grid, node) combinations exist
-without re-reading the GDX. The pairs matter as much as the members: knowing
-``elec`` and ``FI_heat`` both exist says nothing about whether ``elec/FI_heat``
-does, and generating parameters for combinations that do not exist is what the
-pair cache prevents.
+"""The GAMS import include file, and the unitdata gate beside it.
 
 ``update_import_timeseries_inc`` appends a ``$gdxin`` block to the file Backbone
 reads. It is called once per processor per run and must be idempotent -- a
@@ -18,89 +11,9 @@ import pandas as pd
 import pytest
 
 from src.timeseries.timeseries_helpers import (
-    collect_domain_pairs_for_cache,
-    collect_domains_for_cache,
+    nodes_needing_flow,
     update_import_timeseries_inc,
 )
-
-DOMAINS = ["grid", "node", "flow", "group"]
-PAIRS = [["grid", "node"], ["flow", "node"]]
-
-
-def _frame(**columns) -> pd.DataFrame:
-    return pd.DataFrame(columns)
-
-
-class TestCollectDomains:
-    def test_collects_the_distinct_values_of_each_present_domain(self):
-        out = collect_domains_for_cache(
-            _frame(grid=["elec", "elec", "heat"], node=["a", "b", "c"]), DOMAINS
-        )
-        assert sorted(out["grid"]) == ["elec", "heat"]
-        assert sorted(out["node"]) == ["a", "b", "c"]
-
-    def test_absent_domains_are_omitted_rather_than_empty(self):
-        # The dict is merged across processors, so an empty entry would claim
-        # the processor had opinions about a domain it never touched.
-        out = collect_domains_for_cache(_frame(grid=["elec"]), DOMAINS)
-        assert set(out) == {"grid"}
-
-    def test_missing_values_are_not_collected(self):
-        # pd.NA is not a GAMS set element.
-        out = collect_domains_for_cache(_frame(grid=["elec", pd.NA]), DOMAINS)
-        assert out["grid"] == ["elec"]
-
-    def test_a_column_of_only_missing_values_is_omitted(self):
-        out = collect_domains_for_cache(_frame(grid=[pd.NA, pd.NA]), DOMAINS)
-        assert out == {}
-
-    def test_the_result_is_json_serialisable(self):
-        # It is written straight to a JSON cache file.
-        import json
-
-        out = collect_domains_for_cache(_frame(grid=["elec"], node=["FI_elec"]), DOMAINS)
-        assert json.loads(json.dumps({k: list(v) for k, v in out.items()}))
-
-    def test_case_is_preserved_rather_than_normalised(self):
-        # Normalisation happens once, downstream in compile_domain_df, which
-        # keeps the first-seen spelling. Folding here would pre-empt that.
-        out = collect_domains_for_cache(_frame(node=["FI_heat_HKI"]), DOMAINS)
-        assert out["node"] == ["FI_heat_HKI"]
-
-
-class TestCollectDomainPairs:
-    def test_collects_distinct_pairs(self):
-        out = collect_domain_pairs_for_cache(
-            _frame(grid=["elec", "elec", "heat"], node=["a", "a", "b"]), PAIRS
-        )
-        assert sorted(out["grid_node"]) == [("elec", "a"), ("heat", "b")]
-
-    def test_a_pair_is_not_implied_by_its_members(self):
-        """The reason the pair cache exists.
-
-        Two grids and two nodes do not mean four combinations. Generating
-        parameters for pairs that never occur is exactly what this prevents.
-        """
-        out = collect_domain_pairs_for_cache(
-            _frame(grid=["elec", "heat"], node=["FI_elec", "FI_heat"]), PAIRS
-        )
-        assert set(out["grid_node"]) == {("elec", "FI_elec"), ("heat", "FI_heat")}
-        assert ("elec", "FI_heat") not in out["grid_node"]
-
-    def test_pairs_with_a_missing_column_are_skipped(self):
-        out = collect_domain_pairs_for_cache(_frame(grid=["elec"], node=["a"]), PAIRS)
-        assert set(out) == {"grid_node"}      # flow_node has no flow column
-
-    def test_the_key_names_both_domains(self):
-        out = collect_domain_pairs_for_cache(_frame(flow=["wind"], node=["a"]), PAIRS)
-        assert set(out) == {"flow_node"}
-
-    @pytest.mark.parametrize("bad", [["grid"], ["grid", "node", "unit"], "grid"])
-    def test_a_pair_that_is_not_two_names_is_rejected(self, bad):
-        # Raised rather than logged: a malformed pair list is a caller bug, and
-        # silently skipping it would quietly disable the check it asks for.
-        with pytest.raises(ValueError, match="exactly two"):
-            collect_domain_pairs_for_cache(_frame(grid=["elec"], node=["a"]), [bad])
 
 
 class TestUpdateImportTimeseriesInc:
@@ -180,3 +93,51 @@ class TestUpdateImportTimeseriesInc:
                 tmp_path, file_suffix="forecasts",
                 bb_parameter="ts_influx", gdx_name_suffix="elec",
             )
+
+
+class TestNodesNeedingFlow:
+    """Which nodes the model attaches a unit of a given flow to.
+
+    The gate that keeps a VRE processor from building -- and then complaining
+    about -- a capacity factor nobody reads. `flow` reaches unitdata from
+    unittypedata, and the merge has already applied this run's scenario, year and
+    country filtering, so what is in the frame is what the model has.
+    """
+
+    @staticmethod
+    def _frame(rows):
+        return pd.DataFrame(rows, columns=["unit", "flow", "node_output1"])
+
+    def test_a_node_with_a_unit_of_that_flow_is_named(self):
+        frame = self._frame([("w1", "onshore", "FI00_elec")])
+        assert nodes_needing_flow(frame, "onshore") == {"FI00_elec"}
+
+    def test_another_flow_does_not_count(self):
+        """An empty set, not None: the model was asked and has no such unit."""
+        frame = self._frame([("w1", "offshore", "FI00_elec")])
+        assert nodes_needing_flow(frame, "onshore") == set()
+
+    def test_the_comparison_ignores_case_and_padding(self):
+        frame = self._frame([("w1", " Onshore ", "FI00_elec")])
+        assert nodes_needing_flow(frame, "onshore") == {"FI00_elec"}
+
+    def test_input_nodes_do_not_count(self):
+        """A flow says what the weather produces, so a fuel node is not it."""
+        frame = pd.DataFrame(
+            [("w1", "onshore", "FI00_elec", "FI00_gas")],
+            columns=["unit", "flow", "node_output1", "node_input1"],
+        )
+        assert nodes_needing_flow(frame, "onshore") == {"FI00_elec"}
+
+    @pytest.mark.parametrize("frame", [
+        None,
+        pd.DataFrame(),
+        pd.DataFrame([("w1", "FI00_elec")], columns=["unit", "node_output1"]),
+    ])
+    def test_cannot_tell_is_none_so_the_caller_fails_open(self, frame):
+        """Distinct from the empty set, which is a real answer meaning "none"."""
+        assert nodes_needing_flow(frame, "onshore") is None
+
+    def test_no_flow_asked_for_is_also_cannot_tell(self):
+        frame = self._frame([("w1", "onshore", "FI00_elec")])
+        assert nodes_needing_flow(frame, "") is None

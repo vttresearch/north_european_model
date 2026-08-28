@@ -18,17 +18,6 @@ import pytest
 from tests._common.bb_excel import gnu_frame, make_pipeline, unit_frame
 from tests._common.fixtures import FakeLogger
 
-DIMS = ["grid", "node", "unit", "input_output"]
-
-
-def _prepare(pipeline, gnu: pd.DataFrame, unit: pd.DataFrame):
-    """Both methods take frames carrying the fake MultiIndex."""
-    return (
-        pipeline.create_fake_MultiIndex(gnu, DIMS),
-        pipeline.create_fake_MultiIndex(unit, ["unit"]),
-    )
-
-
 def _capacity(flat: pd.DataFrame, io_type: str, unit: str = "u1") -> float:
     match = flat[(flat["unit"] == unit) & (flat["input_output"] == io_type)]
     assert len(match) == 1, f"expected one {io_type} row for {unit}, got {len(match)}"
@@ -43,8 +32,7 @@ class TestFillCapacitiesOneInOneOut:
             {"grid": "elec", "node": "FI_elec", "input_output": "output", "capacity": output_cap},
         )
         unit = unit_frame({"eff00": eff})
-        out = pipeline.fill_capacities(*_prepare(pipeline, gnu, unit))
-        return pipeline.drop_fake_MultiIndex(out)
+        return pipeline.fill_capacities(gnu, unit)
 
     def test_a_missing_input_is_derived_from_the_output(self):
         # 100 MW out at 50% efficiency needs 200 MW of fuel in.
@@ -103,8 +91,7 @@ class TestFillCapacitiesMultipleOutputs:
             rows.append(row)
         gnu = gnu_frame(*rows)
         unit = unit_frame({"eff00": eff})
-        out = pipeline.fill_capacities(*_prepare(pipeline, gnu, unit))
-        return pipeline.drop_fake_MultiIndex(out)
+        return pipeline.fill_capacities(gnu, unit)
 
     def test_the_input_is_derived_from_the_total_of_the_outputs(self):
         flat = self._run(eff=0.8, output_caps=(100, 50))
@@ -131,9 +118,7 @@ class TestFillCapacitiesMultipleOutputs:
             {"grid": "a", "node": "FI_a", "input_output": "output", "capacity": 100},
             {"grid": "b", "node": "FI_b", "input_output": "output", "capacity": 50},
         )
-        flat = pipeline.drop_fake_MultiIndex(
-            pipeline.fill_capacities(*_prepare(pipeline, gnu, unit_frame({"eff00": 0.8})))
-        )
+        flat = pipeline.fill_capacities(gnu, unit_frame({"eff00": 0.8}))
         assert _capacity(flat, "input") == 999.0
 
 
@@ -151,9 +136,7 @@ class TestFillCapacitiesEdges:
             {"unit": "u2", "grid": "elec", "node": "FI_elec", "input_output": "output", "capacity": 0},
         )
         unit = unit_frame({"unit": "u1", "eff00": 0.5}, {"unit": "u2", "eff00": 0.5})
-        flat = pipeline.drop_fake_MultiIndex(
-            pipeline.fill_capacities(*_prepare(pipeline, gnu, unit))
-        )
+        flat = pipeline.fill_capacities(gnu, unit)
         assert _capacity(flat, "input", "u1") == 200.0
         assert _capacity(flat, "input", "u2") == 0.0     # nothing to derive from
 
@@ -164,17 +147,17 @@ class TestDropRedundantUnits:
         pipeline = make_pipeline(logger=logger)
         gnu = gnu_frame({"capacity": 0, **(gnu_extra or {})})
         unit = unit_frame({**(unit_extra or {})})
-        gnu_out, unit_out = pipeline.drop_redundant_units(*_prepare(pipeline, gnu, unit))
+        gnu_out, unit_out = pipeline.drop_redundant_units(gnu, unit)
         return (
-            pipeline.drop_fake_MultiIndex(gnu_out),
-            pipeline.drop_fake_MultiIndex(unit_out),
+            gnu_out,
+            unit_out,
             logger,
         )
 
     def test_a_unit_with_no_capacity_and_no_investment_is_dropped(self):
         gnu, unit, logger = self._run()
         assert gnu.empty and unit.empty
-        logger.assert_logged("Dropping unit", level="skip")
+        logger.assert_logged("Dropped 1 unit(s)", level="skip")
 
     def test_a_unit_with_capacity_is_kept(self):
         gnu, unit, _ = self._run(gnu_extra={"capacity": 100})
@@ -201,10 +184,10 @@ class TestDropRedundantUnits:
             {"unit": "dropme", "capacity": 0},
         )
         unit = unit_frame({"unit": "keeper"}, {"unit": "dropme"})
-        gnu_out, unit_out = pipeline.drop_redundant_units(*_prepare(pipeline, gnu, unit))
+        gnu_out, unit_out = pipeline.drop_redundant_units(gnu, unit)
 
-        assert pipeline.drop_fake_MultiIndex(gnu_out)["unit"].tolist() == ["keeper"]
-        assert pipeline.drop_fake_MultiIndex(unit_out)["unit"].tolist() == ["keeper"]
+        assert gnu_out["unit"].tolist() == ["keeper"]
+        assert unit_out["unit"].tolist() == ["keeper"]
 
     def test_a_unit_is_kept_when_any_of_its_connections_has_capacity(self):
         # A CHP whose heat output is sized but whose input is not must survive.
@@ -215,17 +198,22 @@ class TestDropRedundantUnits:
             {"grid": "heat", "node": "FI_heat", "input_output": "output", "capacity": 50},
         )
         gnu_out, _ = pipeline.drop_redundant_units(
-            *_prepare(pipeline, gnu, unit_frame({"unit": "u1"}))
+            gnu, unit_frame({"unit": "u1"})
         )
-        assert len(pipeline.drop_fake_MultiIndex(gnu_out)) == 2
+        assert len(gnu_out) == 2
 
     def test_empty_frames_pass_through(self):
         pipeline = make_pipeline()
         gnu, unit = pipeline.drop_redundant_units(pd.DataFrame(), pd.DataFrame())
         assert gnu.empty and unit.empty
 
-    def test_dropping_is_reported_per_unit(self):
-        # Units vanishing from the model is worth a line each; silently
-        # shrinking the model is how a scenario ends up smaller than intended.
+    def test_dropping_is_reported_once_and_names_the_units(self):
+        # Units vanishing from the model is worth reporting -- silently shrinking
+        # the model is how a scenario ends up smaller than intended -- but on one
+        # line, naming up to three of them. A missing input file can leave a
+        # hundred units with no capacity, and a hundred lines is a hundred lines
+        # nobody reads.
         _, _, logger = self._run()
-        assert len(logger.matching("Dropping unit")) == 1
+        lines = logger.matching("Dropped")
+        assert len(lines) == 1
+        assert "u1" in lines[0]

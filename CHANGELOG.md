@@ -19,6 +19,21 @@ not build and why, and has a documentation page of its own.
 - wind and solar: [docs/vre-timeseries.md](docs/vre-timeseries.md)
 - `VRE_MAF2019` and `hydro_mingen_limits_MAF2019` removed. A config still naming
   either writes no timeseries for it; switch to `VRE_PECD`.
+- Demand grids with no processor of their own get a constant `influx` instead of
+  a flat timeseries; `ts_influx_other_demands.gdx` is no longer written.
+- A processor contributes to the source data tables instead of returning a
+  secondary result; the `secondary_output_name` spec field is retired.
+  [docs/timeseries.md](docs/timeseries.md)
+- A `node`, `grid` or `flow` a processor builds data for that the source data
+  does not have is reported.
+- wind and solar: capacity factors are built only for the nodes `unitdata`
+  attaches a unit of that flow to. [docs/vre-timeseries.md](docs/vre-timeseries.md)
+- The build reports what needs acting on rather than what happened: an absence
+  the source workbooks already state is silent, and what the rules handled is a
+  line of counts. [docs/timeseries.md](docs/timeseries.md)
+- `is_input_data_dependent` is retired and a timeseries processor is never copied
+  between scenario folders; a config still setting it is ignored, and a
+  multi-scenario build costs about a minute more per scenario.
 
 ## Source workbooks
 
@@ -29,14 +44,27 @@ not build and why, and has a documentation page of its own.
 - Blank rows, unnamed columns and repeated headers inside a table are reported
   rather than silently dropped.
 - A node that only one of `nodedata` and `demanddata` knows about is reported.
+- `merge_row_by_row`: column titles compared case-insensitively, first spelling kept.
 
 ## Input excel builder
 
-- merge_row_by_row: column titles compared case-insensitively, first spelling kept.
+- How the builder turns the source data tables into `inputData.xlsx`:
+  [docs/input-excel.md](docs/input-excel.md).
 - p_gn/p_gnn/p_gnu_io/p_unit/p_gnBoundaryPropertiesForStates: empty parameter
   columns are dropped, always keeping one.
 - storage starts: a node with no determinable start level is reported. It was
   already left unbounded, but `boundStart=1` and a 0 reference made it look bound.
+- Node state boundaries are read from one table, and it states whether each one
+  is a constant or a timeseries instead of that following from where it came
+  from. [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- The hydro reservoir start level is written by `changes.inc` alone; the input
+  excel's provisional value is no longer meant to be the one used.
+- `useTimeSeries` and `storageValueUseTimeSeries` spelled `useTimeseries` and
+  `storageValueUseTimeseries`, following Backbone.
+- `boundStart` is dropped when no node has a storage start level, rather than
+  written as a column of zeros.
+- Warnings name the first three offenders and then count the rest, instead of
+  one line each. [docs/timeseries.md](docs/timeseries.md)
 
 ## Test suite
 

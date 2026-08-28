@@ -51,12 +51,12 @@ codebase's history lives at the seam. This table is what the suite is organised 
 | 1 | Excel cell → source DataFrame | blank cell | `pd.NA`; all-NA column → `object` | `read_input_excels` → `normalize_dataframe` → `standardize_df_dtypes` | specified |
 | 2 | within source merging | `pd.NA` ≠ `0` | same | `merge_row_by_row` truth table (`:884-909`) | specified |
 | 3 | source DataFrames → BB Excel builder | `pd.NA` ≠ `0` | `0 = NA = None = not set` | `fill_all_na` / `fill_numeric_na` (`utils.py:107,119`) | specified |
-| 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns (`bb_excel_pipeline.py:332`) | specified |
-| 4b | BB frame → fake-MultiIndex sheet | dtype is meaningful | every parameter column is `object` | `create_fake_MultiIndex` inserts a text header row | specified |
+| 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns, via `drop_empty_parameter_columns` | specified |
+| 4b | BB frame → written sheet | dtype is meaningful | every parameter column is `object` | `create_fake_MultiIndex` inserts a text header row, in `write_workbook` | specified |
 | 5 | processor `process()` → `main_result` | NaN = no data | NaN = no data | validation in `ProcessorRunner` | specified |
 | 6 | `main_result` → climate windows → forecasts | NaN = no data | NaN = no data | nothing — gaps pass through | specified |
 | 7 | window DataFrame → GDX | NaN = no data | GAMS: `0 = empty` | `GDX_exchange.prepare_values_for_gdx` | specified |
-| 8 | `secondary_result` → `BBExcelPipeline` | ? | consumed by `p_gn` / storage limits | nothing | **UNSPECIFIED** |
+| 8 | processor `frames` → source `df_*` | `pd.NA` ≠ `0` | `pd.NA` ≠ `0`; all-NA column → `object` | `merge_contribution` (`source_data_contributions.py`) | specified |
 
 **`0 = NA = None` governs written GDX files too, not only `inputData.xlsx`.** The GAMS
 convention begins at boundary 7 and nowhere earlier.
@@ -100,14 +100,47 @@ Dimension values are different from measurements: a missing one is a **broken ke
 It would become the GAMS set element `''`, so it is rejected rather than filled — and that *is*
 reported, because it means something upstream is broken rather than merely incomplete.
 
-Row 8 is still unspecified and remains open.
+### Boundary 8: what a processor may add to a source table
+
+A processor returns `main_result` plus **contributions** — frames named after the
+source data tables — and they are merged into those tables once the timeseries phase
+is over, so `BBExcelPipeline` reads one set of tables and never asks which stage
+produced a row.
+
+This used to be three routes with three cache formats, and it was unspecified because
+nothing said what could travel them: a `secondary_result` was whatever a processor
+felt like returning, re-keyed by a config field and picked back up by a string prefix
+match. What is specified now:
+
+- **the same conventions on both sides.** `pd.NA` ≠ `0` — this is the *source* side of
+  the pipeline, not the GAMS side — and an all-NA column is `object`.
+- **the workbook wins.** A contribution fills only where the source frame said nothing,
+  the same precedence `merge_unittypedata_into_unitdata` uses. That is what lets a
+  workbook override a processor rather than the other way round.
+- **nothing else moves.** A column no contribution mentions keeps the exact dtype the
+  source stage gave it, and existing rows keep their order. Only the columns actually
+  written to are re-typed, because re-standardising the whole frame would re-decide
+  dtypes on data nothing touched.
+- **a key is a key.** A blank value in a key column is refused, not filled — it would
+  become the GAMS set element `''`, same reasoning as a blank dimension at boundary 5.
+- **only raw contributions are cached.** The cache holds what a processor returned and
+  never a merged or melted table; every derivation is recomputed from
+  `workbooks + cache` on each build, so a partial rerun reads the same as a full one.
+
+A refusal costs the contribution alone. The time series was never in question, so the
+GDX is still written and the run continues.
 
 ### Boundary 4b: after the fake MultiIndex, dtype means nothing
 
 `create_fake_MultiIndex` pushes a row of parameter **names** into the sheet, so every
-parameter column below it is `object` whatever it held before — and so is every `*_flat`
-frame derived from it. This is the one place where `object` does not mean "no assumption
-has been made" and does not mean something unparseable got in.
+parameter column below it is `object` whatever it held before. This is the one place where
+`object` does not mean "no assumption has been made" and does not mean something
+unparseable got in.
+
+The boundary is one-way and one step wide. `write_workbook` in `bb_excel_writer.py` applies
+the transform per sheet on the way out and nothing reads a sheet back, so no builder ever
+holds a frame in that state — they work on ordinary frames whose dtypes still mean what
+this document says they mean.
 
 It is also why the numeric gate is not applied there: a column that legitimately mixes a
 name with numbers is precisely the shape the gate reports, so running it would flag every

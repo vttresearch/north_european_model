@@ -61,7 +61,6 @@ class TestFakeLogger:
             section_start_length=80,
             add_empty_line_before=True,
             add_empty_line_after=True,
-            print_to_screen=False,
         )
         assert logger.messages == ["section"]
 
@@ -74,7 +73,7 @@ class TestFakeLogger:
         real = IterationLogger(print_all_elapsed_times=False)
         fake = FakeLogger()
         for level in ("info", "warn", "error", "run", "done", "skip", "none"):
-            real.log_status(f"msg {level}", level=level, print_to_screen=False)
+            real.log_status(f"msg {level}", level=level)
             fake.log_status(f"msg {level}", level=level)
 
         assert len(fake.warnings) == len(real.warnings)

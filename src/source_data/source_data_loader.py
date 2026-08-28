@@ -1455,9 +1455,6 @@ def report_node_disagreements(
             logger.log_status(
                 f"{len(names)} '{grid}' node(s) appear in {present_in} but not in "
                 f"{missing_from}: {', '.join(names)}. Every other '{grid}' node is in "
-                f"both. Either a country, grid or node_suffix cell is mistyped -- which "
-                f"does not fail, it invents a node name that looks real and silently "
-                f"takes another node's data -- or the row is absent on purpose, "
-                f"including a demand row written as 0, which is dropped as empty.",
+                f"both. Check node and demand data.",
                 level="warn",
             )

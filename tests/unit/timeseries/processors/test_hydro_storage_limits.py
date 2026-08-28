@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.source_data.source_data_contributions import CONTRIBUTION_KEYS
 from src.timeseries.processors.hydro_storage_limits_MAF2019 import (
     hydro_storage_limits_MAF2019,
 )
@@ -201,7 +202,7 @@ class TestPatternGaps:
             nodedata(XX00_reservoir=1_000_000.0),
         )
         assert "XX00_reservoir" in set(result["node"])
-        logger.assert_logged("single-week gap(s) in the level pattern", level="info")
+        logger.assert_logged("Gaps interpolated at 1 node(s)", level="info")
         logger.assert_clean()
 
     def test_a_run_of_missing_weeks_is_refused_and_named(self, tmp_path):
@@ -235,7 +236,7 @@ class TestZerosInTheLevelPattern:
         )
         values = result[result["param_gnBoundaryTypes"] == bound]["value"]
         assert not (values == 0).any()
-        logger.assert_logged("single-week gap(s) in the level pattern", level="info")
+        logger.assert_logged("Gaps interpolated at 1 node(s)", level="info")
 
     def test_a_run_of_zeros_is_refused_and_named(self, tmp_path):
         """Refused rather than invented: the pattern repeats into every year."""
@@ -249,7 +250,10 @@ class TestZerosInTheLevelPattern:
         logger.assert_logged("downwardLimit", level="warn")
 
     def test_a_stated_exception_lets_a_run_through(self, tmp_path):
-        """How SE04's weeks 46-47 are handled: a decision recorded, not a silence."""
+        """How SE04's weeks 46-47 are handled: a decision recorded, not a silence.
+
+        Recorded in ACCEPTED_LONG_RUNS, that is -- the run itself only counts it.
+        """
         folder = tmp_path / "timeseries"
         write_levels(folder, {"XX00": {"zero_min_weeks": (46, 47)}})
         logger = FakeLogger()
@@ -266,7 +270,8 @@ class TestZerosInTheLevelPattern:
         assert "XX00_reservoir" in set(result["node"])
         lower = result[result["param_gnBoundaryTypes"] == "downwardLimit"]["value"]
         assert not (lower == 0).any()
-        logger.assert_logged("Accepted rather than escalated", level="info")
+        logger.assert_logged("Gaps interpolated at 1 node(s)", level="info")
+        logger.assert_not_logged("synthetic case for this test")
         logger.assert_clean()
 
     def test_the_real_exception_names_its_reason(self):
@@ -321,7 +326,12 @@ class TestCountrySetTolerance:
         logger.assert_logged("YY00_reservoir", level="warn")
 
     def test_a_new_country_code_with_no_hydro_data_is_not_an_error(self, tmp_path):
-        """FI00 split into FI01/FI02 produces codes PECD has never seen."""
+        """FI00 split into FI01/FI02 produces codes PECD has never seen.
+
+        Not reported either: the node keeps the constant bounds nodedata gives
+        it, which is a complete answer. A node left with *no* bound by either
+        route is caught in the workbook builder, which can see both.
+        """
         result, logger = run(
             tmp_path,
             {"XX00": {}},
@@ -329,9 +339,9 @@ class TestCountrySetTolerance:
             countries=["XX00", "FI01"],
         )
         assert "XX00_reservoir" in set(result["node"])
+        assert "FI01_reservoir" not in set(result["node"])
         logger.assert_clean()
-        logger.assert_logged("FI01_reservoir", level="info")
-        logger.assert_logged("no weekly level data", level="info")
+        logger.assert_not_logged("FI01_reservoir")
 
     def test_a_country_with_neither_data_nor_a_node_says_nothing_about_it(self, tmp_path):
         """Most countries in a run have no reservoir; naming them all is noise."""
@@ -349,11 +359,13 @@ class TestCountrySetTolerance:
         assert result.empty
         logger.assert_logged("no reservoir sizes", level="warn")
 
-    def test_pumped_storage_without_level_data_is_named_once(self, tmp_path):
+    def test_pumped_storage_without_level_data_is_not_mentioned(self, tmp_path):
         """PECD has no weekly levels for psOpen outside Norway, nor psClosed anywhere.
 
-        Those nodes are constant-bounded by construction. Saying so beats leaving
-        their absence from the time series looking like a bug.
+        Those nodes are constant-bounded by construction and are the same ones
+        every run, so the build says nothing: which they are is in docs/hydro.md,
+        and a node left with no bound at all is caught by the workbook builder,
+        which can see the constants this processor cannot.
         """
         _, logger = run(
             tmp_path,
@@ -361,8 +373,8 @@ class TestCountrySetTolerance:
             nodedata(XX00_reservoir=1_000_000.0, XX00_psOpen=5.0, XX00_psClosed=7.0),
             countries=["XX00"],
         )
-        logger.assert_logged("XX00_psOpen", level="info")
-        logger.assert_logged("XX00_psClosed", level="info")
+        logger.assert_not_logged("XX00_psOpen")
+        logger.assert_not_logged("XX00_psClosed")
         logger.assert_clean()
 
 
@@ -428,7 +440,7 @@ class TestOutputContract:
             df_nodedata=nodedata(XX00_reservoir=1_000_000.0),
         )
 
-    def test_the_secondary_result_lists_node_and_boundary_type(self, tmp_path):
+    def _contribution(self, tmp_path):
         folder = tmp_path / "timeseries"
         write_levels(folder, {"XX00": {}})
         processor = hydro_storage_limits_MAF2019(
@@ -440,9 +452,38 @@ class TestOutputContract:
             logger=FakeLogger(),
         )
         processor.run_processor()
-        secondary = processor.secondary_result
-        assert list(secondary.columns) == ["node", "param_gnBoundaryTypes", "average_value"]
-        assert set(secondary["param_gnBoundaryTypes"]) == {"upwardLimit", "downwardLimit"}
+        return processor.frames["boundarydata"]
+
+    def test_it_states_which_boundaries_came_from_a_series(self, tmp_path):
+        """The one thing about its own output this processor has to say.
+
+        Nothing downstream can work it out: p_gnBoundaryProperties needs
+        useTimeseries rather than the node's nodedata constant, and while
+        changes.inc turns that flag off again for a series that proves flat,
+        nothing ever turns it on.
+        """
+        contribution = self._contribution(tmp_path)
+
+        assert set(contribution["param_gnboundarytypes"]) == {"upwardLimit", "downwardLimit"}
+        assert set(contribution["usetimeseries"]) == {1}
+
+    def test_the_contribution_is_keyed_the_way_the_boundary_table_is(self, tmp_path):
+        # Without the key the merge has nothing to match on, and the flag would
+        # be dropped at the contribution gate rather than reaching the workbook.
+        contribution = self._contribution(tmp_path)
+
+        assert set(CONTRIBUTION_KEYS["boundarydata"]) <= set(contribution.columns)
+        assert set(contribution["grid"]) == {"reservoir"}
+
+    def test_it_says_nothing_about_the_constant(self, tmp_path):
+        """The flag is the claim; the number stays the workbook's.
+
+        A constant here would be a second opinion on the reservoir size the
+        processor read *from* nodedata to build the series in the first place.
+        """
+        contribution = self._contribution(tmp_path)
+
+        assert "constant" not in contribution.columns
 
 
 class TestDeclarations:
@@ -487,16 +528,16 @@ class TestYearChangeIsBounded:
     def test_a_flat_pattern_needs_no_blend(self, tmp_path):
         result, logger = run(tmp_path, {"XX00": {}}, nodedata(XX00_reservoir=1_000_000.0))
         assert not result.empty
-        logger.assert_not_logged("Blended the last weeks")
+        logger.assert_not_logged("blended")
 
-    def test_a_sawtooth_is_blended_and_reported(self, tmp_path):
+    def test_a_sawtooth_is_blended_and_counted(self, tmp_path):
+        """Counted, not explained: the reasoning is in docs/hydro.md and stays there."""
         result, logger = run(
             tmp_path,
             {"XX00": {"min_profile": rising(0.2, 0.004), "max_profile": rising(0.5, 0.004)}},
             nodedata(XX00_reservoir=1_000_000.0),
         )
-        logger.assert_logged("Blended the last weeks", level="info")
-        logger.assert_logged("Week 1 is unchanged", level="info")
+        logger.assert_logged("year-change tail blended in 2 pattern(s)", level="info")
 
     def test_week_one_is_never_moved(self, tmp_path):
         """The model's year starts there, so it is the value that is trusted."""

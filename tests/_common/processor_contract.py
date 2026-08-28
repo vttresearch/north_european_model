@@ -49,7 +49,7 @@ class {name}:
 
     def run_processor(self):
 {body}
-        return ProcessorOutput(main_result={main_result})
+        return ProcessorOutput(main_result={main_result}, frames={frames}, nothing_to_build={nothing_to_build})
 '''
 
 
@@ -60,14 +60,14 @@ class StubCacheManager:
         self.cache_folder = cache_folder
         self.cache_folder.mkdir(parents=True, exist_ok=True)
         self.processor_hashes: dict[str, str] = {}
-        self.secondary_results: list[tuple] = []
+        self.processor_frames: dict[str, dict] = {}
         self.processor_requirements: dict[str, tuple] = {}
 
     def save_processor_hash(self, processor_name: str, hash_value: str) -> None:
         self.processor_hashes[processor_name] = hash_value
 
-    def save_secondary_result(self, processor_name, data, secondary_result_name) -> None:
-        self.secondary_results.append((processor_name, data, secondary_result_name))
+    def save_processor_frames(self, human_name, frames) -> None:
+        self.processor_frames[human_name] = frames
 
     def save_processor_requirements(self, processor_name, source_names) -> None:
         self.processor_requirements[processor_name] = tuple(source_names)
@@ -119,11 +119,10 @@ class FakeRun:
             raise AssertionError(
                 f"expected no GDX output, found: {[f.name for f in files]}"
             )
-        if self.result.ts_domains or self.result.ts_domain_pairs:
+        if self.result.frames:
             raise AssertionError(
-                f"expected an empty ProcessorRunResult, got "
-                f"ts_domains={self.result.ts_domains!r} "
-                f"ts_domain_pairs={self.result.ts_domain_pairs!r}"
+                f"expected an empty ProcessorRunResult, got contributions to "
+                f"{sorted(self.result.frames)}"
             )
 
 
@@ -134,11 +133,15 @@ def write_fake_processor(
     *,
     body: str = "",
     class_body: str = "",
+    frames: str = "{}",
+    nothing_to_build: str = "False",
 ) -> Path:
     """Write a one-class processor module returning `main_result`, and return its path.
 
     `body` is spliced into ``run_processor``; `class_body` into the class itself,
-    which is where declarations such as ``value_range`` live.
+    which is where declarations such as ``value_range`` live; `frames` is the
+    contribution dict, and `nothing_to_build` the flag, both spliced in as
+    expressions so a case can return literally anything as either.
     """
     folder.mkdir(parents=True, exist_ok=True)
     indented_body = textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8) if body else ""
@@ -152,6 +155,8 @@ def write_fake_processor(
         main_result=main_result,
         body=indented_body,
         class_body=indented_class,
+        frames=frames,
+        nothing_to_build=nothing_to_build,
     )
     path = folder / f"{name}.py"
     path.write_text(source, encoding="utf-8")
@@ -170,6 +175,8 @@ def run_fake_processor(
     config_overrides: dict | None = None,
     spec_overrides: dict | None = None,
     source_data: dict[str, pd.DataFrame] | None = None,
+    frames: str = "{}",
+    nothing_to_build: str = "False",
 ) -> FakeRun:
     """Run a synthetic processor through the real ``ProcessorRunner``.
 
@@ -184,7 +191,9 @@ def run_fake_processor(
         processor_file.write_text(textwrap.dedent(raw_source), encoding="utf-8")
     else:
         processor_file = write_fake_processor(
-            tmp_path / "processors", name, main_result, body=body, class_body=class_body
+            tmp_path / "processors", name, main_result,
+            body=body, class_body=class_body, frames=frames,
+            nothing_to_build=nothing_to_build,
         )
     output_folder = tmp_path / "output"
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -197,10 +206,8 @@ def run_fake_processor(
         "custom_column_value": None,
         "gdx_name_suffix": "",
         "rounding_precision": 0,
-        "secondary_output_name": None,
         "input_sub_folder": "",
         "attached_grid": "",
-        "is_input_data_dependent": True,
         "scaling_factor": 1,
         "annual_summary": "",
         "cutoff_below": None,

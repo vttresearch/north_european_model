@@ -13,5 +13,4 @@ class TimeseriesPipelineInputs:
     cache_manager: CacheManager
     source_data_pipeline: SourceDataPipeline
     logger: IterationLogger
-    reference_ts_folder: Path | None = None
     scenario_year: int | None = None

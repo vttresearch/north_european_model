@@ -54,12 +54,11 @@ import importlib.util
 import pandas as pd
 import src.hash_utils as hash_utils
 import src.GDX_exchange as GDX_exchange
-import src.json_exchange as json_exchange
+import src.source_data.source_data_contributions as source_data_contributions
+import src.source_workbook_shape as source_workbook_shape
 from src.infrastructure.cache_manager import CacheManager
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.timeseries_helpers import (
-    collect_domains_for_cache,
-    collect_domain_pairs_for_cache,
     find_incomplete_climate_windows,
     find_time_axis_defects,
     order_timeseries_for_labelling,
@@ -68,6 +67,7 @@ from src.timeseries.timeseries_helpers import (
     calculate_climatological_forecasts,
 )
 from src.timeseries.timeseries_results import ProcessorOutput, ProcessorRunResult
+from src.utils import summarise
 from src.infrastructure.logger import IterationLogger
 from typing import Optional
 
@@ -88,7 +88,8 @@ class ProcessorRunner:
     - Writes one GDX per climate window and updates ``import_timeseries.inc``.
     - Computes forecast branches when the spec dimensions include both ``f`` and
       ``t`` and at least one grouping dimension.
-    - Persists ``secondary_result`` and per-processor domain data to the cache.
+    - Validates the processor's ``frames`` -- its contributions to the source
+      data tables -- and caches them under this spec's name.
     - Records a hash of the processor file, so the next run's cache manager can
       see that the code changed.
     """
@@ -242,6 +243,70 @@ class ProcessorRunner:
         )
 
 
+    def _report_unknown_dimension_values(
+        self, main_result: pd.DataFrame, group_dims: list, frames: dict, processor_name: str
+    ) -> None:
+        """Name any dimension value the rest of the model has never heard of.
+
+        A processor used to have its dimension values added to the workbook's
+        `node`, `grid` and `flow` sheets automatically, which existed to stop
+        GAMS aborting on a domain violation when a processor emitted every
+        country regardless of the model's topology. Processors filter by
+        `country_codes` now, so that safety net was quietly doing nothing -- and
+        while it was there, a genuine typo in a node name became a new node in
+        the workbook rather than a complaint.
+
+        A warning rather than a refusal, and the GDX is still written: the model
+        the user gets is the one their data describes, and a series for a node
+        Backbone does not have is inert rather than wrong. What changes is that
+        they are told which node, at build time, next to the processor that
+        produced it.
+        """
+        tables = source_workbook_shape.tables_of(self.source_data_pipeline)
+
+        for dimension in source_workbook_shape.DIMENSION_SOURCES:
+            if dimension not in group_dims:
+                continue
+
+            # A processor that contributes a value is allowed to use it: the two
+            # halves are one sentence.
+            also_known = [
+                value
+                for frame in frames.values()
+                if dimension in frame.columns
+                for value in frame[dimension].dropna()
+            ]
+            unknown = source_workbook_shape.unknown_dimension_values(
+                main_result[dimension], dimension, tables, also_known=also_known
+            )
+            if unknown:
+                self.logger.log_status(
+                    f"Processor '{processor_name}' built data for {len(unknown)} "
+                    f"'{dimension}' value(s) the source data does not have: "
+                    f"{summarise(unknown)}. Backbone will not read those series, "
+                    f"because nothing else in the model refers to them. Either the "
+                    f"name is misspelled, or the workbooks are missing rows the "
+                    f"processor expects.",
+                    level="warn",
+                )
+
+    def _abandon(
+        self, message: str, *, level: str, processor_file: Path
+    ) -> ProcessorRunResult:
+        """Report why this processor produced nothing, and return that nothing.
+
+        Every rejection path does the same three things, and getting one of them
+        wrong is invisible: a path that forgot the hash update left the processor
+        permanently "changed", so every later build re-ran it and failed again.
+        One helper means there is one place for all three to be right.
+        """
+        self.logger.log_status(message, level=level)
+        self._update_processor_hash(processor_file, self.processor_spec["name"])
+        return ProcessorRunResult(
+            processor_name=self.processor_spec["name"],
+            human_name=self.processor_spec["human_name"],
+        )
+
     def run(self) -> ProcessorRunResult:
         """
         Execute the processor and return all structured outputs.
@@ -254,8 +319,8 @@ class ProcessorRunner:
         Returns
         -------
         ProcessorRunResult
-            ``processor_name``, ``secondary_result``, ``ts_domains`` and
-            ``ts_domain_pairs`` for the executed processor.
+            The processor's names, and the contributions it made to the source
+            data tables.
         """
         spec = self.processor_spec["spec"]
         processor_name = self.processor_spec["name"]
@@ -283,34 +348,20 @@ class ProcessorRunner:
 
         module_spec = importlib.util.spec_from_file_location(processor_name, processor_file)
         if module_spec is None or module_spec.loader is None:
-            self.logger.log_status(
+            return self._abandon(
                 f"Could not load processor module '{processor_name}' from '{processor_file}'. "
                 f"Check that the file exists and that timeseries_specs names it correctly. "
                 f"No GDX output will be written.",
-                level="warn",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="warn", processor_file=processor_file,
             )
         module = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(module)
 
         if not hasattr(module, processor_name):
-            self.logger.log_status(
+            return self._abandon(
                 f"Processor module '{processor_name}' is missing a class named '{processor_name}'. "
                 f"No GDX output will be written.",
-                level="warn",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="warn", processor_file=processor_file,
             )
 
         # Resolved here rather than just before instantiation, because the class
@@ -344,32 +395,18 @@ class ProcessorRunner:
         if demand_grid:
             df_annual_demands = self.source_data_pipeline.df_demanddata
             if "grid" not in df_annual_demands.columns:
-                self.logger.log_status(
+                return self._abandon(
                     f"Demand data has not been loaded (df_demanddata has no columns). "
                     f"Cannot run processor '{human_name}'. Re-run to trigger source excel import.",
-                    level="warn",
-                )
-                self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunResult(
-                    processor_name=processor_name,
-                    secondary_result=None,
-                    ts_domains={},
-                    ts_domain_pairs={},
+                    level="warn", processor_file=processor_file,
                 )
             df_filtered = df_annual_demands[
                 df_annual_demands["grid"].str.lower() == demand_grid.lower()
             ]
             if df_filtered.empty:
-                self.logger.log_status(
+                return self._abandon(
                     f"No demand data found for grid '{demand_grid}'. Skipping processor '{human_name}'.",
-                    level="warn",
-                )
-                self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunResult(
-                    processor_name=processor_name,
-                    secondary_result=None,
-                    ts_domains={},
-                    ts_domain_pairs={},
+                    level="warn", processor_file=processor_file,
                 )
             processor_kwargs["df_annual_demands"] = df_filtered
 
@@ -385,18 +422,11 @@ class ProcessorRunner:
         for source_name in required_source_data:
             frame = getattr(self.source_data_pipeline, f"df_{source_name}", None)
             if frame is None or frame.empty:
-                self.logger.log_status(
+                return self._abandon(
                     f"Source data '{source_name}' has not been loaded, which processor "
                     f"'{human_name}' declares it needs. Cannot run it. Re-run to trigger "
                     f"source excel import.",
-                    level="warn",
-                )
-                self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunResult(
-                    processor_name=processor_name,
-                    secondary_result=None,
-                    ts_domains={},
-                    ts_domain_pairs={},
+                    level="warn", processor_file=processor_file,
                 )
             processor_kwargs[f"df_{source_name}"] = frame
 
@@ -404,21 +434,13 @@ class ProcessorRunner:
             processor_instance = ProcessorClass(**processor_kwargs)
             processor_result = processor_instance.run_processor()
         except Exception as e:
-            self.logger.log_status(
+            return self._abandon(
                 f"Processor '{processor_name}' raised an exception during execution: {e}. "
                 f"No GDX output will be written.",
-                level="warn",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="warn", processor_file=processor_file,
             )
 
         main_result = processor_result.main_result
-        secondary_result = processor_result.secondary_result
 
         # --- Validate processor interface ---
         self.logger.log_status(
@@ -426,45 +448,37 @@ class ProcessorRunner:
             level="none",
         )
         if not isinstance(main_result, pd.DataFrame):
-            self.logger.log_status(
+            return self._abandon(
                 f"Processor '{processor_name}' returned main_result of type "
                 f"'{type(main_result).__name__}', expected pd.DataFrame.  "
                 f"Check that run_processor() returns a ProcessorOutput.  "
                 f"No GDX output will be written.",
-                level="error",
+                level="error", processor_file=processor_file,
             )
-            main_result = pd.DataFrame()
         if main_result.empty:
-            self.logger.log_status(
+            # Return rather than fall through, since the message promises no GDX
+            # output.
+            #
+            # At info when the processor set nothing_to_build: it has already said
+            # why it built nothing, and the runner cannot tell an emptiness that
+            # was ordered -- no unit uses this flow -- from one that is a failure.
+            # Warning on both taught a reader to skip the line, which is what the
+            # rest of this build's logging exists to avoid.
+            return self._abandon(
                 f"Processor '{processor_name}' returned an empty DataFrame.  "
                 f"No GDX output will be written.",
-                level="warn",
-            )
-            # Return rather than fall through, since the message above promised
-            # no GDX output.
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="info" if processor_result.nothing_to_build else "warn",
+                processor_file=processor_file,
             )
         expected_dims = [d for d in spec.get("bb_parameter_dimensions") if d not in ('t', 'f')]
         expected_cols = set(expected_dims + ['time', 'value'])
         actual_cols = set(main_result.columns)
         if actual_cols != expected_cols:
-            self.logger.log_status(
+            return self._abandon(
                 f"Processor '{processor_name}' returned unexpected columns. "
                 f"Expected {sorted(expected_cols)}, got {sorted(actual_cols)}. "
                 f"No GDX output will be written.",
-                level="error",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="error", processor_file=processor_file,
             )
         # The time axis is checked further down, once 'time' is datetime and the
         # ordering it needs has been computed. It subsumes the duplicate-row
@@ -476,32 +490,18 @@ class ProcessorRunner:
         for dim in expected_dims:
             if main_result[dim].isna().any():
                 n_missing = int(main_result[dim].isna().sum())
-                self.logger.log_status(
+                return self._abandon(
                     f"Processor '{processor_name}' returned {n_missing} row(s) with a "
                     f"missing '{dim}' value. Dimension values become GAMS set elements "
                     f"and cannot be blank. No GDX output will be written.",
-                    level="error",
-                )
-                self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunResult(
-                    processor_name=processor_name,
-                    secondary_result=None,
-                    ts_domains={},
-                    ts_domain_pairs={},
+                    level="error", processor_file=processor_file,
                 )
 
         if not pd.api.types.is_numeric_dtype(main_result["value"]):
-            self.logger.log_status(
+            return self._abandon(
                 f"Processor '{processor_name}' returned a non-numeric 'value' column "
                 f"(dtype {main_result['value'].dtype}). No GDX output will be written.",
-                level="error",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="error", processor_file=processor_file,
             )
 
         # --- cure and standardize main results ---
@@ -515,18 +515,11 @@ class ProcessorRunner:
             try:
                 main_result['time'] = pd.to_datetime(main_result['time'])
             except (ValueError, TypeError) as e:
-                self.logger.log_status(
+                return self._abandon(
                     f"Processor '{processor_name}' returned a 'time' column that is not "
                     f"datetime and could not be converted ({e}). "
                     f"No GDX output will be written.",
-                    level="error",
-                )
-                self._update_processor_hash(processor_file, processor_name)
-                return ProcessorRunResult(
-                    processor_name=processor_name,
-                    secondary_result=None,
-                    ts_domains={},
-                    ts_domain_pairs={},
+                    level="error", processor_file=processor_file,
                 )
             self.logger.log_status(
                 f"Processor '{processor_name}' returned 'time' as "
@@ -568,18 +561,11 @@ class ProcessorRunner:
         )
         time_axis = find_time_axis_defects(ordered_result, group_ids)
         if not time_axis.ok:
-            self.logger.log_status(
+            return self._abandon(
                 self._describe_time_axis_defect(
                     time_axis, processor_name, ordered_result, group_dim_cols
                 ),
-                level="error",
-            )
-            self._update_processor_hash(processor_file, processor_name)
-            return ProcessorRunResult(
-                processor_name=processor_name,
-                secondary_result=None,
-                ts_domains={},
-                ts_domain_pairs={},
+                level="error", processor_file=processor_file,
             )
 
         # Values are checked against the processor's own declarations after the
@@ -706,7 +692,12 @@ class ProcessorRunner:
                 parameter_name=bb_parameter,
                 parameter_dimensions=spec.get("bb_parameter_dimensions"),
             )
-            self.logger.log_status(f"Forecast data GDX written to {forecast_gdx_path}", level="info")                    
+            # The file name, not the path: the output folder is stated once at the
+            # top of the run, and seven absolute paths repeat it seven times.
+            self.logger.log_status(
+                f"Forecast data written to {os.path.basename(forecast_gdx_path)}",
+                level="info",
+            )
 
             update_import_timeseries_inc(
                 self.output_folder,
@@ -716,26 +707,24 @@ class ProcessorRunner:
             )
 
 
-        # --- Post-processing activities ---
-        if secondary_result is not None:
-            secondary_output_name = spec.get("secondary_output_name")
-            self.cache_manager.save_secondary_result(
-                processor_name, secondary_result, secondary_output_name
+        # --- Contributions to the source data tables ---
+        #
+        # Cached per spec rather than per processor: three specs share VRE_PECD,
+        # and a file named after the processor would have them overwrite each
+        # other's answers. Cached exactly as the processor returned it, never
+        # merged -- the merge is recomputed from workbooks + cache on every
+        # build, which is what keeps a partial rerun readable.
+        frames = {}
+        for name, frame in (processor_result.frames or {}).items():
+            validated = source_data_contributions.validate_contribution(
+                name, frame, processor=processor_name, logger=self.logger
             )
+            if validated is not None:
+                frames[name] = validated
 
-        domains = ['grid', 'node', 'flow', 'group']
-        domain_pairs = [['grid', 'node'], ['flow', 'node']]
-        local_ts_domains = collect_domains_for_cache(main_result, domains)
-        local_ts_domain_pairs = collect_domain_pairs_for_cache(main_result, domain_pairs)
+        self.cache_manager.save_processor_frames(human_name, frames)
 
-        # Per processor rather than merged, so that a run which copies one
-        # processor's output from a reference folder can copy its domains too.
-        domain_cache_data = {
-            "ts_domains": {k: list(v) for k, v in local_ts_domains.items()},
-            "ts_domain_pairs": {k: [list(t) for t in v] for k, v in local_ts_domain_pairs.items()}
-        }
-        domain_file = Path(self.cache_manager.cache_folder) / f"processor_domains_{processor_name}.json"
-        json_exchange.save_json(domain_file, domain_cache_data)
+        self._report_unknown_dimension_values(main_result, group_dim_cols, frames, processor_name)
 
         self._update_processor_hash(processor_file, processor_name)
 
@@ -743,8 +732,7 @@ class ProcessorRunner:
 
         return ProcessorRunResult(
             processor_name=processor_name,
-            secondary_result=secondary_result,
-            ts_domains=local_ts_domains,
-            ts_domain_pairs=local_ts_domain_pairs,
+            human_name=human_name,
+            frames=frames,
         )
 

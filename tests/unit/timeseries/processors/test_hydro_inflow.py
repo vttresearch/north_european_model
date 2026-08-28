@@ -12,7 +12,7 @@ everything else.
 
 What that fixes is the anchor geometry, not the levels. How far apart week 52
 and week 1 are is the source's own weather, so the tests here pin the geometry
-and leave the size of the change to `_report_year_change_outliers`.
+and leave the size of the change to `_note_year_change_outlier`.
 """
 
 from __future__ import annotations
@@ -289,6 +289,39 @@ class TestRefusedRunsAreNotBridged:
         assert gap.isna().all()
         logger.assert_logged("no usable value", level="warn")
 
+    def test_the_warning_says_how_large_a_series_the_gap_is_in(self, tmp_path):
+        """A missing week means something different in a 20 TWh catchment than a 0.2 TWh one.
+
+        Said here rather than in the summary lines: this is the one gap report
+        that asks someone to decide, and the size is what they decide on.
+        """
+        folder = write_inputs(tmp_path / "ts", skip_weeks=(20, 21))
+        processor, logger = make_processor(folder)
+        processor._process_reservoir_inflows(weekly_frame(folder))
+        assert logger.matching("TWh/year", level="warn")
+
+
+class TestAcceptedLongRuns:
+    def test_an_accepted_run_is_filled_and_costs_no_explanation(self, tmp_path):
+        """The reason is a standing decision, so it lives in the code, not in every run.
+
+        A build that says the same paragraph about the same node every time is
+        how a reader stops reading the log. The count is what a data refresh
+        moves, so the count is all that is said.
+        """
+        folder = write_inputs(tmp_path / "ts", skip_weeks=(20, 21))
+        processor, logger = make_processor(folder)
+        processor.ACCEPTED_LONG_RUNS = {"XX00_reservoir": "a reason recorded once"}
+        out = processor._process_reservoir_inflows(weekly_frame(folder))
+        processor._report_repairs()
+
+        filled_at = pd.Timestamp(START_YEAR, 1, 4, 12) + pd.Timedelta(19 * 7, unit="D")
+        assert not pd.isna(at(out, "XX00_reservoir", filled_at))
+        logger.assert_logged("Gaps interpolated at 1 node(s)", level="info")
+        logger.assert_not_logged("a reason recorded once")
+        logger.assert_not_logged("XX00_reservoir")
+        logger.assert_clean()
+
 
 class TestWeeklyGridIsCompletedFirst:
     """Complete the weekly series, then cast it to hourly -- not the reverse.
@@ -319,25 +352,36 @@ class TestWeeklyGridIsCompletedFirst:
         folder = write_inputs(tmp_path / "ts", skip_weeks=(7,))
         processor, logger = make_processor(folder)
         out = processor._process_reservoir_inflows(weekly_frame(folder))
+        processor._report_repairs()
 
         week7_at = pd.Timestamp(START_YEAR, 1, 4, 12) + pd.Timedelta(6 * 7, unit="D")
         got = at(out, "XX00_reservoir", week7_at)
         expected = (1000 * weekly_value(6) / 168 + 1000 * weekly_value(8) / 168) / 2
         assert got == pytest.approx(expected)
-        logger.assert_logged("single-week gap(s) interpolated", level="info")
+        logger.assert_logged("Gaps interpolated at 1 node(s)", level="info")
 
-    def test_the_report_says_how_much_of_the_series_was_filled(self, tmp_path):
-        """A missing week means something different in a 20 TWh catchment than a 0.2 TWh one."""
-        folder = write_inputs(tmp_path / "ts", skip_weeks=(7,))
-        processor, logger = make_processor(folder)
-        processor._process_reservoir_inflows(weekly_frame(folder))
-        assert logger.matching("TWh/year", level="info")
+    def test_repairs_cost_one_line_of_counts_however_many_there_are(self, tmp_path):
+        """A repair is the rule working, so the run says how many, not which.
+
+        Both the reservoir and the pump-storage column of both zones carry the
+        same hole here, which used to be four near-identical paragraphs.
+        """
+        zones = ("XX00", "YY00")
+        folder = write_inputs(tmp_path / "ts", zones=zones, skip_weeks=(7,))
+        weekly = weekly_frame(folder)
+        weekly[PS_HEADER] = weekly[WEEKLY_HEADER]
+        processor, logger = make_processor(folder, zones=zones)
+        processor._process_reservoir_inflows(weekly)
+        processor._report_repairs()
+
+        lines = logger.matching("interpolated", level="info")
+        assert lines == ["Gaps interpolated at 4 node(s)."]
 
     def test_a_complete_grid_is_not_reported_at_all(self, tmp_path):
         folder = write_inputs(tmp_path / "ts")
         processor, logger = make_processor(folder)
-        processor._process_reservoir_inflows(weekly_frame(folder))
-        logger.assert_not_logged("filled by interpolation")
+        processor.process()
+        logger.assert_not_logged("interpolated")
         logger.assert_clean()
 
 
@@ -426,18 +470,34 @@ class TestYearChangeOutlierReport:
         mask = (weekly["week"] == 1) & (weekly["year"] == END_YEAR)
         weekly.loc[mask, WEEKLY_HEADER] = weekly_value(1) + 500.0
         out = processor._process_reservoir_inflows(weekly)
+        processor._report_repairs()
 
-        logger.assert_logged("week 52 to week 1", level="info")
-        # Reported, not smoothed: week 1 still carries what the source said.
+        logger.assert_logged("1 large year change(s) left as they are", level="info")
+        # Counted, not smoothed: week 1 still carries what the source said.
         assert at(out, "XX00_reservoir", pd.Timestamp(END_YEAR, 1, 4, 12)) == pytest.approx(
             1000 * (weekly_value(1) + 500.0) / 168
         )
+
+    def test_outliers_cost_one_line_of_counts_however_many_there_are(self, tmp_path):
+        """Nothing is changed here, so the whole finding is a number."""
+        zones = ("XX00", "YY00")
+        folder = write_inputs(tmp_path / "ts", zones=zones)
+        processor, logger = make_processor(folder, zones=zones)
+        weekly = weekly_frame(folder)
+        mask = (weekly["week"] == 1) & (weekly["year"] == END_YEAR)
+        weekly.loc[mask, WEEKLY_HEADER] = weekly_value(1) + 500.0
+        processor._process_reservoir_inflows(weekly)
+        processor._report_repairs()
+
+        lines = logger.matching("year change", level="info")
+        assert lines == ["2 large year change(s) left as they are."]
 
     def test_an_ordinary_year_change_is_not_reported(self, tmp_path):
         folder = write_inputs(tmp_path / "ts")
         processor, logger = make_processor(folder)
         processor._process_reservoir_inflows(weekly_frame(folder))
-        logger.assert_not_logged("week 52 to week 1")
+        processor._report_repairs()
+        logger.assert_not_logged("year change")
 
 
 class TestOutputContract:

@@ -10,11 +10,11 @@ from itertools import product
 import src.infrastructure.config_reader as config_reader
 from src.infrastructure.cache_manager import CacheManager
 from src.infrastructure.logger import IterationLogger
+from src.source_data.source_data_contributions import apply_contributions, combine_contributions
 from src.source_data.source_data_inputs import SourceDataPipelineInputs
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
 from src.timeseries.timeseries_pipeline import TimeseriesPipeline
-from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
 from src.utils import parse_sys_args, force_utf8_output
@@ -76,9 +76,6 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
     scenario_alternatives2 = config['scenario_alternatives2']
     scenario_alternatives3 = config['scenario_alternatives3']
     scenario_alternatives4 = config['scenario_alternatives4']
-
-    # Reference folder for copying input-data-independent timeseries between iterations
-    reference_ts_folder = None
 
     for scenario, year, alt1, alt2, alt3, alt4 in product(
         scenarios, scenario_years,
@@ -193,26 +190,35 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 cache_manager=cache_manager,
                 source_data_pipeline=source_data_pipeline,
                 logger=logger,
-                reference_ts_folder=reference_ts_folder,
                 scenario_year=year,
             ))
-            ts_results = ts_pipeline.run()
-
-            # Set reference folder for subsequent iterations to enable copy optimization
-            if reference_ts_folder is None:
-                reference_ts_folder = output_folder
+            ts_contributions = ts_pipeline.run()
         else:
             logger.log_status(
                 "Timeseries results are up-to-date. Loading from cache.",
                 level="skip"
             )
-            # Load cached results
-            ts_results = TimeseriesPipelineOutput(
-                secondary_results=cache_manager.load_all_secondary_results(),
-                ts_domains=cache_manager.load_dict_from_cache("all_ts_domains.json"),
-                ts_domain_pairs=cache_manager.load_dict_from_cache("all_ts_domain_pairs.json"),
+            ts_contributions = combine_contributions(
+                list(cache_manager.load_processor_frames().values()), logger
             )
         timeseries_run_successfully = (logger.error_count == error_count_before_ts)
+
+        # What the timeseries phase had to say about the source data tables goes
+        # into them here, once, before anything reads them. Not inside
+        # SourceDataPipeline.run(): the frames it builds are what the processors
+        # *read*, and folding their own output back in before they run would feed
+        # them their own answers.
+        #
+        # Guarded on the one reader there is. rebuild_bb_excel implies both
+        # reimport_source_excels and needs_timeseries_run (CacheManager.run), so
+        # inside the guard both phases have actually run and there are real tables
+        # to merge into. Unguarded, a fully warm run merges into an empty
+        # df_nodedata -- merge_contribution takes the contribution whole when the
+        # source is empty -- and leaves SourceDataPipeline holding a three-column
+        # table that states something false about the model. Nothing reads it
+        # today, which is exactly why it would go unnoticed.
+        if cache_manager.rebuild_bb_excel:
+            apply_contributions(source_data_pipeline, ts_contributions, logger)
 
         # --- 2.5. Backbone Input Excel building phase ---
 
@@ -228,7 +234,6 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 cache_manager=cache_manager,
                 logger=logger,
                 source_data=source_data_pipeline,
-                ts_results=ts_results
             )
 
             builder = BBExcelPipeline(excel_context)
@@ -318,11 +323,10 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         # If previous log exist, add its contents to a "Previous logs" section
         if log_path.exists():
             logger.log_status("Previous logs found and added to current log", level="info")
-            logger.log_status("Previous logs",
-                       level="none",
-                       add_empty_line_before=True,
-                       section_start_length=90,
-                       print_to_screen=False)
+            # Straight into the message list rather than through log_status: this
+            # is a separator inside the file, and printing it would announce on
+            # screen that a file is about to be concatenated.
+            logger.messages.append("\n---     Previous logs " + "-" * 68)
             with open(log_path, "r", encoding="utf-8") as f:
                 previous_logs = f.read().splitlines()
             logger.messages.extend(previous_logs)

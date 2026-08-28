@@ -426,7 +426,7 @@ class TestNormalisation:
 
     def test_the_run_says_how_wide_the_climate_spread_is(self, clean_folder):
         _, logger = build(clean_folder, demands(row("FI00", "FI00_elec")))
-        logger.assert_logged("individual climate years range", level="info")
+        logger.assert_logged("Climate years span", level="info")
 
     def test_the_flat_share_sets_the_minimum_hour(self, clean_folder):
         wide, _ = build(clean_folder, demands(row("FI00", "FI00_elec", twh=10.0, share=1.0)))
@@ -579,11 +579,12 @@ class TestCountrySetTolerance:
         logger.assert_clean()
         assert wide["FI00_elec"].notna().all()
 
-    def test_a_configured_country_with_no_demand_rows_is_information(self, clean_folder):
+    def test_a_configured_country_with_no_demand_rows_is_not_mentioned(self, clean_folder):
+        """The workbooks say what the model contains, so an absence is not news."""
         _, logger = build(clean_folder, demands(row("FI00", "FI00_elec")),
                           countries=["FI00", "PL00"])
 
-        logger.assert_logged("No elec demand rows for 1 configured", level="info")
+        logger.assert_not_logged("PL00")
         logger.assert_clean()
 
     def test_no_country_has_demand_rows_at_all(self, clean_folder):

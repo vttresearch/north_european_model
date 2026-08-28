@@ -103,9 +103,9 @@ class FakeLogger:
 
         ``**_ignored`` is deliberate.  The real signature carries presentation-only
         kwargs (``section_start_length``, ``add_empty_line_before``,
-        ``add_empty_line_after``, ``print_to_screen``); swallowing them means a new
-        one can be added to ``IterationLogger`` without editing the test suite.
-        That is the no-pinning rule applied to the test double itself.
+        ``add_empty_line_after``); swallowing them means a new one can be added to
+        ``IterationLogger`` without editing the test suite. That is the no-pinning
+        rule applied to the test double itself.
         """
         self.records.append((level, str(message)))
 

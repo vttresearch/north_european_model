@@ -8,13 +8,36 @@ This repository builds input data for the Backbone energy system model, modellin
 ## Scope for AI assistance
 
 Only the following directories contain actively developed code and data definitions:
-- `dev/` -- Early versio of developer functions
+- `dev/` -- Early version of developer functions, and local reference artifacts
+  (a known-good `inputData.xlsx`, reference GDX files). Untracked, and large.
 - `src/` -- Python source code (data pipeline, processors, utilities)
 - `src_files/` -- configuration files (.ini), Excel data files, GAMS templates, time series
+- `tools/` -- shared standalone tools, tracked (see below)
 
 All other subdirectories are generated outputs or ad-hoc analysis folders -- skip them.
 
 All `.cmd` files are user-owned run scripts. Do not rewrite them unless explicitly asked.
+
+
+## Tools
+
+`tools/` holds standalone scripts that answer a question about a build rather than
+taking part in one. **Look here before writing a throwaway script** -- that is what
+the folder is for, and a tool that already exists has already been debugged.
+
+Each tool documents itself in its module docstring: what it checks, what it cannot
+see, and its usage line. They take command-line arguments, print a report, and exit
+0 / 1 so they can gate a loop; they are not imported by `src/` and are not in the
+pytest suite. Reference artifacts they compare against live in the untracked `dev/`,
+so a usage example may name a file the reader does not have.
+
+- `compare_input_excels.py` -- two `inputData.xlsx` files compared sheet by sheet on
+  *values*, read as text. Row order does not matter. Blind to formatting.
+- `compare_workbook_parts.py` -- two `.xlsx` files compared as zip archives, part by
+  part, ignoring only the build timestamps openpyxl stamps into `docProps/core.xml`.
+  Sees cell values, column order, widths, alignment, table styles -- use it to prove a
+  refactor changed nothing. Literal byte equality is not achievable; those timestamps
+  differ on every build.
 
 
 ## Execution flow
@@ -80,6 +103,21 @@ enforced by `tests/_common/contracts.py` and swept over every loader function.
 
 - **Before logger init** (config, arg parsing): raise and abort.
 - **After logger init** (pipeline phases): never raise -- log a warning and continue with a safe default.
+
+
+## What a build says
+
+A warning asks the reader to change something; if there is nothing they can do, it is not
+one. **Absence is not a defect** -- the source workbooks state what the model contains, so
+a country with no district heating or no offshore wind is silent. What earns a line is
+*partial* data: the model has the node or unit and the data for it is missing or
+contradictory -- and such a warning **names the first three offenders, then counts
+the rest** (`utils.summarise`), because "1 node has no price data" only makes its
+reader ask which one. Everything expected and handled costs counts, not names, and
+never reasons -- one short line per processor, with the names and the reasoning in
+the documentation page. A check that fires on correct data every run is not strict, it is broken.
+
+The full rule, with examples, is "What a build says" in `docs/timeseries.md`.
 
 
 ## Working inside the Backbone checkout

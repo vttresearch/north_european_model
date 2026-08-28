@@ -106,8 +106,36 @@ Seasonal fill limits exist for two of the four types:
 
 Those nodes are not broken and are not being skipped by mistake. They use the
 constant `upwardLimit` from `nodedata`, which is a flat bound rather than a
-seasonal profile. `hydro_storage_limits_MAF2019` names them in the build log each
-run so their absence from the time series is stated rather than discovered.
+seasonal profile, and the build says nothing about them: they are the same nodes
+every run, and this list is where they are named. What *is* reported is a node
+left with no bound by either route — that check lives in the workbook builder,
+which can see the constants as well as the series, and it names the node.
+
+How a node ends up on one side or the other is written into the input Excel
+rather than inferred. `nodedata`'s `upwardLimit` and `downwardLimit` columns are
+constants, and the processor states separately which nodes got a series instead;
+the input Excel writes `useTimeseries` for those and `useConstant` for the rest.
+Backbone reverses the first decision by itself for a series that turns out to be
+flat — `changes.inc` converts it back to a constant, because a constant is much
+faster to carry — but nothing reverses it the other way, so the processor's claim
+is what makes the seasonal profiles reachable at all.
+
+The **starting level** of each reservoir is not decided here. The input Excel
+writes a provisional one, and `changes.inc` then recomputes it for every `psOpen`
+and `reservoir` node from the maximum of that node's own upwardLimit series. That
+rule needs a rewrite of its own — as written it cannot express a run starting and
+ending in summer — so nothing in the build depends on the provisional number
+beyond it being above zero.
+
+One consequence looks like a false positive and is not. A node whose `upwardLimit`
+comes only from a series, with no `nodedata` constant behind it, gets no
+provisional level and the builder warns that it could not determine one. That
+warning is correct — the data really is partial, and partial data warns — even
+though `changes.inc` will go on to bound the node anyway. The build cannot see
+past the workbook it is writing, and should not be taught to pretend it can. Both
+this and the `changes.inc` patch itself come out when the hydro rules are redone;
+until then they are listed in
+[Identified gaps](identified-gaps.md#the-hydro-storage-start-level).
 
 Whether that is the right treatment is discussed in
 [the caveats](#some-caveats-from-cross-checking-the-data), which is also where the
@@ -189,6 +217,10 @@ What is in it today:
 | `NOS0_psOpen` | 5 weeks in 1995 | [neighbouring zones contradict the zeros](#the-norwegian-pump-storage-zeros); ~100 GWh |
 | `NON1_psOpen` | 4 weeks, 1984 and 1987 | as above; ~100 GWh |
 | `SE04_reservoir downwardLimit` | 2 weeks | the only multi-week zero run in the level data |
+
+A build says only how many nodes needed a repair of either kind — the same
+handful every run, and this table is where they are named. A run that no entry
+covers is the exception and warns with its node and its series size.
 
 ### The year change
 

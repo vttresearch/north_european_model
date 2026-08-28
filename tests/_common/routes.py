@@ -10,9 +10,12 @@ Three things make that possible:
 - ``load_config`` returns a plain dict and every consumer treats it as one, so
   configparser is bypassed entirely and tested separately.
 - ``BBExcelInputs`` is a bare dataclass with no runtime validation, and
-  ``BBExcelPipeline`` stores ``cache_manager`` without ever reading it. Passing
-  None avoids CacheManager's mkdir-on-construction and its CWD-relative source
-  hashing in one step.
+  ``BBExcelPipeline`` never reads ``cache_manager`` -- it does not even store it.
+  Passing None avoids CacheManager's mkdir-on-construction and its CWD-relative
+  source hashing in one step.
+- ``BBExcelPipeline`` reads the source data tables and nothing else, so a route
+  run needs no timeseries phase at all. What that phase would have contributed
+  is passed to ``run_route`` as ``contributions=`` and merged the real way.
 - Nothing on this path imports ``GDX_exchange``, so no GDX is written and the
   GAMS API is never touched.
 
@@ -30,9 +33,9 @@ import pandas as pd
 
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
 from src.bb_excel.bb_excel_pipeline import BBExcelPipeline
+from src.source_data.source_data_contributions import apply_contributions
 from src.source_data.source_data_inputs import SourceDataPipelineInputs
 from src.source_data.source_data_pipeline import SourceDataPipeline
-from src.timeseries.timeseries_results import TimeseriesPipelineOutput
 from tests._common.excel_read import read_output_workbook, read_output_workbook_raw
 from tests._common.fixtures import FakeLogger, make_config
 from tests._common.workbook_text import sheet_names, write_workbook_text
@@ -51,16 +54,6 @@ CATEGORY_FILES_KEY = {
     "unitdata": "unitdata_files",
     "userconstraintdata": "userconstraintdata_files",
 }
-
-
-def empty_ts_results() -> TimeseriesPipelineOutput:
-    """A valid, empty timeseries result.
-
-    ``BBExcelPipeline.__init__`` filters ``secondary_results`` by key prefix and
-    every ``ts_domains`` read is guarded, so empty dicts are safe and mean "no
-    timeseries contributed anything".
-    """
-    return TimeseriesPipelineOutput(secondary_results={}, ts_domains={}, ts_domain_pairs={})
 
 
 def _category_of(sheet_name: str) -> str | None:
@@ -182,10 +175,15 @@ def run_route(
     scenario: str = "test",
     year: int = 2030,
     alternatives: Sequence[str] = (),
-    ts_results: TimeseriesPipelineOutput | None = None,
+    contributions: Mapping[str, pd.DataFrame] | None = None,
     logger: FakeLogger | None = None,
 ) -> RouteResult:
-    """Source workbooks -> ``inputData.xlsx``, read back and ready to assert on."""
+    """Source workbooks -> ``inputData.xlsx``, read back and ready to assert on.
+
+    `contributions` stands in for the timeseries phase: ``{"nodedata": frame}``
+    is merged into the source tables through the real ``apply_contributions``,
+    which is the only way anything reaches ``BBExcelPipeline`` from there.
+    """
     logger = logger or FakeLogger()
     config = config or config_for_workbooks(workbooks)
 
@@ -198,6 +196,9 @@ def run_route(
         alternatives=alternatives,
         logger=logger,
     )
+
+    if contributions:
+        apply_contributions(source, dict(contributions), logger)
 
     input_folder = build_input_folder(tmp_path, workbooks=workbooks)
     output_folder = tmp_path / "output"
@@ -212,7 +213,6 @@ def run_route(
             cache_manager=None,   # stored, never read
             logger=logger,
             source_data=source,
-            ts_results=ts_results or empty_ts_results(),
         )
     )
     builder.run()

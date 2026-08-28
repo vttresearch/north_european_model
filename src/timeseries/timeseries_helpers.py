@@ -11,27 +11,6 @@ import pandas as pd
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
-#: How many items a log line names before it starts counting instead.
-LOG_LIST_LIMIT = 3
-
-
-def summarise(items, limit: int = LOG_LIST_LIMIT) -> str:
-    """Render a list for a log line: the first few, then how many are left.
-
-    A log line carrying a full list is a line nobody reads, and the warning next
-    to it gets skipped too. The full lists belong in the documentation pages.
-
-    Callers order `items` most-interesting-first, since that is what survives the
-    truncation. Where the whole list is what a reader has to act on -- the nodes
-    that were *not* built, rather than the ones that were -- name it in full and
-    do not call this.
-    """
-    items = [str(item) for item in items]
-    if len(items) <= limit:
-        return ", ".join(items)
-    return f"{', '.join(items[:limit])} and {len(items) - limit} more"
-
-
 def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     """Which nodes with these name endings does the model actually contain?
 
@@ -63,67 +42,47 @@ def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     }
 
 
-def collect_domains_for_cache(df, possible_domains: list[str]) -> dict[str, list]:
+def nodes_needing_flow(df_unitdata, flow: str) -> set | None:
+    """Which nodes does the model attach units of this ``flow`` to?
+
+    A capacity factor series is read by Backbone only through a unit: no unit of
+    that flow on a node means the series is inert, and its absence means nothing.
+    ``unitdata`` is where the question is answered -- ``flow`` arrives on it from
+    ``unittypedata``, and the merge has already applied this run's scenario, year
+    and country filtering, including a row removed by ``method: remove``.
+
+    Output connections only. A unit's flow describes what it takes from the
+    weather to produce, so a fuel node on the input side is not a node that needs
+    a capacity factor.
+
+    ``None`` means the question could not be asked -- no frame, no ``flow``
+    column, no node column, or no flow to look for -- and is a different answer
+    from the empty set, which says the model has no unit of this flow at all.
+    Callers fail open on ``None`` the way `nodes_present_in_nodedata` does, and
+    build nothing on the empty set.
     """
-    Collect domain values from a processor result, for the cache and for
-    accumulation across processors.
+    if df_unitdata is None or getattr(df_unitdata, "empty", True) or not flow:
+        return None
 
-    Serializes directly to JSON and merges across processors. Compiling and
-    normalizing the domain names happens downstream, when the Excel is assembled.
+    columns = {str(c).lower(): c for c in df_unitdata.columns}
+    flow_col = columns.get('flow')
+    node_cols = [
+        original for lowered, original in columns.items()
+        if lowered.startswith('node_output') or lowered == 'node'
+    ]
+    if flow_col is None or not node_cols:
+        return None
 
-    Parameters:
-    - df: pandas.DataFrame containing possible domain columns
-    - possible_domains: list of domain column names to check in df
-
-    Returns:
-    - dict[str, list]: domain -> unique values, unsorted
-    """
-    result = {}
-
-    for domain in possible_domains:
-        if domain in df.columns:
-            unique_values = df[domain].dropna().unique()
-            if len(unique_values) > 0:
-                result[domain] = list(unique_values)
-
-    return result
-
-
-def collect_domain_pairs_for_cache(df, domain_pairs: list[list[str]]) -> dict[str, list[tuple]]:
-    """
-    Collect domain value pairs from a processor result, alongside the domains.
-
-    The pairs are what stop the Excel from being generated for combinations that
-    do not exist -- the domains on their own would imply the cross product.
-
-    Parameters:
-    - df: pandas.DataFrame containing the domain columns
-    - domain_pairs: list of domain pair lists, e.g. [['grid', 'node'], ['flow', 'node']]
-
-    Returns:
-    - dict[str, list[tuple]]: pair key like 'grid_node' -> unique domain tuples
-    """
-    result = {}
-
-    for pair in domain_pairs:
-        if not isinstance(pair, list) or len(pair) != 2:
-            raise ValueError("Each domain pair must be a list of exactly two domain names")
-
-        domain1, domain2 = pair
-
-        # Skip pair if any column is missing
-        if domain1 not in df.columns or domain2 not in df.columns:
-            continue
-
-        # Extract and deduplicate
-        pairs_df = df[[domain1, domain2]].drop_duplicates()
-        pair_key = f"{domain1}_{domain2}"
-        new_pairs = list(pairs_df.itertuples(index=False, name=None))
-
-        if new_pairs:
-            result[pair_key] = new_pairs
-
-    return result
+    wanted = str(flow).strip().lower()
+    rows = df_unitdata[
+        df_unitdata[flow_col].astype('string').str.strip().str.lower() == wanted
+    ]
+    return {
+        str(node)
+        for column in node_cols
+        for node in rows[column]
+        if not pd.isna(node) and str(node).strip()
+    }
 
 
 def update_import_timeseries_inc(

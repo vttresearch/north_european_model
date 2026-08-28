@@ -68,6 +68,14 @@ links to it.
 - [Wind and solar timeseries](docs/vre-timeseries.md) — what a PECD download decides and
   why the CSV cannot tell you, why one folder may hold only one download, how a node is
   given one of several PECD zones, and what a zero capacity factor means.
+- [Input Excel builder](docs/input-excel.md) — the last phase: which sheets `inputData.xlsx`
+  gets, why a parameter column is missing whenever nothing set it, how a node is decided to
+  be a price or a balance or a storage node, which capacities and storage start levels are
+  derived rather than read, and what each of its warnings is asking you to change.
+- [Identified gaps](docs/identified-gaps.md) — a working inventory rather than a
+  reference page: what Backbone can express that this build does not write, and which
+  of its own rules are known to be provisional. Read it before designing anything that
+  adds a parameter or a sheet.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,
@@ -291,7 +299,6 @@ Timeseries processors are selected and configured in the `timeseries_specs = {}`
 		'rounding_precision': 5,
 		'input_sub_folder': 'PECD-onshore/',   # folder, not file
 		'attached_grid': 'elec',
-		'is_input_data_dependent': False,
 		'annual_summary': 'avg',
 	},
 

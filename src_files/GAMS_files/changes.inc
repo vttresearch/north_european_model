@@ -210,7 +210,7 @@ loop(gn_tmp(grid, node),
 ); // END loop(gn_tmp)
 
 // replacing values in p_gnBoundaryPropertiesForStates
-p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useTimeSeries') = 0;
+p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useTimeseries') = 0;
 p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useConstant') = 1;
 p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'upwardLimit', 'constant') = ts_node(grid, node, 'upwardLimit', 'f00', 't000001');
 
@@ -245,7 +245,7 @@ loop(gn_tmp(grid, node),
 ); // END loop(gn_tmp)
 
 // replacing values in p_gnBoundaryPropertiesForStates
-p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useTimeSeries') = 0;
+p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useTimeseries') = 0;
 p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useConstant') = 1;
 p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'downwardLimit', 'constant') = ts_node(grid, node, 'downwardLimit', 'f00', 't000001');
 

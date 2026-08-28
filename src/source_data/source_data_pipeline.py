@@ -82,8 +82,15 @@ files are configured):
   df_transferdata        interconnector parameters       key: from_country, from_suffix, to_country, to_suffix, grid
   df_userconstraintdata  custom constraint parameters    key: group, 1st dimension,
                          2nd dimension, 3rd dimension, 4th dimension, param_userconstraint
+  df_boundarydata        node state boundaries, long     key: grid, node, param_gnboundarytypes
+                         NOTE: derived, not read. build_boundarydata() melts
+                         nodedata's wide boundary columns (upwardlimit, maxSpill,
+                         ...) into one row per type. A timeseries processor adds
+                         to the same table, which is why it is long: a boundary
+                         that comes from a series states useTimeseries there.
 """
 
+import src.source_data.source_data_contributions as source_data_contributions
 import src.source_data.source_data_loader as data_loader
 import src.utils as utils
 import pandas as pd
@@ -116,6 +123,9 @@ class SourceDataPipeline:
         self.df_nodedata = pd.DataFrame()
         self.df_emissiondata = pd.DataFrame()
         self.df_userconstraintdata = pd.DataFrame()
+        # Derived from df_nodedata at the end of run(), never read from a
+        # workbook of its own -- see build_boundarydata.
+        self.df_boundarydata = pd.DataFrame()
 
     def run(self):
         """
@@ -322,3 +332,11 @@ class SourceDataPipeline:
                     if df[col].dtype == object or isinstance(df[col].dtype, pd.StringDtype):
                         df[col] = df[col].replace('', pd.NA)
                         df[col] = df[col].where(df[col].notna(), pd.NA)
+
+        # Node state boundaries, long. nodedata writes them wide -- one column
+        # per boundary type -- because one row per node is what a spreadsheet is
+        # good at; p_gnBoundaryPropertiesForStates has the type as a dimension.
+        # Built last, so it sees a nodedata that is already merged and cleaned.
+        self.df_boundarydata = source_data_contributions.build_boundarydata(
+            self.df_nodedata, self.logger
+        )

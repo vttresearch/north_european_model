@@ -159,8 +159,18 @@ indistinguishable from a unit nobody asked for. So the build names what it built
 and what it did not.
 
 On the shipped configuration, PV and onshore build all 22 codes. Offshore builds
-20: **AT00 and CH00 have no offshore column**, which is correct, and they are
-named at warning level every run rather than left to be noticed.
+20: **AT00 and CH00 have no offshore column**, which is correct — and neither has
+an offshore unit, so neither is built or mentioned.
+
+**A code is built only if a unit needs it.** `unitdata` carries a `flow` per unit
+(from `unittypedata`), and Backbone reads a capacity factor only through such a
+unit, so a series for a node with none is inert. The processor asks
+`nodes_needing_flow` which nodes have a unit of its flow and builds those. What
+that buys is the warning: a code that *does* have a unit and finds no PECD column
+is a real problem — someone typed `offshore` where they meant `onshore` — and it
+is no longer buried under two countries that are landlocked. Austria's `Offshore
+Wind` row is zero capacity with `method: remove`, so the merged unitdata has no
+such unit at all.
 
 ## Zeros and holes
 
@@ -177,20 +187,23 @@ magnitude fires 749 times on CH00 onshore alone, every one of them a zero wedged
 between two values that are themselves almost nothing — median 0.0002, never
 above 0.037.
 
-Requiring both neighbours to sit at five times the written floor leaves, over
-1982–2016:
+Requiring both neighbours to sit at five times the written floor — 0.05 on the
+shipped `cutoff_below` — left 6 flagged hours on onshore and 13 on offshore over
+1982–2016, and every build reported them. Nobody ever acted on one: a hole
+between two hours at five percent of nameplate is weather, not a dropped value.
+A warning that fires on correct data every run is not a strict check, it is a
+broken one, so the bar is now **half of nameplate on both sides**
+(`ISOLATED_DROPOUT_NEIGHBOUR`), which the shipped data does not trip at all.
 
-| | hours flagged |
-|---|---|
-| onshore | 6, across AT00, BE00, NOS0 |
-| offshore | 13, across BE00, DE00, FR00, LT00, SE01 |
-| PV | 0 |
+Half a capacity factor rather than a multiple of the floor, because a multiple
+leaves the [0, 1] a capacity factor lives in as soon as the cutoff grows: at
+fifty times, a `cutoff_below` of 0.05 would ask for neighbours at 2.5 and the
+check would be silently dead.
 
-The floor is **your** `cutoff_below`, read from the config rather than written
-into the code, and the check runs against the values as they will be *written* —
-after `rounding_precision` and after the cutoff. Both of those turn small
-numbers into zeros, so a check on the unrounded values would answer a question
-nobody asked.
+Which hours count as *empty* does still follow **your** `cutoff_below`, and the
+check runs against the values as they will be *written* — after
+`rounding_precision` and after the cutoff. Both of those turn small numbers into
+zeros, so a check on the unrounded values would answer a question nobody asked.
 
 Nothing is repaired. What these hours actually are is not yet understood well
 enough to write a repair rule, and a wrong repair here would be invisible
@@ -223,7 +236,7 @@ defend. Any of them would be worth revisiting given better data or a reason.
   profiles for a historical year, future turbines for 2040 — today both are
   chosen by editing `input_sub_folder`, so a multi-year run uses one fleet for
   every scenario year. Making the selection follow the scenario year is intended
-  work, and it will end `is_input_data_dependent: False` for these specs.
+  work.
 - **Nothing compares the values against anything.** Whether a capacity factor is
   plausible for a country is a question this processor cannot answer; input data
   validation is where it belongs.

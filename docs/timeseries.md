@@ -41,6 +41,8 @@ has its own page, and those pages come and go as the data sources do.
 - [Forecast branches](#forecast-branches)
 - [Why zero is the hard case](#why-zero-is-the-hard-case)
 - [What the runner checks before it writes](#what-the-runner-checks-before-it-writes)
+- [What a build says](#what-a-build-says)
+- [What a processor contributes besides the series](#what-a-processor-contributes-besides-the-series)
 - [What is cached, and what forces a rebuild](#what-is-cached-and-what-forces-a-rebuild)
 - [Adding a source](#adding-a-source)
 - [Where the timeseries code lives](#where-the-timeseries-code-lives)
@@ -79,11 +81,11 @@ Into the output folder, per source:
   is the right size.
 
 Two things do not belong to any one source. Demand grids that appear in the
-demand tables but have no processor of their own get a **flat** series in
-`ts_influx_other_demands.gdx`: the annual energy spread evenly over the window,
-which is the honest thing to write when nothing knows the shape. And some
-processors return a **secondary result** — a small table about what they built —
-which is cached for the Excel build rather than written to GDX.
+demand tables but have no processor of their own get a **constant** demand rather
+than a time series: the annual energy spread evenly over the hours, which is the
+honest thing to write when nothing knows the shape. And a processor may
+**contribute to the source data tables** — see below — instead of, or as well as,
+writing a GDX.
 
 ## The shape of the pipeline
 
@@ -91,7 +93,7 @@ which is cached for the Excel build rather than written to GDX.
 config: timeseries_specs
         │
         ▼
-  TimeseriesPipeline      decides, per source: run it, copy it, or skip it
+  TimeseriesPipeline      decides, per source: run it or leave last run's output
         │
         ▼
   ProcessorRunner         once per source
@@ -102,6 +104,8 @@ config: timeseries_specs
         ├── label + slice   t-labels, one climate window per year
         ├── forecasts       quantile branches across climate years
         └── write           GDX + a line in import_timeseries.inc
+                            and whatever the processor contributed to the
+                            source data tables, for the input Excel
 ```
 
 The split is the point. **A processor knows about its source and nothing else:**
@@ -219,23 +223,111 @@ Separately, a processor may **declare** what its output should look like —
 data on every run. Those are warnings rather than refusals: an out-of-range value
 may be a real feature of the source, where a broken time axis cannot be.
 
+One more warning is worth knowing about, because it is the only thing standing
+between a mistyped node name and silence. The runner checks every `node`, `grid`
+and `flow` value a processor produced against the source data tables, and names
+any the model does not have. Backbone will not read a series for a node nothing
+else refers to, so the usual cause is a spelling mistake or a workbook missing
+rows the processor expected.
+
+"The model does not have it" is a wider question than it looks, and
+`src/source_workbook_shape.py` is where the answer lives. A grid or a node can be
+declared by four tables: `nodedata` and `demanddata` one per row, `unitdata` one
+per unit connection — which is how every battery, heat store and fuel grid enters
+the model without a `nodedata` row of its own — and both ends of a `transferdata`
+link. That is the same union the input Excel builds its `grid` and `node` sheets
+from, so a value this warning names is genuinely one nothing else in the model
+mentions.
+
+## What a build says
+
+A build log is read by someone who wants to know whether anything needs their
+attention. Everything else in it is cost, and a page of standing text is worse
+than cost: it is what teaches a reader to skip the line that is new.
+
+So the rule, for every message a build writes -- the timeseries pipeline, the
+source data phase and the input Excel builder alike:
+
+1. **A warning asks the reader to change something.** If there is nothing they
+   can do about it, it is not a warning, whatever its tone.
+2. **Absence is not a defect.** The source workbooks are the statement of what
+   the model contains. A country with no district heating, a zone with no
+   reservoir, a landlocked country with no offshore wind — the build says nothing
+   at all. Spain has no district heating and never will; a line saying so every
+   run only makes its reader wonder what they did wrong.
+3. **Partial or contradictory data earns a line, and the line names names.** The
+   model has the node or the unit, and the data for it is missing or
+   inconsistent: a node in `nodedata` but not in `demanddata`, a hydro node with
+   no inflow anywhere in the source, a unit whose `flow` has no capacity factor
+   series. That is the case worth interrupting someone for, and it is the case
+   the checks are shaped around.
+
+   One line, naming the **first three offenders and then counting the rest** --
+   `summarise` in `utils.py` is exactly that, and at three or fewer it names them
+   all. A bare count is not enough: the reader's next question after "1 node has
+   no price data" is always *which node*, and the log already knows. But nor is a
+   line per offender: a missing input file leaves a hundred units with partial
+   data, and a hundred lines is a hundred lines nobody reads. This is the one
+   place a warning spends names, which is why clause 4 is strict about the rest.
+4. **Expected and handled costs counts, not names, and never reasons.** A repair
+   the rules made, a decision taken once and recorded in code, a check that found
+   what it always finds — one short line per processor, and the names and the
+   reasoning stay in this documentation where they do not have to be retyped into
+   every log. `Gaps interpolated at 7 node(s), 3 large year change(s) left as
+   they are.` is a whole build's worth of hydro repairs.
+5. **Progress lines carry the run.** `Validating and curing processor output...`
+   is the shape to copy: it says all normal and nothing else, and it is a fine
+   summary of a thousand lines of code that found nothing to report.
+
+The same rule governs what a *check* is worth adding. A test that fires on
+correct data every run is not a strict check, it is a broken one — the isolated
+capacity-factor dropout test has a threshold precisely so that it stays silent on
+weather and speaks on dropped values.
+
+## What a processor contributes besides the series
+
+Most processors return the time series and nothing else. A node, a grid or a flow
+the model already has needs no announcing — it is in the source workbooks, which
+is how the processor found it in the first place.
+
+What does need saying is a fact about the data that only the processor knows and
+nothing downstream can work out. Today there is exactly one: the hydro storage
+limits are a **time series** rather than a constant, and the input Excel has to
+say so or Backbone uses the node's constant and never opens the GDX.
+
+A processor says it by filling `self.frames` with tables named after the source
+data ones — `nodedata`, `boundarydata`, `demanddata` and the rest, the same names
+`requires_source_data` uses to ask for them. They are merged into those tables
+after the timeseries phase, and the input Excel is built from the result.
+
+Two rules govern the merge. **The workbook wins**: a contribution fills only
+where the source data said nothing, so a value written by hand is never
+overwritten by a processor. And a contribution is checked before it is accepted —
+an unknown table name, a missing key column or a blank key is reported naming the
+processor and dropped. That costs the contribution alone: the time series is
+unaffected and its GDX is still written.
+
 ## What is cached, and what forces a rebuild
 
 A processor is rerun when its `timeseries_specs` entry changed, when its own
 source file changed (the runner hashes it), or when `force_full_rerun = True` at
 the top of the config. Otherwise its previous output stands.
 
-A processor may also be **copied instead of run**. A source that does not depend
-on the scenario — weather does not care which scenario year is being modelled —
-takes `is_input_data_dependent: false` in its spec, and a multi-scenario build
-then copies its GDX, its cached results and its hash from the first output folder
-rather than repeating the work.
+What is kept between runs is what each processor *returned*: its GDX files, and
+its contributions to the source data tables exactly as it produced them. Nothing
+merged is ever cached, so the input Excel is rebuilt from the source workbooks
+plus those contributions every time — which is what makes a partial rerun, where
+most sources did not execute, describe the same model as a full one.
 
-With one override: a processor that declares it needs merged source data is
-scenario-dependent whatever the config says, because the frames it receives are
-filtered per scenario, year and country. A copy from another scenario's folder
-would be that scenario's answer wearing this one's name. The code takes the
-processor's declaration over the config, and says so when the two disagree.
+Every processor is scenario-dependent, and a multi-scenario build runs each of
+them per scenario. A build used to copy the weather-driven ones from the first
+output folder on the grounds that weather does not care which scenario year is
+modelled — but what gets *built* does: the VRE processors read `unitdata` to
+learn which nodes have a unit of their flow, and that is filtered per scenario,
+year and country. A copy from another scenario's folder would be that scenario's
+answer wearing this one's name. The copying, its `is_input_data_dependent` spec
+key and the checks that guarded it are gone; a second scenario costs about a
+minute more.
 
 ## Adding a source
 
@@ -249,6 +341,8 @@ processor's declaration over the config, and says so when the two disagree.
    `requires_source_data` if you need a merged source-data frame. Declarations
    are checked against the real data on every run and are versioned with the
    file, so they cannot go stale.
+   Fill `self.frames` only if the input Excel needs to be told something the
+   source workbooks cannot say — see above. Most sources need nothing here.
 4. Add an entry to `timeseries_specs` in the config. The comment block above it
    documents every field.
 5. Write a page in `docs/`, link it from `README.md`, and add it to the list on
@@ -268,11 +362,15 @@ its time series; the same cell reported costs one node and names it.
 | `src/timeseries/processors/base_processor.py` | the base class, the declarations, and the file readers |
 | `src/timeseries/processors/*.py` | one file per source |
 | `src/GDX_exchange.py` | the GDX boundary, and the one NaN-to-zero conversion |
+| `src/source_data/source_data_contributions.py` | what a processor may add to a source data table, and how it is merged in |
+| `src/source_workbook_shape.py` | which table declares which dimension, for the check above |
 | `src_files/config_*.ini` | `timeseries_specs`, `climate_data`, the window and the forecast branches |
 
 ## See also
 
 - [Source workbook conventions](source-workbook-conventions.md) — how the Excel
   files behind the annual figures are read and combined
+- [Input Excel builder](input-excel.md) — the phase after this one, and what a
+  contribution to a source data table ends up looking like in `inputData.xlsx`
 - `tests/README.md` — the NA and zero boundary map, for anyone changing the
   pipeline rather than the data

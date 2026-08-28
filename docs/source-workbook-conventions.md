@@ -96,6 +96,43 @@ Some parameters belong to the unit as a whole rather than to one connection —
 `availability`, `unitCount`, `eff00`. Giving one of those a connection suffix is
 reported and the column ignored.
 
+### Columns that stand for a dimension
+
+Two `nodedata` column families name a value rather than a parameter, so the set
+of them is open-ended and no list has to be kept up to date.
+
+`emission_CO2`, `emission_CH4` and so on give the node's emission factor per
+MWh. The part after the underscore is the emission's name, and whatever you write
+there becomes an emission in the model.
+
+`upwardLimit`, `downwardLimit`, `reference`, `maxSpill` and `balancePenalty` give
+the node's state boundaries — one column per boundary type, because one row per
+node is what a spreadsheet is good at. Backbone indexes them the other way round,
+so the build turns each non-blank cell into a row saying "this node's upwardLimit
+is this constant". That matters when something else has an opinion about the same
+boundary: a timeseries processor can say a node's limit follows a seasonal
+profile instead, and then the profile is used and the column is not. Your value
+wins wherever you wrote one — a processor can only fill a gap, never overwrite.
+
+### Where a grid or a node comes from
+
+Four sheets can bring one into being, and none of them is more official than the
+others:
+
+- a `nodedata` row, one node;
+- a `demanddata` row, one node;
+- a `unitdata` row, **one per connection** — a battery unit's `grid_output1` of
+  `batterystor` creates that grid and its `XX00_batterystor` node, and every fuel
+  grid arrives the same way;
+- either end of a `transferdata` link.
+
+So there is no sheet you must declare a node in before using it elsewhere. The
+cost of that convenience is that a mistyped name is indistinguishable from a new
+node — it simply appears in the model, connected to whatever the typo was in.
+The one place the build can tell is a **timeseries processor** naming a node none
+of the four sheets has, and it reports that; between the sheets themselves it
+cannot, and does not pretend to.
+
 ### Combining rows: the `method` column
 
 Several files and sheets can describe the same thing. They are applied in the
@@ -280,5 +317,9 @@ rule never matched.
   demand sheet means: a weather-normalised normal year, never a realised one, and the
   same holds for the electricity demand table
 - [Hydro data](hydro.md) — which file supplies which hydro number, and in what unit
+- [Input Excel builder](input-excel.md) — what becomes of these sheets: which of their
+  columns reach `inputData.xlsx`, and which values are deduced rather than copied
+- [Identified gaps](identified-gaps.md) — Backbone parameters that have no column in
+  any of these sheets yet, and the one table with no workbook of its own
 - `tests/README.md` — the NA/zero boundary map, for anyone changing the pipeline
 - `docs/dictionary.md` in the Backbone repository — what each parameter means
