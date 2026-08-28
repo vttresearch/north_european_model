@@ -49,7 +49,7 @@ class {name}:
 
     def run_processor(self):
 {body}
-        return ProcessorOutput(main_result={main_result}, frames={frames})
+        return ProcessorOutput(main_result={main_result}, frames={frames}, nothing_to_build={nothing_to_build})
 '''
 
 
@@ -134,13 +134,14 @@ def write_fake_processor(
     body: str = "",
     class_body: str = "",
     frames: str = "{}",
+    nothing_to_build: str = "False",
 ) -> Path:
     """Write a one-class processor module returning `main_result`, and return its path.
 
     `body` is spliced into ``run_processor``; `class_body` into the class itself,
     which is where declarations such as ``value_range`` live; `frames` is the
-    contribution dict, spliced in as an expression so a case can return
-    literally anything as one.
+    contribution dict, and `nothing_to_build` the flag, both spliced in as
+    expressions so a case can return literally anything as either.
     """
     folder.mkdir(parents=True, exist_ok=True)
     indented_body = textwrap.indent(textwrap.dedent(body).strip("\n"), " " * 8) if body else ""
@@ -155,6 +156,7 @@ def write_fake_processor(
         body=indented_body,
         class_body=indented_class,
         frames=frames,
+        nothing_to_build=nothing_to_build,
     )
     path = folder / f"{name}.py"
     path.write_text(source, encoding="utf-8")
@@ -174,6 +176,7 @@ def run_fake_processor(
     spec_overrides: dict | None = None,
     source_data: dict[str, pd.DataFrame] | None = None,
     frames: str = "{}",
+    nothing_to_build: str = "False",
 ) -> FakeRun:
     """Run a synthetic processor through the real ``ProcessorRunner``.
 
@@ -190,6 +193,7 @@ def run_fake_processor(
         processor_file = write_fake_processor(
             tmp_path / "processors", name, main_result,
             body=body, class_body=class_body, frames=frames,
+            nothing_to_build=nothing_to_build,
         )
     output_folder = tmp_path / "output"
     output_folder.mkdir(parents=True, exist_ok=True)

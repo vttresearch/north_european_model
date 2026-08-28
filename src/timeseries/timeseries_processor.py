@@ -458,10 +458,17 @@ class ProcessorRunner:
         if main_result.empty:
             # Return rather than fall through, since the message promises no GDX
             # output.
+            #
+            # At info when the processor set nothing_to_build: it has already said
+            # why it built nothing, and the runner cannot tell an emptiness that
+            # was ordered -- no unit uses this flow -- from one that is a failure.
+            # Warning on both taught a reader to skip the line, which is what the
+            # rest of this build's logging exists to avoid.
             return self._abandon(
                 f"Processor '{processor_name}' returned an empty DataFrame.  "
                 f"No GDX output will be written.",
-                level="warn", processor_file=processor_file,
+                level="info" if processor_result.nothing_to_build else "warn",
+                processor_file=processor_file,
             )
         expected_dims = [d for d in spec.get("bb_parameter_dimensions") if d not in ('t', 'f')]
         expected_cols = set(expected_dims + ['time', 'value'])

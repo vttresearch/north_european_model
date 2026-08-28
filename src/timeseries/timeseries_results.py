@@ -34,9 +34,18 @@ class ProcessorOutput:
         ``df_`` prefix -- ``{'nodedata': ...}`` is merged into ``df_nodedata``.
         Empty for a processor whose whole output is the time series itself,
         which is most of them. See ``source_data_contributions``.
+    nothing_to_build : bool
+        Set by a processor that returned an empty ``main_result`` **on purpose**
+        and has already said why -- no unit uses this flow, no country has a
+        demand row of this grid. ProcessorRunner then notes the empty result at
+        info instead of warning about it, leaving the processor's own message as
+        the one that carries the level. That is the "absence is not a defect" rule
+        applied to the runner, which cannot tell an ordered emptiness from a
+        broken one where the processor can.
     """
     main_result: pd.DataFrame
     frames: dict[str, pd.DataFrame] = field(default_factory=dict)
+    nothing_to_build: bool = False
 
 
 @dataclass

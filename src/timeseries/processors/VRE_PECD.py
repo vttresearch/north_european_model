@@ -764,6 +764,7 @@ class VRE_PECD(BaseProcessor):
                 f"is built.",
                 level="info",
             )
+            self.nothing_to_build = True
             return empty
 
         if not os.path.isdir(self.csv_folder):

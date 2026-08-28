@@ -95,6 +95,14 @@ class BaseProcessor(ABC):
 
         The rules the contribution is checked against, and what happens when two
         producers describe the same row, are in `source_data_contributions`.
+
+    nothing_to_build : bool
+        Set in `process()` before returning an empty frame *on purpose* -- no unit
+        uses this flow, no country has a demand row of this grid. Say why first,
+        at whatever level the situation deserves; the flag only stops
+        ProcessorRunner adding a second, blanker warning on top. Leave it False
+        for an emptiness that is a failure, which is the default and the case the
+        runner's own warning is for.
     """
 
     #: See "Declarations of intent" above.
@@ -114,6 +122,7 @@ class BaseProcessor(ABC):
         self.logger = kwargs.get('logger')
         self.main_result: Optional[pd.DataFrame] = None
         self.frames: dict[str, pd.DataFrame] = {}
+        self.nothing_to_build: bool = False
 
     # ------------------------------------------------------------------
     # Reading input files
@@ -280,5 +289,6 @@ class BaseProcessor(ABC):
         return ProcessorOutput(
             main_result=self.main_result,
             frames=self.frames,
+            nothing_to_build=self.nothing_to_build,
         )
 

@@ -701,6 +701,10 @@ class DH_demand_fromTemperature(BaseProcessor):
                 f"Nothing to build.",
                 level="warn",
             )
+            # This warning is the one worth reading: a demand processor is
+            # configured and no country it covers has a row. The flag stops
+            # ProcessorRunner adding a blanker one beside it.
+            self.nothing_to_build = True
             return pd.DataFrame(columns=['grid', 'node', 'time', 'value'])
 
         self.logger.log_status(

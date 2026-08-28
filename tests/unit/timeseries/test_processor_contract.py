@@ -51,6 +51,31 @@ class TestReturnShape:
         run.logger.assert_logged("empty DataFrame", level="warn")
         run.assert_no_gdx_written()
 
+    def test_an_emptiness_the_processor_ordered_is_not_a_warning(self, tmp_path):
+        """`nothing_to_build` says the processor meant it and has said why.
+
+        The runner cannot tell an emptiness that was ordered -- no unit uses this
+        flow, so VRE_PECD builds nothing -- from one that is a failure, and
+        warning on both is the noise "What a build says" exists to stop. The
+        processor can tell, so it decides.
+        """
+        run = run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": [], "node": [], "time": [], "value": []})',
+            nothing_to_build="True",
+        )
+        run.logger.assert_logged("empty DataFrame", level="info")
+        run.logger.assert_no_errors()
+        assert not run.logger.warnings
+
+    def test_and_it_still_writes_no_gdx(self, tmp_path):
+        run = run_fake_processor(
+            tmp_path,
+            'pd.DataFrame({"grid": [], "node": [], "time": [], "value": []})',
+            nothing_to_build="True",
+        )
+        run.assert_no_gdx_written()
+
     def test_missing_a_required_column_is_rejected(self, tmp_path):
         run = run_fake_processor(
             tmp_path,
