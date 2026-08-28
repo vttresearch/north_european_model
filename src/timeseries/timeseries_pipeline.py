@@ -337,4 +337,6 @@ class TimeseriesPipeline:
         if not other_demands.empty:
             contributions_in_order.append({"nodedata": other_demands})
 
-        return source_data_contributions.combine_contributions(contributions_in_order)
+        return source_data_contributions.combine_contributions(
+            contributions_in_order, self.logger
+        )

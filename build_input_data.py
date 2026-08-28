@@ -199,7 +199,7 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 level="skip"
             )
             ts_contributions = combine_contributions(
-                list(cache_manager.load_processor_frames().values())
+                list(cache_manager.load_processor_frames().values()), logger
             )
         timeseries_run_successfully = (logger.error_count == error_count_before_ts)
 
@@ -208,7 +208,17 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         # SourceDataPipeline.run(): the frames it builds are what the processors
         # *read*, and folding their own output back in before they run would feed
         # them their own answers.
-        apply_contributions(source_data_pipeline, ts_contributions, logger)
+        #
+        # Guarded on the one reader there is. rebuild_bb_excel implies both
+        # reimport_source_excels and needs_timeseries_run (CacheManager.run), so
+        # inside the guard both phases have actually run and there are real tables
+        # to merge into. Unguarded, a fully warm run merges into an empty
+        # df_nodedata -- merge_contribution takes the contribution whole when the
+        # source is empty -- and leaves SourceDataPipeline holding a three-column
+        # table that states something false about the model. Nothing reads it
+        # today, which is exactly why it would go unnoticed.
+        if cache_manager.rebuild_bb_excel:
+            apply_contributions(source_data_pipeline, ts_contributions, logger)
 
         # --- 2.5. Backbone Input Excel building phase ---
 

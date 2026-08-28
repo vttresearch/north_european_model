@@ -260,6 +260,68 @@ class TestCombining:
         assert combined == {}
 
 
+class TestTwoProducersOfOneRow:
+    """The first answer wins, and the second is dropped here rather than merged.
+
+    The merge cannot express the choice: its matched-row fill would keep the
+    last, and an unmatched duplicate would be appended twice -- leaving two rows
+    with one key in a ``df_*`` table, which is the state ``merge_contribution``
+    itself refuses to merge into.
+    """
+
+    def test_the_first_answer_is_the_one_kept(self, logger):
+        combined = combine_contributions([
+            {"nodedata": nodedata({"influx": -10})},
+            {"nodedata": nodedata({"influx": -99})},
+        ], logger)
+
+        assert list(combined["nodedata"]["influx"]) == [-10]
+
+    def test_the_dropped_row_is_reported_with_its_key(self, logger):
+        combine_contributions([
+            {"nodedata": nodedata({"influx": -10})},
+            {"nodedata": nodedata({"influx": -99})},
+        ], logger)
+
+        logger.assert_logged("elec FI_elec", level="warn")
+
+    def test_a_key_only_one_producer_states_is_untouched(self, logger):
+        combined = combine_contributions([
+            {"nodedata": nodedata({"node": "FI_elec"})},
+            {"nodedata": nodedata({"node": "SE_elec"})},
+        ], logger)
+
+        assert list(combined["nodedata"]["node"]) == ["FI_elec", "SE_elec"]
+        logger.assert_clean()
+
+    def test_a_repeat_never_becomes_two_rows_of_one_key(self, logger):
+        """The append path is the one that would have made a df_* table
+        unmergeable, so it is pinned separately from the fill path above."""
+        combined = combine_contributions([
+            {"nodedata": nodedata({"node": "NEW_elec"})},
+            {"nodedata": nodedata({"node": "NEW_elec"})},
+        ], logger)
+        merged = merge(nodedata({"node": "FI_elec"}), combined["nodedata"], logger)
+
+        assert list(merged["node"]) == ["FI_elec", "NEW_elec"]
+
+    def test_a_table_with_no_key_of_its_own_is_left_alone(self, logger):
+        """apply_contributions reports an unknown table and merges nothing, so
+        there is no de-duplication here to protect it."""
+        rows = pd.DataFrame([{"grid": "elec", "node": "FI_elec"}])
+        combined = combine_contributions([{"nonsense": rows}, {"nonsense": rows}], logger)
+
+        assert len(combined["nonsense"]) == 2
+
+    def test_no_logger_is_allowed(self):
+        combined = combine_contributions([
+            {"nodedata": nodedata({"influx": -10})},
+            {"nodedata": nodedata({"influx": -99})},
+        ])
+
+        assert list(combined["nodedata"]["influx"]) == [-10]
+
+
 class TestApplying:
     def test_the_pipeline_frame_is_replaced_in_place(self, logger):
         class Pipeline:

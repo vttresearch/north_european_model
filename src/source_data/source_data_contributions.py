@@ -21,9 +21,17 @@ need one: ``(grid, node)`` names the same row.
 
 **The workbook wins.** A contribution fills only where the source frame says
 nothing, the same precedence ``merge_unittypedata_into_unitdata`` uses for
-type-level defaults. This is what lets a workbook override a processor -- write
-``usetimeseries = 0`` on a boundary row and the processor's ``1`` cannot reach
-it.
+type-level defaults. So a value written by hand overrides a processor: put an
+``influx`` on a nodedata row and the flat one
+``TimeseriesPipeline._influx_for_grids_without_a_processor`` derives for that grid
+never reaches it. Boundaries are the one table this cannot be said of, because
+they have no workbook to write in -- see docs/identified-gaps.md.
+
+**First answer wins.** Where two producers describe the same row,
+:func:`combine_contributions` keeps the first and drops the rest, which is the
+rule :func:`validate_contribution` already applies inside a single frame. Neither
+of them is arbitrating between two right answers: two producers writing the same
+row is a mistake somewhere, and the merge below cannot say whose.
 
 **Nothing derived is ever cached.** The cache holds what a processor returned
 and nothing else; the melt below and the merge here are recomputed on every
@@ -165,12 +173,57 @@ def validate_contribution(
     return frame
 
 
-def combine_contributions(per_source: list[dict[str, pd.DataFrame]]) -> dict[str, pd.DataFrame]:
+def _keep_first_of_each_key(
+    name: str, frame: pd.DataFrame, logger
+) -> pd.DataFrame:
+    """`frame` with the second and later row for any key dropped.
+
+    Left alone when the table is not one this module knows, or the stacked frame
+    is missing a key column: ``apply_contributions`` reports the first and
+    ``merge_contribution`` the second, and neither ends up merged, so there is
+    nothing a de-duplication here could protect.
+    """
+    key_columns = CONTRIBUTION_KEYS.get(name)
+    if key_columns is None or not set(key_columns) <= set(frame.columns):
+        return frame
+
+    keys = pd.Series(_row_keys(frame, key_columns))
+    duplicated = keys.duplicated()
+    if not duplicated.any():
+        return frame
+
+    if logger is not None:
+        repeated = [" ".join(key) for key in keys[duplicated.to_numpy()]]
+        logger.log_status(
+            f"{len(repeated)} contributed '{name}' row(s) repeat a "
+            f"({', '.join(key_columns)}) another contribution already stated: "
+            f"{utils.summarise(repeated)}. Keeping the first of each. Two producers "
+            f"describing one row is a mistake somewhere, and nothing here can tell "
+            f"which of them is right.",
+            level="warn",
+        )
+    return frame[~duplicated.to_numpy()].reset_index(drop=True)
+
+
+def combine_contributions(
+    per_source: list[dict[str, pd.DataFrame]],
+    logger=None,
+) -> dict[str, pd.DataFrame]:
     """Stack several producers' contributions into one frame per table name.
 
-    Order follows the order they were produced in, and no de-duplication happens
-    here: two processors legitimately describing the same row is a question for
-    the merge, which takes the first answer, not for the stacking.
+    Order follows the order they were produced in, and the **first answer wins**:
+    where two producers describe the same row, the later one is dropped here
+    rather than carried into the merge. The merge cannot express the choice --
+    its matched-row fill would keep the last, and an unmatched duplicate would be
+    appended twice, putting two rows with one key into a ``df_*`` table, which is
+    the very state ``merge_contribution`` then refuses to merge into.
+
+    So the rule is the one ``validate_contribution`` already applies inside a
+    single frame, and a repeated key costs the same whether it arrives from one
+    producer or from two.
+
+    `logger` is optional only because a caller may have none; pass one wherever
+    there is one, since a dropped row is worth saying out loud.
     """
     stacked: dict[str, list[pd.DataFrame]] = {}
     for frames in per_source:
@@ -179,7 +232,11 @@ def combine_contributions(per_source: list[dict[str, pd.DataFrame]]) -> dict[str
                 stacked.setdefault(name, []).append(frame)
 
     return {
-        name: (frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True))
+        name: _keep_first_of_each_key(
+            name,
+            frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True),
+            logger,
+        )
         for name, frames in stacked.items()
     }
 
@@ -207,6 +264,21 @@ def merge_contribution(
 
     if source is None or source.empty:
         return contribution.reset_index(drop=True)
+
+    # The same test validate_contribution applies to the contribution, applied to
+    # the source. Not symmetry for its own sake: the key columns of
+    # userconstraintdata are the four uc slots, which create_p_userconstraint
+    # itself treats as optional and fills with pd.NA, so a source frame without
+    # one is a shape this pipeline already produces -- and _row_keys would raise
+    # a bare KeyError on it, in a phase that is supposed to carry on.
+    missing = [c for c in key_columns if c not in source.columns]
+    if missing:
+        logger.log_status(
+            f"df_{name} has no {', '.join(missing)} column, so a contribution cannot "
+            f"be matched to it. Leaving the table as the source data left it.",
+            level="warn",
+        )
+        return source
 
     source_keys = _row_keys(source, key_columns)
     if len(set(source_keys)) != len(source_keys):

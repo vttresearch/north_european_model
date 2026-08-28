@@ -975,9 +975,12 @@ class BBExcelPipeline:
         single choice is the whole of the precedence rule, which used to be
         implicit in the order two data sources were consulted in.
 
-        The other direction is a workbook's to take: the contribution merge fills
-        only where the workbook said nothing, so ``usetimeseries = 0`` written by
-        hand survives a processor claiming otherwise, and the constant is used.
+        Nothing overrides that from the other direction yet. The contribution
+        merge fills only where the source said nothing, so a hand-written
+        ``usetimeseries = 0`` would survive a processor claiming otherwise -- but
+        there is no boundary workbook to write one in, and build_boundarydata
+        derives every row it makes from nodedata's constants. See
+        docs/identified-gaps.md.
 
         A constant of zero writes nothing: ``0`` is "not set" by the time a value
         reaches this class, and Backbone reads it the same way.
