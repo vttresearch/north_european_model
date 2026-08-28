@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 
 from src.timeseries.processors.base_processor import BaseProcessor, SourceDataError
-from src.timeseries.timeseries_helpers import nodes_needing_flow, summarise
+from src.timeseries.timeseries_helpers import nodes_needing_flow
+from src.utils import summarise
 
 
 #: The 22 underscore-separated fields of a PECD file name, in order.

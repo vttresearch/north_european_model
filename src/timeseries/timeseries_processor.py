@@ -62,12 +62,12 @@ from src.timeseries.timeseries_helpers import (
     find_incomplete_climate_windows,
     find_time_axis_defects,
     order_timeseries_for_labelling,
-    summarise,
     update_import_timeseries_inc,
     split_timeseries_to_climate_windows,
     calculate_climatological_forecasts,
 )
 from src.timeseries.timeseries_results import ProcessorOutput, ProcessorRunResult
+from src.utils import summarise
 from src.infrastructure.logger import IterationLogger
 from typing import Optional
 

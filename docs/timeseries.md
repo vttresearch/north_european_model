@@ -245,7 +245,8 @@ A build log is read by someone who wants to know whether anything needs their
 attention. Everything else in it is cost, and a page of standing text is worse
 than cost: it is what teaches a reader to skip the line that is new.
 
-So the rule, for every message this pipeline writes:
+So the rule, for every message a build writes -- the timeseries pipeline, the
+source data phase and the input Excel builder alike:
 
 1. **A warning asks the reader to change something.** If there is nothing they
    can do about it, it is not a warning, whatever its tone.
@@ -254,11 +255,20 @@ So the rule, for every message this pipeline writes:
    reservoir, a landlocked country with no offshore wind — the build says nothing
    at all. Spain has no district heating and never will; a line saying so every
    run only makes its reader wonder what they did wrong.
-3. **Partial or contradictory data earns a line.** The model has the node or the
-   unit, and the data for it is missing or inconsistent: a node in `nodedata` but
-   not in `demanddata`, a hydro node with no inflow anywhere in the source, a unit
-   whose `flow` has no capacity factor series. That is the case worth
-   interrupting someone for, and it is the case the checks are shaped around.
+3. **Partial or contradictory data earns a line, and the line names names.** The
+   model has the node or the unit, and the data for it is missing or
+   inconsistent: a node in `nodedata` but not in `demanddata`, a hydro node with
+   no inflow anywhere in the source, a unit whose `flow` has no capacity factor
+   series. That is the case worth interrupting someone for, and it is the case
+   the checks are shaped around.
+
+   One line, naming the **first three offenders and then counting the rest** --
+   `summarise` in `utils.py` is exactly that, and at three or fewer it names them
+   all. A bare count is not enough: the reader's next question after "1 node has
+   no price data" is always *which node*, and the log already knows. But nor is a
+   line per offender: a missing input file leaves a hundred units with partial
+   data, and a hundred lines is a hundred lines nobody reads. This is the one
+   place a warning spends names, which is why clause 4 is strict about the rest.
 4. **Expected and handled costs counts, not names, and never reasons.** A repair
    the rules made, a decision taken once and recorded in code, a check that found
    what it always finds — one short line per processor, and the names and the

@@ -16,12 +16,14 @@ import pandas as pd
 import pytest
 
 from src.utils import (
+    LOG_LIST_LIMIT,
     drop_empty_parameter_columns,
     fill_all_na,
     fill_numeric_na,
     is_col_empty,
     parse_sys_args,
     standardize_df_dtypes,
+    summarise,
 )
 from tests._common.contracts import assert_normalized
 
@@ -334,3 +336,40 @@ class TestParseSysArgs:
             mp.setattr(sys, "argv", argv)
             with pytest.raises(SystemExit):
                 parse_sys_args()
+
+
+class TestSummarise:
+    """The naming rule for a warning: first few, then a count.
+
+    A pure string transform, which tests/README.md lists as one of the five cases
+    where pinning exact output is correct -- the wording *is* the contract, since
+    every warning about partial data is built out of it.
+    """
+
+    def test_a_short_list_is_named_in_full(self):
+        assert summarise(["a", "b"]) == "a, b"
+
+    def test_exactly_the_limit_is_still_named_in_full(self):
+        items = [str(n) for n in range(LOG_LIST_LIMIT)]
+        assert summarise(items) == ", ".join(items)
+
+    def test_beyond_the_limit_the_rest_are_counted(self):
+        assert summarise(["a", "b", "c", "d"], limit=3) == "a, b, c and 1 more"
+
+    def test_the_count_is_of_what_was_left_out_not_the_total(self):
+        assert summarise([str(n) for n in range(10)], limit=2) == "0, 1 and 8 more"
+
+    def test_a_single_item_is_just_named(self):
+        # The case the rule exists for: "1 node has no price data" makes its
+        # reader ask which node, and the log already knows.
+        assert summarise(["FI_elec"]) == "FI_elec"
+
+    def test_an_empty_list_renders_as_nothing(self):
+        assert summarise([]) == ""
+
+    def test_non_strings_are_rendered(self):
+        assert summarise([1, None]) == "1, None"
+
+    def test_a_generator_is_accepted(self):
+        # Callers pass comprehensions inline, so it must not need a list.
+        assert summarise(f"n{i}" for i in range(2)) == "n0, n1"
