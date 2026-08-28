@@ -23,6 +23,11 @@ class BBExcelPipeline:
     Assembles the Backbone energy system model input Excel from pre-processed
     source DataFrames produced by the pipeline.
 
+    `docs/input-excel.md` is the documentation and carries the reasoning: which
+    sheets are written, why a parameter column is missing whenever nothing set it,
+    how a node is decided to be a price or a balance or a storage node, and what
+    each warning is asking its reader to change.
+
     Numeric value conventions
     -------------------------
     0 = NA = None = "parameter not set" throughout this class.
@@ -790,6 +795,9 @@ class BBExcelPipeline:
 
         Remaining param_gn:
             All other PARAM_GN columns (including isActive) are read from df_nodedata.
+
+        The deduction table, and why maxSpill and balancePenalty are deliberately
+        not in it, is "How a node is classified" in docs/input-excel.md.
         """
         dimensions = ['grid', 'node']
         param_gn = self.PARAM_GN
@@ -1074,6 +1082,9 @@ class BBExcelPipeline:
         """
         Adds p_gn('boundStart') and p_gnBoundaryPropertiesForStates('reference')
         for storage nodes.
+
+        "Storage start levels" in docs/input-excel.md carries the rule and the
+        two sources it reads, in order.
 
         The number this writes is provisional for hydro
         ----------------------------------------------

@@ -370,5 +370,7 @@ its time series; the same cell reported costs one node and names it.
 
 - [Source workbook conventions](source-workbook-conventions.md) — how the Excel
   files behind the annual figures are read and combined
+- [Input Excel builder](input-excel.md) — the phase after this one, and what a
+  contribution to a source data table ends up looking like in `inputData.xlsx`
 - `tests/README.md` — the NA and zero boundary map, for anyone changing the
   pipeline rather than the data

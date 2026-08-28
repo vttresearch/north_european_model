@@ -48,6 +48,8 @@ not build and why, and has a documentation page of its own.
 
 ## Input excel builder
 
+- How the builder turns the source data tables into `inputData.xlsx`:
+  [docs/input-excel.md](docs/input-excel.md).
 - p_gn/p_gnn/p_gnu_io/p_unit/p_gnBoundaryPropertiesForStates: empty parameter
   columns are dropped, always keeping one.
 - storage starts: a node with no determinable start level is reported. It was

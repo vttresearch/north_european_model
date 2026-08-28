@@ -317,5 +317,7 @@ rule never matched.
   demand sheet means: a weather-normalised normal year, never a realised one, and the
   same holds for the electricity demand table
 - [Hydro data](hydro.md) — which file supplies which hydro number, and in what unit
+- [Input Excel builder](input-excel.md) — what becomes of these sheets: which of their
+  columns reach `inputData.xlsx`, and which values are deduced rather than copied
 - `tests/README.md` — the NA/zero boundary map, for anyone changing the pipeline
 - `docs/dictionary.md` in the Backbone repository — what each parameter means
