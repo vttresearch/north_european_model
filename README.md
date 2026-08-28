@@ -72,6 +72,10 @@ links to it.
   gets, why a parameter column is missing whenever nothing set it, how a node is decided to
   be a price or a balance or a storage node, which capacities and storage start levels are
   derived rather than read, and what each of its warnings is asking you to change.
+- [Identified gaps](docs/identified-gaps.md) — a working inventory rather than a
+  reference page: what Backbone can express that this build does not write, and which
+  of its own rules are known to be provisional. Read it before designing anything that
+  adds a parameter or a sheet.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

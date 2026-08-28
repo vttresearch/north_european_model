@@ -319,5 +319,7 @@ rule never matched.
 - [Hydro data](hydro.md) — which file supplies which hydro number, and in what unit
 - [Input Excel builder](input-excel.md) — what becomes of these sheets: which of their
   columns reach `inputData.xlsx`, and which values are deduced rather than copied
+- [Identified gaps](identified-gaps.md) — Backbone parameters that have no column in
+  any of these sheets yet, and the one table with no workbook of its own
 - `tests/README.md` — the NA/zero boundary map, for anyone changing the pipeline
 - `docs/dictionary.md` in the Backbone repository — what each parameter means

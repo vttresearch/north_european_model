@@ -13,7 +13,8 @@ Where each value comes from
 it, and ``../inc/1a_definitions.gms`` is where Backbone declares the sets:
 
 - the ``PARAM_*`` lists are its parameter tables, restricted to what this project
-  actually writes -- Backbone has more;
+  actually writes. Backbone has more, and which more is measured per sheet in
+  docs/identified-gaps.md rather than left as this sentence;
 - the ``PARAM_*_DEFAULTS`` entries are the ``Default`` column of those same
   tables, for the parameters whose default is not 0;
 - ``UC_DIMENSION_COLUMNS`` and ``UC_UNUSED_DIMENSION`` are the ``p_userconstraint``

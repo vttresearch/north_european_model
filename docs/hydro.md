@@ -127,6 +127,16 @@ rule needs a rewrite of its own — as written it cannot express a run starting 
 ending in summer — so nothing in the build depends on the provisional number
 beyond it being above zero.
 
+One consequence looks like a false positive and is not. A node whose `upwardLimit`
+comes only from a series, with no `nodedata` constant behind it, gets no
+provisional level and the builder warns that it could not determine one. That
+warning is correct — the data really is partial, and partial data warns — even
+though `changes.inc` will go on to bound the node anyway. The build cannot see
+past the workbook it is writing, and should not be taught to pretend it can. Both
+this and the `changes.inc` patch itself come out when the hydro rules are redone;
+until then they are listed in
+[Identified gaps](identified-gaps.md#the-hydro-storage-start-level).
+
 Whether that is the right treatment is discussed in
 [the caveats](#some-caveats-from-cross-checking-the-data), which is also where the
 evidence against conjuring a profile for them sits.

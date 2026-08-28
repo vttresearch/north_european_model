@@ -268,4 +268,7 @@ happened.
   contribute to the source data tables, and the full build-log rule
 - [Hydro data](hydro.md) — where the storage nodes and their boundaries come from,
   and why the reservoir reference is recomputed in `changes.inc`
+- [Identified gaps](identified-gaps.md) — which Backbone parameters and sheets this
+  phase does not write, and which of its rules are known to be provisional. The
+  place to look when a parameter you expected is not on any sheet
 - `tests/README.md` — the NA/zero boundary map, for anyone changing this phase
