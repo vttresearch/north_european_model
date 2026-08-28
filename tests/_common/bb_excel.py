@@ -5,8 +5,9 @@ touches no disk until ``run()`` writes the workbook. So its ``create_*`` /
 ``fill_*`` methods can be exercised directly on hand-made frames, without
 building an input folder or an Excel file.
 
-``cache_manager`` is stored and never read, so it stays None -- which also
-avoids CacheManager's mkdir-on-construction and its CWD-relative source hashing.
+``cache_manager`` is a field of ``BBExcelInputs`` that the pipeline never reads
+and does not even store, so it stays None -- which also avoids CacheManager's
+mkdir-on-construction and its CWD-relative source hashing.
 """
 
 from __future__ import annotations
@@ -65,7 +66,11 @@ def make_pipeline(
 
 
 def gnu_frame(*rows: dict) -> pd.DataFrame:
-    """A flat p_gnu_io frame; callers add the fake MultiIndex when a method wants it."""
+    """A p_gnu_io frame, as the builders pass one around.
+
+    No wrapping needed: the fake MultiIndex is applied in bb_excel_writer on the
+    way to the workbook, so every method here takes and returns a plain frame.
+    """
     defaults = {"grid": "elec", "node": "FI_elec", "unit": "u1", "input_output": "output"}
     return pd.DataFrame([{**defaults, **row} for row in rows])
 

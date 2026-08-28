@@ -32,7 +32,6 @@ SPEC = {
     "bb_parameter": "ts_influx",
     "bb_parameter_dimensions": ["grid", "node", "f", "t"],
     "demand_grid": "",
-    "secondary_output_name": None,
 }
 
 #: Two real processor files, because _detect_processor_code_changes hashes the

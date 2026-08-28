@@ -44,10 +44,10 @@ not build and why, and has a documentation page of its own.
 - Blank rows, unnamed columns and repeated headers inside a table are reported
   rather than silently dropped.
 - A node that only one of `nodedata` and `demanddata` knows about is reported.
+- `merge_row_by_row`: column titles compared case-insensitively, first spelling kept.
 
 ## Input excel builder
 
-- merge_row_by_row: column titles compared case-insensitively, first spelling kept.
 - p_gn/p_gnn/p_gnu_io/p_unit/p_gnBoundaryPropertiesForStates: empty parameter
   columns are dropped, always keeping one.
 - storage starts: a node with no determinable start level is reported. It was
@@ -59,6 +59,10 @@ not build and why, and has a documentation page of its own.
   excel's provisional value is no longer meant to be the one used.
 - `useTimeSeries` and `storageValueUseTimeSeries` spelled `useTimeseries` and
   `storageValueUseTimeseries`, following Backbone.
+- `boundStart` is dropped when no node has a storage start level, rather than
+  written as a column of zeros.
+- Warnings name the first three offenders and then count the rest, instead of
+  one line each. [docs/timeseries.md](docs/timeseries.md)
 
 ## Test suite
 

@@ -87,6 +87,8 @@ class CacheManager:
     _BB_PIPELINE_FILES = [
         Path("./src/bb_excel/bb_excel_inputs.py"),
         Path("./src/bb_excel/bb_excel_pipeline.py"),
+        Path("./src/bb_excel/bb_excel_tables.py"),
+        Path("./src/bb_excel/bb_excel_writer.py"),
     ]
 
     @property

@@ -51,8 +51,8 @@ codebase's history lives at the seam. This table is what the suite is organised 
 | 1 | Excel cell → source DataFrame | blank cell | `pd.NA`; all-NA column → `object` | `read_input_excels` → `normalize_dataframe` → `standardize_df_dtypes` | specified |
 | 2 | within source merging | `pd.NA` ≠ `0` | same | `merge_row_by_row` truth table (`:884-909`) | specified |
 | 3 | source DataFrames → BB Excel builder | `pd.NA` ≠ `0` | `0 = NA = None = not set` | `fill_all_na` / `fill_numeric_na` (`utils.py:107,119`) | specified |
-| 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns (`bb_excel_pipeline.py:332`) | specified |
-| 4b | BB frame → fake-MultiIndex sheet | dtype is meaningful | every parameter column is `object` | `create_fake_MultiIndex` inserts a text header row | specified |
+| 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns, via `drop_empty_parameter_columns` | specified |
+| 4b | BB frame → written sheet | dtype is meaningful | every parameter column is `object` | `create_fake_MultiIndex` inserts a text header row, in `write_workbook` | specified |
 | 5 | processor `process()` → `main_result` | NaN = no data | NaN = no data | validation in `ProcessorRunner` | specified |
 | 6 | `main_result` → climate windows → forecasts | NaN = no data | NaN = no data | nothing — gaps pass through | specified |
 | 7 | window DataFrame → GDX | NaN = no data | GAMS: `0 = empty` | `GDX_exchange.prepare_values_for_gdx` | specified |
@@ -133,9 +133,14 @@ GDX is still written and the run continues.
 ### Boundary 4b: after the fake MultiIndex, dtype means nothing
 
 `create_fake_MultiIndex` pushes a row of parameter **names** into the sheet, so every
-parameter column below it is `object` whatever it held before — and so is every `*_flat`
-frame derived from it. This is the one place where `object` does not mean "no assumption
-has been made" and does not mean something unparseable got in.
+parameter column below it is `object` whatever it held before. This is the one place where
+`object` does not mean "no assumption has been made" and does not mean something
+unparseable got in.
+
+The boundary is one-way and one step wide. `write_workbook` in `bb_excel_writer.py` applies
+the transform per sheet on the way out and nothing reads a sheet back, so no builder ever
+holds a frame in that state — they work on ordinary frames whose dtypes still mean what
+this document says they mean.
 
 It is also why the numeric gate is not applied there: a column that legitimately mixes a
 name with numbers is precisely the shape the gate reports, so running it would flag every

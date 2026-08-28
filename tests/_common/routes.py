@@ -10,9 +10,9 @@ Three things make that possible:
 - ``load_config`` returns a plain dict and every consumer treats it as one, so
   configparser is bypassed entirely and tested separately.
 - ``BBExcelInputs`` is a bare dataclass with no runtime validation, and
-  ``BBExcelPipeline`` stores ``cache_manager`` without ever reading it. Passing
-  None avoids CacheManager's mkdir-on-construction and its CWD-relative source
-  hashing in one step.
+  ``BBExcelPipeline`` never reads ``cache_manager`` -- it does not even store it.
+  Passing None avoids CacheManager's mkdir-on-construction and its CWD-relative
+  source hashing in one step.
 - ``BBExcelPipeline`` reads the source data tables and nothing else, so a route
   run needs no timeseries phase at all. What that phase would have contributed
   is passed to ``run_route`` as ``contributions=`` and merged the real way.
