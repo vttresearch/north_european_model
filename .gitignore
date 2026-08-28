@@ -4,6 +4,7 @@
 !/src/
 !/src_files/
 !/tests/
+!/tools/
 !/.spinetoolbox/
 
 # Documentation pages are shared. Name a page here to keep it local instead --

@@ -8,13 +8,36 @@ This repository builds input data for the Backbone energy system model, modellin
 ## Scope for AI assistance
 
 Only the following directories contain actively developed code and data definitions:
-- `dev/` -- Early versio of developer functions
+- `dev/` -- Early version of developer functions, and local reference artifacts
+  (a known-good `inputData.xlsx`, reference GDX files). Untracked, and large.
 - `src/` -- Python source code (data pipeline, processors, utilities)
 - `src_files/` -- configuration files (.ini), Excel data files, GAMS templates, time series
+- `tools/` -- shared standalone tools, tracked (see below)
 
 All other subdirectories are generated outputs or ad-hoc analysis folders -- skip them.
 
 All `.cmd` files are user-owned run scripts. Do not rewrite them unless explicitly asked.
+
+
+## Tools
+
+`tools/` holds standalone scripts that answer a question about a build rather than
+taking part in one. **Look here before writing a throwaway script** -- that is what
+the folder is for, and a tool that already exists has already been debugged.
+
+Each tool documents itself in its module docstring: what it checks, what it cannot
+see, and its usage line. They take command-line arguments, print a report, and exit
+0 / 1 so they can gate a loop; they are not imported by `src/` and are not in the
+pytest suite. Reference artifacts they compare against live in the untracked `dev/`,
+so a usage example may name a file the reader does not have.
+
+- `compare_input_excels.py` -- two `inputData.xlsx` files compared sheet by sheet on
+  *values*, read as text. Row order does not matter. Blind to formatting.
+- `compare_workbook_parts.py` -- two `.xlsx` files compared as zip archives, part by
+  part, ignoring only the build timestamps openpyxl stamps into `docProps/core.xml`.
+  Sees cell values, column order, widths, alignment, table styles -- use it to prove a
+  refactor changed nothing. Literal byte equality is not achievable; those timestamps
+  differ on every build.
 
 
 ## Execution flow
