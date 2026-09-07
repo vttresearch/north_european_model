@@ -13,7 +13,7 @@ takes no position on whether it should change.
 
 ## In one minute
 
-Five kinds of gap, and they are not equally interesting:
+Six kinds of gap, and they are not equally interesting:
 
 - **Slots declared here that nothing feeds** — the plumbing exists and no source
   fills it. Looks like a bug and is not.
@@ -21,14 +21,21 @@ Five kinds of gap, and they are not equally interesting:
   currently answer.
 - **Rules known to be provisional** — the code is deliberate, and its author
   already knows it is not the final answer.
-- **Backbone parameters this build does not write** — measured against
-  `../docs/dictionary.md`. Mostly investment and reserves.
+- **Deferred by the source data pass** — found while measuring, deliberately not
+  acted on. Alternatives being scenario names is the one with teeth.
+- **Backbone parameters this build does not write** — derived from
+  `../inc/1a_definitions.gms`. Mostly investment, reserves and part-load
+  efficiency.
 - **Backbone symbols with no sheet at all** — `src_files/indexSheet.xlsx` declares
   63, the builder writes 21, and three more arrive as GDX. Reserves, group
   policies and unit constraints are the substance of what is left.
 
-The last two are inventory. The first three are the ones that change what someone
+The last two are inventory. The first four are the ones that change what someone
 designs next.
+
+**One entry has been closed rather than moved.** "The source workbook side" asked
+what the workbooks hold that nothing reads; the build now reports it on every
+run, so nobody has to measure it again.
 
 ## Contents
 
@@ -38,6 +45,7 @@ designs next.
 - [Backbone parameters this build does not write](#backbone-parameters-this-build-does-not-write)
 - [Backbone symbols with no sheet at all](#backbone-symbols-with-no-sheet-at-all)
 - [The source workbook side](#the-source-workbook-side)
+- [Deferred by the source data pass](#deferred-by-the-source-data-pass)
 
 ## Slots declared here that nothing feeds
 
@@ -132,17 +140,29 @@ number here", once the sweep has been done.
 
 ## Backbone parameters this build does not write
 
-Measured against the parameter tables in `../docs/dictionary.md`. Re-derive rather
-than trusting this table: Backbone's own vocabulary moves.
+Re-derive rather than trusting this table: Backbone's own vocabulary moves. Last
+derived **2026-09-07**, against the `param_*` set declarations in
+`../inc/1a_definitions.gms` rather than by hand — see
+[How to re-derive it](#how-to-re-derive-it) below.
 
 | Sheet | Written here | In Backbone, not written |
 |---|---|---|
 | `p_gn` | 17 of 20 | `maxInvest`, `invCost`, `annuityFactor` — node-level investment |
 | `p_gnn` | 12 of 18 | `transferCapBidirectional`, `boundStateMaxDiff`, `unitSize`, `portion_of_transfer_to_reserve`, `useTimeseriesAvailability`, `useTimeseriesLoss` |
 | `p_gnu_io` | 32 of 34 | `profitMargin`, `maxTsDelay` |
-| `p_unit` | 26 of 32 | `eff02`–`eff12` and `op02`–`op12`, the whole `hr*` / `hrop*` heat-rate family, `section`, `hrsection`, `outputCapacityTotal`, `unitOutputCapacityTotal`, `lastStepNotAggregated` |
-| `param_gnBoundaryTypes` | 6 of 8 | `minSpill`, `upwardSlack01`–`upwardSlack20`, `downwardSlack02`–`downwardSlack20` |
+| `p_unit` | 26 of 79 | `eff02`–`eff12` and `op02`–`op12`, the whole `hr*` / `hrop*` heat-rate family, `section`, `hrsection`, `outputCapacityTotal`, `unitOutputCapacityTotal`, `lastStepNotAggregated` |
+| `param_gnBoundaryTypes` | 6 of 46 | `minSpill`, `upwardSlack01`–`upwardSlack20`, `downwardSlack02`–`downwardSlack20` |
 | `param_gnBoundaryProperties` | 4 of 5 | `multiplier` — deliberate, see above |
+
+Two denominators moved when this was derived rather than counted by hand, both
+for the same reason: GAMS declares `eff02*12` and `upwardSlack01*20` as ranges,
+so counting the written lines undercounts the members. `p_unit` has 79 members,
+not 32, and `param_gnBoundaryTypes` 46, not 8. The lists of missing names were
+right; only the totals were wrong, which flattered the coverage considerably.
+
+The check also runs the other way, and that direction is clean: **every name in
+`backbone_params.py` is a member of the Backbone set it claims to belong to.**
+Nothing had verified that before.
 
 Two of these are more than a missing column. **The efficiency curve stops at two
 points**: a unit gets `eff00` / `eff01` and `op00` / `op01`, so every part-load
@@ -153,6 +173,24 @@ node**, since `p_gn`'s three investment parameters are the three that are missin
 *Where it would live:* [Input Excel builder](input-excel.md) for the parameters
 themselves, [Source workbook conventions](source-workbook-conventions.md) for the
 columns that would carry them.
+
+### How to re-derive it
+
+The Backbone repository parses its own dictionary, and the parser is usable from
+here. It must not become a dependency — nothing under `src/` or `tests/` imports
+it, and this table stays a document rather than something generated — so this is
+a thing you run by hand when you want to know whether the table has drifted:
+
+```python
+import sys; sys.path.insert(0, "../scripts/docs")
+import dictionary as d
+members = [m for m in d.parse_param_sets()["param_unit"] if not m.commented_out]
+expanded = [n for m in members for n in (d.expand_range(m) if m.range_end else [m.name])]
+```
+
+`parse_param_sets` reads `../inc/1a_definitions.gms`, skips the commented-out
+members that mean NOT IMPLEMENTED, and `expand_range` turns `eff02*12` into its
+eleven names. Compare against the `PARAM_*` lists in `src/backbone_params.py`.
 
 ## Backbone symbols with no sheet at all
 
@@ -186,23 +224,112 @@ time.
 
 ## The source workbook side
 
-The largest entry, and the one that has not been measured. The sections above ask
-what Backbone can hold that the builder does not write. The mirror question is
-what the source workbooks hold that nothing reads, and answering it needs a pass
-over `source_data_loader` and the sheets in `src_files/data_files/` that has not
-been done.
+**Closed.** This was the largest entry and the one that had not been measured:
+what do the source workbooks hold that nothing reads? It is no longer a question
+anyone has to ask, because the build answers it on every run — an unrecognised
+column is reported by file and sheet rather than silently ignored. See
+[A column nothing reads](source-workbook-conventions.md#a-column-nothing-reads)
+and [The source data phase](source-data.md#columns-nothing-reads).
 
-Two things are known without it:
+The measurement that closed it, kept because it says what "clean" looks like: 44
+prefix-matching sheets across the nine workbooks the four configs name, 363
+column headers, of which 54 are marked `##` and 9 are `note`. The remaining 300
+spell 101 distinct (table, column) pairs, and **every one of them is
+recognised**. The only unread columns found were four in
+`unittypedata_compilation.xlsx`, disabled years ago by renaming them
+`disabled-maxRampUp` and so on; they are marked `##` now, which is what the
+builder can see.
 
-- A column the builder does not recognise is carried through the source stage and
-  then ignored, silently. `_coerce_numeric_dtypes` warns about exactly one shape of
-  mistake — a `param_unit` name wearing a connection suffix — and about nothing
-  else.
-- Every parameter in the table above needs a workbook column before it can be
-  written, so that table is also a list of columns that do not exist yet.
+What stays open is the mirror half, which is still an inventory rather than a
+defect: every parameter in the table above needs a workbook column before it can
+be written, so that table is also a list of columns that do not exist yet.
 
-*Where it would live:* [Source workbook conventions](source-workbook-conventions.md),
-once measured.
+## Deferred by the source data pass
+
+Found while measuring the above, deliberately not acted on.
+
+### Alternatives are scenario names
+
+`scenario_alternatives` through `scenario_alternatives4` are four axes of a
+Cartesian product, and an alternative is not a thing in a workbook: it is a value
+in the ordinary `scenario` column, which `apply_whitelist` adds to the list of
+scenarios this run accepts.
+
+So **an alternative carries no precedence**. A base row in a later file overwrites
+an alternative row in an earlier one, and the only lever is config file order —
+the same lever everything else uses. Expressing "this alternative overrides the
+base" therefore means ordering files rather than saying so.
+
+All four shipped configs set `scenario_alternatives = []`, and no test exercises
+the axes. That is deliberate: pinning the current behaviour would make it harder
+to change, and reworking alternatives is its own piece of work.
+
+*Where it would live:* [The source data phase](source-data.md), once alternatives
+have a mechanism of their own.
+
+### `country = 'all'` is expanded for three tables of five
+
+`expand_all_country` runs for `nodedata`, `demanddata` and `unitdata`. It does not
+run for `userconstraintdata`, which drops `country` after filtering, and it is
+vacuous for `transferdata`, which has no `country` column at all — it has
+`from_country` and `to_country`, and neither is expanded. No shipped sheet writes
+`all` in a table that would not expand it.
+
+*Where it would live:* [The source data phase](source-data.md), if the two ever
+need it.
+
+### A sheet that normalises to nothing loses its column names
+
+`normalize_dataframe` returns a bare `DataFrame` — no rows and no columns — for
+an empty input, so a sheet whose every row is marked `##` arrives downstream with
+its schema gone rather than empty. That is the mechanism behind the `KeyError`
+the userconstraint block used to raise; that caller is guarded, and the general
+rule is unchanged because it reaches the contract sweep.
+
+*Where it would live:* `tests/README.md`, in the boundary map, if the rule
+changes.
+
+### A `remove` that removes nothing cannot be verified
+
+49 `remove` rows on `config_OT2030.ini` and 21 on the National Trends configs
+match no earlier row, and every one is deliberate — removing offshore wind from
+landlocked countries by writing the row for every country and letting it miss.
+A misspelled `remove` looks exactly the same and nothing in the sheet
+distinguishes them. This is why the build reports an unmatched `add` or
+`multiply` and not an unmatched `remove`.
+
+*Where it would live:* [The source data phase](source-data.md), if a `remove`
+ever gains a way to say it meant to match something.
+
+### Eight workbooks no config names
+
+`H2 heavy.xlsx`, `transferdata_TYNDP2020.xlsx`, `unitdata_TYNDP-2020.xlsx`,
+`unittypedata_nuclear-lwr-smr.xlsx`, `transferdata_additional1.xlsx`,
+`unitdata_additional-conventional-units.xlsx`, `unitdata_additional-vre.xlsx`
+and `demanddata_other.xlsx` sit in `src_files/data_files/` and no shipped config
+lists any of them. Their columns are genuinely unread, and listing one now says
+so rather than staying silent — which is the useful part, because
+`transferdata_additional1.xlsx` is a long-format `parameter`/`value` sheet the
+transferdata reader does not support at all and would read as a table of
+nothing.
+
+*Where it would live:* nowhere. They are either deleted or listed.
+
+### A processor could declare the columns it reads
+
+`source_workbook_shape.DERIVATION_INPUTS` names the three columns a later phase
+reads by name — `lp/mip`, `twh/year`, `constant_share` — because nothing can
+discover them. Two of the three belong to timeseries processors, and
+`BaseProcessor.reads_source_columns` lets a processor state its own; a test holds
+the two equal rather than one importing the other, because the source phase runs
+first and must not depend on which processors a config enables.
+
+Making the processors the authority would need the source phase to read
+declarations without importing processor modules. Worth doing if the list grows;
+at three entries it is not.
+
+*Where it would live:* [Timeseries](timeseries.md), beside the other processor
+declarations.
 
 ## See also
 
