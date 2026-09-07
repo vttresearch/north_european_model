@@ -50,6 +50,10 @@ links to it.
   reads the Excel files in `src_files/data_files/`: marking rows and columns as not
   input, where a sheet ends, what happens to a cell that should be a number and is not,
   and how `method` combines rows from several files.
+- [The source data phase](docs/source-data.md) — what the builder does with those files:
+  the order the steps run in and why, how file order and Excel tab order together decide
+  which row wins, what excluding a node takes with it, and what the phase reports about a
+  column nothing reads.
 - [Timeseries](docs/timeseries.md) — how the build turns any hourly data source into
   Backbone input: what a processor is responsible for and what the shared pipeline does,
   what climate years and windows are, why a zero is the hard case, and what is checked

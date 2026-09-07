@@ -23,6 +23,8 @@ something in a build log does not look right.
 | `#REF!`, `#DIV/0!` anywhere | reports it and reads it as not set |
 | the same header on two columns | reads the first, warns about the rest |
 | `_` anywhere in a text cell | drops the row, with a warning |
+| a column name nothing recognises | reports it and reads nothing from it |
+| a node in `exclude_nodes` | drops it, and every unit connected to it, whole |
 
 ---
 
@@ -133,6 +135,22 @@ The one place the build can tell is a **timeseries processor** naming a node non
 of the four sheets has, and it reports that; between the sheets themselves it
 cannot, and does not pretend to.
 
+### Excluding a node excludes the units on it
+
+`exclude_nodes` in the config removes a node from the model. For a `nodedata` or
+`demanddata` row that is one row, and it is the only thing that goes.
+
+A `unitdata` row is a whole unit, and it is **removed whole**. A unit declares up
+to ten connections, and if any one of their nodes is excluded the entire unit
+goes, not just that connection. A unit whose heat output has no node cannot be
+represented as it stands, and quietly turning it into a different unit would be
+a worse answer than removing it.
+
+Worth checking when you exclude a district heating node in a country that has
+CHP, because the plant's electricity capacity leaves with it. On the shipped
+configs this removes one unit: `ES00 / solar thermal`, whose only real
+connection is the `ES00_dheat` node the configs exclude.
+
 ### Combining rows: the `method` column
 
 Several files and sheets can describe the same thing. They are applied in the
@@ -150,6 +168,13 @@ to what came before:
 
 An empty `method` cell means `replace`. An unrecognised value is reported and
 treated as `replace`.
+
+**"Later" has three levels, and only the first is visible in the config.** The
+file order decides between files; within one file, the order its sheets sit in
+decides between them; within one sheet, row order. The middle one is worth
+knowing about because nothing on screen suggests it: `ObservedTrends.xlsx`
+contributes four `unitdata*` sheets, so dragging one of its tabs changes which
+of them wins a key the others also mention.
 
 For `add` and `multiply`, a missing value is not the same as zero: adding to a
 missing value treats the missing one as `0.0`, multiplying by a missing new value
@@ -257,6 +282,34 @@ two spellings of the same column. That is reported as a rename collision, and th
 suffixed column is left as it is rather than one silently overwriting the other.
 Use one spelling or the other.
 
+### A column nothing reads
+
+A header is free text, so nothing about a wrong one looks wrong. `capacty` sits
+in a sheet looking exactly like `capacity`, and the unit built from that row
+simply has no capacity.
+
+Every sheet is checked against the column names its data type can carry, and
+anything else is reported by file and sheet, spelled the way you typed it. There
+are three reasons a column can be here and the builder cannot tell them apart,
+so the message offers all three:
+
+- **it is misspelled** — the usual case, and the one this exists for;
+- **it is yours, not the model's** — put `##` at the start of the header, and
+  nothing more is said about it;
+- **it names a real Backbone parameter this build does not write yet** —
+  `profitMargin`, `invCost`, the `hr*` heat-rate family and about a hundred
+  others. [Identified gaps](identified-gaps.md) has the list. The column still
+  reaches nothing, which is why it is reported rather than quietly accepted.
+
+Nothing is dropped on account of this. The column is carried exactly as before;
+the only change is that the build now says it is going nowhere.
+
+The set of names is not a fixed list you have to keep up with. Parameter names
+come from Backbone's own vocabulary, `emission_<name>` on a node and
+`emission_group<n>` on a unit are open-ended families, and a connection suffix is
+understood wherever the bare name is — `capacity_input3` is recognised because
+`capacity` is.
+
 ### Identifiers
 
 **Underscore is the node-name separator.** Node names are built as
@@ -313,6 +366,8 @@ rule never matched.
 
 ## See also
 
+- [The source data phase](source-data.md) — the same subject from the builder's side:
+  what happens to a sheet after it is read, in what order, and why that order
 - [District heating demand timeseries](dh-demand-timeseries.md) — what `TWh/year` in a
   demand sheet means: a weather-normalised normal year, never a realised one, and the
   same holds for the electricity demand table

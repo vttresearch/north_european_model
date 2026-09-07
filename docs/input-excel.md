@@ -262,6 +262,9 @@ happened.
 
 ## See also
 
+- [The source data phase](source-data.md) — where the seven frames this page
+  reads come from, and what has already been decided about them
+
 - [Source workbook conventions](source-workbook-conventions.md) — the sheets this
   phase reads, and what a row in them is allowed to say
 - [Timeseries](timeseries.md) — the phase before this one, what a processor may
