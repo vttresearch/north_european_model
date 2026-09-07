@@ -5,6 +5,7 @@ import numpy as np
 from pathlib import Path
 from typing import Union, List, Dict, Mapping, Tuple, Iterable, Sequence, Set
 import src.utils as utils
+import src.source_workbook_shape as source_workbook_shape
 from src.infrastructure.logger import IterationLogger
 
 FilterValue = list[str] | list[int]
@@ -275,6 +276,14 @@ def read_input_excels(
             # reported rather than being deleted along with its row.
             df = utils.gate_xlsx_frame(df, f"{file_name}:{sheet}", logger)
 
+            # --- Report columns nothing reads ---
+            # Last of the per-sheet checks, and after the '##' and 'note' drops
+            # so that the author's own working columns are never named. Headers
+            # are still spelled as they were typed here -- normalize_dataframe
+            # lower-cases them next -- and the message quotes that spelling,
+            # because it is what someone will search a workbook for.
+            report_unused_columns(df, sheet_name_prefix, f"{file_name}:{sheet}", logger)
+
             # Optionally add provenance columns
             if add_source_cols:
                 df = df.copy()
@@ -288,6 +297,66 @@ def read_input_excels(
         return []
 
     return dataframes
+
+
+def report_unused_columns(
+    df: pd.DataFrame,
+    table: str,
+    source: str,
+    logger,
+    ) -> None:
+    """Report columns of `df` that no stage reads, naming `source`.
+
+    A source workbook may hold any column at all; the ones nothing recognises
+    are carried through this stage and then dropped, so a mistyped header
+    reaches the model as silence rather than as an error. Underscore is a
+    node-name separator and a header is free text, which means nothing about a
+    wrong name looks wrong -- ``capacty`` sits in a sheet looking exactly like
+    ``capacity``, and the unit built from that row simply has no capacity.
+
+    Three remedies, because there are three reasons a column can be here: it is
+    misspelled, it is the author's own working material and should say so with
+    ``##``, or it names a real Backbone parameter this build does not write yet.
+    The check cannot tell them apart -- separating the third would need
+    Backbone's dictionary in machine-readable form in this repo, which
+    docs/identified-gaps.md records as deliberately not a dependency -- so the
+    message offers all three rather than guessing.
+
+    Columns pandas renamed for a repeated header are skipped: the duplicate
+    header check has already spoken about them, and one mistake earning two
+    warnings trains people to skim.
+    """
+    if df is None or df.empty:
+        return
+
+    present = {str(c) for c in df.columns}
+    candidates = [
+        c for c in df.columns
+        if not str(c).startswith("_")
+        and not (
+            (match := _RENAMED_DUPLICATE.match(str(c))) and match.group("base") in present
+        )
+    ]
+
+    unused = source_workbook_shape.unrecognised_columns(candidates, table)
+    if not unused:
+        return
+
+    # Most values first: a column holding data is likelier to be a real mistake
+    # than an empty one, and summarise keeps whatever comes first.
+    unused.sort(key=lambda c: int(df[c].notna().sum()), reverse=True)
+    named = utils.summarise(
+        f"'{c}' ({int(df[c].notna().sum())} values)" for c in unused
+    )
+    logger.log_status(
+        f"[{source}] {len(unused)} column(s) are read by nothing and their values are "
+        f"discarded: {named}. Check the spelling against "
+        f"docs/source-workbook-conventions.md; start the header with "
+        f"'{utils.IGNORE_MARKER}' to mark the column as your own working material; or "
+        f"see docs/identified-gaps.md if it is a Backbone parameter this build does "
+        f"not write yet.",
+        level="warn"
+    )
 
 
 def normalize_dataframe(

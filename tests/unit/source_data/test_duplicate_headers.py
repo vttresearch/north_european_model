@@ -131,12 +131,16 @@ class TestWhatMustNotBeReported:
 
     def test_a_dotted_header_whose_base_is_absent(self, tmp_path):
         # Someone may legitimately name a column 'eff.1'. With no 'eff' beside
-        # it, nothing was renamed and there is nothing to report.
+        # it, nothing was renamed and there is nothing for *this* rule to say.
+        #
+        # Narrowed from assert_clean when the unused-column check landed: 'eff.1'
+        # is a name nothing reads, so that check reports it, correctly. This test
+        # owns the duplicate-header rule and asserts only about that.
         _, logger = _read(tmp_path, [
             ["country", "eff.1"],
             ["FI", 0.4],
         ])
-        logger.assert_clean()
+        logger.assert_not_logged("Duplicate column header")
 
 
 class TestTheRealWorkbooksStaySilent:

@@ -182,7 +182,15 @@ def test_the_sweep_table_covers_the_public_loader_surface():
     # report_node_disagreements takes two frames and returns nothing: it only
     # reports, deliberately, because which of the two workbooks is wrong is not
     # something it can know. Covered in test_node_disagreements.py.
-    deliberately_excluded = {"read_input_excels", "report_node_disagreements"}
+    # report_unused_columns takes a frame and returns nothing, for the same
+    # reason: whether a column is a typo or an intention is not something it can
+    # know, so it names the column and offers the remedies. Covered in
+    # test_unused_columns.py.
+    deliberately_excluded = {
+        "read_input_excels",
+        "report_node_disagreements",
+        "report_unused_columns",
+    }
 
     public = {
         name
