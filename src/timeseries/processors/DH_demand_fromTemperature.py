@@ -41,6 +41,11 @@ class DH_demand_fromTemperature(BaseProcessor):
     #: tuple can state, and a maximum of 0.0 would only restate the sign.
     value_sign = "non_positive"
 
+    #: The demand table columns this processor reads by name. Declared so the
+    #: source stage does not report them as read by nothing; see
+    #: source_workbook_shape.DERIVATION_INPUTS, which a test holds this equal to.
+    reads_source_columns = ("twh/year", "constant_share")
+
     #: Outdoor temperature above which no space heating is needed. A modelling
     #: choice, not a tuning constant.
     BALANCE_POINT_C = 17.0

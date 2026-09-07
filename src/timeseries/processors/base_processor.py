@@ -77,6 +77,19 @@ class BaseProcessor(ABC):
         conventions, not the timeseries ones: `0` and `pd.NA` are distinct there,
         and an all-NA column arrives as `object` rather than `Float64`.
 
+    reads_source_columns : tuple of str
+        Which workbook columns this processor reads by name, lower-cased. Unlike
+        the others this declares nothing to ProcessorRunner and is never checked
+        against the data: it exists so that the source stage can tell a column
+        someone reads from a column nobody does.
+
+        The source stage runs before this one and cannot ask a processor -- which
+        processors a config enables varies per run, and a disabled one must not
+        make its columns look unread. So the authority is the static table in
+        `source_workbook_shape.DERIVATION_INPUTS`, and this attribute is the
+        processor's own statement of the same thing; a test asserts the two agree
+        rather than one importing the other.
+
     main_result : pd.DataFrame or None
         Primary output, set by `run_processor()`. Do not modify directly.
 
@@ -110,6 +123,7 @@ class BaseProcessor(ABC):
     value_sign: str = "any"
     expects_complete_datetime_axis: bool = True
     requires_source_data: tuple[str, ...] = ()
+    reads_source_columns: tuple[str, ...] = ()
 
     def __init__(self, **kwargs):
         """
