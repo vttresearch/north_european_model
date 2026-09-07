@@ -302,7 +302,11 @@ class SourceDataPipeline:
                                    self.logger, 'userconstraintdata')
                    for df in dfs
                    ]
-            dfs = [df.drop(columns=['scenario', 'year', 'country']) for df in dfs]
+            # errors='ignore': a sheet may lack any of the three, and a sheet that
+            # normalized to empty has no columns at all -- normalize_dataframe returns
+            # a bare DataFrame for empty input. Raising here would abort the phase,
+            # which the error policy in CLAUDE.md forbids after the logger exists.
+            dfs = [df.drop(columns=['scenario', 'year', 'country'], errors='ignore') for df in dfs]
             self.df_userconstraintdata = data_loader.merge_row_by_row(
                                             dfs, self.logger,
                                             key_columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter']
