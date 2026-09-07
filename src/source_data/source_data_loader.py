@@ -1388,6 +1388,12 @@ def merge_row_by_row(
     # Process frames in order. For each row, apply its 'method' against an accumulator.
     acc: Dict[Tuple, Dict[str, object]] = {}
 
+    # Which sheet each live record came from, so that a sheet overwriting its own
+    # earlier row can be told from the ordinary case of a later file overriding
+    # an earlier one. Only the second is what the method column is for.
+    origin: Dict[Tuple, Tuple] = {}
+    self_replaced: List[str] = []
+
     for df in frames:
         for row_dict in df.to_dict(orient="records"):
             # Method is already validated and lowercased by normalize_dataframe
@@ -1405,11 +1411,29 @@ def merge_row_by_row(
                       for val in (row_dict.get(kc) for kc in key_columns))
             existing = acc.get(k)
 
+            source = (row_dict.get("_source_file"), row_dict.get("_source_sheet"))
+
             # --- 'remove': delete any existing record for this key --------------
             if method == "remove":
                 if existing is not None:
                     del acc[k]
+                    origin.pop(k, None)
                 continue
+
+            # A replacing row landing on a record its own sheet established. Two
+            # rows for one key in one sheet make the earlier one dead text: it is
+            # read, applied, and then overwritten without anything being said.
+            # Scoped to the replacing methods on purpose -- 'add' and 'multiply'
+            # rows stacking in one sheet are deliberate, and shipped data does
+            # exactly that.
+            if (method in ("replace", "replace-partial")
+                    and existing is not None
+                    and origin.get(k) == source
+                    and any(part is not None for part in source)):
+                where = ":".join(str(part) for part in source if part is not None)
+                shown = "/".join("" if part is None else str(part) for part in k)
+                self_replaced.append(f"'{shown}' in {where}")
+            origin[k] = source
 
             # --- Apply appropriate handler based on method ----------------------
             # Every method routes to its own handler, including when there are no
@@ -1431,6 +1455,16 @@ def merge_row_by_row(
                 acc[k] = _handle_add(existing, row_dict, method, clamp_non_negative=True)
             elif method == "multiply":
                 acc[k] = _handle_multiply(existing, row_dict, method)
+
+    if self_replaced:
+        logger.log_status(
+            f"{len(self_replaced)} key(s) are written twice in the same sheet, where the "
+            f"later row replaces the earlier one: {utils.summarise(self_replaced)}. "
+            f"Overriding a value belongs in a later file, which is what the file order "
+            f"is for; two rows for one key in one sheet make the first one dead text. "
+            f"Use 'add' or 'multiply' if the rows are meant to stack.",
+            level="warn"
+        )
 
     # --- Assemble output frame -------------------------------------------------
     merged = pd.DataFrame.from_records(list(acc.values()), columns=cols_union)
