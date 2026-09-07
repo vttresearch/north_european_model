@@ -226,6 +226,9 @@ class SourceDataPipeline:
 
         # unitdata
         files = self.config['unitdata_files']
+        unit_whitelist = {'scenario': scen_and_alt, 'year': [self.scenario_year],
+                          'country': self.country_codes}
+        unit_keys = ['country', 'generator_id', 'unit_name_prefix']
         if len(files) > 0:
             dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logger) for df in dfs]
@@ -233,13 +236,28 @@ class SourceDataPipeline:
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             dfs = [data_loader.build_unittype_unit_column(df, self._df_unittypedata, self.logger) for df in dfs]
             dfs = [data_loader.build_unit_grid_and_node_columns(df, self._df_unittypedata, self.logger) for df in dfs]
+            # An excluded grid or node removes the entire unit connected to it, not
+            # just that connection -- intended, and not what "exclude a node"
+            # sounds like, so the count is said out loud. Units rather than rows,
+            # because several sheets can describe one unit and a row count would
+            # overstate what left the model. A count rather than names: this is
+            # expected and handled, and docs/source-data.md carries the reasoning.
+            dfs_before_exclusion = dfs
             dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logger=self.logger) for d in dfs]
             dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes, df_name="unitdata", logger=self.logger) for d in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
-                                   self.logger, 'unitdata')
+            dfs = [data_loader.apply_whitelist(df, unit_whitelist, self.logger, 'unitdata')
                    for df in dfs
                    ]
-            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'generator_id', 'unit_name_prefix'])
+            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=unit_keys)
+
+            units_dropped = data_loader.count_units_without_exclusions(
+                dfs_before_exclusion, unit_whitelist, unit_keys
+            ) - len(self.df_unitdata)
+            if units_dropped:
+                self.logger.log_status(
+                    f"Excluded grids and nodes removed {units_dropped} unit(s).",
+                    level="none"
+                )
 
             # Merge type-level technical parameters (LP/MIP, flow, emission_group*,
             # capacity defaults, etc.) from _df_unittypedata into each unit row.

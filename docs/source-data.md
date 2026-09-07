@@ -100,18 +100,32 @@ not just that connection. This is deliberate: a unit whose heat output has no
 node cannot be represented as it stands, and silently converting it into a
 different unit would be a worse answer than removing it.
 
-Measured on the shipped configs, so the cost is known rather than assumed:
+The build says how many units went, and the count is exact: what the merged
+table would have held, minus what it holds. Measured on the shipped configs:
 
-| Config | Unit rows dropped |
+| Config | Units removed |
 |---|---|
 | `config_OT2030.ini` | 0 |
-| `config_NT2030.ini`, `config_NT2040.ini` | 2 rows, one unit — `ES00 / solar thermal` |
+| `config_NT2030.ini`, `config_NT2040.ini` | 1 — `ES00 / solar thermal` |
 
 That unit's only real connection is `ES00_dheat`, which the configs exclude, so
 nothing beyond the excluded node is lost. It is worth re-measuring rather than
 trusting this table if you add a unit to a country whose district heating is
 excluded, because a CHP plant is exactly the case where dropping the unit whole
 would also remove its electricity capacity.
+
+It stays one line at any scale. Excluding all eighteen Spanish nodes from
+`config_OT2030.ini` — a real way to shorten a run — reports 18 units, once.
+
+Counting rows would overstate it three ways, which is why it does not: several
+sheets can describe one unit, a row may belong to another scenario this run
+never wanted, and a `remove` row may have been going to delete the unit anyway.
+The Spanish case is 30 rows, 19 keys and 18 units.
+
+Taking a country out that way and taking it out of `country_codes` produce the
+same model. Measured on `config_OT2030.ini` without Spain, both routes give 283
+nodedata rows, 60 demanddata, 488 unitdata and 92 transferdata, and neither
+warns about anything.
 
 ## Removing something that is not there
 

@@ -186,10 +186,14 @@ def test_the_sweep_table_covers_the_public_loader_surface():
     # reason: whether a column is a typo or an intention is not something it can
     # know, so it names the column and offers the remedies. Covered in
     # test_unused_columns.py.
+    # count_units_without_exclusions answers "how many units would this run have
+    # had", so it returns a number rather than a frame. Covered in
+    # route/test_route_excluded_nodes.py.
     deliberately_excluded = {
         "read_input_excels",
         "report_node_disagreements",
         "report_unused_columns",
+        "count_units_without_exclusions",
     }
 
     public = {

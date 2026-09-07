@@ -45,6 +45,7 @@ not build and why, and has a documentation page of its own.
   rather than silently dropped.
 - A node that only one of `nodedata` and `demanddata` knows about is reported.
 - `merge_row_by_row`: column titles compared case-insensitively, first spelling kept.
+- Excluding a grid or node says how many units it removed.
 - A column no stage reads is reported by file and sheet.
   [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
 - What the source data phase does with a workbook:

@@ -1213,6 +1213,42 @@ def apply_unit_nodes_blacklist(
     return apply_blacklist(df, df_name, filters, logger=logger, log_warning=False)
 
 
+class _SilentLogger:
+    """Swallows messages, for a pass whose only purpose is to count.
+
+    Reusing apply_whitelist to find out what a run would have kept is the only
+    way to be sure the answer matches what it actually keeps. Running it twice
+    would report every missing-column warning twice, and a message repeated is a
+    message skipped.
+    """
+
+    def log_status(self, *args, **kwargs):
+        pass
+
+
+def count_units_without_exclusions(dfs, whitelist, key_columns) -> int:
+    """How many units this run would have had if nothing were excluded.
+
+    The caller subtracts the units it actually has, and the difference is what
+    the exclusions cost. Doing it this way rather than counting the rows the
+    blacklists dropped is the only way to get a number that matches the model,
+    and two things make the row count wrong:
+
+    a unit belonging to another scenario or year was never going to be in this
+    build, so the whitelist has to run first; and several sheets can describe one
+    unit while a ``remove`` row can delete one outright, so only the merge knows
+    how many there are. On config_OT2030.ini without Spain the row count says 30,
+    counting keys says 19, and the answer is 18.
+
+    The exclusions themselves still run before the whitelist -- an expanded
+    country row has to be subject to them -- so this repeats the two steps on the
+    unexcluded frames rather than reordering the pipeline for a log line.
+    """
+    silent = _SilentLogger()
+    kept = [apply_whitelist(df, whitelist, silent, "unitdata") for df in dfs]
+    return len(merge_row_by_row(kept, silent, key_columns=key_columns))
+
+
 def merge_row_by_row(
     dfs: Iterable[pd.DataFrame],
     logger,
