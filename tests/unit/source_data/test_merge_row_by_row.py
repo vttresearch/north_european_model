@@ -24,8 +24,8 @@ another reduces the starting electricity capacity for a climate policy, and the
 third overlay tips the total below zero. Clamping keeps a stack of independent,
 individually-reasonable edits from producing a negative capacity.
 
-The truth table in the docstring at ``source_data_loader.py:884-909`` is the
-specification, so exact values are pinned here -- pinning case 3.
+The truth table in ``merge_row_by_row``'s own docstring is the specification,
+so exact values are pinned here -- pinning case 3.
 """
 
 import itertools
@@ -43,8 +43,8 @@ KEY = ["country", "grid"]
 def _frame(*rows: dict) -> pd.DataFrame:
     """Build a frame the way the pipeline would hand it over.
 
-    ``merge_row_by_row`` documents a precondition of normalized input
-    (:875), so the real normalizer is used rather than a hand-built frame that
+    ``merge_row_by_row`` documents a precondition of normalized input, so the
+    real normalizer is used rather than a hand-built frame that
     might not match what actually arrives.
     """
     return normalize_dataframe(pd.DataFrame(list(rows)), "test", FakeLogger())
@@ -70,7 +70,7 @@ def _value(df, column="capacity", country="FI", grid="elec"):
 
 
 class TestAddMissingValueRules:
-    """``source_data_loader.py:890-897``, quoted verbatim in the docstring."""
+    """The add rules from ``merge_row_by_row``'s docstring, which is the spec."""
 
     @pytest.mark.parametrize(
         "previous, incoming, expected",

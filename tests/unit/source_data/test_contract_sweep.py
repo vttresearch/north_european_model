@@ -59,7 +59,7 @@ def _normalized(df: pd.DataFrame) -> pd.DataFrame:
     """Put a frame through the gatekeeper.
 
     Most loader functions document a precondition of normalized input
-    (``merge_row_by_row``'s docstring states it outright at :875).  Feeding them
+    (``merge_row_by_row``'s docstring states the precondition outright).  Feeding them
     raw frames would test a situation the pipeline never produces.
     """
     return normalize_dataframe(df, "sweep-setup", FakeLogger())
@@ -123,7 +123,7 @@ def test_all_na_object_column_is_tolerated(case, blank_column):
     """The cascade bug, as a property.
 
     An all-``pd.NA`` column is typed ``object`` precisely so that no assumption
-    is baked in about what it holds (utils.py:90-91).  The price is that every
+    is baked in about what it holds.  The price is that every
     consumer must cope with seeing ``object`` where it expected ``Float64``:
     handle it, or reject it with a logged message -- but never crash, and never
     silently coerce it into something else.

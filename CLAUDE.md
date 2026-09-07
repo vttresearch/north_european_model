@@ -48,7 +48,7 @@ so a usage example may name a file the reader does not have.
 3. For each (scenario, year, alternative) combination:
    - **Logger** -- `logger` collects log messages from the run and is passed to all pipelines 
    - **Cache check** -- `CacheManager` determines which steps need re-running
-   - **Source data phase** -- `SourceExcelDataPipeline` reads and merges data Excel files
+   - **Source data phase** -- `SourceDataPipeline` reads and merges data Excel files
    - **Time series phase** -- `TimeseriesPipeline` runs each processor defined in `timeseries_specs`
    - **Build Excel phase** -- `BBExcelPipeline` assembles the final `inputData.xlsx`
    - **Finalize** -- GAMS template files are edited and copied to the output folder

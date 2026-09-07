@@ -47,9 +47,9 @@ class TestAssertNormalizedAccepts:
         assert_normalized(df)
 
     def test_strings_that_the_pipeline_never_promised_to_convert(self):
-        # Only 'nan' is converted (utils.py:75). Asserting 'NA'/'None'/'null'
-        # away would fail on behaviour that was never promised -- and 'NA' is a
-        # plausible real value.
+        # Only 'nan' is converted, in standardize_df_dtypes' first pass.
+        # Asserting 'NA'/'None'/'null' away would fail on behaviour that was
+        # never promised -- and 'NA' is a plausible real value.
         df = pd.DataFrame({"code": pd.Series(["NA", "None", "null"], dtype="object")})
         assert_normalized(df)
 
