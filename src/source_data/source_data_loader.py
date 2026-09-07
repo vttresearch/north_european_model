@@ -17,6 +17,12 @@ FilterValue = list[str] | list[int]
 #: the same sheet before anything is concluded.
 _RENAMED_DUPLICATE = re.compile(r"^(?P<base>.+)\.(?P<n>\d+)$")
 
+#: What merge_row_by_row treats as instruction rather than data: dropped from
+#: the result, never merged, never reachable by a row's arithmetic. A module
+#: constant rather than a default argument, which was a mutable set shared by
+#: every call.
+MERGE_META_COLUMNS: frozenset = frozenset({"_source_file", "_source_sheet", "method"})
+
 
 def _has_no_header(col) -> bool:
     """Whether a column's header cell was left empty in the spreadsheet.
@@ -1151,7 +1157,7 @@ def merge_row_by_row(
     key_columns: Sequence[str],
     measure_cols: Sequence[str] = (),
     not_measure_cols: Sequence[str] = ("year",),
-    meta_cols: Set[str] = {"_source_file", "_source_sheet", "method"},
+    meta_cols: Set[str] = MERGE_META_COLUMNS,
     ) -> pd.DataFrame:
     """
     Merge DataFrames row-by-row in order, applying a per-row 'method'.
@@ -1249,6 +1255,14 @@ def merge_row_by_row(
         missing = [c for c in measure_cols if c not in cols_union]
         if missing:
             logger.log_status(f"[merge_row_by_row] Some measure_cols not found: {missing}", level="warn")
+
+    # A key identifies the record and a meta column is an instruction, so neither
+    # is something a row's arithmetic may reach. _handle_replace already skips
+    # both when partial; without this, 'add' and 'multiply' disagreed with it and
+    # would sum a numerically-valued key -- unit_name_prefix, from_suffix -- while
+    # the record kept the key it was found by.
+    reserved = set(key_columns) | set(meta_cols)
+    present_measures = [c for c in present_measures if c not in reserved]
 
     # --- Key validation -------------------------------------------------------
     key_columns = list(key_columns)
