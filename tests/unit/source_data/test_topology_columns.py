@@ -117,7 +117,18 @@ class TestBuildFromToColumns:
         logger = FakeLogger()
         out = build_from_to_columns(_frame(from_country=["FI"]), logger)
         assert out.empty
-        logger.assert_logged("missing required columns", level="warn")
+        logger.assert_logged("to_country", level="warn")
+
+    def test_the_warning_counts_the_rows_it_is_discarding(self):
+        """One missing column costs the whole sheet, so the cost has to be said.
+
+        The frame is returned empty either way; a reader seeing only "a column
+        is missing" has no idea whether that cost them two rows or five hundred.
+        """
+        logger = FakeLogger()
+        build_from_to_columns(_frame(from_country=["FI", "SE", "NO"]), logger)
+
+        logger.assert_logged("all 3 row(s)", level="warn")
 
 
 class TestBuildUnitGridAndNodeColumns:

@@ -38,6 +38,23 @@ def _has_no_header(col) -> bool:
     )
 
 
+def _frame_source(df: pd.DataFrame, fallback: str = "") -> str:
+    """The ``file:sheet`` a frame came from, for a message, or `fallback`.
+
+    read_input_excels stamps every frame with ``_source_file`` and
+    ``_source_sheet``; merge_row_by_row drops them again. Anything reporting
+    between those two points can name where the problem is, and a count with no
+    sheet attached is not something anyone can act on.
+    """
+    parts = []
+    for column in ("_source_file", "_source_sheet"):
+        if column in df.columns:
+            values = df[column].dropna().astype(str).unique()
+            if len(values):
+                parts.append(values[0])
+    return ":".join(parts) if parts else fallback
+
+
 def read_input_excels(
     input_folder: Union[Path, str],
     files: Sequence[str],
@@ -590,7 +607,13 @@ def build_node_column(
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         if logger is not None:
-            logger.log_status(f"build_node_column: DataFrame is missing required columns: {', '.join(missing_columns)}", level="warn")
+            logger.log_status(
+                f"[{_frame_source(df, 'nodedata')}] No node names can be built without "
+                f"{', '.join(missing_columns)}, so all {len(df)} row(s) of this sheet are "
+                f"dropped. Add the column, or mark the sheet '{utils.IGNORE_MARKER}' if it "
+                f"is not input.",
+                level="warn"
+            )
         return pd.DataFrame()
 
     # Create node column with optional suffix if available
@@ -740,7 +763,13 @@ def build_from_to_columns(
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         if logger is not None:
-            logger.log_status(f"build_from_to_columns: DataFrame is missing required columns: {', '.join(missing_columns)}", level="warn")
+            logger.log_status(
+                f"[{_frame_source(df, 'transferdata')}] No link ends can be built without "
+                f"{', '.join(missing_columns)}, so all {len(df)} row(s) of this sheet are "
+                f"dropped. Add the column, or mark the sheet '{utils.IGNORE_MARKER}' if it "
+                f"is not input.",
+                level="warn"
+            )
         return pd.DataFrame()
 
 
@@ -808,8 +837,10 @@ def build_unittype_unit_column(
     if missing_columns:
         if logger is not None:
             logger.log_status(
-                f"build_unittype_unit_column: DataFrame is missing required columns: {', '.join(missing_columns)}. "
-                "Check all unitdata_files and remove_files.",
+                f"[{_frame_source(df, 'unitdata')}] No unit names can be built without "
+                f"{', '.join(missing_columns)}, so all {len(df)} row(s) of this sheet are "
+                f"dropped. Add the column, or mark the sheet '{utils.IGNORE_MARKER}' if it "
+                f"is not input.",
                 level="warn"
             )
         return pd.DataFrame()
@@ -1047,15 +1078,7 @@ def apply_whitelist(
 
     df_out = df.copy()
 
-    # Named for the message, while the provenance columns are still here:
-    # merge_row_by_row drops them further down the chain.
-    source = df_identifier
-    for column in ("_source_file", "_source_sheet"):
-        if column in df.columns:
-            values = df[column].dropna().astype(str).unique()
-            if len(values):
-                source = values[0] if source == df_identifier else f"{source}:{values[0]}"
-
+    source = _frame_source(df, df_identifier)
     blank: Dict[str, int] = {}
 
     # Apply each filter with AND semantics
