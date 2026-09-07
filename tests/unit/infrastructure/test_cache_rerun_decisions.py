@@ -165,6 +165,34 @@ class TestSourceDataRequirementsDriveReruns:
             "editing hydroUpd-v1.xlsx must re-run a processor that reads nodedata"
         )
 
+    def test_unittypedata_reaches_a_processor_that_asked_for_unitdata(self, tmp_path):
+        """df_unitdata is the merged result, so unittypedata is part of it.
+
+        merge_unittypedata_into_unitdata folds the type-level defaults in, so a
+        processor handed df_unitdata receives something a unittypedata sheet can
+        change. The link used to hold by accident: the hashing prefix for
+        unitdata_files was the truncated 'unit', which also matched every
+        unittypedata sheet. Exact prefixes removed the accident, so the
+        dependency is declared.
+        """
+        manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
+        manager.save_processor_requirements("some_processor", ["unitdata"])
+
+        changed = manager._detect_timeseries_spec_changes(
+            manager.config, self._prev_config(), {"unittypedata_files": True}
+        )
+        assert changed["hydro"]
+
+    def test_the_dependency_does_not_run_the_other_way(self, tmp_path):
+        """Nothing folds unitdata into df_unittypedata."""
+        manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
+        manager.save_processor_requirements("some_processor", ["unittypedata"])
+
+        changed = manager._detect_timeseries_spec_changes(
+            manager.config, self._prev_config(), {"unitdata_files": True}
+        )
+        assert not changed["hydro"]
+
     def test_an_undeclared_category_changing_does_not(self, tmp_path):
         """Only the frames a processor asked for should wake it."""
         manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})

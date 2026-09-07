@@ -29,6 +29,18 @@ import shutil
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+#: A source table whose content depends on files outside its own category.
+#:
+#: df_unitdata is the merged result: merge_unittypedata_into_unitdata folds the
+#: type-level defaults into it, so a processor asking for 'unitdata' receives
+#: something a unittypedata sheet can change. Nothing else crosses categories.
+#:
+#: This was implicit while the hashing prefixes were truncated -- 'unit' matched
+#: unittypedata sheets too, so the dependency was satisfied by accident. Exact
+#: prefixes make it a statement instead.
+_SOURCE_TABLE_EXTRA_FILES = {"unitdata": ("unittypedata_files",)}
+
+
 class CacheManager:
     """
     CacheManager handles the saving and loading of critical run information to enable
@@ -271,15 +283,20 @@ class CacheManager:
                                    level="warn")
             prev_input_hashes = {}
 
-        # Map categories to their sheet prefixes (following read_input_excels logic)
+        # The sheet prefix each category reads, exactly as read_input_excels
+        # matches them. They used to be truncated -- 'unit' for unitdata_files --
+        # which also matched every unittypedata sheet, so a workbook carrying
+        # both had its unittypedata hashed under both categories and the hash
+        # file said something that was not true. TYNDP-2024_National_Trends.xlsx
+        # is such a workbook and is listed under both keys in the NT configs.
         category_to_prefix = {
-            "unittypedata_files": "unittype",
-            "nodedata_files": "node",
-            "emissiondata_files": "emission",
-            "demanddata_files": "demand",
-            "transferdata_files": "transfer",
-            "unitdata_files": "unit",
-            "userconstraintdata_files": "userconstraint"
+            "unittypedata_files": "unittypedata",
+            "nodedata_files": "nodedata",
+            "emissiondata_files": "emissiondata",
+            "demanddata_files": "demanddata",
+            "transferdata_files": "transferdata",
+            "unitdata_files": "unitdata",
+            "userconstraintdata_files": "userconstraintdata"
         }
 
         category_status = {}
@@ -307,7 +324,7 @@ class CacheManager:
 
                     if not sheet_hashes:
                         self.logger.log_status(
-                            f"Did not find '{sheet_prefix}data' sheets from {file_path}",
+                            f"Did not find '{sheet_prefix}' sheets from {file_path}",
                             level="warn"
                         )
 
@@ -433,7 +450,9 @@ class CacheManager:
             processor_name = curr_spec.get("processor_name")
             if processor_name in recorded_requirements:
                 for source_name in recorded_requirements[processor_name]:
-                    if input_changes.get(f"{source_name}_files"):
+                    categories = (f"{source_name}_files",
+                                  *_SOURCE_TABLE_EXTRA_FILES.get(source_name, ()))
+                    if any(input_changes.get(category) for category in categories):
                         changed = True
             elif any_input_changed:
                 # Nothing recorded for this processor, so its requirements are

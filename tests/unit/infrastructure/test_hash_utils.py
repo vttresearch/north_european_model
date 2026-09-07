@@ -96,6 +96,28 @@ class TestComputeExcelSheetsHash:
         hashes = compute_excel_sheets_hash(path, "unitdata")
         assert set(hashes) == {"unitdata_FI", "unitdata_SE"}
 
+    def test_unitdata_and_unittypedata_are_separate_families(self, tmp_path):
+        """One is a prefix of the other, so the prefix has to be the whole word.
+
+        The cache used to hash with truncated prefixes -- 'unit' for
+        unitdata_files -- which swept every unittypedata sheet into the unitdata
+        category as well. A workbook carrying both then reported the same sheet
+        under two categories, and TYNDP-2024_National_Trends.xlsx is such a
+        workbook, listed under both keys in the NT configs.
+        """
+        path = _write_xlsx(
+            tmp_path / "wb.xlsx",
+            {
+                "unitdata": pd.DataFrame({"a": [1]}),
+                "unittypedata": pd.DataFrame({"a": [2]}),
+            },
+        )
+
+        assert set(compute_excel_sheets_hash(path, "unitdata")) == {"unitdata"}
+        assert set(compute_excel_sheets_hash(path, "unittypedata")) == {"unittypedata"}
+        # And the truncation that caused it, as the reason the prefixes are exact.
+        assert set(compute_excel_sheets_hash(path, "unit")) == {"unitdata", "unittypedata"}
+
     def test_returns_empty_for_a_prefix_that_matches_nothing(self, tmp_path):
         path = _write_xlsx(tmp_path / "wb.xlsx", {"nodedata": pd.DataFrame({"a": [1]})})
         assert compute_excel_sheets_hash(path, "unitdata") == {}

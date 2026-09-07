@@ -316,7 +316,10 @@ def read_input_excels(
             dataframes.append(df)
 
     if not dataframes:
-        # Already warned about missing sheets in cache manager 
+        # The cache manager warns about a listed file with no matching sheet, and
+        # it now looks for the same prefixes this does -- its were truncated, so
+        # 'unitdata' and 'unittypedata' were one category to it and the deferral
+        # was not quite true.
         return []
 
     return dataframes
