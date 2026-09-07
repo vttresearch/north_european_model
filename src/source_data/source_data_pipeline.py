@@ -260,11 +260,13 @@ class SourceDataPipeline:
             dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'from_country': self.country_codes},
-                                   self.logger, 'transferdata')
-                   for df in dfs
-                   ]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'to_country': self.country_codes},
+            # Both ends in one call: apply_whitelist already ANDs its filters, so
+            # a link survives only if both countries are modelled. Two calls said
+            # the same thing and repeated every scenario and year comparison, and
+            # any warning either raised, twice.
+            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year],
+                                                    'from_country': self.country_codes,
+                                                    'to_country': self.country_codes},
                                    self.logger, 'transferdata')
                    for df in dfs
                    ]
