@@ -72,7 +72,7 @@ After run() the following attributes are populated (empty DataFrame if no source
 files are configured):
 
   df_nodedata            node parameters (fuel costs, emissions, storage)  key: country, grid, node
-  df_emissiondata        emission factors                key: emission
+  df_emissiondata        emission factors                key: emission, group
   df_demanddata          demand parameters               key: country, grid, node
   df_unitdata            unit capacity parameters        key: country, generator_id, unit_name_prefix
                          NOTE: df_unitdata is the MERGED result — type-level defaults
@@ -166,7 +166,11 @@ class SourceDataPipeline:
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'emissiondata')
                    for df in dfs
                    ]
-            self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['emission'])
+            # (emission, group), not emission alone: create_ts_emissionPriceChange
+            # keys its output on the pair, so a narrower key here would merge two
+            # groups of one emission into a single row and drop the second group
+            # without a word.
+            self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['emission', 'group'])
         else:
             self.logger.log_status(
                 "No Excel files for 'emissiondata_files' defined in the config file",
