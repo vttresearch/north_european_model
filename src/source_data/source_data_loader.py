@@ -1188,13 +1188,12 @@ def merge_row_by_row(
     - 'add-non-negative' : Same as 'add', but clamp results to ≥ 0. On first occurrence,
                            initialize measures with max(0, incoming).
 
-    - 'multiply'         : Multiply measures with special missing rules:
-                           * (missing x missing) → NaN
-                           * previous missing → 0.0 (zeroes product)
-                           * current (new) missing → 1.0 (no change)
-                           Only affects measure columns present in the second DataFrame
-                           (absent → treated as missing → apply the above rules).
-                           On first occurrence, use incoming values directly (initialize).
+    - 'multiply'         : Multiply measures. A missing value on either side means
+                           there is nothing to scale, so nothing happens:
+                           * (missing x anything) → unchanged, still missing
+                           * (anything x missing) → unchanged
+                           A row whose key matches nothing establishes no record --
+                           there is no value for it to scale -- and is reported.
 
     - 'remove'   : Delete any previously merged row for the same key.
 
@@ -1377,10 +1376,17 @@ def merge_row_by_row(
                 continue
 
             prev_val = existing.get(mc)
-            prev_missing = prev_val is None or pd.isna(prev_val)
+            if prev_val is None or pd.isna(prev_val):
+                # Nothing to scale. This used to read the missing value as 0.0
+                # and write a 0, which made 'empty x 5' produce 0 while
+                # '5 x empty' produced 5 -- two answers to the same question, and
+                # the 0 one silently replaced "not set" with a real number that
+                # nothing had stated. A missing operand contributes nothing to
+                # the operation: for 'add' that is the 0.0 below, for 'multiply'
+                # it is leaving the other side alone.
+                continue
 
-            # Previous missing → 0.0, which zeroes the product
-            existing[mc] = (0.0 if prev_missing else prev_val) * cur_val
+            existing[mc] = prev_val * cur_val
         existing["method"] = method
         return existing
 
@@ -1393,6 +1399,7 @@ def merge_row_by_row(
     # an earlier one. Only the second is what the method column is for.
     origin: Dict[Tuple, Tuple] = {}
     self_replaced: List[str] = []
+    unmatched: List[str] = []
 
     for df in frames:
         for row_dict in df.to_dict(orient="records"):
@@ -1433,6 +1440,17 @@ def merge_row_by_row(
                 where = ":".join(str(part) for part in source if part is not None)
                 shown = "/".join("" if part is None else str(part) for part in k)
                 self_replaced.append(f"'{shown}' in {where}")
+
+            # An arithmetic row is an instruction to change a value that already
+            # exists. Landing on a key nothing established almost always means
+            # the key is misspelled -- and the two methods then behave very
+            # differently, which is why both are reported rather than only the
+            # one that does nothing.
+            if method in ("add", "add-non-negative", "multiply") and existing is None:
+                where = ":".join(str(part) for part in source if part is not None)
+                shown = "/".join("" if part is None else str(part) for part in k)
+                unmatched.append(f"'{shown}' ({method})" + (f" in {where}" if where else ""))
+
             origin[k] = source
 
             # --- Apply appropriate handler based on method ----------------------
@@ -1454,7 +1472,23 @@ def merge_row_by_row(
             elif method == "add-non-negative":
                 acc[k] = _handle_add(existing, row_dict, method, clamp_non_negative=True)
             elif method == "multiply":
-                acc[k] = _handle_multiply(existing, row_dict, method)
+                # Nothing to scale, so nothing to write. 'add' initialises here
+                # instead, and correctly: a missing value counts as 0.0 for it,
+                # so 0 + cur is cur. The multiplicative equivalent of that is
+                # leaving the value unset, not writing the multiplier as if it
+                # were a quantity.
+                if existing is not None:
+                    acc[k] = _handle_multiply(existing, row_dict, method)
+
+    if unmatched:
+        logger.log_status(
+            f"{len(unmatched)} row(s) add to or multiply a key that no earlier row "
+            f"established: {utils.summarise(unmatched)}. An arithmetic row changes a "
+            f"value that already exists, so a key matching nothing usually means it is "
+            f"misspelled. An 'add' row creates the record from zero; a 'multiply' row "
+            f"has nothing to scale and does nothing at all.",
+            level="warn"
+        )
 
     if self_replaced:
         logger.log_status(
