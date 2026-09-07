@@ -45,6 +45,26 @@ not build and why, and has a documentation page of its own.
   rather than silently dropped.
 - A node that only one of `nodedata` and `demanddata` knows about is reported.
 - `merge_row_by_row`: column titles compared case-insensitively, first spelling kept.
+- A column no stage reads is reported by file and sheet.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- What the source data phase does with a workbook:
+  [docs/source-data.md](docs/source-data.md)
+- A demand written as `0` is kept instead of being deleted as an empty row.
+- `multiply` leaves a value unchanged when either side is missing, instead of
+  writing `0`.
+- An `add` or `multiply` row whose key matches nothing is reported; `multiply`
+  no longer creates a record.
+- A row with no `scenario` or `year` is reported before it is dropped.
+- A sheet that overwrites its own earlier row with `replace` is reported.
+- A sheet dropped for a missing `country`, `grid` or `generator_id` says how
+  many rows that cost.
+- A user constraint sheet without a `country` column no longer stops the build.
+- `emissiondata` is merged on `emission` and `group` together.
+- `transferdata` is filtered once for both link ends rather than twice.
+- Sheet hashes use the full category prefix, so `unittypedata` is no longer
+  hashed as `unitdata` too.
+- Config file lists name `Finland_dheat_and_industry.xlsx` with the case the
+  folder uses.
 
 ## Input excel builder
 
