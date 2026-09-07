@@ -1032,6 +1032,12 @@ def apply_whitelist(
     - Special always-include values (if the corresponding filter key is present):
         * scenario: include 'all' (case-insensitive) in addition to provided values
         * year    : include 1 in addition to provided values
+
+    A blank ``scenario`` or ``year`` cell matches nothing and the row is dropped.
+    That is deliberate -- a row has to say which run it belongs to, and reading a
+    blank as 'all' would silently promote an unfinished row into every scenario
+    -- but it used to happen without a word, which made an empty cell look
+    exactly like a row this run does not cover. It is reported now.
     """
     # Fast exits for None/empty/no-filters
     if df is None:
@@ -1041,6 +1047,17 @@ def apply_whitelist(
 
     df_out = df.copy()
 
+    # Named for the message, while the provenance columns are still here:
+    # merge_row_by_row drops them further down the chain.
+    source = df_identifier
+    for column in ("_source_file", "_source_sheet"):
+        if column in df.columns:
+            values = df[column].dropna().astype(str).unique()
+            if len(values):
+                source = values[0] if source == df_identifier else f"{source}:{values[0]}"
+
+    blank: Dict[str, int] = {}
+
     # Apply each filter with AND semantics
     for col, val in filters.items():
         if col not in df_out.columns:
@@ -1048,6 +1065,15 @@ def apply_whitelist(
             continue
 
         vals = val
+
+        if col in ("scenario", "year"):
+            # A blank here is not "every run", it is a row that never says which
+            # run it belongs to. astype(str) below turns pd.NA into the literal
+            # '<NA>', so it drops out either way; counting it first is what makes
+            # the drop visible.
+            missing = int(df_out[col].isna().sum())
+            if missing:
+                blank[col] = blank.get(col, 0) + missing
 
         if col == "scenario":
             # Include 'all' (universal)
@@ -1070,7 +1096,16 @@ def apply_whitelist(
                 df_out = df_out[df_out[col].isin(vals)]
 
         if df_out.empty:
-            return df_out  # Short-circuit: nothing left
+            break  # Short-circuit: nothing left
+
+    if blank:
+        detail = ", ".join(f"{count} with no {col}" for col, count in blank.items())
+        logger.log_status(
+            f"[{source}] {detail}, so those row(s) are not read. A row states which "
+            f"scenario and year it belongs to; write 'all' and 1 for one that belongs "
+            f"to every run.",
+            level="warn"
+        )
 
     return df_out
 
