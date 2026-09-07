@@ -214,7 +214,6 @@ class SourceDataPipeline:
                    for df in dfs
                    ]
             self.df_demanddata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
-            self.df_demanddata = data_loader.filter_nonzero_numeric_rows(self.df_demanddata, exclude=['year'])
         else:
             self.logger.log_status(
                 "No Excel files for 'demanddata_files' defined in the config file",

@@ -249,11 +249,11 @@ def find_malformed_numeric_cells(df: pd.DataFrame) -> MalformedCellReport:
     ``standardize_df_dtypes`` converts a column to numeric only when
     ``pd.to_numeric`` introduces no new NA, so one unparseable cell leaves the
     *entire* column ``object`` -- and a dozen places downstream branch on dtype.
-    The column then silently changes behaviour rather than failing: a sheet whose
-    only numeric column is poisoned is dropped whole by
-    ``filter_nonzero_numeric_rows``, and ``normalize_dataframe``'s ``_output1``
-    rename stops firing, which loses the capacity column outright. A visible
-    ``TypeError`` is the lucky outcome.
+    The column then silently changes behaviour rather than failing:
+    ``normalize_dataframe``'s ``_output1`` rename fires only on ``Float64``, so a
+    poisoned ``capacity_output1`` keeps its suffix and the capacity is never read
+    at all, and ``merge_row_by_row``'s ``add`` and ``multiply`` concatenate
+    strings. A visible ``TypeError`` is the lucky outcome.
 
     Structural on purpose: no column list and no ``{column: dtype}`` map, which
     would need editing on every schema change (tests/README.md, R7). The rule is

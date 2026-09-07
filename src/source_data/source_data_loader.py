@@ -1478,27 +1478,6 @@ def merge_row_by_row(
     return merged
 
 
-def filter_nonzero_numeric_rows(
-    df: pd.DataFrame, exclude: list[str] = None
-    ) -> pd.DataFrame:
-    """
-    Removes rows from the DataFrame where the sum of numeric columns is zero.
-    Optionally excludes specific numeric columns from the summation.
-
-    Parameters:
-        df (pd.DataFrame): Input DataFrame.
-        exclude (list[str], optional): List of column names to exclude from summing.
-
-    Returns:
-        pd.DataFrame: Filtered DataFrame with only rows having non-zero numeric data.
-    """
-    if exclude is None:
-        exclude = []
-
-    numeric_cols = df.select_dtypes(include='number').columns.difference(exclude)
-    return df[df[numeric_cols].sum(axis=1) != 0]
-
-
 #: A grid is only cross-checked once this share of its demand nodes already have
 #: a nodedata row. Below it the grid is taken to be one nodedata does not
 #: describe at all -- electricity and hydrogen nodes carry no nodedata row today,
@@ -1534,12 +1513,17 @@ def report_node_disagreements(
     balance nodes stay silent while ``dheat``, ``steam`` and the hydro grids are
     checked.
 
-    Reports only, and never asserts which cause it is. A mistyped cell is one
-    cause; the other is a demand row written as ``0``, which
-    ``filter_nonzero_numeric_rows`` drops as empty, so it arrives here looking
-    exactly like a row nobody wrote. Both leave a node the model carries with
-    nothing to serve, and telling them apart needs the workbook, so no row is
-    dropped and the message names both.
+    Reports only, and never asserts which cause it is. A mistyped cell in either
+    table is one cause; a node genuinely present in one and not the other is the
+    next; and either leaves a node the model carries with nothing to serve.
+    Telling them apart needs the workbook, so no row is dropped and the message
+    names both tables.
+
+    A demand row written as ``0`` used to be a third cause, and the worst of
+    them: it was deleted before reaching here, so a deliberate zero arrived
+    looking exactly like a row nobody wrote. That deletion is gone -- a demand of
+    zero is data -- and with it the only case where this warning fired on a
+    workbook that was correct.
     """
     if logger is None or df_nodedata.empty or df_demanddata.empty:
         return

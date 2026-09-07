@@ -191,8 +191,8 @@ real numbers and values that look like numbers but do not parse (`1,000.0`, `100
 Blanking rather than interpreting is the point: `1.000` is a thousand to one author and one
 to another, and the cell does not say which. Blanking also lets `standardize_df_dtypes` type
 the column `Float64` by itself, which is what stops one bad cell demoting a whole column to
-`object` — the failure that dropped every row of a sheet through
-`filter_nonzero_numeric_rows`, and stopped the `_output1` rename from firing.
+`object` — the failure that stopped the `_output1` rename from firing, so a poisoned
+`capacity_output1` kept its suffix and the capacity was never read at all.
 
 The rule is *starts with a digit after any sign or currency symbol*, not *contains a digit*:
 the weaker test blanked `chp1` out of an identifier column. A purely textual value in a

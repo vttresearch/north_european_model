@@ -7,8 +7,6 @@ whole column ``object`` -- and around a dozen places downstream branch on exactl
 that dtype. Nothing was logged, so the usual outcome was not a traceback but a
 quietly different model:
 
-- ``filter_nonzero_numeric_rows`` stopped seeing the column as numeric and
-  dropped **every row of the sheet**;
 - ``normalize_dataframe``'s ``_output1`` rename only fires on ``Float64``
   columns, so ``capacity_output1`` stayed unrenamed and the capacity was never
   read at all;
@@ -53,13 +51,6 @@ def _row(capacity, country="FI", column="capacity"):
 
 class TestTheSheetSurvives:
     """The cascade, as the properties it used to break."""
-
-    def test_the_other_rows_are_not_dropped(self):
-        # Before the gate this kept 0 of 3: the poisoned column was no longer
-        # numeric, so no row had any numeric value left to be non-zero.
-        df, _ = _gated([_row("1,000.0"), _row(500.0, "SE"), _row(250.0, "NO")])
-        kept = loader.filter_nonzero_numeric_rows(loader.normalize_dataframe(df, "u", FakeLogger()))
-        assert set(kept["country"]) == {"SE", "NO"}
 
     def test_the_column_is_still_numeric(self):
         df, _ = _gated([_row("1,000.0"), _row(500.0, "SE"), _row(250.0, "NO")])

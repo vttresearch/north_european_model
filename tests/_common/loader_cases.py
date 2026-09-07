@@ -135,8 +135,4 @@ LOADER_CASES: list[LoaderCase] = [
             [df, df], log, key_columns=["country", "grid"]
         ),
     ),
-    LoaderCase(
-        "filter_nonzero_numeric_rows",
-        lambda df, log: loader.filter_nonzero_numeric_rows(df),
-    ),
 ]
