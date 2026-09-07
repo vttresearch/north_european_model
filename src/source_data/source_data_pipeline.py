@@ -81,7 +81,7 @@ files are configured):
                          NOT exposed as a public attribute after run().
   df_transferdata        interconnector parameters       key: from_country, from_suffix, to_country, to_suffix, grid
   df_userconstraintdata  custom constraint parameters    key: group, 1st dimension,
-                         2nd dimension, 3rd dimension, 4th dimension, param_userconstraint
+                         2nd dimension, 3rd dimension, 4th dimension, parameter
   df_boundarydata        node state boundaries, long     key: grid, node, param_gnboundarytypes
                          NOTE: derived, not read. build_boundarydata() melts
                          nodedata's wide boundary columns (upwardlimit, maxSpill,

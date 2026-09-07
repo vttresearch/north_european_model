@@ -413,7 +413,8 @@ def normalize_dataframe(
     6) DType conversions via ``utils.standardize_df_dtypes``:
        - Convert empty/NaN columns to Object dtype
        - Convert numeric string columns to Float64
-       - Fill NA in Float64 columns with 0.
+       - NA is preserved, never filled. This is the source side, where pd.NA and
+         0 are different things; only the Excel builder collapses them.
     7) Column rename: for **numeric** columns named `*_output1`, drop the suffix to become the base
        name; skip and warn if renaming would collide with an existing column.
 
@@ -454,7 +455,8 @@ def normalize_dataframe(
     ident = ":".join(parts) if parts else df_identifier
 
     # 2) Lower-case selected columns' values
-    # Note: cannot be applied to 'method' which is already handled above
+    # 'method' is excluded here and canonicalized on its own in step 4 below,
+    # which also has to create it when a sheet does not carry one.
     for col in lowercase_col_values:
         if col in df_out.columns and col != "method":
             df_out[col] = df_out[col].astype("string").str.lower()
@@ -1263,8 +1265,10 @@ def merge_row_by_row(
     - If `measure_cols` is blank, we **infer measures conservatively**:
         * Exclude booleans and `not_measure_cols`
         * A column qualifies if it's numeric-typed with at least one non-NA value
-    - Only measure columns are coerced to nullable Float64 at the end.
-    - Other columns specifically keep their dtype
+    - The merged frame goes through ``utils.standardize_df_dtypes`` at the end,
+      like every other frame in this stage: numeric to Float64, all-NA to object,
+      everything else to object. Measure inference decides what arithmetic may
+      touch, not what anything is typed as.
     """
 
     # --- Input filtering & column union ---------------------------------------
