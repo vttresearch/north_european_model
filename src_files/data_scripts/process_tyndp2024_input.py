@@ -115,25 +115,28 @@ tyndp_to_unittype = {
 
     # these choices are debatable
     # comments at end of line are alternative unittypes in maf2020
-    'Battery Storage charge (load)':        'Batterychar4h',      # Batterychar
-    'Battery Storage discharge (gen.)':     'Batterydisch4h',     # Batterydisch
-    'Hard Coal biofuel':                    'hardcoalNewBio',     # hardcoalOldBio, hardcoalOld2Bio
-    'Lignite biofuel':                      'ligniteOld1Bio',     # ligniteOld2Bio
-    'Gas biofuel':                          'gasCCGTOld2Bio',     # gasOld2Bio
+    'Battery Storage charge (load)':        'BatteryCharger4h',   # BatteryCharger
+    'Battery Storage discharge (gen.)':     'BatteryDisch4h',     # BatteryDisch
+    'Hard Coal biofuel':                    'bioCoalNew',         # bioCoalOld, bioCoalOld2
+    'Lignite biofuel':                      'bioLigniteOld1',     # bioLigniteOld2
+    'Gas biofuel':                          'bioGasCCGTOld2',     # bioGasOld2
 
     'Electrolyser (load)':                  'Electrolyser',
-    'Oil shale biofuel':                    'oilshaleNewBio',
-    'Others non-renewable':                 'industryNonResCHP',
-    'Others renewable':                     'industryResCHP',
+    'Oil shale biofuel':                    'bioOilshaleNew',
+    'Others non-renewable':                 'coalCHPIndustry',
+    'Others renewable':                     'bioCHPIndustry',
     'Pondage':                              'rorTurbine',
-    'Solar (Photovoltaic)':                 'PV',
+    # needs an entry despite looking like a pass-through: an unmapped name
+    # reaches the workbook verbatim, and nothing declares it there
+    'Run-of-River':                         'rorTurbine',
+    'Solar (Photovoltaic)':                 'solarPV',
     'Solar (Thermal)':                      'solarThermal',
     'Wind Offshore':                        'windOffshore',
     'Wind Onshore':                         'windOnshore',
-    'Pump Storage - Closed Loop (pump)':    'psclosedpump',
-    'Pump Storage - Closed Loop (turbine)': 'psclosedturbine',
-    'Pump Storage - Open Loop (pump)':      'psopenpump',
-    'Pump Storage - Open Loop (turbine)':   'psopenturbine',
+    'Pump Storage - Closed Loop (pump)':    'psClosedPump',
+    'Pump Storage - Closed Loop (turbine)': 'psClosedTurbine',
+    'Pump Storage - Open Loop (pump)':      'psOpenPump',
+    'Pump Storage - Open Loop (turbine)':   'psOpenTurbine',
 
     # Names TYNDP2024 and the NE model used to spell identically, which is why
     # they needed no entry while the workbooks carried Generator_IDs.
@@ -147,13 +150,13 @@ tyndp_to_unittype = {
     'Gas OCGT old':                         'gasOCGTold',
     'Gas conventional old 1':               'gasOld1',
     'Gas conventional old 2':               'gasOld2',
-    'Hard coal new':                        'hardcoalNew',
-    'Hard coal old 1':                      'hardcoalOld1',
-    'Hard coal old 2':                      'hardcoalOld2',
-    'Heavy oil old 1':                      'HFOOld1',
-    'Heavy oil old 2':                      'HFOOld2',
+    'Hard coal new':                        'coalNew',
+    'Hard coal old 1':                      'coalOld1',
+    'Hard coal old 2':                      'coalOld2',
+    'Heavy oil old 1':                      'oilHeavyOld1',
+    'Heavy oil old 2':                      'oilHeavyOld2',
     'Hydrogen CCGT':                        'hydrogenCCGT',
-    'Light oil':                            'LFO',
+    'Light oil':                            'OilLightOld',
     'Lignite old 1':                        'ligniteOld1',
     'Lignite old 2':                        'ligniteOld2',
     'Nuclear':                              'nuclear',
@@ -161,7 +164,7 @@ tyndp_to_unittype = {
     'Reservoir':                            'reservoirTurbine',
 }
 
-# Country-specific share of nuclear capacity treated as flexible (Nuclear-flex).
+# Country-specific share of nuclear capacity treated as flexible (nuclearFlexible).
 # France has a higher flexible share due to its large and operationally diverse fleet.
 nuclear_flex_shares = {
     'FR00': 0.60,   # France
@@ -172,13 +175,13 @@ nuclear_flex_default_share = 0.15  # all other countries
 # done after the renamings specified in tyndp_to_unittype
 unittype_aggregations_loc = {
     # reservoirTurbine and rorTurbine in NOM1, NON1 and NOS0 have no storagedata in
-    # the NE model -> aggregated to psopenturbine (perhaps not a good permanent solution)
-    'NOM1': {'reservoirTurbine': 'psopenturbine',
-             'rorTurbine': 'psopenturbine'},
-    'NON1': {'reservoirTurbine': 'psopenturbine',
-             'rorTurbine': 'psopenturbine'},
-    'NOS0': {'reservoirTurbine': 'psopenturbine',
-             'rorTurbine': 'psopenturbine'}
+    # the NE model -> aggregated to psOpenTurbine (perhaps not a good permanent solution)
+    'NOM1': {'reservoirTurbine': 'psOpenTurbine',
+             'rorTurbine': 'psOpenTurbine'},
+    'NON1': {'reservoirTurbine': 'psOpenTurbine',
+             'rorTurbine': 'psOpenTurbine'},
+    'NOS0': {'reservoirTurbine': 'psOpenTurbine',
+             'rorTurbine': 'psOpenTurbine'}
 }
 
 
@@ -280,7 +283,7 @@ def process_installed_capacities(plexos_caps_demands, tyndp_to_unittype, unittyp
 
 def split_nuclear_flex_capacity(installed_capacities):
     """
-    Split Nuclear rows into Nuclear (base) and Nuclear-flex rows.
+    Split nuclear rows into nuclear (base) and nuclearFlexible rows.
 
     For each row with unittype == 'nuclear', a 'nuclearFlexible' row is
     created that carries the flexible share of the capacity, and the original
@@ -289,7 +292,7 @@ def split_nuclear_flex_capacity(installed_capacities):
     nuclear_flex_default_share for countries not listed there.
 
     Only capacity_output1 is split; all other columns are copied as-is from
-    the Nuclear row (scenario, year, node_suffix_output2, etc.).
+    the nuclear row (scenario, year, node_suffix_output2, etc.).
 
     Parameters
     ----------
@@ -299,7 +302,7 @@ def split_nuclear_flex_capacity(installed_capacities):
     Returns
     -------
     pd.DataFrame
-        DataFrame with Nuclear-flex rows appended and Nuclear rows scaled down.
+        DataFrame with nuclearFlexible rows appended and nuclear rows scaled down.
     """
     nuclear_mask = installed_capacities['unittype'] == 'nuclear'
     if not nuclear_mask.any():
