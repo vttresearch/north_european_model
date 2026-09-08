@@ -37,10 +37,37 @@ not build and why, and has a documentation page of its own.
 
 ## Source workbooks
 
+- `generator_ID` is removed. A `unitdata` row names its `unittype` directly, and
+  `unittypedata` is keyed on `unittype` with a free-text `## Description` column
+  in place of the old name.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
 - `##` in a cell skips the row, `##` in a column header skips the column.
   [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- A build no longer holds every source workbook open for its whole run, which
+  made them read-only in Excel while it ran.
+- Excel error values now reach the report at all. pandas turns every error cell
+  into an empty one before anything can look, so no `#REF!` or `#N/A` had ever
+  been named.
+- Malformed cells are reported once per workbook, naming the worst three columns,
+  instead of once per column.
 - Malformed numbers (`1,000.0`, `100 MW`, `#REF!`) are reported and treated as
   not set, in source excels and timeseries files alike.
+- Warnings about a unittype or a node name the workbook and sheet it was written
+  in, and say when another sheet spells the same name differently.
+- A row with no unittype is identified by its country, scenario and year.
+- A blank key column, or a year that is neither a real year nor the `1` meaning
+  every year, is an error naming the spreadsheet row. Such a row used to be
+  dropped in silence.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- Source workbooks renamed for what they hold: `dheat_balticData.xlsx`,
+  `dheat_unitdata_PL_DE_AT.xlsx`, `dheat_unitdata_SE_DK.xlsx`. The unused
+  `unitdata_TYNDP-2020.xlsx` and `unitdata_additional-*.xlsx` are removed, and
+  some content moved between the remaining ones.
+- Unit types and several fuel nodes renamed.
+- Finnish city units and district heating transfer links no longer share
+  identical costs, and VRE costs are slightly higher.
+- Three AT00 units are deactivated with `method = remove` rather than a year that
+  matched nothing; the sub-10 MW rule drops one further unit.
 - Blank rows, unnamed columns and repeated headers inside a table are reported
   rather than silently dropped.
 - A node that only one of `nodedata` and `demanddata` knows about is reported.
@@ -57,7 +84,7 @@ not build and why, and has a documentation page of its own.
   no longer creates a record.
 - A row with no `scenario` or `year` is reported before it is dropped.
 - A sheet that overwrites its own earlier row with `replace` is reported.
-- A sheet dropped for a missing `country`, `grid` or `generator_id` says how
+- A sheet dropped for a missing `country`, `grid` or `unittype` says how
   many rows that cost.
 - A user constraint sheet without a `country` column no longer stops the build.
 - `emissiondata` is merged on `emission` and `group` together.

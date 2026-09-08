@@ -31,7 +31,7 @@ def _rows(*, methods, sheet="unitdata", file="book.xlsx"):
     count = len(methods)
     return pd.DataFrame({
         "country": pd.Series(["FI00"] * count, dtype="object"),
-        "generator_id": pd.Series(["chp"] * count, dtype="object"),
+        "unittype": pd.Series(["CHP"] * count, dtype="object"),
         "capacity": pd.Series([100.0] * count, dtype="Float64"),
         "method": pd.Series(list(methods), dtype="object"),
         "_source_file": pd.Series([file] * count, dtype="object"),
@@ -39,7 +39,7 @@ def _rows(*, methods, sheet="unitdata", file="book.xlsx"):
     })
 
 
-KEYS = ["country", "generator_id"]
+KEYS = ["country", "unittype"]
 
 
 class TestASheetReplacingItsOwnRow:

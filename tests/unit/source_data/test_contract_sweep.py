@@ -152,7 +152,7 @@ def test_source_stage_never_collapses_na_to_zero(case):
     # only 'capacity' carries the NA under test.
     raw = frame_with_cell(SWEEP_COLUMNS, "FI", rows=2, filler="SE")
     raw["grid"] = ["elec", "elec"]
-    raw["generator_id"] = ["gen1", "gen1"]
+    raw["unittype"] = ["coalplant", "coalplant"]
     raw["scenario"] = ["test", "test"]
     raw["year"] = [2030, 2030]
     raw["method"] = ["replace", "replace"]
@@ -189,11 +189,23 @@ def test_the_sweep_table_covers_the_public_loader_surface():
     # count_units_without_exclusions answers "how many units would this run have
     # had", so it returns a number rather than a frame. Covered in
     # route/test_route_excluded_nodes.py.
+    # collect_origins and describe_origins index and render where a value was
+    # written down. Neither takes or returns a frame, so there is no dtype
+    # contract to sweep. Covered in unit/source_data/test_origins.py.
     deliberately_excluded = {
         "read_input_excels",
         "report_node_disagreements",
         "report_unused_columns",
         "count_units_without_exclusions",
+        "collect_origins",
+        "describe_origins",
+        # restore_excel_error_values needs a live openpyxl worksheet beside the
+        # frame, so there is nothing to hand it here. Covered in
+        # unit/source_data/test_numeric_cell_mistakes.py through the real reader.
+        "restore_excel_error_values",
+        # report_unusable_keys reports and returns nothing. Covered in
+        # unit/source_data/test_unusable_keys.py.
+        "report_unusable_keys",
     }
 
     public = {

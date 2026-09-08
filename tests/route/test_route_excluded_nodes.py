@@ -31,8 +31,8 @@ MESSAGE = "removed 1 unit(s)"
 # capacity with it, which is the case worth counting.
 CHP = """
 [unittypedata]
-scenario | year | Generator_ID | unittype | grid_input1 | grid_output1 | grid_output2 | eff00
-all      | 1    | chp          | CHP      | biomass     | elec         | dheat        | 0.9
+scenario | year | unittype | grid_input1 | grid_output1 | grid_output2 | eff00
+all      | 1    | CHP      | biomass     | elec         | dheat        | 0.9
 
 [nodedata]
 Country | Grid  | Scenario | Year | nodeBalance
@@ -40,8 +40,8 @@ FI      | elec  | all      | 1    | 1
 FI      | dheat | all      | 1    | 1
 
 [unitdata]
-Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1
-FI      | chp          |                  | all      | 1    | 100
+Country | unittype | unit_name_prefix | Scenario | Year | capacity_output1
+FI      | CHP      |                  | all      | 1    | 100
 """
 
 WORKBOOKS = {"data.xlsx": CHP}

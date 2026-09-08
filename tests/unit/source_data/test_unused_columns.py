@@ -54,7 +54,7 @@ def _read(tmp_path, rows, *, sheet="unitdata"):
 class TestAColumnNothingReadsIsReported:
     def test_it_warns(self, tmp_path):
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "capacty"],
+            ["country", "unittype", "capacty"],
             ["FI", "windturbine", 1000],
         ])
         logger.assert_logged(MESSAGE, level="warn")
@@ -62,7 +62,7 @@ class TestAColumnNothingReadsIsReported:
     def test_the_message_spells_the_header_the_way_it_was_typed(self, tmp_path):
         """The reader searches the workbook for what they wrote, not for a slug."""
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "MaxRampUpp"],
+            ["country", "unittype", "MaxRampUpp"],
             ["FI", "windturbine", 5],
         ])
         assert any("MaxRampUpp" in message for message in logger.matching(MESSAGE))
@@ -73,7 +73,7 @@ class TestAColumnNothingReadsIsReported:
         The check cannot tell the three apart, so it must not imply it can.
         """
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "capacty"],
+            ["country", "unittype", "capacty"],
             ["FI", "windturbine", 1000],
         ])
         message = logger.matching(MESSAGE)[0]
@@ -84,7 +84,7 @@ class TestAColumnNothingReadsIsReported:
     def test_the_column_is_still_carried(self, tmp_path):
         """Reporting is the whole change; nothing is dropped on account of it."""
         df, _ = _read(tmp_path, [
-            ["country", "generator_id", "capacty"],
+            ["country", "unittype", "capacty"],
             ["FI", "windturbine", 1000],
         ])
         assert "capacty" in df.columns
@@ -93,14 +93,14 @@ class TestAColumnNothingReadsIsReported:
 class TestWhatMustNotBeReported:
     def test_a_recognised_parameter_is_quiet(self, tmp_path):
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "capacity", "vomCosts"],
+            ["country", "unittype", "capacity", "vomCosts"],
             ["FI", "windturbine", 1000, 2.5],
         ])
         logger.assert_not_logged(MESSAGE)
 
     def test_a_connection_suffix_is_quiet(self, tmp_path):
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "capacity_output1", "grid_input2"],
+            ["country", "unittype", "capacity_output1", "grid_input2"],
             ["FI", "chp", 1000, "gas"],
         ])
         logger.assert_not_logged(MESSAGE)
@@ -116,14 +116,14 @@ class TestWhatMustNotBeReported:
     def test_a_column_the_author_marked_is_quiet(self, tmp_path):
         """The marker says "mine, not the model's", and is dropped beforehand."""
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "##", "##"],
+            ["country", "unittype", "##", "##"],
             ["FI", "windturbine", "scratch", 12],
         ])
         logger.assert_not_logged(MESSAGE)
 
     def test_a_note_column_is_quiet(self, tmp_path):
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "note"],
+            ["country", "unittype", "note"],
             ["FI", "windturbine", "from the 2019 study"],
         ])
         logger.assert_not_logged(MESSAGE)
@@ -131,7 +131,7 @@ class TestWhatMustNotBeReported:
     def test_a_repeated_header_is_left_to_the_duplicate_check(self, tmp_path):
         """One mistake must not earn two warnings, or people skim both."""
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "capacity", "capacity"],
+            ["country", "unittype", "capacity", "capacity"],
             ["FI", "windturbine", 1000, 999],
         ])
         logger.assert_logged("Duplicate column header", level="warn")
@@ -146,14 +146,14 @@ class TestTheTableDecidesWhatAColumnMeans:
         and a single global ``emission_`` rule would wave it through.
         """
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "emission_CO2"],
+            ["country", "unittype", "emission_CO2"],
             ["FI", "gasturbine", 200],
         ])
         logger.assert_logged(MESSAGE, level="warn")
 
     def test_a_unit_group_on_a_unit_sheet_is_quiet(self, tmp_path):
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "emission_group1"],
+            ["country", "unittype", "emission_group1"],
             ["FI", "gasturbine", "ETS-CO2"],
         ])
         logger.assert_not_logged(MESSAGE)
@@ -165,8 +165,8 @@ class TestTheTableDecidesWhatAColumnMeans:
         not, and this is the only thing that would ever tell them.
         """
         _, logger = _read(tmp_path, [
-            ["generator_id", "unittype", "country"],
-            ["windturbine", "WindOn", "FI"],
+            ["unittype", "country"],
+            ["WindOn", "FI"],
         ], sheet="unittypedata")
         logger.assert_logged(MESSAGE, level="warn")
 

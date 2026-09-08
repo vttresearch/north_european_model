@@ -5,10 +5,25 @@ import numpy as np
 from pathlib import Path
 from typing import Union, List, Dict, Mapping, Tuple, Iterable, Sequence, Set
 import src.utils as utils
+from pandas._libs.parsers import STR_NA_VALUES as _PANDAS_NA_STRINGS
 import src.source_workbook_shape as source_workbook_shape
 from src.infrastructure.logger import IterationLogger
 
 FilterValue = list[str] | list[int]
+
+
+#: The NA strings pandas is allowed to blank on its own, which is its default set
+#: minus the Excel error values.
+#:
+#: ``#N/A`` is in *both* pandas' defaults and ``utils.EXCEL_ERROR_VALUES``, so
+#: without this the reader silently turned every ``#N/A`` into an empty cell and
+#: find_excel_error_values could never fire for the one error value Excel produces
+#: most. A broken VLOOKUP then reached the model as "not set", and the only sign
+#: was a later message about a row with nothing in it.
+_NA_STRINGS: tuple = tuple(sorted(
+    set(_PANDAS_NA_STRINGS) - {value.upper() for value in utils.EXCEL_ERROR_VALUES}
+    - {"#N/A N/A", "#NA"}
+))
 
 
 #: pandas' rename for a repeated header: the second 'capacity' becomes
@@ -53,6 +68,128 @@ def _frame_source(df: pd.DataFrame, fallback: str = "") -> str:
             if len(values):
                 parts.append(values[0])
     return ":".join(parts) if parts else fallback
+
+
+def _unittype_key(values: pd.Series) -> pd.Series:
+    """`values` reduced to what decides whether two unittypes are the same one.
+
+    Case-insensitive, because GAMS is: a build carrying both ``CHPbio`` and
+    ``chpbio`` would write two records into a GDX that has one set element for
+    them. The spelling itself is not folded anywhere -- unit names are built from
+    it -- so every comparison of a unittype goes through here instead.
+
+    ``astype("string")`` first, and not incidentally. ``unittype`` is not in
+    normalize_dataframe's ``lowercase_col_values``, so nothing forces the column to
+    text: a sheet whose unittypes all happen to be numbers arrives as ``Float64``,
+    where ``.str`` raises and a merge against an object key raises.
+    """
+    return values.astype("string").str.lower()
+
+
+def collect_origins(dfs, columns, into=None) -> dict:
+    """``{value (lower-cased): {(spelling, "file:sheet"), ...}}`` for `columns`.
+
+    Where a value in the model was written down. A build's late checks speak
+    about a merged table, by which point ``merge_row_by_row`` has dropped the
+    provenance columns -- so a message can say a node is unusable but not which
+    of 44 sheets to open. Collected here, while the per-sheet frames still carry
+    ``_source_file``, and handed to whoever reports.
+
+    Keyed case-insensitively but the spelling is kept, because the two together
+    are what diagnoses a rename: a sheet holding the same name in a different
+    case is not an unrelated sheet, it is the one that was missed.
+
+    `columns` are base names: ``node`` also collects ``node_input1`` and the rest
+    of the connection suffixes, because a unit declares its nodes that way.
+
+    Accumulates into `into` when given, so several data types can contribute to
+    one index.
+    """
+    origins = {} if into is None else into
+    for df in dfs:
+        if df is None or getattr(df, "empty", True):
+            continue
+        where = _frame_source(df)
+        if not where:
+            continue
+        for column in df.columns:
+            if source_workbook_shape.base_column_name(column) not in columns:
+                continue
+            for value in df[column].dropna().astype(str):
+                value = value.strip()
+                if value:
+                    origins.setdefault(value.lower(), set()).add((value, where))
+    return origins
+
+
+def describe_origins(value, origins, limit: int = 2) -> str:
+    """`` (file:sheet)`` for `value`, or empty when nothing recorded it.
+
+    When every sheet holding this value spells it differently, the spelling is
+    named too: that is the whole diagnosis of a half-finished rename, and
+    'check the node data' is not one.
+
+    Empty rather than "unknown": a message that admits it cannot say where
+    something came from has spent a line saying nothing.
+    """
+    text = str(value).strip()
+    entries = origins.get(text.lower())
+    if not entries:
+        return ""
+
+    exact = sorted(where for spelling, where in entries if spelling == text)
+    if exact:
+        shown, total = exact, len(exact)
+    else:
+        # Same name, different case, so nothing matched it. Name the spelling
+        # that is there instead -- one of the two sheets has not been renamed.
+        others = sorted({f"spelled '{spelling}' in {where}"
+                         for spelling, where in entries})
+        shown, total = others, len(others)
+
+    rendered = ", ".join(shown[:limit])
+    if total > limit:
+        rendered += f" and {total - limit} more"
+    return f" ({rendered})"
+
+
+def restore_excel_error_values(df: pd.DataFrame, worksheet) -> pd.DataFrame:
+    """Put the Excel error values pandas dropped back into a freshly read frame.
+
+    openpyxl gives an error cell the data type ``e``, and pandas' Excel reader
+    turns every such cell into ``NaN`` before ``na_values`` is consulted. So
+    ``#REF!``, ``#N/A`` and the rest never reached ``utils.gate_xlsx_frame`` and
+    were blanked in silence -- a broken VLOOKUP entered the model as "not set"
+    and the only trace was a later complaint about an empty row.
+
+    Restoring the strings here, rather than reporting from the worksheet
+    directly, keeps one implementation of what counts as input: the frame then
+    goes through the same ``##`` drops, blank-row truncation and gate as
+    everything else, and a broken formula in a helper column stays as quiet as
+    the author asked.
+
+    Positional, and only valid immediately after ``read_excel(header=0)`` with
+    nothing dropped yet: frame row *i* is sheet row *i + 2*, frame column *j* is
+    sheet column *j + 1*.
+    """
+    found: Dict[int, List[Tuple[int, str]]] = {}
+    for row in worksheet.iter_rows(min_row=2):
+        for cell in row:
+            if getattr(cell, "data_type", None) != "e" or cell.value is None:
+                continue
+            frame_row, frame_col = cell.row - 2, cell.column - 1
+            if 0 <= frame_row < len(df.index) and 0 <= frame_col < len(df.columns):
+                found.setdefault(frame_col, []).append((frame_row, str(cell.value)))
+
+    # Column at a time, retyped once: a column pandas read as all-NaN is float64,
+    # and writing a string into it cell by cell warns on every assignment and is
+    # slated to become an error.
+    for frame_col, cells in found.items():
+        column = df.columns[frame_col]
+        df[column] = df[column].astype(object)
+        for frame_row, value in cells:
+            df.iat[frame_row, frame_col] = value
+    return df
 
 
 def read_input_excels(
@@ -131,11 +268,23 @@ def read_input_excels(
         matched = [s for s in xls.sheet_names if s.lower().startswith(sheet_name_prefix.lower())]
         if not matched:
             # Warning about missing data sheet already logged in cache manager.
+            xls.close()
             continue
+
+        # Gate findings are gathered across the workbook's sheets and said once,
+        # below. Per column per sheet is one line when a cell is wrong and a page
+        # when an export changed format, and the page is what buries the rest of
+        # the build.
+        gate_findings = []
 
         for sheet in matched:
             try:
-                df = pd.read_excel(xls, sheet_name=sheet, header=0)
+                # keep_default_na=False so the Excel error values survive to
+                # the gate below; _NA_STRINGS restores everything else pandas
+                # would have blanked, the empty cell included.
+                df = pd.read_excel(xls, sheet_name=sheet, header=0,
+                                   keep_default_na=False, na_values=_NA_STRINGS)
+                df = restore_excel_error_values(df, xls.book[sheet])
             except Exception as e:
                 logger.log_status(
                     f"Failed reading sheet '{sheet}' in '{file_name}': {e}",
@@ -293,11 +442,16 @@ def read_input_excels(
                 df = df[~ignored_rows]
 
             # --- Gate: report cells that should be numbers and are not ---
+            # Before the gate: an Excel error value is then reported as itself
+            # rather than a second time as the blank the gate leaves behind.
+            report_unusable_keys(df, sheet_name_prefix, f"{file_name}:{sheet}", logger)
+
             # Placed here because this is the only route source workbooks take,
             # so no future reader can forget it. It runs before the comment-row
             # rule in normalize_dataframe, which means an Excel error value is
             # reported rather than being deleted along with its row.
-            df = utils.gate_xlsx_frame(df, f"{file_name}:{sheet}", logger)
+            df = utils.gate_xlsx_frame(df, f"{file_name}:{sheet}", logger,
+                                       collector=gate_findings)
 
             # --- Report columns nothing reads ---
             # Last of the per-sheet checks, and after the '##' and 'note' drops
@@ -315,6 +469,17 @@ def read_input_excels(
 
             dataframes.append(df)
 
+        if gate_findings:
+            logger.log_status(utils.render_gate_findings(file_name, gate_findings),
+                              level="error")
+
+        # Closed as soon as the workbook is read, not left to garbage collection.
+        # Windows keeps the file locked while the handle is open, so a build that
+        # held all 16 of them until it exited made every source workbook
+        # read-only in Excel for the length of the run -- which is exactly when
+        # someone is most likely to be editing one.
+        xls.close()
+
     if not dataframes:
         # The cache manager warns about a listed file with no matching sheet, and
         # it now looks for the same prefixes this does -- its were truncated, so
@@ -323,6 +488,88 @@ def read_input_excels(
         return []
 
     return dataframes
+
+
+def report_unusable_keys(df: pd.DataFrame, table: str, source: str, logger) -> None:
+    """Report rows whose key columns cannot identify anything.
+
+    Two ways a key fails, and neither raises anything downstream:
+
+    A **blank** in a column that says which thing the row is about. The row is
+    then about nothing -- it merges under a key of ``None``, or builds a node
+    named ``FI00_None`` -- and the only later sign is a table quietly one row
+    short.
+
+    A **year that is not a year**. ``1`` means every year and a real year matches
+    its own run; anything else, ``0`` most often, matches nothing and the row is
+    filtered out with all the rows that legitimately belong to other years. That
+    filtering is normal, which is exactly why this has to be said here.
+
+    At error level, like the malformed-cell gate and for the same reason: the
+    build still writes its output, but it is marked failed rather than passing
+    with data missing.
+
+    Runs before the gate so an Excel error value is reported once, as the error
+    value it is, rather than again as the blank the gate turns it into.
+    """
+    if df.empty:
+        return
+
+    # Headers are still spelled as the author typed them here -- this runs before
+    # normalize_dataframe lower-cases them -- so every lookup goes through the
+    # folded name, and messages quote the spelling in the workbook.
+    actual = {str(c).strip().lower(): c for c in df.columns}
+    required = [actual[c] for c in source_workbook_shape.REQUIRED_COLUMNS.get(table, ())
+                if c in actual]
+    describing = [actual[c] for c in ("country", "unittype", "grid", "unit_name_prefix",
+                                      "scenario", "year", "emission", "group")
+                  if c in actual]
+
+    def _describe(index, row) -> str:
+        # The spreadsheet row, so the reader can go straight to the cell. The
+        # frame's index still counts data rows in sheet order at this point --
+        # the '##' drop and the blank-row truncation both keep it -- and the
+        # header occupies row 1.
+        shown = []
+        for col in describing:
+            value = row[col]
+            if pd.isna(value):
+                continue
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
+            shown.append(f"{col}={value}")
+        # Parenthesised, because the fields are comma-separated and so is the
+        # list of offenders around them.
+        return f"row {index + 2}" + (f" ({', '.join(shown)})" if shown else "")
+
+    for column in required:
+        blank = df[column].isna()
+        if not blank.any():
+            continue
+        offenders = [_describe(i, row) for i, row in df.loc[blank].iterrows()]
+        logger.log_status(
+            f"[{source}] {int(blank.sum())} row(s) have no '{column}', so nothing "
+            f"identifies what they describe: {utils.summarise(offenders)}. "
+            "Fill the cell, or delete the row.",
+            level="error",
+        )
+
+    if "year" in actual:
+        years = pd.to_numeric(df[actual["year"]], errors="coerce")
+        # NA is apply_whitelist's to report; this is about values that are there
+        # and cannot be a year.
+        impossible = years.notna() & (years != 1) & ~years.isin(
+            list(source_workbook_shape.PLAUSIBLE_YEARS)
+        )
+        if impossible.any():
+            offenders = [_describe(i, row) for i, row in df.loc[impossible].iterrows()]
+            logger.log_status(
+                f"[{source}] {int(impossible.sum())} row(s) give a year that is "
+                f"neither a year nor the '1' that means every year: "
+                f"{utils.summarise(offenders)}. Such a row matches no run and is "
+                "dropped in silence.",
+                level="error",
+            )
 
 
 def report_unused_columns(
@@ -391,7 +638,7 @@ def normalize_dataframe(
     logger,
     *,
     allowed_methods: Sequence[str] = ("replace", "replace-partial", "add", "add-non-negative", "multiply", "remove"),
-    lowercase_col_values: Sequence[str] = ("scenario", "generator_id", "method"),
+    lowercase_col_values: Sequence[str] = ("scenario", "method"),
     ) -> pd.DataFrame:
     """
     Normalize a DataFrame with consistent column naming, 'method' handling,
@@ -430,8 +677,9 @@ def normalize_dataframe(
         Logger instance for status messages.
     allowed_methods : list[str]
         Allowed values for the 'method' column (case-insensitive). Unknown values default to 'replace'.
-    lowercase_col_values : Sequence[str], default ("scenario","generator_id","method")
+    lowercase_col_values : Sequence[str], default ("scenario","method")
         Columns whose **values** should be lower-cased. (The 'method' column is canonicalized separately.)
+        'unittype' is deliberately absent -- see step 2 in the body.
     """
 
     allowed_set = {str(m).strip().lower() for m in allowed_methods}
@@ -457,6 +705,11 @@ def normalize_dataframe(
     # 2) Lower-case selected columns' values
     # 'method' is excluded here and canonicalized on its own in step 4 below,
     # which also has to create it when a sheet does not carry one.
+    # 'unittype' must never be added: a unit is named {country}_{unittype}, so
+    # folding the column would rename every unit in the model. Two sheets
+    # disagreeing about a unittype's spelling are reconciled instead by
+    # canonicalize_unittype_and_build_unit, which respells them from unittypedata,
+    # and by merge_row_by_row, whose key tuple is folded already.
     for col in lowercase_col_values:
         if col in df_out.columns and col != "method":
             df_out[col] = df_out[col].astype("string").str.lower()
@@ -642,7 +895,7 @@ def build_unit_grid_and_node_columns(
     logger=None,
     *,
     country_col: str = "country",
-    generator_id_col: str = "generator_id",
+    unittype_col: str = "unittype",
     ) -> pd.DataFrame:
     """
     Add node_<put> columns (e.g., node_output1, node_input1) without merging full tech tables.
@@ -650,7 +903,8 @@ def build_unit_grid_and_node_columns(
     Assumes both DataFrames have been normalized (blank markers already converted to NA).
 
     Rules:
-      - grid_<put> is fetched by generator_id from df_unittypedata (first row per id).
+      - grid_<put> is fetched by unittype from df_unittypedata (first row per unittype,
+        matched case-insensitively).
       - node = f"{country}_{grid}" and ONLY if 'node_suffix_<put>' exists & is non-blank, append "_<suffix>".
       - No generic suffix fallback.
       - Does not drop or modify existing columns.
@@ -658,16 +912,16 @@ def build_unit_grid_and_node_columns(
     Parameters
     ----------
     df_unitdata : pd.DataFrame
-        Must include [country_col, generator_id_col].
+        Must include [country_col, unittype_col].
         May include per-connection 'node_suffix_<put>'.
     df_unittypedata : pd.DataFrame
-        Must include [generator_id_col] and any subset of 'grid_<put>' columns.
-        If multiple rows per generator_id exist, the first is used.
+        Must include [unittype_col] and any subset of 'grid_<put>' columns.
+        If multiple rows per unittype exist, the first is used.
     logger : IterationLogger, optional
         Logger instance for status messages.
     country_col : str
         Column name in df_unitdata used for country.
-    generator_id_col : str
+    unittype_col : str
         Column name in df_unitdata used for join key.
 
     Returns
@@ -692,25 +946,30 @@ def build_unit_grid_and_node_columns(
             )
         return out
 
-    # Build a compact lookup: first tech row per generator_id
-    key = generator_id_col
+    # Build a compact lookup: first tech row per unittype. Folded rather than
+    # taken as written, because canonicalize_unittype_and_build_unit is not the
+    # only caller -- the sweeps and the topology tests call this on their own.
+    if unittype_col not in df_unittypedata.columns or unittype_col not in out.columns:
+        return out
     techs = (
         df_unittypedata
-        .sort_values(by=[key])
-        .drop_duplicates(subset=[key], keep="first")
-        .set_index(key)
+        .assign(_key=_unittype_key(df_unittypedata[unittype_col]))
+        .sort_values(by=["_key"])
+        .drop_duplicates(subset=["_key"], keep="first")
+        .set_index("_key")
     )
 
-    # Note: Not warning about missing generator_id values, because build_unittype_unit_column already does that
+    # Note: a unittype absent from unittypedata is not warned about here --
+    # merge_unittypedata_into_unitdata reports it once, after the whitelist.
 
     # Construct node_<put> per connection using map
-    genID_series = out[generator_id_col]
+    unittype_series = _unittype_key(out[unittype_col])
     country_series = out[country_col].astype(object)
 
     for p in puts:
         grid_col = f"grid_{p}"
-        # map -> may yield NaN if this put is not defined for the generator_id
-        grids = genID_series.map(techs[grid_col]) if grid_col in techs.columns else pd.Series(np.nan, index=out.index)
+        # map -> may yield NaN if this put is not defined for the unittype
+        grids = unittype_series.map(techs[grid_col]) if grid_col in techs.columns else pd.Series(np.nan, index=out.index)
 
         # mask: valid grid (not NaN — blank markers are already NA after normalization)
         valid = grids.notna()
@@ -801,43 +1060,54 @@ def build_from_to_columns(
     return df
 
 
-def build_unittype_unit_column(
+def canonicalize_unittype_and_build_unit(
     df: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
     logger=None
     ) -> pd.DataFrame:
     """
-    Add 'unittype' and 'unit' columns to DataFrame based on generator mappings.
+    Respell 'unittype' the way unittypedata spells it, and build the 'unit' column.
+
+    A unitdata sheet names its technology with a 'unittype'. This rewrites that
+    value to the spelling df_unittypedata uses, so that two sheets writing
+    'CHPbio' and 'chpbio' describe one unit rather than two -- GAMS has one set
+    element for both, and a GDX carrying two records for it is rejected.
+
+    The respelling has to happen before merge_row_by_row keys on 'unittype', which
+    is why it lives here rather than anywhere later.
 
     Parameters:
     -----------
     df : pandas.DataFrame
-        DataFrame containing at minimum 'country' and 'generator_id' columns.
+        DataFrame containing at minimum 'country' and 'unittype' columns.
         Optional 'unit_name_prefix' column can be included for more specific unit naming.
     df_unittypedata : pandas.DataFrame
-        Reference DataFrame mapping 'generator_id' to 'unittype' values
+        Reference DataFrame whose 'unittype' column decides the spelling.
     logger : IterationLogger, optional
         Logger instance for status messages.
 
     Returns:
     --------
     pandas.DataFrame
-        Input DataFrame with new 'unittype' and 'unit' columns added.
+        Input DataFrame with 'unittype' respelled and a 'unit' column added.
         Returns empty DataFrame if required columns are missing.
 
     Notes:
     ------
-    - The 'unittype' is determined by case-insensitive lookup in df_unittypedata
+    - Matching is case-insensitive; nothing else about the value is interpreted.
     - The 'unit' format is: "{country}_{unittype}" or "{country}_{unit_name_prefix}_{unittype}"
       when unit_name_prefix is present and not empty
-    - If 'generator_id' does not have any matching 'unittype', the code uses 'generator_id' instead of 'unittype'
+    - A unittype df_unittypedata does not declare keeps the sheet's own spelling.
+      It gets no grids, no nodes and no type-level defaults, so nothing of it
+      reaches the model; merge_unittypedata_into_unitdata reports it once, after
+      the whitelist has decided the row is wanted.
     """
     # Return input data if empty unittypedata
     if df.empty or df_unittypedata.empty:
         return df
 
     # Check that required columns exist in the DataFrame
-    required_columns = ["country", "generator_id"]
+    required_columns = ["country", "unittype"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         if logger is not None:
@@ -850,46 +1120,53 @@ def build_unittype_unit_column(
             )
         return pd.DataFrame()
 
-    # Create a mapping from generator_id (lowercase) to unittype for efficient lookup
-    unit_mapping = df_unittypedata.set_index(df_unittypedata['generator_id'].str.lower())['unittype']
+    if "unittype" in df_unittypedata.columns:
+        # First row per unittype wins, matching build_unit_grid_and_node_columns
+        # and merge_unittypedata_into_unitdata, which say the same about their own
+        # lookups.
+        spellings = (
+            df_unittypedata
+            .assign(_key=_unittype_key(df_unittypedata["unittype"]))
+            .drop_duplicates(subset=["_key"], keep="first")
+            .set_index("_key")["unittype"]
+        )
+        canonical = _unittype_key(df["unittype"]).map(spellings)
+        # fillna rather than a where(): it yields pd.NA in an object column when
+        # both sides are missing, which is the convention the source stage keeps.
+        df["unittype"] = canonical.fillna(df["unittype"])
 
-    # Add unittype column by mapping lowercase generator_id to the corresponding unittype
-    df['unittype'] = df['generator_id'].str.lower().map(unit_mapping)
+    # A row with no unittype cannot be named. Reported here rather than later
+    # because it is a property of the row and _source_file is still attached;
+    # counted rather than listed because the rows have nothing to list.
+    blank = df["unittype"].isna()
+    if blank.any() and logger is not None:
+        # Say which rows. The cell is empty by the time anyone looks -- often
+        # because it held an Excel error the gate blanked -- so the only way back
+        # to it is the rest of the row: the country, and whatever else the sheet
+        # uses to tell one unit from another.
+        describing = [c for c in ("country", "unit_name_prefix", "scenario", "year")
+                      if c in df.columns]
 
-    # Identify generator_ids without match
-    # Note: build_unit_grid_and_node_columns assumes that this is warned here
-    missing_mask = df['unittype'].isna()
-    if missing_mask.any() and logger is not None:
-        source_cols = [c for c in ('_source_file', '_source_sheet', 'file', 'sheet', 'source_file', 'source_sheet') if c in df.columns]
-        for generator_id in df.loc[missing_mask, 'generator_id'].unique():
-            if pd.isna(generator_id):
-                row_mask = missing_mask & df['generator_id'].isna()
-            else:
-                row_mask = missing_mask & (df['generator_id'] == generator_id)
-            source_hint = ""
-            if source_cols:
-                parts = []
-                for col in source_cols:
-                    vals = df.loc[row_mask, col].dropna().astype(str).unique()
-                    if len(vals) > 0:
-                        parts.append(f"{col}={', '.join(vals)}")
-                if parts:
-                    source_hint = f" (source: {'; '.join(parts)})"
-            if pd.isna(generator_id):
-                logger.log_status(
-                    f"unitdata has {row_mask.sum()} row(s) with missing (NA) generator_ID{source_hint}. "
-                    "These rows cannot be matched to unittypedata.",
-                    level="warn"
-                )
-            else:
-                logger.log_status(
-                    f"unitdata generator_ID '{generator_id}' does not have a matching generator_ID "
-                    f"in any of the unittypedata files, check spelling.{source_hint}",
-                    level="warn"
-                )
+        def _shown(value):
+            # A year read as 2030.0 is the same year, and a reader searching the
+            # workbook for it will not find that spelling.
+            if isinstance(value, float) and value.is_integer():
+                return str(int(value))
+            return str(value)
 
-    # Fallback: Fill in missing unittype with original generator_id
-    df['unittype'] = df['unittype'].fillna(df['generator_id'])
+        offenders = [
+            ", ".join(f"{col}={_shown(row[col])}" for col in describing
+                      if pd.notna(row[col])) or "no other identifying column"
+            for _, row in df.loc[blank].iterrows()
+        ]
+        logger.log_status(
+            f"[{_frame_source(df, 'unitdata')}] {int(blank.sum())} row(s) have no "
+            "unittype, so no unit can be named from them: "
+            f"{utils.summarise(offenders)}. If the cell looks filled in the "
+            "workbook, check whether it holds an Excel error value -- those are "
+            "reported separately and read as not set.",
+            level="warn"
+        )
 
     # Create unit column with optional prefix if available
     if "unit_name_prefix" in df.columns:
@@ -910,10 +1187,12 @@ def build_unittype_unit_column(
     return df
 
 
+
 def merge_unittypedata_into_unitdata(
     df_unitdata: pd.DataFrame,
     df_unittypedata: pd.DataFrame,
     logger,
+    origins: dict | None = None,
     ) -> pd.DataFrame:
     """
     Merge type-level technical parameters from df_unittypedata into df_unitdata.
@@ -922,14 +1201,15 @@ def merge_unittypedata_into_unitdata(
     NA in df_unitdata.  Columns already handled by earlier enrichment steps and
     meta/identity columns are excluded from the transfer.
 
-    A generator_id that matches nothing in df_unittypedata is a misconfiguration --
-    the unit silently loses every type-level default -- so it is warned about by
-    name rather than left to be noticed downstream.
+    A unittype that matches nothing in df_unittypedata is a misconfiguration, and
+    a total one: the unit gets no grids and no nodes either, so create_p_gnu_io
+    writes it no connection and drop_redundant_units removes it. Reported here
+    rather than earlier because it is a cross-reference, not a property of the row,
+    and should speak only about rows this run actually uses.
 
     Excluded from transfer
     ----------------------
-    - 'generator_id'  — join key (already in df_unitdata)
-    - 'unittype'      — already added by build_unittype_unit_column
+    - 'unittype'      — join key (already in df_unitdata)
     - 'grid_*'        — already added by build_unit_grid_and_node_columns
     - 'node_*'        — already added by build_unit_grid_and_node_columns
     - meta columns    — scenario, year, country, unit_name_prefix, method,
@@ -940,9 +1220,14 @@ def merge_unittypedata_into_unitdata(
     df_unitdata : pd.DataFrame
         Unit-level data, already enriched with unittype, grid_*, and node_* columns.
     df_unittypedata : pd.DataFrame
-        Generator-type-level data keyed by generator_id.
+        Type-level data keyed by unittype.
     logger : IterationLogger
         Logger instance for status messages.
+    origins : dict, optional
+        ``{unittype: {"file:sheet"}}`` from collect_origins. Names the sheet an
+        unmatched unittype was written in -- by this point merge_row_by_row has
+        dropped the provenance columns, and 'check spelling' is not an
+        instruction anyone can follow across 44 sheets.
 
     Returns
     -------
@@ -952,9 +1237,14 @@ def merge_unittypedata_into_unitdata(
     """
     if df_unitdata.empty or df_unittypedata.empty:
         return df_unitdata
+    # Not a KeyError: after the logger exists this stage warns and carries on.
+    # A frame without the column is an unmigrated sheet, which report_unused_columns
+    # has already named by file and sheet.
+    if 'unittype' not in df_unitdata.columns or 'unittype' not in df_unittypedata.columns:
+        return df_unitdata
 
     _EXCLUDE = {
-        'generator_id', 'unittype',
+        'unittype',
         'scenario', 'year', 'country', 'unit_name_prefix',
         'method', '_source_file', '_source_sheet',
     }
@@ -966,36 +1256,55 @@ def merge_unittypedata_into_unitdata(
         and not col.startswith('node_')
     ]
 
+    # Reported before the early return below: a unittypedata sheet carrying only
+    # 'unittype' and its grid columns yields no type_cols at all, and a unit
+    # matching nothing in it is exactly as broken there as anywhere else.
+    unit_keys = _unittype_key(df_unitdata['unittype'])
+    known = set(_unittype_key(df_unittypedata['unittype']).dropna())
+    unmatched = unit_keys[unit_keys.notna() & ~unit_keys.isin(known)]
+    if len(unmatched):
+        # Most units first: which unittype is misspelled is a question about how
+        # much of the model it costs.
+        # Listed in full, one per line, rather than through utils.summarise:
+        # every one of these has to be fixed before the model is whole, and
+        # summarise is for the case where the count is the point. A rename
+        # touching a dozen sheets is exactly when three names and a number leave
+        # the reader no better off. Ordered by how many units each costs.
+        origins = origins or {}
+        lines = [
+            f"    '{name}' ({count} unit(s))"
+            f"{describe_origins(name, origins) or ' (source unknown)'}"
+            for name, count in unmatched.value_counts().items()
+        ]
+        logger.log_status(
+            f"[merge_unittypedata_into_unitdata] {len(lines)} unittype(s) that no "
+            "unittypedata declares. Those units get no type-level defaults and no "
+            "connections, so nothing of them reaches the model:\n"
+            + "\n".join(lines)
+            + "\n  Check the spelling against the unittypedata sheets, and that "
+              "every unittypedata file is listed in the config.",
+            level="warn"
+        )
+
     if not type_cols:
         return df_unitdata
 
-    # One row per generator_id (first wins)
+    # One row per unittype (first wins). The type side's own 'unittype' column is
+    # dropped, so the canonical spelling df_unitdata already carries is the one
+    # that survives the join.
     type_lookup = (
-        df_unittypedata[['generator_id'] + type_cols]
-        .drop_duplicates(subset=['generator_id'], keep='first')
+        df_unittypedata[['unittype'] + type_cols]
+        .assign(_key=_unittype_key(df_unittypedata['unittype']))
+        .drop_duplicates(subset=['_key'], keep='first')
+        .drop(columns=['unittype'])
     )
 
-    # A unit whose generator_id is absent from unittypedata keeps none of the
-    # type-level defaults. That is almost always a typo or a missing file rather
-    # than an intention, and nothing downstream can tell the difference.
-    if 'generator_id' in df_unitdata.columns:
-        unmatched = sorted(
-            set(df_unitdata['generator_id'].dropna()) - set(type_lookup['generator_id'])
-        )
-        if unmatched:
-            logger.log_status(
-                f"[merge_unittypedata_into_unitdata] No unittypedata found for generator_id(s): "
-                f"{unmatched}. Those units get no type-level defaults. Check spelling and "
-                "that the unittypedata files are listed in the config.",
-                level="warn"
-            )
-
     # Left join; overlapping columns get a '_type' suffix on the type side
-    merged = df_unitdata.merge(
-        type_lookup,
-        on='generator_id',
-        how='left',
-        suffixes=('', '_type'),
+    merged = (
+        df_unitdata
+        .assign(_key=unit_keys)
+        .merge(type_lookup, on='_key', how='left', suffixes=('', '_type'))
+        .drop(columns=['_key'])
     )
 
     # For each overlapping column: fill NA in the original with the type value

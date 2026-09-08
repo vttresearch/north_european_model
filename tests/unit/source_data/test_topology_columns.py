@@ -134,7 +134,7 @@ class TestBuildFromToColumns:
 class TestBuildUnitGridAndNodeColumns:
     UNITTYPES = pd.DataFrame(
         {
-            "generator_id": pd.Series(["chp"], dtype="object"),
+            "unittype": pd.Series(["CHPbio"], dtype="object"),
             "grid_input1": pd.Series(["biomass"], dtype="object"),
             "grid_output1": pd.Series(["elec"], dtype="object"),
         }
@@ -144,7 +144,7 @@ class TestBuildUnitGridAndNodeColumns:
         unitdata = pd.DataFrame(
             {
                 "country": pd.Series(["FI"], dtype="object"),
-                "generator_id": pd.Series(["chp"], dtype="object"),
+                "unittype": pd.Series(["CHPbio"], dtype="object"),
             }
         )
         out = build_unit_grid_and_node_columns(unitdata, self.UNITTYPES, FakeLogger())
@@ -154,7 +154,7 @@ class TestBuildUnitGridAndNodeColumns:
         assert out["grid_output1"].tolist() == ["elec"]
         assert out["node_output1"].tolist() == ["FI_elec"]
 
-    def test_unmatched_generator_ids_yield_pd_na_not_float_nan(self):
+    def test_unmatched_unittypes_yield_pd_na_not_float_nan(self):
         """Regression: the unmatched cells were seeded with ``np.nan``.
 
         ``pd.Series(np.nan, ..., dtype=object)`` puts a real float NaN inside an
@@ -167,7 +167,7 @@ class TestBuildUnitGridAndNodeColumns:
         unitdata = pd.DataFrame(
             {
                 "country": pd.Series(["FI"], dtype="object"),
-                "generator_id": pd.Series(["not_in_unittypedata"], dtype="object"),
+                "unittype": pd.Series(["absentFromUnittypedata"], dtype="object"),
             }
         )
 
@@ -179,14 +179,49 @@ class TestBuildUnitGridAndNodeColumns:
 
     def test_warns_when_unittypedata_declares_no_grid_columns(self):
         logger = FakeLogger()
-        unittypes = pd.DataFrame({"generator_id": pd.Series(["chp"], dtype="object")})
+        unittypes = pd.DataFrame({"unittype": pd.Series(["CHPbio"], dtype="object")})
         unitdata = pd.DataFrame(
             {
                 "country": pd.Series(["FI"], dtype="object"),
-                "generator_id": pd.Series(["chp"], dtype="object"),
+                "unittype": pd.Series(["CHPbio"], dtype="object"),
             }
         )
 
         build_unit_grid_and_node_columns(unitdata, unittypes, logger)
 
         logger.assert_logged("grid_input1", level="warn")
+
+    def test_finds_the_grids_when_the_two_frames_disagree_on_case(self):
+        """The lookup folds case, so a sheet's own spelling cannot lose a unit
+        its connections. Normally canonicalize_unittype_and_build_unit has
+        already respelled the column, but this function is also called on its
+        own -- by the contract sweeps and by the tests above -- and a
+        reordering must not silently drop every connection."""
+        unitdata = pd.DataFrame(
+            {
+                "country": pd.Series(["FI"], dtype="object"),
+                "unittype": pd.Series(["chpbio"], dtype="object"),
+            }
+        )
+
+        out = build_unit_grid_and_node_columns(unitdata, self.UNITTYPES, FakeLogger())
+
+        assert out["node_output1"].tolist() == ["FI_elec"]
+
+    def test_a_numeric_unittype_column_does_not_raise(self):
+        """Nothing forces 'unittype' to text any more.
+
+        It left normalize_dataframe's lowercase_col_values when generator_id did,
+        so a sheet whose unittypes all happen to be numbers arrives as Float64 --
+        where a bare .str accessor raises rather than returning nothing.
+        """
+        unitdata = pd.DataFrame(
+            {
+                "country": pd.Series(["FI"], dtype="object"),
+                "unittype": pd.Series([2030.0], dtype="Float64"),
+            }
+        )
+
+        out = build_unit_grid_and_node_columns(unitdata, self.UNITTYPES, FakeLogger())
+
+        assert out["grid_output1"].iloc[0] is pd.NA

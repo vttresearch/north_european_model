@@ -74,7 +74,7 @@ files are configured):
   df_nodedata            node parameters (fuel costs, emissions, storage)  key: country, grid, node
   df_emissiondata        emission factors                key: emission, group
   df_demanddata          demand parameters               key: country, grid, node
-  df_unitdata            unit capacity parameters        key: country, generator_id, unit_name_prefix
+  df_unitdata            unit capacity parameters        key: country, unittype, unit_name_prefix
                          NOTE: df_unitdata is the MERGED result — type-level defaults
                          from df_unittypedata are incorporated here via
                          merge_unittypedata_into_unitdata().  df_unittypedata is
@@ -127,6 +127,13 @@ class SourceDataPipeline:
         # workbook of its own -- see build_boundarydata.
         self.df_boundarydata = pd.DataFrame()
 
+        # Where a value was written down: {dimension: {value: {"file:sheet"}}}.
+        # Filled while the per-sheet frames still carry their provenance columns,
+        # which merge_row_by_row drops. Both this phase and the Excel builder
+        # report against it, so a message about a node or a unittype can name the
+        # sheet to open -- see collect_origins.
+        self.origins: dict[str, dict[str, set[str]]] = {}
+
     def run(self):
         """
         Run the full pipeline: load, process, and filter all input DataFrames.
@@ -150,7 +157,11 @@ class SourceDataPipeline:
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'unittypedata')
                    for df in dfs
                    ]
-            self._df_unittypedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['generator_id'])
+            data_loader.collect_origins(dfs, {'unittype'},
+                                        into=self.origins.setdefault('unittype', {}))
+            data_loader.collect_origins(dfs, {'grid'},
+                                        into=self.origins.setdefault('grid', {}))
+            self._df_unittypedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['unittype'])
         else:
             self.logger.log_status(
                 "No Excel files for 'unittypedata_files' defined in the config file",
@@ -196,6 +207,8 @@ class SourceDataPipeline:
                                    self.logger, 'nodedata')
                    for df in dfs
                    ]
+            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
             self.df_nodedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
         else:
             self.logger.log_status(
@@ -217,6 +230,8 @@ class SourceDataPipeline:
                                    self.logger, 'demanddata')
                    for df in dfs
                    ]
+            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
             self.df_demanddata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
         else:
             self.logger.log_status(
@@ -228,13 +243,18 @@ class SourceDataPipeline:
         files = self.config['unitdata_files']
         unit_whitelist = {'scenario': scen_and_alt, 'year': [self.scenario_year],
                           'country': self.country_codes}
-        unit_keys = ['country', 'generator_id', 'unit_name_prefix']
+        unit_keys = ['country', 'unittype', 'unit_name_prefix']
         if len(files) > 0:
             dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logger) for df in dfs]
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
-            dfs = [data_loader.build_unittype_unit_column(df, self._df_unittypedata, self.logger) for df in dfs]
+            # Before merge_row_by_row, and that ordering is the point: the merge
+            # keys on 'unittype', so every sheet's spelling has to have been
+            # respelled from unittypedata first. dfs_before_exclusion is captured
+            # after both builders for the same reason -- count_units_without_exclusions
+            # counts the same keys the real merge will.
+            dfs = [data_loader.canonicalize_unittype_and_build_unit(df, self._df_unittypedata, self.logger) for df in dfs]
             dfs = [data_loader.build_unit_grid_and_node_columns(df, self._df_unittypedata, self.logger) for df in dfs]
             # An excluded grid or node removes the entire unit connected to it, not
             # just that connection -- intended, and not what "exclude a node"
@@ -248,6 +268,9 @@ class SourceDataPipeline:
             dfs = [data_loader.apply_whitelist(df, unit_whitelist, self.logger, 'unitdata')
                    for df in dfs
                    ]
+            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'unittype'},
+                                        into=self.origins.setdefault('unittype', {}))
             self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=unit_keys)
 
             units_dropped = data_loader.count_units_without_exclusions(
@@ -263,7 +286,8 @@ class SourceDataPipeline:
             # capacity defaults, etc.) from _df_unittypedata into each unit row.
             # Unit-specific values take priority; type-level values fill NAs only.
             self.df_unitdata = data_loader.merge_unittypedata_into_unitdata(
-                self.df_unitdata, self._df_unittypedata, self.logger
+                self.df_unitdata, self._df_unittypedata, self.logger,
+                origins=self.origins.get('unittype', {}),
             )
 
         else:
@@ -292,6 +316,9 @@ class SourceDataPipeline:
                                    self.logger, 'transferdata')
                    for df in dfs
                    ]
+            data_loader.collect_origins(dfs, {'from_node', 'to_node'},
+                                        into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
             self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['from_country', 'from_suffix', 'to_country', 'to_suffix', 'grid'])
 
             # Deprecation check: old bidirectional format used export_capacity / import_capacity

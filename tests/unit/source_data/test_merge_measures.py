@@ -30,14 +30,14 @@ def _frame(prefix, capacity, method):
     """
     return pd.DataFrame({
         "country": pd.Series(["FI00"], dtype="object"),
-        "generator_id": pd.Series(["chp"], dtype="object"),
+        "unittype": pd.Series(["CHP"], dtype="object"),
         "unit_name_prefix": pd.Series([prefix], dtype="Float64"),
         "capacity": pd.Series([capacity], dtype="Float64"),
         "method": pd.Series([method], dtype="object"),
     })
 
 
-KEYS = ["country", "generator_id", "unit_name_prefix"]
+KEYS = ["country", "unittype", "unit_name_prefix"]
 
 
 class TestAKeyIsNotAMeasure:

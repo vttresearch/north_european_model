@@ -206,7 +206,7 @@ class TestRerunBehaviour:
 
         edited = workbook_text_with(
             MINIMAL, sheet="unitdata", header="capacity_output1", value=999,
-            where={"Country": "FI", "Generator_ID": "windturbine"},
+            where={"Country": "FI", "unittype": "WindOnFI"},
         )
         write_workbook_text(edited, input_folder / "data_files" / "data.xlsx")
 

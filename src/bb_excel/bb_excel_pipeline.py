@@ -14,6 +14,7 @@ from src.bb_excel.bb_excel_tables import (
     compile_domain_df,
     is_positive,
 )
+from src.source_data.source_data_loader import describe_origins
 from src.source_workbook_shape import CONNECTION_SUFFIXES, base_column_name
 from src.utils import summarise
 
@@ -149,7 +150,7 @@ class BBExcelPipeline:
         Parameters:
         -----------
         df_unitdata : DataFrame
-            Merged unit data. Must include 'generator_id' and 'unit' columns,
+            Merged unit data. Must include a 'unit' column,
             grid_input1/grid_output1/... columns, and node_input1/node_output1/...
             columns (all added by build_unit_grid_and_node_columns).
             Type-level parameter defaults are pre-merged via
@@ -927,19 +928,54 @@ class BBExcelPipeline:
 
             rows.append(row_dict)
 
-        for nodes, message in (
+        # This phase reads one merged table, so a node here has no provenance of
+        # its own -- the source phase recorded it while the per-sheet frames still
+        # had theirs. Without it the message names a node and leaves the reader to
+        # open 44 sheets looking for it, which is the state a large rename puts
+        # them in. A node with no nodedata row of its own was brought into being
+        # by a unit connection, and then it is its *grid* whose spelling is
+        # usually wrong, so that is named too.
+        origins = getattr(self.source_data, 'origins', {})
+        node_origins = origins.get('node', {})
+        grid_origins = origins.get('grid', {})
+        node_grid = (dict(zip(unique_gn_pairs['node'], unique_gn_pairs['grid']))
+                     if not unique_gn_pairs.empty else {})
+
+        def _located(node):
+            parts = [f"{node}{describe_origins(node, node_origins)}"]
+            # The grid as well as the node: a node nothing declares was built as
+            # {country}_{grid} by a unit connection, so the cell to change is
+            # wherever that grid is spelled -- a unittypedata column, not the
+            # unitdata sheet the node's own origin points at.
+            grid = node_grid.get(node)
+            if grid is not None and pd.notna(grid):
+                parts.append(f"grid '{grid}'{describe_origins(grid, grid_origins)}")
+            return ", ".join(parts)
+
+        for nodes, message, remedy in (
             (priced_and_balanced,
-             "set both 'usePrice' and 'nodeBalance'"),
+             "set both 'usePrice' and 'nodeBalance'",
+             "A node is one or the other. Clear whichever the node is not."),
             (priced_and_stored,
-             "set 'usePrice' together with 'energyStoredPerUnitOfState'"),
+             "set 'usePrice' together with 'energyStoredPerUnitOfState'",
+             "A price node has no state to store. Clear one of the two."),
             (neither_price_nor_balance,
-             "are neither price nor balance nodes, and nothing in the data says which"),
+             "are neither price nor balance nodes, and nothing in the data says which",
+             "Give the node a nodedata row saying which it is. A node no nodedata "
+             "sheet mentions was brought into being by a unit connection, and then "
+             "it is usually the grid's spelling that moved."),
         ):
-            if nodes:
-                self.logger.log_status(
-                    f"{len(nodes)} node(s) {message}: {summarise(nodes)}. Check the node data.",
-                    level="warn"
-                )
+            if not nodes:
+                continue
+            # One line per node, in full: each has to be fixed, and a rename can
+            # produce dozens at once. The locator is what makes the pattern
+            # visible -- the same sheet repeated down the list is the culprit.
+            self.logger.log_status(
+                f"{len(nodes)} node(s) {message}:\n"
+                + "\n".join(f"    {_located(n)}" for n in nodes)
+                + f"\n  {remedy}",
+                level="warn"
+            )
 
         # The defaults cover nodes with no df_nodedata entry at all. 'isActive' is
         # kept even when empty so the Cdim=1 column dimension always has a member;

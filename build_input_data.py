@@ -312,6 +312,10 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                        level="none",
                        add_empty_line_before=True,
                        section_start_length=55)
+            # Repeated whole, however many lines. The summary exists so nobody has
+            # to scroll back through a build to find what needs acting on, and a
+            # warning that names its offenders is doing exactly that job -- cutting
+            # it here would leave the digest saying only that a problem exists.
             for w in warnings:
                 logger.messages.append(w)
                 print(w)

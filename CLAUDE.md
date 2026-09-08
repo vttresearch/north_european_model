@@ -38,6 +38,17 @@ so a usage example may name a file the reader does not have.
   Sees cell values, column order, widths, alignment, table styles -- use it to prove a
   refactor changed nothing. Literal byte equality is not achievable; those timestamps
   differ on every build.
+- `compare_source_workbooks.py` -- two versions of the source workbooks compared
+  *numerically*, row by row on their dimension columns, with `--git-ref` to take the
+  earlier version straight from git. The one that catches a name still being used as
+  a lookup key: `SUMIF`, `VLOOKUP` and `COUNTIF` criteria do not fail when the data is
+  renamed, they return 0 or a neighbouring row. Also the way to review a deliberate
+  data edit, since a binary `.xlsx` has no readable diff.
+- `check_unittype_columns.py` -- a folder of source workbooks checked against the
+  unittype rule: no `Generator_ID` header left, every `unitdata` unittype declared by
+  some `unittypedata` sheet, and -- with `--legacy-names` -- no cell anywhere still
+  holding a pre-migration name, which is how a VLOOKUP helper table gets left behind.
+  Reads workbooks rather than a config, so it cannot know which of them a build lists.
 
 
 ## Execution flow

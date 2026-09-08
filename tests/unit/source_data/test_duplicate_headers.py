@@ -108,7 +108,7 @@ class TestWhatMustNotBeReported:
         # by the rename-collision guard, not as a duplicate header, and the two
         # reports must not both fire.
         _, logger = _read(tmp_path, [
-            ["country", "generator_id", "method", "vomCosts", "vomCosts_output1"],
+            ["country", "unittype", "method", "vomCosts", "vomCosts_output1"],
             ["FI", "chp", "replace", 1.5, 2.5],
         ])
         logger.assert_not_logged("Duplicate column header")

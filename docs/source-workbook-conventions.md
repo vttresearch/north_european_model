@@ -16,6 +16,7 @@ something in a build log does not look right.
 |---|---|
 | `##` in any cell of a row | ignores the whole row |
 | `##` as a column header | ignores the whole column |
+| `## Description` on `unittypedata` | free text saying what the unittype is |
 | a fully empty row | stops reading the sheet there; warns if rows follow |
 | a column with no header, past the table | ignores that column, silently |
 | a column with no header, inside the table | ignores it, and warns |
@@ -24,6 +25,10 @@ something in a build log does not look right.
 | the same header on two columns | reads the first, warns about the rest |
 | `_` anywhere in a text cell | drops the row, with a warning |
 | a column name nothing recognises | reports it and reads nothing from it |
+| `all` as a scenario or country | the row applies to every one of them |
+| `1` as a year | the row applies to every year |
+| a blank `country`, `grid` or `unittype` | reports the row and reads nothing from it |
+| a year that is not a year, `0` say | reports the row; it matches no run |
 | a node in `exclude_nodes` | drops it, and every unit connected to it, whole |
 
 ---
@@ -65,13 +70,13 @@ The order of the file list matters — see [Combining rows](#combining-rows-the-
 
 Every sheet has two kinds of column. `unitdata_VRE` in `ObservedTrends.xlsx`:
 
-| Country | Generator_ID | Scenario | Year | capacity_output1 | vomCosts | method |
+| Country | unittype | Scenario | Year | capacity_output1 | vomCosts | method |
 |---|---|---|---|---|---|---|
-| AT00 | Solar PV | Observed Trends | 2015 | 937 | 0.56 | |
-| BE00 | Solar PV | Observed Trends | 2015 | 3132 | 0.56 | |
+| AT00 | PV | Observed Trends | 2015 | 937 | 0.56 | |
+| BE00 | PV | Observed Trends | 2015 | 3132 | 0.56 | |
 
 **Dimension columns** say *which thing* the row is about: `Country`,
-`Generator_ID`, `Scenario`, `Year`. They hold labels, and together they are the
+`unittype`, `Scenario`, `Year`. They hold labels, and together they are the
 key the builder uses to recognise that two rows describe the same unit.
 
 **Parameter columns** hold the numbers: `capacity_output1`, `vomCosts`. Their
@@ -84,6 +89,41 @@ when it is not.
 
 Column names are matched case-insensitively, so `Country` and `country` are the
 same column.
+
+### Rows that apply to everything
+
+Three dimension columns have a value meaning *any*:
+
+| Column | Write | Meaning |
+|---|---|---|
+| `scenario` | `all` | every scenario the config runs |
+| `year` | `1` | every scenario year |
+| `country` | `all` | every country in `country_codes` |
+
+`year = 1` is the one nobody guesses. It is not year 1 and not a placeholder; it
+is how a row says the number does not change between 2030 and 2040, which saves
+writing one block of rows per year. It is the most-used value in the shipped
+workbooks: 20 of their sheets carry it.
+
+A year the config does not run — a 2040 row in a 2030 build — is filtered out in
+the ordinary way, and that is what these sheets are for. A value that could not
+be any year, `0` most often, is different: it matches nothing in any run, so it is
+reported by spreadsheet row rather than left to disappear among the rows that were
+meant for another year.
+
+The same goes for a blank in a column that says *which thing* the row is about —
+`country`, `grid`, `unittype` and their equivalents on the other tables. The row
+then describes nothing, and it is reported with its row number. `unit_name_prefix`
+and the node suffixes are exempt: blank is their normal state.
+
+`country = all` differs from the other two in when it acts: it is *expanded* into
+one row per country before the blacklists run, so an expanded row can then be
+excluded like any other. `scenario` and `year` are matched at filter time and
+never expanded. See [The source data phase](source-data.md).
+
+A row you want for one scenario or one year writes that value instead, and both
+kinds can sit in the same sheet — the specific row and the `all`/`1` row are
+merged in file order like everything else, so the later one wins.
 
 ### Connection suffixes
 
@@ -196,6 +236,11 @@ part of it is yours rather than the model's:
 A bare `##` works as the header of every helper column — Excel is happy with
 duplicate headers, and so is the builder.
 
+`unittypedata` uses this for `## Description`, where it says in words what the row
+is: `windOnshore` is an onshore wind turbine. Nothing reads it, which is the point
+— a unittype is a name the model uses, and the sentence explaining it belongs
+beside it rather than in someone's head.
+
 Marked rows and columns are removed **before anything is checked**, so a
 half-finished formula, a `#DIV/0!` or a pasted `1,000.0` sitting in your working
 area is never reported as a problem. Nothing is logged: you said what you meant.
@@ -234,8 +279,11 @@ that does not:
 `1,000.0` · `1 000` · `1'000` · `12,345,678` · `1.000,5` · `1_000` · `100 MW` ·
 `100MW` · `5%` · `€100` · `(500)` · `−5`
 
-Each is reported — naming the file, sheet, column and value — and read as **not
-set**, which the model treats as zero.
+Each is read as **not set**, which the model treats as zero, and reported: one
+message per workbook, naming the three columns with the most bad cells and
+counting the rest. Per column would be right for one stray cell and unreadable
+for a workbook whose export changed format, and that case is the one that buries
+every other warning in the build.
 
 None of them is repaired, and that is deliberate. `1.000` is a thousand to an
 author writing in one locale and one to an author writing in another, and the cell
@@ -261,7 +309,9 @@ enough to catch it would eat identifiers like `chp1`.
 
 `#REF!`, `#N/A`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#NUM!` and their relatives are
 reported wherever they appear, in dimension columns as much as parameter columns,
-and read as not set. None is ever a value anyone meant to write. `#REF!` in
+and read as not set. They reach the report by a detour: pandas turns an error cell
+into an empty one while reading, before anything can look at it, so the builder
+puts the error strings back from the workbook itself first. None is ever a value anyone meant to write. `#REF!` in
 particular is what Excel leaves behind when a column another sheet pointed at is
 deleted, so it usually means the workbook has quietly lost a reference.
 
@@ -318,10 +368,19 @@ an `_` inside a text cell would produce a name nobody can take apart again. Any
 row containing one is dropped, with a warning naming the column and showing
 examples.
 
-**Case is folded, first spelling wins.** `scenario`, `generator_id` and `method`
-values are lower-cased, as are column names. Rows match case-insensitively while
-the spelling used first is what reaches the output. GAMS treats `dh` and `DH` as
-one set element and refuses a GDX containing both, so this is not a nicety.
+**Case is folded, first spelling wins.** `scenario` and `method` values are
+lower-cased, as are column names. Rows match case-insensitively while the spelling
+used first is what reaches the output. GAMS treats `dh` and `DH` as one set element
+and refuses a GDX containing both, so this is not a nicety.
+
+**A unit is named after its `unittype`, spelled the way `unittypedata` spells it.**
+The name is `{country}_{unittype}`, or `{country}_{unit_name_prefix}_{unittype}`
+with a prefix, so the column cannot be folded like the others — that would rename
+every unit in the model. Instead your sheet's spelling is *replaced* by the one
+`unittypedata` uses: write `chpbio` against a `CHPbio` row and the unit is
+`FI_CHPbio`. A `unittype` no `unittypedata` sheet declares keeps the spelling you
+wrote, gets no grids, no nodes and no type-level defaults, and so reaches the model
+as nothing at all. That is reported once, by name.
 
 **A mistyped suffix makes a new node.** `node_suffix` and `unit_name_prefix` are
 part of the merge key and are built into the node and unit name. A typo does not

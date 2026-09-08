@@ -404,9 +404,9 @@ obviously flat one.
   balance penalties), `unitdata` (turbining and pumping power), and
   `userconstraintdata` (minimum-generation constraints). Listed after
   `TYNDP-2024_National_Trends.xlsx` in the config, so its rows win.
-- `src_files/data_files/unittypedata_compilation.xlsx` — maps each hydro
-  `Generator_ID` to its unit type, grids and efficiency, which is what turns
-  `AT00 / Run-of-River` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.
+- `src_files/data_files/unittypedata_compilation.xlsx` — declares each hydro
+  `unittype` with its grids and efficiency, which is what turns
+  `AT00 / rorTurbine` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.
 - `src/timeseries/processors/hydro_inflow_MAF2019.py` — inflow for all three
   inflow-bearing types.
 - `src/timeseries/processors/hydro_storage_limits_MAF2019.py` — seasonal fill

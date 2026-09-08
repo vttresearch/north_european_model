@@ -205,14 +205,19 @@ COMMON_COLUMNS: tuple[str, ...] = ("scenario", "year", "method", "note")
 #: not normally write a built one, but writing it is a statement about the
 #: model rather than an unread column, so it is not reported.
 #:
+#: ``generator_id`` is absent because it no longer exists: a unitdata row names
+#: its ``unittype`` directly. A sheet still carrying the old column is therefore
+#: reported by report_unused_columns, naming the file and sheet, which is how an
+#: unmigrated workbook says so.
+#:
 #: ``country`` is deliberately absent from four tables. Only nodedata,
 #: demanddata, unitdata and userconstraintdata are filtered by it; a ``country``
 #: column on unittypedata, emissiondata or transferdata reaches nothing, and an
 #: author who wrote one believes they made something country-specific when they
 #: did not. That is precisely what this check is for.
 STRUCTURAL_COLUMNS: dict[str, tuple[str, ...]] = {
-    "unittypedata": ("generator_id", "unittype", "flow", "grid", "node"),
-    "unitdata": ("country", "generator_id", "unit_name_prefix", "unittype",
+    "unittypedata": ("unittype", "flow", "grid", "node"),
+    "unitdata": ("country", "unit_name_prefix", "unittype",
                  "unit", "flow", "grid", "node", "node_suffix"),
     "nodedata": ("country", "grid", "node", "node_suffix"),
     "demanddata": ("country", "grid", "node", "node_suffix"),
@@ -223,6 +228,31 @@ STRUCTURAL_COLUMNS: dict[str, tuple[str, ...]] = {
                            "1st dimension", "2nd dimension",
                            "3rd dimension", "4th dimension"),
 }
+
+#: table -> the columns that identify a row and must therefore hold something.
+#:
+#: A subset of STRUCTURAL_COLUMNS: the ones without which the row describes
+#: nothing. ``unit_name_prefix``, ``node_suffix`` and the transfer suffixes are
+#: deliberately absent -- they are optional by design and blank on most rows.
+#: ``scenario`` and ``year`` are absent too: apply_whitelist already counts a
+#: blank in either, and a sheet may legitimately omit the column entirely.
+#:
+#: Checked only where the column is present. A sheet missing one of these
+#: outright is a different failure, reported by whichever builder needs it.
+REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "unittypedata": ("unittype",),
+    "unitdata": ("country", "unittype"),
+    "nodedata": ("country", "grid"),
+    "demanddata": ("country", "grid"),
+    "transferdata": ("grid", "from_country", "to_country"),
+    "emissiondata": ("emission",),
+    "userconstraintdata": ("group", "parameter"),
+}
+
+#: A year outside this range is not a year. ``1`` is the "every year" wildcard and
+#: is allowed on its own; anything else below the range is a leftover or a typo,
+#: and it matches no scenario year, so the row is dropped without a word.
+PLAUSIBLE_YEARS = range(1900, 2201)
 
 #: table -> the Backbone parameter blocks its sheets may carry.
 #:
@@ -251,7 +281,7 @@ PARAMETER_COLUMNS: dict[str, tuple[str, ...]] = {
 #: one and nothing would notice. test_unused_columns.py greps src/ for each,
 #: which catches a declaration outliving its reader.
 DERIVATION_INPUTS: dict[str, tuple[str, ...]] = {
-    # BBExcelPipeline.create_p_unit reads unit_row['lp/mip'] to decide investMIP.
+    # BBExcelPipeline.create_effLevelGroupUnit reads unit_row['lp/mip'].
     # Written on unittypedata and reaching unitdata through the unittype merge.
     "unittypedata": ("lp/mip",),
     "unitdata": ("lp/mip",),

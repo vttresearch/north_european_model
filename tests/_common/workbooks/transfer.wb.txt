@@ -10,8 +10,8 @@
 // link that only appears one way is a link that only carries power one way.
 
 [unittypedata]
-scenario | year | Generator_ID | unittype | grid_output1 | eff00 | isSource
-all      | 1    | windturbine  | WindOn   | elec         | 1     | 1
+scenario | year | unittype | grid_output1 | eff00 | isSource
+all      | 1    | WindOn   | elec         | 1     | 1
 
 [nodedata]
 Country | Grid | Scenario | Year | nodeBalance
@@ -19,9 +19,9 @@ FI      | elec | all      | 1    | 1
 SE      | elec | all      | 1    | 1
 
 [unitdata]
-Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1
-FI      | windturbine  |                  | all      | 1    | 100
-SE      | windturbine  |                  | all      | 1    | 200
+Country | unittype | unit_name_prefix | Scenario | Year | capacity_output1
+FI      | WindOn   |                  | all      | 1    | 100
+SE      | WindOn   |                  | all      | 1    | 200
 
 [transferdata]
 grid | from_country | to_country | scenario | Year | transferCap | transferLoss | variableTransCost

@@ -21,7 +21,7 @@ pytestmark = pytest.mark.route
 CHP = load_workbook_fixture("chp")
 READER_RULES = load_workbook_fixture("reader_rules")
 
-UNIT = {"Country": "FI", "Generator_ID": "chpbio"}
+UNIT = {"Country": "FI", "unittype": "chpbio"}
 #: The generated unit name; a coordinate, so pinning it is correct (rule R5).
 GNU_ELEC_OUT = ("elec", "FI_elec", "FI_CHPbio", "output")
 
@@ -88,8 +88,11 @@ class TestASingleValueEdit:
         variant = _sheets(
             tmp_path,
             "variant",
+            # 'CHPbio', not the 'chpbio' the unitdata sheet writes: the fixture
+            # spells it differently on purpose, and workbook_text_with matches a
+            # cell as written rather than as the pipeline will read it.
             workbook_text_with(CHP, sheet="unittypedata", header="eff00",
-                               value=0.5, where={"Generator_ID": "chpbio"}),
+                               value=0.5, where={"unittype": "CHPbio"}),
         )
 
         assert_delta(
@@ -111,7 +114,7 @@ class TestEditsThatMustChangeNothing:
             "variant",
             workbook_text_with(READER_RULES, sheet="unitdata", header="Note",
                                value="an entirely different remark",
-                               where={"Generator_ID": "keeper", "Scenario": "all"}),
+                               where={"unittype": "keeper", "Scenario": "all"}),
         )
 
         assert_delta(workbook_delta(base, variant), expect_no_change=True)
@@ -126,7 +129,7 @@ class TestEditsThatMustChangeNothing:
             "variant",
             workbook_text_with(READER_RULES, sheet="unitdata",
                                header="capacity_output1", value=999,
-                               where={"Generator_ID": "truncated"}),
+                               where={"unittype": "truncated"}),
         )
 
         assert_delta(workbook_delta(base, variant), expect_no_change=True)

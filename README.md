@@ -80,6 +80,8 @@ links to it.
   reference page: what Backbone can express that this build does not write, and which
   of its own rules are known to be provisional. Read it before designing anything that
   adds a parameter or a sheet.
+- [Migration guide](docs/Migration%20guide.md) — what to change in a workbook or a
+  config when an input format changes, newest entry last.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

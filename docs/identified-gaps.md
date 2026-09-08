@@ -301,12 +301,11 @@ distinguishes them. This is why the build reports an unmatched `add` or
 *Where it would live:* [The source data phase](source-data.md), if a `remove`
 ever gains a way to say it meant to match something.
 
-### Eight workbooks no config names
+### Five workbooks no config names
 
-`H2 heavy.xlsx`, `transferdata_TYNDP2020.xlsx`, `unitdata_TYNDP-2020.xlsx`,
-`unittypedata_nuclear-lwr-smr.xlsx`, `transferdata_additional1.xlsx`,
-`unitdata_additional-conventional-units.xlsx`, `unitdata_additional-vre.xlsx`
-and `demanddata_other.xlsx` sit in `src_files/data_files/` and no shipped config
+`H2 heavy.xlsx`, `transferdata_TYNDP2020.xlsx`,
+`unittypedata_nuclear-lwr-smr.xlsx`, `transferdata_additional1.xlsx` and
+`demanddata_other.xlsx` sit in `src_files/data_files/` and no shipped config
 lists any of them. Their columns are genuinely unread, and listing one now says
 so rather than staying silent — which is the useful part, because
 `transferdata_additional1.xlsx` is a long-format `parameter`/`value` sheet the

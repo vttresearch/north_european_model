@@ -227,9 +227,11 @@ def frame_with_poisoned_numeric_column(
     column ``Float64``, and about a dozen consumers branch on precisely that.
 
     Why not simply pass ``filler=1.0`` to :func:`frame_with_cell`: that makes
-    *every* column numeric, ``generator_id`` and ``country`` included, and then
-    a merge against a text-keyed fixture fails on the key dtype rather than on
-    anything the test is about. The frame has to stay realistic everywhere
+    *every* column numeric, ``unittype`` and ``country`` included, and then a
+    merge against a text-keyed fixture fails on the key dtype rather than on
+    anything the test is about. Nothing forces ``unittype`` to text -- it is not
+    in normalize_dataframe's ``lowercase_col_values`` -- so that failure is
+    reachable rather than hypothetical. The frame has to stay realistic everywhere
     except the one column under examination, or the failure it produces is the
     test's own.
     """

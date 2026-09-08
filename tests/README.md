@@ -166,8 +166,11 @@ neighbouring assertion about warnings failed. `TestFormalityIsJudgedBeforeReleva
 `route/test_route_reader_rules.py` now pins the pipeline order behaviourally.
 
 The one check that deliberately runs late is `merge_unittypedata_into_unitdata`'s unmatched
-`generator_id` report: it is a cross-reference rather than a property of the row, so it
-should only speak about rows the run actually uses.
+`unittype` report: it is a cross-reference rather than a property of the row, so it
+should only speak about rows the run actually uses. Its counterpart -- a row with no
+`unittype` at all -- stays early in `canonicalize_unittype_and_build_unit`, because that
+*is* a property of the row, and because the provenance columns naming the sheet are
+still attached there.
 
 ### `##` is what the author declares is not input
 

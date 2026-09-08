@@ -178,7 +178,7 @@ Seven tables, held on the pipeline object rather than returned:
 |---|---|
 | `df_nodedata` | country, grid, node |
 | `df_demanddata` | country, grid, node |
-| `df_unitdata` | country, generator_id, unit_name_prefix |
+| `df_unitdata` | country, unittype, unit_name_prefix |
 | `df_transferdata` | from_country, from_suffix, to_country, to_suffix, grid |
 | `df_emissiondata` | emission, group |
 | `df_userconstraintdata` | group, the four dimensions, parameter |
