@@ -41,6 +41,10 @@ not build and why, and has a documentation page of its own.
   `unittypedata` is keyed on `unittype` with a free-text `## Description` column
   in place of the old name.
   [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- `transferdata` is unidirectional: one row per line per direction, with
+  `transferCap` in place of `export_capacity` and `import_capacity`. Either old
+  column is named by the build and contributes nothing.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
 - `##` in a cell skips the row, `##` in a column header skips the column.
   [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
 - A build no longer holds every source workbook open for its whole run, which

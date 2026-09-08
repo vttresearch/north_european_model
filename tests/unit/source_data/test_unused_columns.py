@@ -178,7 +178,7 @@ class TestTheRealWorkbooksStaySilent:
         Deliberately coupled to shipped data: this is what stops the hygiene
         decaying, and it is why the check can be trusted when it does speak.
 
-        Scoped to the workbooks a config actually lists. Eight files in the
+        Scoped to the workbooks a config actually lists. Several files in the
         folder are named by no config, and their columns are genuinely unread --
         sweeping those too would assert that dormant files are clean, which is
         neither true nor anything this pass promises.

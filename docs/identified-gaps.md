@@ -11,7 +11,7 @@ which is why every one of them carries a *where it would live* line. Nothing her
 is a proposal. An entry says what the state is and where the code says so, and
 takes no position on whether it should change.
 
-## In one minute
+## One minute summary
 
 Six kinds of gap, and they are not equally interesting:
 
@@ -231,14 +231,13 @@ column is reported by file and sheet rather than silently ignored. See
 [A column nothing reads](source-workbook-conventions.md#a-column-nothing-reads)
 and [The source data phase](source-data.md#columns-nothing-reads).
 
-The measurement that closed it, kept because it says what "clean" looks like: 44
-prefix-matching sheets across the nine workbooks the four configs name, 363
-column headers, of which 54 are marked `##` and 9 are `note`. The remaining 300
-spell 101 distinct (table, column) pairs, and **every one of them is
-recognised**. The only unread columns found were four in
-`unittypedata_compilation.xlsx`, disabled years ago by renaming them
-`disabled-maxRampUp` and so on; they are marked `##` now, which is what the
-builder can see.
+What closed it, kept because it says what "clean" looks like: **every column on
+every prefix-matching sheet the four shipped configs name is recognised**. The
+only unread ones found were four in `unittypedata_compilation.xlsx`, disabled
+years ago by renaming them `disabled-maxRampUp` and so on; they are marked `##`
+now, which is what the builder can see. The figure is deliberately not written
+down as a count — a tally of sheets and headers goes stale the first time a
+workbook is consolidated, and silently. Run a build and read `summary.log`.
 
 What stays open is the mirror half, which is still an inventory rather than a
 defect: every parameter in the table above needs a workbook column before it can
@@ -291,8 +290,8 @@ changes.
 
 ### A `remove` that removes nothing cannot be verified
 
-49 `remove` rows on `config_OT2030.ini` and 21 on the National Trends configs
-match no earlier row, and every one is deliberate — removing offshore wind from
+Dozens of `remove` rows on each shipped config match no earlier row, and every
+one is deliberate — removing offshore wind from
 landlocked countries by writing the row for every country and letting it miss.
 A misspelled `remove` looks exactly the same and nothing in the sheet
 distinguishes them. This is why the build reports an unmatched `add` or
@@ -329,6 +328,66 @@ at three entries it is not.
 
 *Where it would live:* [Timeseries](timeseries.md), beside the other processor
 declarations.
+
+### A unit's grid is `unittypedata`'s, and a `unitdata` sheet is not told
+
+`build_unit_grid_and_node_columns` assigns `grid_<put>` from the unittype's row
+unconditionally, so a `grid_output1` written on a `unitdata` sheet is overwritten
+— and set to blank when the unittype does not define that connection at all.
+Nothing is logged, and `grid` is an accepted `unitdata` column, so the
+unrecognised-column check waves it through as well.
+
+The behaviour is right: one authority per connection is what keeps a unit's grids
+consistent across every sheet that mentions it. What is open is whether writing
+the column should say something, or stop being accepted on that table.
+
+*Where it would live:* [Source workbook conventions](source-workbook-conventions.md),
+which now states the rule; this entry is about the silence, not the rule.
+
+### Silent steps that change what reaches the model
+
+Four of them, none wrong, none visible:
+
+- **`expand_all_country` says nothing.** One `all` row becomes one row per
+  country, and no count is reported for a step that can multiply a sheet
+  thirtyfold.
+- **A second `unittypedata` row for one unittype is ignored**, first wins, in
+  three separate functions. A duplicated unittype is not reported anywhere.
+- **An empty `unittypedata` leaves `unitdata` untouched** — no `unit` column at
+  all — and every later stage sees a table that looks merely empty rather than
+  unbuilt.
+- **`method` defaults to `replace` for a blank cell, and a numeric `*_output1`
+  column is renamed to its base name.** Both are the documented behaviour; a
+  reader comparing the sheet with the merged table sees neither happen.
+
+Each is a candidate for a count rather than a warning, on the rule that what is
+expected and handled costs counts, not names.
+
+*Where it would live:* [The source data phase](source-data.md), if any of them
+starts speaking.
+
+### Excluding a node is counted for units only
+
+`14d2c33` answered "how much of the model left with this exclusion" for
+`unitdata`, where a unit is dropped whole and the loss is surprising. The rows
+`exclude_grids` and `exclude_nodes` drop from `nodedata`, `demanddata` and
+`transferdata` are still dropped in silence. Those losses are one row per node
+and much less surprising, which is why they were left — but the reader who wants
+to know what an exclusion cost gets half an answer.
+
+*Where it would live:* [The source data phase](source-data.md), beside the unit
+count.
+
+### A unit name can contain `<NA>`
+
+A `unitdata` row whose `unittype` is blank is reported by
+`canonicalize_unittype_and_build_unit`, and the row is left in place with a
+`unit` string built from the blank — `FI_<NA>`. The report is the actionable
+half; the malformed name travels further than it should, and nothing downstream
+treats it as special.
+
+*Where it would live:* [The source data phase](source-data.md), if the row is
+ever dropped instead of reported.
 
 ## See also
 
