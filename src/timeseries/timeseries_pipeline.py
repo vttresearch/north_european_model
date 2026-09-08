@@ -241,8 +241,14 @@ class TimeseriesPipeline:
             if needs_rerun:
                 processors_to_rerun.add(human_name)
 
+        # "of N" so the reader can see that the rest were skipped rather than
+        # missing. N counts the specs this phase actually has, i.e. after
+        # _create_enriched_processor_specs has dropped any whose demand grid is
+        # excluded -- so it can be lower than the total the run plan named, and
+        # the skip is warned about where it happens.
         self.logger.log_status(
-            f"Need to run {len(processors_to_rerun)} timeseries processor(s): "
+            f"Need to run {len(processors_to_rerun)} of {len(self.processors)} "
+            f"timeseries processor(s): "
             f"{', '.join(sorted(processors_to_rerun)) if processors_to_rerun else 'none'}",
             level="info"
         )
