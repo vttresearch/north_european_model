@@ -298,5 +298,14 @@ class TestUnittypeSpellingIsCanonicalized:
         )
         loader.merge_unittypedata_into_unitdata(merged, unittypes, logger)
 
-        said = logger.matching("notdeclared")
+        # One line for both rows: they are one unittype spelled two ways, and
+        # grouping is on the folded key.
+        said = logger.matching("NotDeclared")
         assert len(said) == 1, said
+
+        # Named by the spelling a sheet carries, never by the folded key -- that
+        # is what someone searches the workbook for. Naming the key would also
+        # send describe_origins down its "spelled X in Y" branch, which is meant
+        # for a half-finished rename and would then fire on every mixed-case
+        # unittype in the model.
+        assert "'notdeclared'" not in said[0], said[0]

@@ -934,14 +934,15 @@ def build_unit_grid_and_node_columns(
     if df_unitdata.empty or df_unittypedata.empty:
         return out
 
-    # Determine which grid_input1...6, grid_output1...6 are used in the unittype data
+    # Determine which grid_input1...5, grid_output1...5 are used in the unittype data
     candidate_puts = [f"input{i}" for i in range(1, 6)] + [f"output{i}" for i in range(1, 6)]
     puts = [p for p in candidate_puts if f"grid_{p}" in df_unittypedata.columns]
     if not puts:
         if logger is not None:
             logger.log_status(
-                (f"unittypedata table does not have any column named grid_input1...6 or grid_output1...6. "
-                 "Check the files and names in the config file."),
+                (f"[{_frame_source(df_unitdata, 'unitdata')}] The unittypedata table has no "
+                 "grid_input1...5 or grid_output1...5 column, so no unit gets a grid or a node. "
+                 "Check the sheet names and the unittypedata_files list in the config file."),
                 level="warn",
             )
         return out
@@ -1261,8 +1262,8 @@ def merge_unittypedata_into_unitdata(
     # matching nothing in it is exactly as broken there as anywhere else.
     unit_keys = _unittype_key(df_unitdata['unittype'])
     known = set(_unittype_key(df_unittypedata['unittype']).dropna())
-    unmatched = unit_keys[unit_keys.notna() & ~unit_keys.isin(known)]
-    if len(unmatched):
+    unmatched_mask = unit_keys.notna() & ~unit_keys.isin(known)
+    if unmatched_mask.any():
         # Most units first: which unittype is misspelled is a question about how
         # much of the model it costs.
         # Listed in full, one per line, rather than through utils.summarise:
@@ -1270,11 +1271,23 @@ def merge_unittypedata_into_unitdata(
         # summarise is for the case where the count is the point. A rename
         # touching a dozen sheets is exactly when three names and a number leave
         # the reader no better off. Ordered by how many units each costs.
+        #
+        # Grouped by the folded key so two spellings of one name are one line,
+        # but named by the spelling the sheet carries. The folded key is not
+        # something anyone typed: Excel's Find would not reach it, and
+        # describe_origins would fail its exact match against it and call every
+        # mixed-case unittype a half-finished rename.
         origins = origins or {}
+        spelling_of = (
+            pd.DataFrame({'_key': unit_keys[unmatched_mask],
+                          '_name': df_unitdata.loc[unmatched_mask, 'unittype'].astype(str)})
+            .drop_duplicates(subset=['_key'], keep='first')
+            .set_index('_key')['_name']
+        )
         lines = [
-            f"    '{name}' ({count} unit(s))"
-            f"{describe_origins(name, origins) or ' (source unknown)'}"
-            for name, count in unmatched.value_counts().items()
+            f"    '{spelling_of[key]}' ({count} unit(s))"
+            f"{describe_origins(spelling_of[key], origins) or ' (source unknown)'}"
+            for key, count in unit_keys[unmatched_mask].value_counts().items()
         ]
         logger.log_status(
             f"[merge_unittypedata_into_unitdata] {len(lines)} unittype(s) that no "
@@ -1308,12 +1321,10 @@ def merge_unittypedata_into_unitdata(
     )
 
     # For each overlapping column: fill NA in the original with the type value
-    cells_filled = 0
     for type_col in [c for c in merged.columns if c.endswith('_type')]:
         orig_col = type_col[:-5]  # strip '_type' (5 chars)
         if orig_col in merged.columns:
             na_mask = merged[orig_col].isna()
-            cells_filled += int(na_mask.sum())
             merged.loc[na_mask, orig_col] = merged.loc[na_mask, type_col]
         merged.drop(columns=[type_col], inplace=True)
 
@@ -1393,7 +1404,19 @@ def apply_whitelist(
     df_out = df.copy()
 
     source = _frame_source(df, df_identifier)
-    blank: Dict[str, int] = {}
+
+    # Counted against the incoming frame, before any filter narrows it. A blank
+    # here is not "every run", it is a row that never says which run it belongs
+    # to; astype(str) below renders pd.NA as the literal '<NA>', so it drops out
+    # either way and counting is what makes the drop visible. Counted inside the
+    # loop it was counted against what the previous filter had left -- so a blank
+    # year went unsaid whenever the scenario filter had already dropped that row,
+    # and unsaid entirely once the frame was empty and the loop broke.
+    blank: Dict[str, int] = {
+        col: int(df[col].isna().sum())
+        for col in ("scenario", "year")
+        if col in filters and col in df.columns and df[col].isna().any()
+    }
 
     # Apply each filter with AND semantics
     for col, val in filters.items():
@@ -1402,15 +1425,6 @@ def apply_whitelist(
             continue
 
         vals = val
-
-        if col in ("scenario", "year"):
-            # A blank here is not "every run", it is a row that never says which
-            # run it belongs to. astype(str) below turns pd.NA into the literal
-            # '<NA>', so it drops out either way; counting it first is what makes
-            # the drop visible.
-            missing = int(df_out[col].isna().sum())
-            if missing:
-                blank[col] = blank.get(col, 0) + missing
 
         if col == "scenario":
             # Include 'all' (universal)
@@ -1449,11 +1463,7 @@ def apply_whitelist(
 
 def apply_blacklist(
     df_input: pd.DataFrame,
-    df_name: str,
     filters: Mapping[str, FilterValue],
-    logger: IterationLogger | None = None,
-    *,
-    log_warning: bool = True
     ) -> pd.DataFrame:
     """
     Filter DataFrame by excluding rows containing blacklisted values.
@@ -1462,16 +1472,14 @@ def apply_blacklist(
     -----------
     df_input : pandas.DataFrame
         The DataFrame to be filtered
-    df_name : str
-        Name of the DataFrame (used for error reporting)
     filters : dict
         Dictionary of {column_name: blacklisted_values} pairs
-    logger : IterationLogger, optional
-        Logger instance for status messages.
 
     Notes:
     ------
     - String comparisons are case-insensitive
+    - A column the frame does not have is skipped without a word, which is why
+      this takes no logger: on unitdata the absent column is the normal case.
     """
     # Skip processing if df_input is empty
     if df_input.empty:
@@ -1483,8 +1491,11 @@ def apply_blacklist(
     # Apply each blacklist filter condition
     for col, val in filters.items():
         if col not in df_filtered.columns:
-            if log_warning and logger is not None:
-                logger.log_status(f"Missing column in {df_name}: {col!r}", level="warn")
+            # Silent, and it has to be: a unitdata frame legitimately lacks
+            # grid_output3, so warning here would speak on every correct build.
+            # Where the column really is required, build_node_column,
+            # build_from_to_columns and canonicalize_unittype_and_build_unit
+            # already report it with the file, the sheet and the row count.
             continue
 
         # Handle string columns with case-insensitive comparison
@@ -1503,23 +1514,19 @@ def apply_blacklist(
 def apply_unit_grids_blacklist(
     df: pd.DataFrame,
     exclude_grids: List[str],
-    df_name: str = "unitdata",
-    logger=None
     ) -> pd.DataFrame:
     filters = {**{f"grid_input{i}":  exclude_grids for i in range(1, 6)},
                **{f"grid_output{i}": exclude_grids for i in range(1, 6)}}
-    return apply_blacklist(df, df_name, filters, logger=logger, log_warning=False)
+    return apply_blacklist(df, filters)
 
 
 def apply_unit_nodes_blacklist(
     df: pd.DataFrame,
     exclude_nodes: List[str],
-    df_name: str = "unitdata",
-    logger=None
     ) -> pd.DataFrame:
     filters = {**{f"node_input{i}":  exclude_nodes for i in range(1, 6)},
                **{f"node_output{i}": exclude_nodes for i in range(1, 6)}}
-    return apply_blacklist(df, df_name, filters, logger=logger, log_warning=False)
+    return apply_blacklist(df, filters)
 
 
 class _SilentLogger:

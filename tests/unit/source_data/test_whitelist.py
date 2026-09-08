@@ -101,3 +101,24 @@ class TestWhatIsNotABlank:
 
         logger.assert_logged("missing column", level="warn")
         logger.assert_not_logged(MESSAGE)
+
+
+class TestTheCountIsTakenBeforeFiltering:
+    """Counted against the incoming frame, not against what is left of it.
+
+    The counts used to be taken inside the filter loop, so ``year`` was counted
+    against a frame the ``scenario`` filter had already narrowed -- and not at
+    all once that filter emptied the frame and the loop short-circuited. A blank
+    could then be hidden by an unrelated cell in the row beside it, which is the
+    one case where silence is least affordable.
+    """
+
+    def test_a_blank_year_survives_the_scenario_filter(self):
+        """The scenario filter removes this row before 'year' is ever reached."""
+        _, logger = _filter(_frame(["national trends"], [None]))
+        assert any("1 with no year" in m for m in logger.matching(MESSAGE))
+
+    def test_both_are_named_when_the_frame_empties(self):
+        _, logger = _filter(_frame([None], [None]))
+        said = logger.matching(MESSAGE)
+        assert any("1 with no scenario" in m and "1 with no year" in m for m in said), said

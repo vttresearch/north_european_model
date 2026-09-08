@@ -200,9 +200,9 @@ class SourceDataPipeline:
             dfs = [data_loader.normalize_dataframe(df, 'nodedata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'nodedata', self.logger) for df in dfs]
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'nodedata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'nodedata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'node': exclude_nodes}) for df in dfs]
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
                                    self.logger, 'nodedata')
                    for df in dfs
@@ -223,9 +223,9 @@ class SourceDataPipeline:
             dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logger) for df in dfs]
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'demanddata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'demanddata', {'node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'node': exclude_nodes}) for df in dfs]
             dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
                                    self.logger, 'demanddata')
                    for df in dfs
@@ -263,8 +263,8 @@ class SourceDataPipeline:
             # overstate what left the model. A count rather than names: this is
             # expected and handled, and docs/source-data.md carries the reasoning.
             dfs_before_exclusion = dfs
-            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids, df_name="unitdata", logger=self.logger) for d in dfs]
-            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes, df_name="unitdata", logger=self.logger) for d in dfs]
+            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids) for d in dfs]
+            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes) for d in dfs]
             dfs = [data_loader.apply_whitelist(df, unit_whitelist, self.logger, 'unitdata')
                    for df in dfs
                    ]
@@ -302,10 +302,10 @@ class SourceDataPipeline:
             dfs = data_loader.read_input_excels(input_folder, files, 'transferdata', self.logger)
             dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logger) for df in dfs]
             dfs = [data_loader.drop_underscore_values(df, 'transferdata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'from_node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, 'transferdata', {'to_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'from_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'to_node': exclude_nodes}) for df in dfs]
             # Both ends in one call: apply_whitelist already ANDs its filters, so
             # a link survives only if both countries are modelled. Two calls said
             # the same thing and repeated every scenario and year comparison, and
@@ -331,7 +331,7 @@ class SourceDataPipeline:
                     f"transferdata contains deprecated column(s) {_deprecated_cols}. "
                     "The old bidirectional format (one row with export_capacity + import_capacity) "
                     "is no longer supported. Replace each bidirectional row with two directional rows "
-                    "using 'transferCap' as the capacity column. ",
+                    "using 'transferCap' as the capacity column.",
                     level="warn",
                     add_empty_line_before=True,
                     add_empty_line_after=True,

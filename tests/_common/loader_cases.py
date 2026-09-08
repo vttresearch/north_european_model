@@ -116,15 +116,15 @@ LOADER_CASES: list[LoaderCase] = [
     ),
     LoaderCase(
         "apply_blacklist",
-        lambda df, log: loader.apply_blacklist(df, "sweep", {"grid": ["excluded"]}, log),
+        lambda df, log: loader.apply_blacklist(df, {"grid": ["excluded"]}),
     ),
     LoaderCase(
         "apply_unit_grids_blacklist",
-        lambda df, log: loader.apply_unit_grids_blacklist(df, ["excluded"], "sweep", log),
+        lambda df, log: loader.apply_unit_grids_blacklist(df, ["excluded"]),
     ),
     LoaderCase(
         "apply_unit_nodes_blacklist",
-        lambda df, log: loader.apply_unit_nodes_blacklist(df, ["excluded"], "sweep", log),
+        lambda df, log: loader.apply_unit_nodes_blacklist(df, ["excluded"]),
     ),
     LoaderCase(
         # Two frames, so the merge machinery actually runs rather than

@@ -94,9 +94,9 @@ def test_merge_reports_and_retypes_when_nothing_matches():
 
     merged = merge_unittypedata_into_unitdata(unitdata, unittypedata, logger)
 
-    # Named, not merely counted: the whole point is that the user can find the
-    # typo without reading the code.
-    logger.assert_logged("absentfromunittypedata", level="warn")
+    # Named, not merely counted, and spelled the way the sheet spells it: the
+    # whole point is that the user can find the typo without reading the code.
+    logger.assert_logged("'absentFromUnittypedata'", level="warn")
 
     assert merged["eff00"].isna().all()
     assert str(merged["eff00"].dtype) == "object"
