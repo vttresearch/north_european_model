@@ -16,13 +16,9 @@ r"""
     * (2) "MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx"
     * (3) "MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx"
 
-- One additional file shared as a part of this repository (./src_files/data_scripts)
-    * (4) historical_transfer_ramps.xlsx
-
 --- What this script does ---
 
 - Processes TYNDP 2024 data into NE model input.
-- Adds ramp limits from historical_transfer_ramps.xlsx
 - Maps TYNDP 2024 technology names to NE model unittypes, and aggregates some of them
     as well as transmission lines to match the existing unittypes/lines in the NE model
     * see tyndp_to_unittype and unittype_aggregations_loc
@@ -38,7 +34,6 @@ r"""
     * Processed unit data from sources 2 and 3 ("Yearly Outputs" sheet)
 - demanddata_elec
     * native electricity demands from sources 2 and 3 ("Yearly Outputs" sheet), values converted from GWh to TWh
-    * ramp limits from historical_transfer_ramps.xlsx
 - transferdata
     * processed transmission line capacities from sources 1, 2 and 3
     * reference grid capacities from source 1 are compared with modelled maximum flows in sources 2 and 3 -> whichever is higher is chosen as the final capacity
@@ -60,9 +55,6 @@ for year in chosen_NT_years:
 
 ref_grid_inv_candidate_filename = '20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx'
 path_to_ref_grid_inv_candidates_file = os.path.normpath(f'./{ref_grid_inv_candidate_filename}')
-
-historical_ramp_limits_filename = 'historical_transfer_ramps.xlsx'
-historical_ramp_limits_file_path = os.path.normpath(f'./{historical_ramp_limits_filename}')
 
 # name for the output file of the script
 output_filename = 'Data_for_TYNDP-2024_National_Trends.xlsx'
@@ -526,55 +518,44 @@ def merge_transmission_data(ref_capacities_agg, min_max_exchanges_agg, year):
     return merged_cap
 
 
-# --- process ramp limits ---
+# --- build the transfer rows ---
 
-def process_ramp_limits(merged_cap, ramp_limits, year):
-    merged_cap, ramp_limits = merged_cap.copy(), ramp_limits.copy()
-    ramp_limits.rename(columns={
-        'export_capacity':'export_capacity_2020',
-        'import_capacity':'import_capacity_2020'},
-        inplace=True)
-    ramp_limits['import_capacity_2020'] = ramp_limits['import_capacity_2020'].abs()
-    ramp_limits.set_index('from-to', inplace=True)
-
-    ramp_limits = ramp_limits.query(f'Year == {year}').copy()
-
-    # merge capacities with ramp limits
-    merged_cap_ramp_limits = merged_cap.merge(ramp_limits, how='left', on=['from-to']).copy()
-    merged_cap_ramp_limits = merged_cap_ramp_limits.query(f'scenario == "National Trends" and Year == {year}')
-
-    # Build one row per direction.
-    # rampLimit is expressed as a fraction of transferCap, so the reverse direction is scaled
-    # by the capacity ratio to preserve the same absolute ramp rate as the forward direction.
+# One row per direction: transferdata is unidirectional, so a line needs both.
+#
+# Dropping a line with no capacity either way used to be a side effect: the rows
+# were merged against historical_transfer_ramps.xlsx, which also supplied grid,
+# scenario and Year, and a line that workbook did not list fell out at the query
+# below it. The ramp limits went in e2bcf37 and the workbook with them, so the
+# rule is stated here rather than inherited. It keeps 8 fewer rows than the
+# workbook did, all of them transferCap 0.
+def build_directional_transfers(merged_cap, year):
     rows = []
-    for _, row in merged_cap_ramp_limits.iterrows():
+    for _, row in merged_cap.iterrows():
         exp_cap = row['ne_model_export']
         imp_cap = row['ne_model_import']
-        ramp = row['max_ramp_rate'] if pd.notna(row['max_ramp_rate']) else 0
+        if not exp_cap and not imp_cap:
+            continue
 
         # forward direction (from -> to)
         rows.append({
-            'grid':               row['grid'],
+            'grid':               'elec',
             'from_country':        row['from'],
             'to_country':          row['to'],
-            'scenario':           row['scenario'],
-            'Year':               row['Year'],
+            'scenario':           'National Trends',
+            'Year':               year,
             'transferCap':        exp_cap,
-            'rampLimit':          0,
             'variableTransCost':  1,
             'transferLoss':       0.01,
         })
 
         # reverse direction (to -> from)
-        ramp_reverse = (ramp * exp_cap / imp_cap) if imp_cap else 0
         rows.append({
-            'grid':               row['grid'],
+            'grid':               'elec',
             'from_country':        row['to'],
             'to_country':          row['from'],
-            'scenario':           row['scenario'],
-            'Year':               row['Year'],
+            'scenario':           'National Trends',
+            'Year':               year,
             'transferCap':        imp_cap,
-            'rampLimit':          0,
             'variableTransCost':  1,
             'transferLoss':       0.01,
         })
@@ -711,9 +692,7 @@ def process_year_data(year):
                                          min_max_exchanges_agg,
                                          year)
 
-    trans_ne_input = process_ramp_limits(merged_cap,
-                                         ramp_limits,
-                                         year)
+    trans_ne_input = build_directional_transfers(merged_cap, year)
 
     merged_cap, missing_capacities, lost_lines = create_doc_sheets(ref_capacities_year,
                                                                    ref_capacities_agg,
@@ -738,9 +717,6 @@ if __name__ == "__main__":
     check_chosen_output(output_filename_path)
     # the reference grid (transmission capacities before investments in 2030)
     ref_capacities = pd.read_excel(path_to_ref_grid_inv_candidates_file, sheet_name='1. Elec Ref Grid').set_index('Border')
-
-    # ramp limits from historical ramp limits
-    ramp_limits = pd.read_excel(historical_ramp_limits_file_path, sheet_name='summary', skiprows=9, usecols='AZ:BG')
 
     processed_data = {
         year: process_year_data(year) for year in chosen_NT_years
