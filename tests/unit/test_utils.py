@@ -52,7 +52,8 @@ class TestStandardizeDfDtypes:
 
     def test_mixed_text_and_numbers_stays_object(self):
         # Converting would introduce NAs that were not in the input, silently
-        # deleting data. utils.py:85 refuses on exactly that basis.
+        # deleting data. standardize_df_dtypes refuses on exactly that basis:
+        # it converts only when pd.to_numeric introduces no new NA.
         out = standardize_df_dtypes(_col(["1", "not a number"]))
         assert str(out["c"].dtype) == "object"
 
@@ -63,7 +64,7 @@ class TestStandardizeDfDtypes:
 
     @pytest.mark.parametrize("text", ["NA", "None", "null", "-"])
     def test_other_missing_looking_strings_are_left_alone(self, text):
-        # Deliberate: only 'nan' is converted (utils.py:75). 'NA' is a plausible
+        # Deliberate: standardize_df_dtypes converts only 'nan'. 'NA' is a plausible
         # real value, and guessing here would destroy data.
         out = standardize_df_dtypes(_col([text, "x"]))
         assert not out["c"].isna().any()
@@ -90,7 +91,7 @@ class TestStandardizeDfDtypes:
         assert out["c"].iloc[1] is pd.NA
 
     def test_an_all_zero_numeric_column_still_lands_on_float64(self):
-        """is_col_empty calls an all-zero numeric column "empty" (utils.py:168).
+        """is_col_empty calls an all-zero numeric column "empty".
 
         Pass 1 therefore retypes it to object -- and pass 2 converts it straight
         back to numeric because nothing is actually missing.  The round trip is
@@ -126,7 +127,7 @@ class TestStandardizeDfDtypes:
 
 
 class TestIsColEmpty:
-    """Three different rules for three kinds of column (utils.py:142-147)."""
+    """Three different rules for three kinds of column, in is_col_empty."""
 
     @pytest.mark.parametrize(
         "values, expected",

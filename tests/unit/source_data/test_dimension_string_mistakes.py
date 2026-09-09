@@ -11,7 +11,7 @@ to change stays as it was. There is no warning, because nothing invalid
 happened: the pipeline cannot tell an intended new node from a typo.
 
 Case is the exception, and it had to be. The project already lowercases the
-fields it joins on (``scenario``, ``generator_id``, ``method`` --
+fields it joins on (``scenario``, ``method`` --
 ``normalize_dataframe``'s ``lowercase_col_values``) and reconstructs the
 first-seen form for presentation (``compile_domain_df``). ``node_suffix`` and
 ``unit_name_prefix`` are not in that list, so ``dh`` and ``DH`` used to produce
@@ -34,7 +34,7 @@ import src.source_data.source_data_loader as loader
 from tests._common.fixtures import FakeLogger
 
 UNITTYPES = [
-    {"generator_id": "chp", "unittype": "CHPbio", "grid_output1": "elec", "method": "replace"}
+    {"unittype": "CHPbio", "grid_output1": "elec", "method": "replace"}
 ]
 
 
@@ -128,19 +128,19 @@ class TestUnitPrefixesBehaveTheSameWay:
         units = loader.normalize_dataframe(
             pd.DataFrame(
                 [
-                    {"country": "FI", "generator_id": "chp", "unit_name_prefix": "a",
+                    {"country": "FI", "unittype": "CHPbio", "unit_name_prefix": "a",
                      "capacity_output1": 100, "method": "replace"},
-                    {"country": "FI", "generator_id": "chp", "unit_name_prefix": "aa",
+                    {"country": "FI", "unittype": "CHPbio", "unit_name_prefix": "aa",
                      "capacity_output1": 200, "method": "replace"},
                 ]
             ),
             "u",
             logger,
         )
-        units = loader.build_unittype_unit_column(units, unittypes, logger)
+        units = loader.canonicalize_unittype_and_build_unit(units, unittypes, logger)
         merged = loader.merge_row_by_row(
             [units], logger,
-            key_columns=["country", "generator_id", "unit_name_prefix"],
+            key_columns=["country", "unittype", "unit_name_prefix"],
         )
 
         assert sorted(merged["unit"]) == ["FI_a_CHPbio", "FI_aa_CHPbio"]
@@ -212,3 +212,100 @@ class TestCaseIsTheDangerousOne:
 
         assert _nodes(merged) == ["FI_heat_HKI"]
         assert merged.iloc[0]["upwardlimit"] == 200
+
+
+class TestUnittypeSpellingIsCanonicalized:
+    """``unittype`` is the one dimension whose spelling is *decided* elsewhere.
+
+    It is not in ``lowercase_col_values`` -- a unit is named
+    ``{country}[_{unit_name_prefix}]_{unittype}``, so folding the column would
+    rename every unit in the model. Instead
+    ``canonicalize_unittype_and_build_unit`` respells each sheet's value the way
+    ``unittypedata`` spells it, before ``merge_row_by_row`` keys on it. Without
+    that, two sheets disagreeing about a unittype's case would reach GDXXRW as
+    two records for one ``unit`` label -- the same failure the section above
+    describes for ``node``.
+    """
+
+    @staticmethod
+    def _units(*rows):
+        logger = FakeLogger()
+        unittypes = loader.normalize_dataframe(pd.DataFrame(UNITTYPES), "u", logger)
+        frames = []
+        for row in rows:
+            frame = loader.normalize_dataframe(pd.DataFrame([row]), "u", logger)
+            frames.append(
+                loader.canonicalize_unittype_and_build_unit(frame, unittypes, logger)
+            )
+        merged = loader.merge_row_by_row(
+            frames, logger, key_columns=["country", "unittype", "unit_name_prefix"]
+        )
+        return merged, logger
+
+    def test_the_sheets_spelling_gives_way_to_unittypedatas(self):
+        merged, _ = self._units(
+            {"country": "FI", "unittype": "chpbio", "capacity_output1": 100,
+             "method": "replace"}
+        )
+
+        assert merged["unittype"].tolist() == ["CHPbio"]
+        assert merged["unit"].tolist() == ["FI_CHPbio"]
+
+    def test_two_sheets_disagreeing_on_case_make_one_unit(self):
+        merged, _ = self._units(
+            {"country": "FI", "unittype": "chpbio", "capacity_output1": 100,
+             "method": "replace"},
+            {"country": "FI", "unittype": "CHPBIO", "capacity_output1": 200,
+             "method": "replace"},
+        )
+
+        assert merged["unit"].tolist() == ["FI_CHPbio"]
+        assert merged["capacity"].tolist() == [200]
+
+    def test_an_undeclared_unittype_keeps_the_sheets_spelling(self):
+        merged, _ = self._units(
+            {"country": "FI", "unittype": "NotDeclared", "capacity_output1": 100,
+             "method": "replace"}
+        )
+
+        assert merged["unittype"].tolist() == ["NotDeclared"]
+        assert merged["unit"].tolist() == ["FI_NotDeclared"]
+
+    def test_an_undeclared_unittype_is_reported_once(self):
+        """Once, not once per row.
+
+        Two functions used to warn about the same unmatched value, one before the
+        whitelist and one after. The count is asserted rather than the presence,
+        because that is what pins the de-duplication.
+        """
+        logger = FakeLogger()
+        unittypes = loader.normalize_dataframe(pd.DataFrame(UNITTYPES), "u", logger)
+        units = loader.normalize_dataframe(
+            pd.DataFrame(
+                [
+                    {"country": "FI", "unittype": "NotDeclared",
+                     "capacity_output1": 100, "method": "replace"},
+                    {"country": "SE", "unittype": "notdeclared",
+                     "capacity_output1": 200, "method": "replace"},
+                ]
+            ),
+            "u",
+            logger,
+        )
+        units = loader.canonicalize_unittype_and_build_unit(units, unittypes, logger)
+        merged = loader.merge_row_by_row(
+            [units], logger, key_columns=["country", "unittype", "unit_name_prefix"]
+        )
+        loader.merge_unittypedata_into_unitdata(merged, unittypes, logger)
+
+        # One line for both rows: they are one unittype spelled two ways, and
+        # grouping is on the folded key.
+        said = logger.matching("NotDeclared")
+        assert len(said) == 1, said
+
+        # Named by the spelling a sheet carries, never by the folded key -- that
+        # is what someone searches the workbook for. Naming the key would also
+        # send describe_origins down its "spelled X in Y" branch, which is meant
+        # for a half-finished rename and would then fire on every mixed-case
+        # unittype in the model.
+        assert "'notdeclared'" not in said[0], said[0]

@@ -27,7 +27,7 @@ from tests._common.workbook_text import (
 SIMPLE = """\
 // a fixture comment
 [unitdata]
-Country | Generator_ID | capacity
+Country | unittype | capacity
 FI      | coal         | 100
 SE      | wind         | 200
 """
@@ -37,7 +37,7 @@ class TestParsing:
     def test_reads_sheets_and_rows(self):
         sheets = parse_workbook_text(SIMPLE)
         assert list(sheets) == ["unitdata"]
-        assert sheets["unitdata"][0] == ["Country", "Generator_ID", "capacity"]
+        assert sheets["unitdata"][0] == ["Country", "unittype", "capacity"]
         assert sheets["unitdata"][1] == ["FI", "coal", 100]
 
     def test_fixture_comments_never_reach_the_workbook(self):
@@ -155,7 +155,7 @@ class TestWriting:
     def test_produces_a_workbook_the_pipeline_reader_can_open(self, tmp_path):
         path = write_workbook_text(SIMPLE, tmp_path / "data.xlsx")
         frame = pd.read_excel(path, sheet_name="unitdata", header=0)
-        assert list(frame.columns) == ["Country", "Generator_ID", "capacity"]
+        assert list(frame.columns) == ["Country", "unittype", "capacity"]
         assert frame["capacity"].tolist() == [100, 200]
 
     def test_blank_rows_are_genuinely_empty_cells(self, tmp_path):
@@ -260,7 +260,7 @@ class TestWorkbookTextWith:
                                value=1, where={"Country": "FI"})
 
     def test_the_result_still_parses(self):
-        out = workbook_text_with(SIMPLE, sheet="unitdata", header="Generator_ID",
+        out = workbook_text_with(SIMPLE, sheet="unitdata", header="unittype",
                                  value="a much longer generator name",
                                  where={"Country": "FI"})
         assert parse_workbook_text(out)["unitdata"][1][1] == "a much longer generator name"

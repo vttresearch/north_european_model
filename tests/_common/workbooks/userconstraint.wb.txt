@@ -12,16 +12,16 @@
 // the whole point of this file.
 
 [unittypedata]
-scenario | year | Generator_ID | unittype | grid_output1 | eff00 | isSource
-all      | 1    | windturbine  | WindOn   | elec         | 1     | 1
+scenario | year | unittype | grid_output1 | eff00 | isSource
+all      | 1    | WindOn   | elec         | 1     | 1
 
 [nodedata]
 Country | Grid | Scenario | Year | nodeBalance
 FI      | elec | all      | 1    | 1
 
 [unitdata]
-Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1
-FI      | windturbine  |                  | all      | 1    | 100
+Country | unittype | unit_name_prefix | Scenario | Year | capacity_output1
+FI      | WindOn   |                  | all      | 1    | 100
 
 // The 1st dimension names a node, so it MUST keep its underscore. A row dropped
 // here would silently remove a constraint from the model.

@@ -26,21 +26,21 @@ pytestmark = pytest.mark.route
 BASE = """\
 // Two units so that one row can be edited while the other pins everything else.
 [unittypedata]
-Generator_ID | unittype | grid_output1 | eff00 | isSource
-windturbine  | WindOn   | elec         | 1     | 1
-gasturbine   | GasOCGT  | elec         | 0.4   | 1
+unittype | grid_output1 | eff00 | isSource
+WindOn   | elec         | 1     | 1
+GasOCGT  | elec         | 0.4   | 1
 
 [unitdata]
-Country | Generator_ID | Scenario | Year | capacity_output1 | vomCosts
-FI      | windturbine  | all      | 1    | 100              | 3
-FI      | gasturbine   | all      | 1    | 200              | 7
+Country | unittype | Scenario | Year | capacity_output1 | vomCosts
+FI      | windon   | all      | 1    | 100              | 3
+FI      | gasocgt  | all      | 1    | 200              | 7
 
 [nodedata]
 Country | Grid | Scenario | Year | nodeBalance
 FI      | elec | all      | 1    | 1
 """
 
-WHERE = {"Country": "FI", "Generator_ID": "gasturbine"}
+WHERE = {"Country": "FI", "unittype": "gasocgt"}
 
 
 def _variant(value):
@@ -57,18 +57,18 @@ class TestSourceStageKeepsThemDistinct:
 
     def test_an_explicit_zero_arrives_as_zero(self, tmp_path):
         source, _ = run_source(tmp_path / "zero", workbooks={"data.xlsx": ZERO})
-        assert cell(source.df_unitdata, "vomcosts", generator_id="gasturbine") == 0
+        assert cell(source.df_unitdata, "vomcosts", unittype="GasOCGT") == 0
 
     def test_an_empty_cell_arrives_as_na(self, tmp_path):
         source, _ = run_source(tmp_path / "empty", workbooks={"data.xlsx": EMPTY})
-        assert pd.isna(cell(source.df_unitdata, "vomcosts", generator_id="gasturbine"))
+        assert pd.isna(cell(source.df_unitdata, "vomcosts", unittype="GasOCGT"))
 
     def test_the_other_unit_is_untouched_either_way(self, tmp_path):
         # Guards the fixture edit itself: if workbook_text_with had hit the wrong
         # row, the tests above would still pass while testing the wrong thing.
         for name, text in (("zero", ZERO), ("empty", EMPTY)):
             source, _ = run_source(tmp_path / name, workbooks={"data.xlsx": text})
-            assert cell(source.df_unitdata, "vomcosts", generator_id="windturbine") == 3
+            assert cell(source.df_unitdata, "vomcosts", unittype="WindOn") == 3
 
 
 class TestExcelStageTreatsThemAlike:
@@ -109,13 +109,13 @@ class TestExcelStageTreatsThemAlike:
         # Provenance rather than pinned values: both the unit's generated name
         # and its cost are read from the source stage, so this test says "the
         # workbook carries what the source produced" without naming either.
-        # (The name is built from the *unittype*, not the generator_id --
-        # build_unittype_unit_column -- which is exactly the kind of detail a
-        # test should not hardcode.)
+        # (The name is built from the unittype as unittypedata spells it, not as
+        # this sheet wrote it -- canonicalize_unittype_and_build_unit -- which is
+        # exactly the kind of detail a test should not hardcode.)
         route = run_route(tmp_path / "zero", workbooks={"data.xlsx": ZERO})
 
-        unit_name = cell(route.source.df_unitdata, "unit", generator_id="windturbine")
-        expected = cell(route.source.df_unitdata, "vomcosts", generator_id="windturbine")
+        unit_name = cell(route.source.df_unitdata, "unit", unittype="WindOn")
+        expected = cell(route.source.df_unitdata, "vomcosts", unittype="WindOn")
 
         wind = rows_for(route.sheets["p_gnu_io"], unit=unit_name)
         assert len(wind) == 1

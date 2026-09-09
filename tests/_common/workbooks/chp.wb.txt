@@ -11,8 +11,8 @@
 // three connections without naming any of the numbers.
 
 [unittypedata]
-scenario | year | Generator_ID | unittype | grid_input1 | grid_output1 | grid_output2 | eff00 | cb   | cv
-all      | 1    | chpbio       | CHPbio   | biomass     | elec         | heat         | 0.85  | 0.45 | 0.15
+scenario | year | unittype | grid_input1 | grid_output1 | grid_output2 | eff00 | cb   | cv
+all      | 1    | CHPbio   | biomass     | elec         | heat         | 0.85  | 0.45 | 0.15
 
 [nodedata]
 Country | Grid    | Scenario | Year | nodeBalance | price
@@ -22,9 +22,13 @@ FI      | biomass | all      | 1    |             | 30
 
 // unit_name_prefix is declared but left blank: it is part of the unitdata merge
 // key, and omitting the column entirely makes merge_row_by_row say so.
+//
+// 'chpbio' against unittypedata's 'CHPbio' is deliberate: the sheet's spelling is
+// respelled from unittypedata, so the unit is FI_CHPbio and the whole route suite
+// exercises that for free.
 [unitdata]
-Country | Generator_ID | unit_name_prefix | Scenario | Year | capacity_output1 | vomCosts
-FI      | chpbio       |                  | all      | 1    | 500              | 2
+Country | unittype | unit_name_prefix | Scenario | Year | capacity_output1 | vomCosts
+FI      | chpbio   |                  | all      | 1    | 500              | 2
 
 [demanddata]
 Country | Grid | Scenario | Year | TWh/year

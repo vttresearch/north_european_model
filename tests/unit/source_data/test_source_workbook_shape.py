@@ -20,6 +20,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+import src.source_workbook_shape as sws
 from src.source_workbook_shape import (
     DIMENSION_SOURCES,
     base_column_name,
@@ -177,3 +178,117 @@ class TestTablesOf:
             pass
 
         assert all(frame.empty for frame in tables_of(Pipeline()).values())
+
+
+class TestWhatAColumnMayBeCalled:
+    """The vocabulary behind ``unrecognised_columns``.
+
+    A column nothing recognises is carried through the source stage and then
+    ignored, so a mistyped header is indistinguishable from a deliberate one.
+    These tests pin the shape of the answer, not the membership of the lists --
+    which names Backbone has is `backbone_params`' business, and asserting it
+    twice would only mean editing two files per parameter.
+    """
+
+    def test_a_parameter_is_recognised_on_the_table_that_carries_it(self):
+        assert not sws.unrecognised_columns(["transferCap"], "transferdata")
+        assert not sws.unrecognised_columns(["nodeBalance"], "nodedata")
+        assert not sws.unrecognised_columns(["eff00"], "unitdata")
+
+    def test_a_parameter_on_the_wrong_table_is_not(self):
+        """The per-table split is the point: transferCap says nothing on a node."""
+        assert sws.unrecognised_columns(["transferCap"], "nodedata")
+        assert sws.unrecognised_columns(["nodeBalance"], "transferdata")
+
+    def test_a_connection_suffix_does_not_hide_a_parameter(self):
+        assert not sws.unrecognised_columns(
+            ["capacity_output1", "capacity_input3", "grid_output2"], "unitdata"
+        )
+
+    def test_a_boundary_type_is_a_nodedata_column(self):
+        """build_boundarydata melts these; the properties it produces are not input."""
+        assert not sws.unrecognised_columns(["upwardLimit", "maxSpill"], "nodedata")
+
+    def test_an_emission_factor_is_open_ended_on_a_node(self):
+        assert not sws.unrecognised_columns(
+            ["emission_CO2", "emission_somethingNobodyHasNamedYet"], "nodedata"
+        )
+
+    def test_an_emission_factor_on_a_unit_sheet_is_reported(self):
+        """What splitting the two emission families per table buys.
+
+        A single global ``emission_`` rule would wave this through, and the
+        factor would reach nothing.
+        """
+        assert sws.unrecognised_columns(["emission_CO2"], "unitdata")
+        assert not sws.unrecognised_columns(["emission_group1"], "unitdata")
+
+    def test_country_is_only_a_column_where_it_filters_anything(self):
+        """unittypedata is global, so a country column on it changes nothing."""
+        assert not sws.unrecognised_columns(["country"], "unitdata")
+        assert sws.unrecognised_columns(["country"], "unittypedata")
+        assert sws.unrecognised_columns(["country"], "emissiondata")
+
+    def test_the_spelling_comes_back_as_it_was_written(self):
+        """The reader searches a workbook for what they typed, not for a slug."""
+        assert sws.unrecognised_columns(["MaxRampUpp"], "nodedata") == ["MaxRampUpp"]
+
+    def test_a_table_this_module_does_not_know_yields_nothing(self):
+        """Same rule as known_dimension_values: cannot tell is not the same as all.
+
+        A new data category must not have every one of its columns reported on
+        the day someone adds it.
+        """
+        assert sws.unrecognised_columns(["anything", "at", "all"], "futuredata") == []
+
+    def test_method_is_recognised_everywhere_because_it_is_created_everywhere(self):
+        """Several shipped sheets omit it and normalize_dataframe adds it."""
+        for table in sws.STRUCTURAL_COLUMNS:
+            assert not sws.unrecognised_columns(["method"], table)
+
+
+class TestTheHandDeclaredVocabularyHasNotRotted:
+    """The two entries that nothing can derive, guarded from both directions.
+
+    Everything else in the vocabulary comes from `backbone_params` or from this
+    module, so it cannot drift. `DERIVATION_INPUTS` names columns read by name
+    at a call site, and a consumer could stop reading one with nothing to
+    notice -- which would leave the build silently accepting a column that no
+    longer reaches anything.
+    """
+
+    def test_every_declared_derivation_input_is_still_read_somewhere(self, repo_root):
+        """A declaration outliving its reader is the way this list rots."""
+        sources = "\n".join(
+            path.read_text(encoding="utf-8", errors="ignore")
+            for path in (repo_root / "src").rglob("*.py")
+        ).lower()
+
+        for table, columns in sws.DERIVATION_INPUTS.items():
+            for column in columns:
+                assert column.lower() in sources, (
+                    f"{table!r} declares {column!r} as read by a later stage, "
+                    "but no file under src/ mentions it any more."
+                )
+
+    def test_the_processors_and_the_static_table_agree(self):
+        """Neither side imports the other, so only a test can hold them equal.
+
+        The source stage runs first and must not depend on which processors a
+        config enables, which is why the authority is static; the processors
+        declare the same thing so the fact lives beside the code that uses it.
+        """
+        from src.timeseries.processors.DH_demand_fromTemperature import (
+            DH_demand_fromTemperature,
+        )
+        from src.timeseries.processors.elec_demand_TYNDP2024 import (
+            elec_demand_TYNDP2024,
+        )
+
+        declared = set(sws.DERIVATION_INPUTS["demanddata"])
+        for processor in (DH_demand_fromTemperature, elec_demand_TYNDP2024):
+            assert set(processor.reads_source_columns) <= declared, (
+                f"{processor.__name__} reads a demanddata column that "
+                "source_workbook_shape.DERIVATION_INPUTS does not list, so the "
+                "source stage would report it as read by nothing."
+            )

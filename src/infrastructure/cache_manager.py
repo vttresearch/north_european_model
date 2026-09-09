@@ -29,6 +29,18 @@ import shutil
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+#: A source table whose content depends on files outside its own category.
+#:
+#: df_unitdata is the merged result: merge_unittypedata_into_unitdata folds the
+#: type-level defaults into it, so a processor asking for 'unitdata' receives
+#: something a unittypedata sheet can change. Nothing else crosses categories.
+#:
+#: This was implicit while the hashing prefixes were truncated -- 'unit' matched
+#: unittypedata sheets too, so the dependency was satisfied by accident. Exact
+#: prefixes make it a statement instead.
+_SOURCE_TABLE_EXTRA_FILES = {"unitdata": ("unittypedata_files",)}
+
+
 class CacheManager:
     """
     CacheManager handles the saving and loading of critical run information to enable
@@ -145,6 +157,12 @@ class CacheManager:
         self.other_input_files_changed = False
         self.timeseries_changed = {}
 
+        # Why each of those is True, keyed the same way, for _log_run_plan.
+        # Recorded where the decision is made because that is far from where it
+        # is reported: a workbook edit is noticed at the top of Phase 3 and what
+        # it means for the timeseries phase is only settled at the end of it.
+        self.timeseries_change_reasons = {}
+
         # Storing general rerun switches
         self.full_rerun = False
         self.reimport_source_excels = False
@@ -202,7 +220,10 @@ class CacheManager:
         only after a processor has actually run successfully.
 
         Returns:
-            dict[str, bool]: processor human_name → True if the processor file changed.
+            dict[str, str | None]: processor human_name → why it must rerun, or
+            None. Reported by _log_run_plan rather than here, so that a processor
+            edited in the same sitting as a workbook costs one line naming both
+            causes instead of two lines naming one each.
         """
         timeseries_specs = self.config["timeseries_specs"]
         if not timeseries_specs:
@@ -211,7 +232,6 @@ class CacheManager:
         processor_hashes = self.load_processor_hashes()
         processors_base = _REPO_ROOT / "src" / "timeseries" / "processors"
         result = {}
-        changed_processors = []
 
         for human_name, spec in timeseries_specs.items():
             processor_name = spec.get("processor_name")
@@ -228,17 +248,9 @@ class CacheManager:
 
             current_hash = hash_utils.compute_file_hash(processor_file)
             previous_hash = processor_hashes.get(processor_name)
-            changed = previous_hash != current_hash
 
-            result[human_name] = changed
-            if changed:
-                changed_processors.append(human_name)
-
-        if changed_processors and not self.full_rerun:
-            self.logger.log_status(
-                f"Processor code changes detected: {', '.join(changed_processors)}",
-                level="info"
-            )
+            result[human_name] = ("the processor code changed"
+                                  if previous_hash != current_hash else None)
 
         return result
 
@@ -271,15 +283,20 @@ class CacheManager:
                                    level="warn")
             prev_input_hashes = {}
 
-        # Map categories to their sheet prefixes (following read_input_excels logic)
+        # The sheet prefix each category reads, exactly as read_input_excels
+        # matches them. They used to be truncated -- 'unit' for unitdata_files --
+        # which also matched every unittypedata sheet, so a workbook carrying
+        # both had its unittypedata hashed under both categories and the hash
+        # file said something that was not true. TYNDP-2024_National_Trends.xlsx
+        # is such a workbook and is listed under both keys in the NT configs.
         category_to_prefix = {
-            "unittypedata_files": "unittype",
-            "nodedata_files": "node",
-            "emissiondata_files": "emission",
-            "demanddata_files": "demand",
-            "transferdata_files": "transfer",
-            "unitdata_files": "unit",
-            "userconstraintdata_files": "userconstraint"
+            "unittypedata_files": "unittypedata",
+            "nodedata_files": "nodedata",
+            "emissiondata_files": "emissiondata",
+            "demanddata_files": "demanddata",
+            "transferdata_files": "transferdata",
+            "unitdata_files": "unitdata",
+            "userconstraintdata_files": "userconstraintdata"
         }
 
         category_status = {}
@@ -307,7 +324,7 @@ class CacheManager:
 
                     if not sheet_hashes:
                         self.logger.log_status(
-                            f"Did not find '{sheet_prefix}data' sheets from {file_path}",
+                            f"Did not find '{sheet_prefix}' sheets from {file_path}",
                             level="warn"
                         )
 
@@ -323,16 +340,17 @@ class CacheManager:
                     continue
 
             prev_hashes = prev_input_hashes.get(category, {})
-            changed = self._compare_sheet_hashes(current_hashes, prev_hashes, category)
+            reason = self._compare_sheet_hashes(current_hashes, prev_hashes)
 
-            category_status[category] = changed
+            category_status[category] = reason is not None
             all_hashes_to_save[category] = current_hashes
 
-            if changed and not self.full_rerun:
-                self.logger.log_status(
-                    f"Input data changed in category '{category}', rerunning necessary steps.",
-                    level="none"
-                )
+            # One line where there used to be two. The sheet and the category
+            # were reported separately, which said the same thing twice and still
+            # left the reader to work out what would rerun -- an answer that does
+            # not exist yet here, and is _log_run_plan's to give.
+            if reason and not self.full_rerun:
+                self.logger.log_status(f"'{category}' changed: {reason}.", level="info")
 
         # Save all current hashes
         try:
@@ -343,45 +361,39 @@ class CacheManager:
         return category_status
 
 
-    def _compare_sheet_hashes(self, current: dict, previous: dict, category: str) -> bool:
+    @staticmethod
+    def _compare_sheet_hashes(current: dict, previous: dict) -> str | None:
         """
-        Compare current and previous sheet-level hashes to detect changes.
+        Why this category's sheets differ from the previous run, or None.
+
+        The caller turns the reason into its log line, which is why nothing is
+        logged here. Only the *first* difference is named: a reader who edited
+        five sheets of one workbook does not need all five to know where to look,
+        and the file-set case has no sheet to name at all -- that one used to
+        return silently, so a config gaining a file changed the build with
+        nothing in the log saying why.
 
         Args:
             current: {filename: {sheetname: hash}}
             previous: {filename: {sheetname: hash}}
-            category: Category name for logging
 
         Returns:
-            bool: True if any sheet changed, was added, or was removed
+            str | None: the first difference found, phrased for a log line.
         """
-        # Check if file lists differ
         if set(current.keys()) != set(previous.keys()):
-            return True
+            return "the config lists a different set of files than last run"
 
-        # Check each file's sheets
         for filename, curr_sheets in current.items():
             prev_sheets = previous.get(filename, {})
 
-            # Check if sheet lists differ
             if set(curr_sheets.keys()) != set(prev_sheets.keys()):
-                self.logger.log_status(
-                    f"Sheet structure changed in '{filename}' for category '{category}'",
-                    level="info"
-                )
-                return True
+                return f"sheets added or removed in '{filename}'"
 
-            # Check if any sheet content changed
             for sheet_name, curr_hash in curr_sheets.items():
-                prev_hash = prev_sheets.get(sheet_name)
-                if curr_hash != prev_hash:
-                    self.logger.log_status(
-                        f"Sheet '{sheet_name}' changed in '{filename}' for category '{category}'",
-                        level="info"
-                    )
-                    return True
+                if curr_hash != prev_sheets.get(sheet_name):
+                    return f"sheet '{sheet_name}' in '{filename}'"
 
-        return False
+        return None
 
 
     def _detect_timeseries_spec_changes(self, config: dict, prev_config: dict,
@@ -412,7 +424,8 @@ class CacheManager:
             input_changes: category name ('nodedata_files', ...) → whether it changed.
 
         Returns:
-            dict[str, bool]: processor human_name → True if that processor needs to rerun.
+            dict[str, str | None]: processor human_name → why it needs to rerun,
+            or None. First cause wins; _log_run_plan is what says it out loud.
         """
         curr_specs = config["timeseries_specs"]
         prev_specs = prev_config["timeseries_specs"]
@@ -425,24 +438,45 @@ class CacheManager:
             # Normalize curr_spec through a JSON round-trip so types match prev_specs,
             # which was loaded from JSON.
             curr_spec_normalized = json.loads(json.dumps(curr_spec))
-            changed = (key not in prev_specs) or (prev_specs[key] != curr_spec_normalized)
+            reason = None
+            if (key not in prev_specs) or (prev_specs[key] != curr_spec_normalized):
+                reason = "the timeseries_specs entry changed"
 
-            if input_changes.get("demanddata_files") and curr_spec.get("demand_grid"):
-                changed = True
+            if not reason and input_changes.get("demanddata_files") and curr_spec.get("demand_grid"):
+                reason = "the demand data changed"
 
             processor_name = curr_spec.get("processor_name")
             if processor_name in recorded_requirements:
-                for source_name in recorded_requirements[processor_name]:
-                    if input_changes.get(f"{source_name}_files"):
-                        changed = True
+                reason = reason or self._declared_source_reason(
+                    recorded_requirements[processor_name], input_changes
+                )
             elif any_input_changed:
                 # Nothing recorded for this processor, so its requirements are
                 # unknown rather than empty. Rerunning is the cheap mistake.
-                changed = True
+                reason = reason or "the source data requirements are not recorded yet"
 
-            result[key] = changed
+            result[key] = reason
 
         return result
+
+
+    @staticmethod
+    def _declared_source_reason(source_names, input_changes: dict) -> str | None:
+        """Why a changed workbook reaches a processor that declared it, or None.
+
+        Two phrasings, and the second is the reason this says anything at all:
+        'unittypedata changed' beside a processor that asked for unitdata reads
+        like a mistake until the sentence says the two are one table by the time
+        it sees them -- merge_unittypedata_into_unitdata folds them together.
+        """
+        for source_name in source_names:
+            if input_changes.get(f"{source_name}_files"):
+                return f"{source_name} changed and they read it"
+            for category in _SOURCE_TABLE_EXTRA_FILES.get(source_name, ()):
+                if input_changes.get(category):
+                    folded = category.removesuffix("_files")
+                    return f"{folded} changed, which {source_name} folds in"
+        return None
 
 
     def _save_dict_to_cache(self, data: dict, filename: str):
@@ -666,6 +700,80 @@ class CacheManager:
         )
 
 
+    def _record_timeseries_reruns(self, reasons: dict) -> None:
+        """Fold one detector's answers into timeseries_changed and its reasons.
+
+        Both detectors return a reason or None per spec, and one processor can
+        have a reason from each -- an edited processor whose workbook also moved.
+        The first recorded wins: the plan line explains the rerun, and a rerun
+        does not happen twice for having been caused twice.
+        """
+        for human_name, reason in reasons.items():
+            self.timeseries_changed[human_name] = (
+                self.timeseries_changed.get(human_name, False) or bool(reason)
+            )
+            if reason:
+                self.timeseries_change_reasons.setdefault(human_name, reason)
+
+
+    def _log_run_plan(self) -> None:
+        """What this run will do, said before the first phase starts.
+
+        Here rather than beside the messages that report a change, because this
+        is the first point at which every flag is final. _detect_input_file_changes
+        runs before the timeseries and excel decisions are even attempted, so the
+        line it used to print -- "rerunning necessary steps" -- promised an answer
+        the code did not have yet.
+
+        The second line is the one that earns its place. A processor declares
+        requires_source_data, so editing a single unitdata sheet reruns all three
+        VRE processors: correct, and indistinguishable from having edited the
+        wrong file unless the build says which workbook woke them.
+        """
+        total = len(self.config["timeseries_specs"])
+        rerunning = sorted(name for name, changed in self.timeseries_changed.items() if changed)
+
+        clauses = []
+        if self.reimport_source_excels:
+            clauses.append("reread the source excel data")
+        # `total` guards a config that declares no timeseries at all: the phase
+        # still runs because rebuild_bb_excel implies it, and "reuse all 0
+        # timeseries processor result(s)" is a line about nothing.
+        if self.needs_timeseries_run and total:
+            clauses.append(
+                f"run {len(rerunning)} of {total} timeseries processor(s)" if rerunning
+                else f"reuse all {total} timeseries processor result(s)"
+            )
+        if self.rebuild_bb_excel:
+            clauses.append("rebuild the Backbone input excel")
+
+        if not clauses:
+            self.logger.log_status(
+                "Nothing changed since the last run; every phase is skipped.", level="skip"
+            )
+            return
+
+        listed = clauses[0] if len(clauses) == 1 else f"{', '.join(clauses[:-1])} and {clauses[-1]}"
+        self.logger.log_status(f"This run will {listed}.", level="none")
+
+        # Nothing to add on a full rerun: its one reason is printed above and
+        # every processor shares it.
+        if self.full_rerun:
+            return
+
+        by_reason = {}
+        for name in rerunning:
+            reason = self.timeseries_change_reasons.get(name)
+            if reason:
+                by_reason.setdefault(reason, []).append(name)
+        if not by_reason:
+            return
+
+        detail = "; ".join(f"{reason}: {utils.summarise(names)}"
+                           for reason, names in by_reason.items())
+        self.logger.log_status(f"Timeseries reruns -- {detail}.", level="none")
+
+
     def run(self) -> None:
         """
         Determine what needs to be rerun based on changes since last execution.
@@ -771,7 +879,7 @@ class CacheManager:
         # These are fast and ensure all caches are up to date for next run
         # ========================================================================
 
-        self.logger.log_status("Updating cache content", level="none")
+        self.logger.log_status("Checking what changed since the last run...", level="none")
 
         # Detect input file changes and update hashes for next run
         input_changes = self._detect_input_file_changes(self.config, self.input_file_folder)
@@ -782,16 +890,12 @@ class CacheManager:
 
         # Detect timeseries spec changes (granular only — full rerun already set all True in Phase 2)
         if prev_config and not self.full_rerun:
-            ts_spec_changes = self._detect_timeseries_spec_changes(
+            self._record_timeseries_reruns(self._detect_timeseries_spec_changes(
                 self.config, prev_config, input_changes
-            )
-            for key, changed in ts_spec_changes.items():
-                self.timeseries_changed[key] = self.timeseries_changed.get(key, False) or changed
+            ))
 
         # Detect processor code changes and merge into timeseries_changed
-        proc_changes = self._detect_processor_code_changes()
-        for human_name, changed in proc_changes.items():
-            self.timeseries_changed[human_name] = self.timeseries_changed.get(human_name, False) or changed
+        self._record_timeseries_reruns(self._detect_processor_code_changes())
 
         # Load flags for granular checks
         general_flags = self.load_dict_from_cache("general_flags.json")
@@ -852,6 +956,8 @@ class CacheManager:
             self.rebuild_bb_excel
             or any_source_consuming_processor_changed
         )
+
+        self._log_run_plan()
 
 
         # ========================================================================

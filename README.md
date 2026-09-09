@@ -49,7 +49,12 @@ links to it.
 - [Source workbook conventions](docs/source-workbook-conventions.md) — how the builder
   reads the Excel files in `src_files/data_files/`: marking rows and columns as not
   input, where a sheet ends, what happens to a cell that should be a number and is not,
-  and how `method` combines rows from several files.
+  how `method` combines rows from several files, how a node and a unit get their names,
+  and why renaming anything a formula keys on needs checking by number.
+- [The source data phase](docs/source-data.md) — what the builder does with those files:
+  the order the steps run in and why, how file order and Excel tab order together decide
+  which row wins, what excluding a node takes with it, and what the phase reports about a
+  column nothing reads.
 - [Timeseries](docs/timeseries.md) — how the build turns any hourly data source into
   Backbone input: what a processor is responsible for and what the shared pipeline does,
   what climate years and windows are, why a zero is the hard case, and what is checked
@@ -76,6 +81,19 @@ links to it.
   reference page: what Backbone can express that this build does not write, and which
   of its own rules are known to be provisional. Read it before designing anything that
   adds a parameter or a sheet.
+- [Migration guide](docs/Migration%20guide.md) — what to change in a workbook or a
+  config when an input format changes, newest entry last.
+
+`tools/` holds standalone scripts that answer a question about a build rather than
+taking part in one, each documenting itself in its module docstring:
+
+- `compare_source_workbooks.py` — two versions of the source workbooks compared
+  numerically, with `--git-ref` to take the earlier one from git. The way to review a
+  deliberate data edit, since a binary `.xlsx` has no readable diff, and the only thing
+  that catches a renamed value that a `SUMIF` or `VLOOKUP` still keys on.
+- `check_unittype_columns.py` — a folder of workbooks checked against the unittype rule.
+- `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
+  compared on values, and as zip archives part by part.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,
@@ -177,10 +195,6 @@ The North European model has some time series source files that are too large to
 		* `Demand Profiles\NT\Electricity demand profiles\2040_National Trends.xlsx`
 	* Copy the files to `c:/backbone/north_european_model/src_files/timeseries`.
 	* Rename them to `elec_2030_National_Trends.xlsx`, and `elec_2040_National_Trends.xlsx` (note the underscore in "National_Trends").
-* **VRE time series from MAF2019** are from an older ENTSO-E PECD dataset ([10.5281/zenodo](https://doi.org/10.5281/zenodo.3702418)). Copy the following files to `c:/backbone/north_european_model/src_files/timeseries/` folder: 
-	* `PECD-MAF2019-wide-PV.csv`
-	* `PECD-MAF2019-wide-WindOffshore.csv`
-	* `PECD-MAF2019-wide-WindOnshore.csv`
 * **The new, updated VRE time series from PECD** are from 2025 ([PECD database](https://cds.climate.copernicus.eu/datasets/sis-energy-pecd?tab=download)). 
 	* download timeseries from PECD portal with you preferred settings, e.g. 
 		* PV:

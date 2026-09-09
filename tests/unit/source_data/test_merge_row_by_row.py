@@ -24,8 +24,8 @@ another reduces the starting electricity capacity for a climate policy, and the
 third overlay tips the total below zero. Clamping keeps a stack of independent,
 individually-reasonable edits from producing a negative capacity.
 
-The truth table in the docstring at ``source_data_loader.py:884-909`` is the
-specification, so exact values are pinned here -- pinning case 3.
+The truth table in ``merge_row_by_row``'s own docstring is the specification,
+so exact values are pinned here -- pinning case 3.
 """
 
 import itertools
@@ -43,8 +43,8 @@ KEY = ["country", "grid"]
 def _frame(*rows: dict) -> pd.DataFrame:
     """Build a frame the way the pipeline would hand it over.
 
-    ``merge_row_by_row`` documents a precondition of normalized input
-    (:875), so the real normalizer is used rather than a hand-built frame that
+    ``merge_row_by_row`` documents a precondition of normalized input, so the
+    real normalizer is used rather than a hand-built frame that
     might not match what actually arrives.
     """
     return normalize_dataframe(pd.DataFrame(list(rows)), "test", FakeLogger())
@@ -70,7 +70,7 @@ def _value(df, column="capacity", country="FI", grid="elec"):
 
 
 class TestAddMissingValueRules:
-    """``source_data_loader.py:890-897``, quoted verbatim in the docstring."""
+    """The add rules from ``merge_row_by_row``'s docstring, which is the spec."""
 
     @pytest.mark.parametrize(
         "previous, incoming, expected",
@@ -95,17 +95,26 @@ class TestAddMissingValueRules:
 
 
 class TestMultiplyMissingValueRules:
-    """``source_data_loader.py:901-907``.
+    """The truth table in ``merge_row_by_row``'s docstring, which is its spec.
 
-    The asymmetry is deliberate and easy to get backwards: a missing *previous*
-    value zeroes the product, a missing *current* one leaves it alone.
+    Symmetric: a missing value on either side means there is nothing to scale,
+    so nothing happens. The rule used to be asymmetric -- a missing *previous*
+    value zeroed the product while a missing *current* one left it alone -- so
+    ``empty x 3`` gave 0 and ``3 x empty`` gave 3, two answers to one question.
+    The 0 was the harmful half: it replaced "not set" with a real number nobody
+    had stated, on the source side of the pipeline where ``pd.NA`` and ``0`` are
+    still different things.
+
+    ``add`` is not symmetric in the same way and should not be. A missing
+    operand contributes nothing to either operation; for addition that is 0.0,
+    for multiplication it is leaving the other side alone.
     """
 
     @pytest.mark.parametrize(
         "previous, incoming, expected",
         [
             pytest.param(None, None, None, id="missing*missing=NA"),
-            pytest.param(None, 3.0, 0.0, id="missing*3=0"),
+            pytest.param(None, 3.0, None, id="missing*3=missing"),
             pytest.param(2.0, None, 2.0, id="2*missing=2"),
             pytest.param(2.0, 3.0, 6.0, id="2*3=6"),
             pytest.param(2.0, 0.0, 0.0, id="2*0=0"),

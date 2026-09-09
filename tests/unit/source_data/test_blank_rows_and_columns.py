@@ -187,4 +187,10 @@ class TestTheRealWorkbooksStaySilent:
         for prefix in prefixes:
             loader.read_input_excels(src_files_dir / "data_files", files, prefix, logger)
 
-        logger.assert_clean()
+        # Narrowed from assert_clean when the unused-column check landed. This
+        # sweep deliberately reads every workbook in the folder, including the
+        # eight no config names, and those do hold columns nothing reads -- which
+        # that check reports and this one has no opinion about. Keeping the
+        # breadth and narrowing the assertion is what preserves both.
+        logger.assert_not_logged("without a header")
+        logger.assert_not_logged("are not read")

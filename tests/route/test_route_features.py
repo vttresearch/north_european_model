@@ -82,7 +82,7 @@ class TestValuesAreCarried:
             chp.sheets["p_gnu_io"], "capacity",
             chp.source.df_unitdata, "capacity",
             out_key={"unit": chp_unit, "grid": "elec", "input_output": "output"},
-            src_key={"generator_id": "chpbio"},
+            src_key={"unittype": "CHPbio"},
         )
 
     def test_vom_costs_reach_the_priced_connection(self, chp, chp_unit):
@@ -90,7 +90,7 @@ class TestValuesAreCarried:
             chp.sheets["p_gnu_io"], "vomCosts",
             chp.source.df_unitdata, "vomcosts",
             out_key={"unit": chp_unit, "grid": "elec", "input_output": "output"},
-            src_key={"generator_id": "chpbio"},
+            src_key={"unittype": "CHPbio"},
         )
 
     def test_efficiency_reaches_p_unit(self, chp, chp_unit):
@@ -98,7 +98,7 @@ class TestValuesAreCarried:
             chp.sheets["p_unit"], "eff00",
             chp.source.df_unitdata, "eff00",
             out_key={"unit": chp_unit},
-            src_key={"generator_id": "chpbio"},
+            src_key={"unittype": "CHPbio"},
         )
 
     @pytest.mark.parametrize("parameter", ["cb", "cv"])

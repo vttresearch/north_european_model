@@ -142,12 +142,12 @@ class TestAWorkbookConstantAndAProcessorSeries:
 
     WORKBOOK = """
 [unittypedata]
-Generator_ID | unittype | grid_output1 | eff00 | isSource
-windturbine  | WindOnFI | elec         | 1     | 1
+unittype | grid_output1 | eff00 | isSource
+WindOnFI | elec         | 1     | 1
 
 [unitdata]
-Country | Generator_ID | Scenario | Year | capacity_output1
-FI      | windturbine  | all      | 1    | 100
+Country | unittype | Scenario | Year | capacity_output1
+FI      | WindOnFI | all      | 1    | 100
 
 [nodedata]
 Country | Grid | Scenario | Year | nodeBalance | upwardLimit
@@ -231,12 +231,12 @@ class TestAConstantInfluxForAGridWithNoProfile:
 
     WITH_ITS_OWN_INFLUX = """
 [unittypedata]
-Generator_ID | unittype | grid_output1 | eff00 | isSource
-windturbine  | WindOnFI | elec         | 1     | 1
+unittype | grid_output1 | eff00 | isSource
+WindOnFI | elec         | 1     | 1
 
 [unitdata]
-Country | Generator_ID | Scenario | Year | capacity_output1
-FI      | windturbine  | all      | 1    | 100
+Country | unittype | Scenario | Year | capacity_output1
+FI      | WindOnFI | all      | 1    | 100
 
 [nodedata]
 Country | Grid | Scenario | Year | nodeBalance | influx

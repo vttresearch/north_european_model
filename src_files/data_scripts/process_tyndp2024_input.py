@@ -16,16 +16,12 @@ r"""
     * (2) "MMStandardOutputFile_NT2030_Plexos_CY2009_2.5_v40.xlsx"
     * (3) "MMStandardOutputFile_NT2040_Plexos_CY2009_2.5_v40.xlsx"
 
-- One additional file shared as a part of this repository (./src_files/data_scripts)
-    * (4) historical_transfer_ramps.xlsx
-
 --- What this script does ---
 
 - Processes TYNDP 2024 data into NE model input.
-- Adds ramp limits from historical_transfer_ramps.xlsx
-- Renames and aggregates some TYNDP 2024 Generator_IDs as well as transmission lines to make them 
-    match with existing IDs/lines in the NE model
-    * see gen_id_renamings and gen_id_aggregations_loc
+- Maps TYNDP 2024 technology names to NE model unittypes, and aggregates some of them
+    as well as transmission lines to match the existing unittypes/lines in the NE model
+    * see tyndp_to_unittype and unittype_aggregations_loc
 - Produces an output Excel file (Data_for_TYNDP-2024_National_Trends.xlsx) that 
     * contains NE model input sheets unitdata, demanddata_elec, transferdata
     * These should be copied into \src_files\data_files\TYNDP-2024_National_Trends.xlsx
@@ -38,7 +34,6 @@ r"""
     * Processed unit data from sources 2 and 3 ("Yearly Outputs" sheet)
 - demanddata_elec
     * native electricity demands from sources 2 and 3 ("Yearly Outputs" sheet), values converted from GWh to TWh
-    * ramp limits from historical_transfer_ramps.xlsx
 - transferdata
     * processed transmission line capacities from sources 1, 2 and 3
     * reference grid capacities from source 1 are compared with modelled maximum flows in sources 2 and 3 -> whichever is higher is chosen as the final capacity
@@ -60,9 +55,6 @@ for year in chosen_NT_years:
 
 ref_grid_inv_candidate_filename = '20231103 - Electricity and Hydrogen Reference Grid & Investment Candidates.xlsx'
 path_to_ref_grid_inv_candidates_file = os.path.normpath(f'./{ref_grid_inv_candidate_filename}')
-
-historical_ramp_limits_filename = 'historical_transfer_ramps.xlsx'
-historical_ramp_limits_file_path = os.path.normpath(f'./{historical_ramp_limits_filename}')
 
 # name for the output file of the script
 output_filename = 'Data_for_TYNDP-2024_National_Trends.xlsx'
@@ -103,54 +95,85 @@ agg_plexos_locations = {
 agg_ref_grid_locations = agg_plexos_locations.copy()
 agg_ref_grid_locations['PL00'] = ['PL00', 'PL00I', 'PL00E']
 
-# NOTE: the TYNDP2024 data has Generator_IDs with no direct equivalent in NE model data set
-# this renames some of them to existing counterparts in the existing data
-gen_id_renamings =    {
-    # same value (as in key-value pair) twice -> capacities will be aggregated after renaming
-    'Demand Side Response Explicit':        'DR cutoff tier 1', 
-    'Demand Side Response Implicit':        'DR cutoff tier 1',
+# TYNDP2024 technology name -> the NE model unittype it becomes.
+#
+# Complete, not just the disagreements: a name with no entry here would reach the
+# workbook as a unittype nothing declares, and such a unit gets no connections and
+# vanishes from the model. process_installed_capacities checks both directions.
+tyndp_to_unittype = {
+    # same value twice -> capacities are aggregated after renaming
+    'Demand Side Response Explicit':        'DRcutofftier1',
+    'Demand Side Response Implicit':        'DRcutofftier1',
 
     # these choices are debatable
-    # comments at end of line are alternative Generator_IDs in maf2020
-    'Battery Storage charge (load)':        'Battery charger 4h',       # Battery charger
-    'Battery Storage discharge (gen.)':     'Battery discharger 4h',    # Battery discharger
-    'Hard Coal biofuel':                    'Hard coal new Bio',        # Hard coal old 1 Bio, Hard coal old 2 Bio
-    'Lignite biofuel':                      'Lignite old 1 Bio',        # Lignite old 2 Bio
-    'Gas biofuel':                          'Gas CCGT old 2 Bio',       # Gas conventional old 2 Bio
+    # comments at end of line are alternative unittypes in maf2020
+    'Battery Storage charge (load)':        'BatteryCharger4h',   # BatteryCharger
+    'Battery Storage discharge (gen.)':     'BatteryDisch4h',     # BatteryDisch
+    'Hard Coal biofuel':                    'bioCoalNew',         # bioCoalOld, bioCoalOld2
+    'Lignite biofuel':                      'bioLigniteOld1',     # bioLigniteOld2
+    'Gas biofuel':                          'bioGasCCGTOld2',     # bioGasOld2
 
     'Electrolyser (load)':                  'Electrolyser',
-    'Oil shale biofuel':                    'Oil shale new Bio',
-    'Others non-renewable':                 'Industry non-renewable CHP',
-    'Others renewable':                     'Industry renewable CHP',
-    'Pondage':                              'Run-of-River',
-    'Solar (Photovoltaic)':                 'Solar PV',
-    'Solar (Thermal)':                      'Solar Thermal',
-    'Wind Offshore':                        'Offshore Wind',
-    'Wind Onshore':                         'Onshore Wind',
-    'Pump Storage - Closed Loop (pump)':    'PS Closed pump',
-    'Pump Storage - Closed Loop (turbine)': 'PS Closed turbine',
-    'Pump Storage - Open Loop (pump)':      'PS Open pump',
-    'Pump Storage - Open Loop (turbine)':   'PS Open turbine',
+    'Oil shale biofuel':                    'bioOilshaleNew',
+    'Others non-renewable':                 'coalCHPIndustry',
+    'Others renewable':                     'bioCHPIndustry',
+    'Pondage':                              'rorTurbine',
+    # needs an entry despite looking like a pass-through: an unmapped name
+    # reaches the workbook verbatim, and nothing declares it there
+    'Run-of-River':                         'rorTurbine',
+    'Solar (Photovoltaic)':                 'solarPV',
+    'Solar (Thermal)':                      'solarThermal',
+    'Wind Offshore':                        'windOffshore',
+    'Wind Onshore':                         'windOnshore',
+    'Pump Storage - Closed Loop (pump)':    'psClosedPump',
+    'Pump Storage - Closed Loop (turbine)': 'psClosedTurbine',
+    'Pump Storage - Open Loop (pump)':      'psOpenPump',
+    'Pump Storage - Open Loop (turbine)':   'psOpenTurbine',
+
+    # Names TYNDP2024 and the NE model used to spell identically, which is why
+    # they needed no entry while the workbooks carried Generator_IDs.
+    'Gas CCGT CCS':                         'gasCCGTCCS',
+    'Gas CCGT new':                         'gasCCGTNew',
+    'Gas CCGT old 1':                       'gasCCGTOld1',
+    'Gas CCGT old 2':                       'gasCCGTOld2',
+    'Gas CCGT present 1':                   'gasCCGTpresent1',
+    'Gas CCGT present 2':                   'gasCCGTpresent2',
+    'Gas OCGT new':                         'gasOCGTnew',
+    'Gas OCGT old':                         'gasOCGTold',
+    'Gas conventional old 1':               'gasOld1',
+    'Gas conventional old 2':               'gasOld2',
+    'Hard coal new':                        'coalNew',
+    'Hard coal old 1':                      'coalOld1',
+    'Hard coal old 2':                      'coalOld2',
+    'Heavy oil old 1':                      'oilHeavyOld1',
+    'Heavy oil old 2':                      'oilHeavyOld2',
+    'Hydrogen CCGT':                        'hydrogenCCGT',
+    'Light oil':                            'OilLightOld',
+    'Lignite old 1':                        'ligniteOld1',
+    'Lignite old 2':                        'ligniteOld2',
+    'Nuclear':                              'nuclear',
+    'Oil shale old':                        'oilShaleOld',
+    'Reservoir':                            'reservoirTurbine',
 }
 
-# Country-specific share of nuclear capacity treated as flexible (Nuclear-flex).
+# Country-specific share of nuclear capacity treated as flexible (nuclearFlexible).
 # France has a higher flexible share due to its large and operationally diverse fleet.
 nuclear_flex_shares = {
     'FR00': 0.60,   # France
 }
 nuclear_flex_default_share = 0.15  # all other countries
 
-# location-specific capacity aggregations for Generator_IDs
-# done after the renamings/aggregations specified in gen_id_renamings
-gen_id_aggregations_loc = {
-    # Reservoir and Run-of-River in NOM1, NON1 and NOS0 have no storagedata in the NE model
-    # -> they are aggregated to PS Open turbine (perhaps not a good permanent solution)
-    'NOM1': {'Reservoir': 'PS Open turbine',
-             'Run-of-River': 'PS Open turbine'},
-    'NON1': {'Reservoir': 'PS Open turbine',
-             'Run-of-River': 'PS Open turbine'},
-    'NOS0': {'Reservoir': 'PS Open turbine',
-             'Run-of-River': 'PS Open turbine'}
+# location-specific capacity aggregations, in unittypes
+# done after the renamings specified in tyndp_to_unittype
+unittype_aggregations_loc = {
+    # reservoirTurbine and rorTurbine in NOM1, NON1 and NOS0 have no storagedata in
+    # the NE model -> aggregated to psOpenTurbine (perhaps not a good permanent solution)
+    'NOM1': {'reservoirTurbine': 'psOpenTurbine',
+             'rorTurbine': 'psOpenTurbine'},
+    'NON1': {'reservoirTurbine': 'psOpenTurbine',
+             'rorTurbine': 'psOpenTurbine'},
+    'NOS0': {'reservoirTurbine': 'psOpenTurbine',
+             'rorTurbine': 'psOpenTurbine'}
 }
 
 
@@ -193,53 +216,58 @@ def process_native_demands(plexos_caps_demands, year):
 
 # --- INSTALLED CAPACITIES ---
 
-def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_aggregations_loc, year):
+def process_installed_capacities(plexos_caps_demands, tyndp_to_unittype, unittype_aggregations_loc, year):
     capacities = plexos_caps_demands[plexos_caps_demands['Output type'] == 'Installed Capacities [MW]']
-    capacities = capacities.rename(columns={'Output type.1':'Generator_ID'}).copy()
+    capacities = capacities.rename(columns={'Output type.1':'unittype'}).copy()
 
     # aggregate columns and remove unnecessary ones, like in process_native_demands()
     for ne_location, plexos_locations in agg_plexos_locations.items():
         capacities.loc[:, ne_location] = capacities[plexos_locations].sum(axis=1).copy()
-    unneeded_columns = [col for col in capacities.columns if col not in agg_plexos_locations.keys() and col != 'Generator_ID']
+    unneeded_columns = [col for col in capacities.columns if col not in agg_plexos_locations.keys() and col != 'unittype']
     capacities = capacities.drop(columns=unneeded_columns).reset_index(drop=True)
 
     # edit installed capacities data to format used by the NE model
-    installed_capacities_ne_input = capacities.melt(id_vars=['Generator_ID'], var_name='Country', value_name='capacity_output1')
+    installed_capacities_ne_input = capacities.melt(id_vars=['unittype'], var_name='Country', value_name='capacity_output1')
     installed_capacities_ne_input['Scenario'] = 'National Trends'
     installed_capacities_ne_input['Year'] = year
-    installed_capacities_ne_input = installed_capacities_ne_input[['Country', 'Generator_ID', 'Scenario', 'Year', 'capacity_output1']]
+    installed_capacities_ne_input = installed_capacities_ne_input[['Country', 'unittype', 'Scenario', 'Year', 'capacity_output1']]
     # remove zero-capacity rows
     installed_capacities_ne_input = installed_capacities_ne_input[installed_capacities_ne_input['capacity_output1'] > 0]
     installed_capacities_ne_input['node_suffix_output2'] = None
     installed_capacities_ne_input['capacity_input1'] = None
     installed_capacities_ne_input['Note'] = None
 
-    # a check that entries in gen_id_renamings exist in data
-    for k, v in gen_id_renamings.items():
-        if k not in installed_capacities_ne_input['Generator_ID'].values:
-            print(f"Warning: TYNDP2024 entry missing in gen_id_renamings: {k}")
+    # Both directions. A key with no data is a stale entry, harmless; a name with
+    # no key reaches the workbook as a unittype nothing declares, and such a unit
+    # gets no connections and is dropped from the model without a word.
+    present = set(installed_capacities_ne_input['unittype'].unique())
+    for k in tyndp_to_unittype:
+        if k not in present:
+            print(f"Warning: TYNDP2024 entry missing from the data: {k}")
+    for name in sorted(present - set(tyndp_to_unittype)):
+        print(f"Warning: no unittype for TYNDP2024 name: {name}")
 
-    installed_capacities_ne_input['Generator_ID'] = installed_capacities_ne_input['Generator_ID'].replace(gen_id_renamings)
+    installed_capacities_ne_input['unittype'] = installed_capacities_ne_input['unittype'].replace(tyndp_to_unittype)
 
     # aggregate some TYNDP2024 entries to fit them into existing maf2020 data
     # in these cases, maf2020 naming will be used
-    ins_cap_groupby_cols = ['Country', 'Generator_ID', 'Scenario', 'Year']
+    ins_cap_groupby_cols = ['Country', 'unittype', 'Scenario', 'Year']
     ins_cap_aggs = {'capacity_output1': 'sum', 'node_suffix_output2': 'first', 'capacity_input1': 'first', 'Note': 'first'}
     installed_capacities_ne_input = installed_capacities_ne_input.groupby(ins_cap_groupby_cols, as_index=False).agg(ins_cap_aggs).copy()
 
-    # Apply location-specific capacity aggregations based on gen_id_aggregations_loc
-    for location, gen_aggregations in gen_id_aggregations_loc.items():
-        for source_gen_id, target_gen_id in gen_aggregations.items():
-            # Find rows matching the location and source Generator_ID
-            mask = (installed_capacities_ne_input['Country'] == location) & (installed_capacities_ne_input['Generator_ID'] == source_gen_id)
+    # Apply location-specific capacity aggregations based on unittype_aggregations_loc
+    for location, aggregations in unittype_aggregations_loc.items():
+        for source_unittype, target_unittype in aggregations.items():
+            # Find rows matching the location and source unittype
+            mask = (installed_capacities_ne_input['Country'] == location) & (installed_capacities_ne_input['unittype'] == source_unittype)
             if mask.any():
-                # Add the capacities to the target Generator_ID
+                # Add the capacities to the target unittype
                 installed_capacities_ne_input.loc[
                     (installed_capacities_ne_input['Country'] == location) & 
-                    (installed_capacities_ne_input['Generator_ID'] == target_gen_id), 
+                    (installed_capacities_ne_input['unittype'] == target_unittype), 
                     'capacity_output1'
                 ] += installed_capacities_ne_input.loc[mask, 'capacity_output1'].sum()
-                # Remove the source Generator_ID rows
+                # Remove the source unittype rows
                 installed_capacities_ne_input = installed_capacities_ne_input[~mask]
 
     return installed_capacities_ne_input
@@ -247,16 +275,16 @@ def process_installed_capacities(plexos_caps_demands, gen_id_renamings, gen_id_a
 
 def split_nuclear_flex_capacity(installed_capacities):
     """
-    Split Nuclear rows into Nuclear (base) and Nuclear-flex rows.
+    Split nuclear rows into nuclear (base) and nuclearFlexible rows.
 
-    For each row with Generator_ID == 'Nuclear', a 'Nuclear-flex' row is
+    For each row with unittype == 'nuclear', a 'nuclearFlexible' row is
     created that carries the flexible share of the capacity, and the original
     row's capacity is reduced by that share.  The split is applied per country
     using nuclear_flex_shares (see top of file), falling back to
     nuclear_flex_default_share for countries not listed there.
 
     Only capacity_output1 is split; all other columns are copied as-is from
-    the Nuclear row (scenario, year, node_suffix_output2, etc.).
+    the nuclear row (scenario, year, node_suffix_output2, etc.).
 
     Parameters
     ----------
@@ -266,9 +294,9 @@ def split_nuclear_flex_capacity(installed_capacities):
     Returns
     -------
     pd.DataFrame
-        DataFrame with Nuclear-flex rows appended and Nuclear rows scaled down.
+        DataFrame with nuclearFlexible rows appended and nuclear rows scaled down.
     """
-    nuclear_mask = installed_capacities['Generator_ID'] == 'Nuclear'
+    nuclear_mask = installed_capacities['unittype'] == 'nuclear'
     if not nuclear_mask.any():
         return installed_capacities
 
@@ -280,7 +308,7 @@ def split_nuclear_flex_capacity(installed_capacities):
         orig_cap = row['capacity_output1']
 
         flex_row = row.copy()
-        flex_row['Generator_ID'] = 'Nuclear-flex'
+        flex_row['unittype'] = 'nuclearFlexible'
         flex_row['capacity_output1'] = orig_cap * flex_share
         flex_rows.append(flex_row)
 
@@ -490,55 +518,44 @@ def merge_transmission_data(ref_capacities_agg, min_max_exchanges_agg, year):
     return merged_cap
 
 
-# --- process ramp limits ---
+# --- build the transfer rows ---
 
-def process_ramp_limits(merged_cap, ramp_limits, year):
-    merged_cap, ramp_limits = merged_cap.copy(), ramp_limits.copy()
-    ramp_limits.rename(columns={
-        'export_capacity':'export_capacity_2020',
-        'import_capacity':'import_capacity_2020'},
-        inplace=True)
-    ramp_limits['import_capacity_2020'] = ramp_limits['import_capacity_2020'].abs()
-    ramp_limits.set_index('from-to', inplace=True)
-
-    ramp_limits = ramp_limits.query(f'Year == {year}').copy()
-
-    # merge capacities with ramp limits
-    merged_cap_ramp_limits = merged_cap.merge(ramp_limits, how='left', on=['from-to']).copy()
-    merged_cap_ramp_limits = merged_cap_ramp_limits.query(f'scenario == "National Trends" and Year == {year}')
-
-    # Build one row per direction.
-    # rampLimit is expressed as a fraction of transferCap, so the reverse direction is scaled
-    # by the capacity ratio to preserve the same absolute ramp rate as the forward direction.
+# One row per direction: transferdata is unidirectional, so a line needs both.
+#
+# Dropping a line with no capacity either way used to be a side effect: the rows
+# were merged against historical_transfer_ramps.xlsx, which also supplied grid,
+# scenario and Year, and a line that workbook did not list fell out at the query
+# below it. The ramp limits went in e2bcf37 and the workbook with them, so the
+# rule is stated here rather than inherited. It keeps 8 fewer rows than the
+# workbook did, all of them transferCap 0.
+def build_directional_transfers(merged_cap, year):
     rows = []
-    for _, row in merged_cap_ramp_limits.iterrows():
+    for _, row in merged_cap.iterrows():
         exp_cap = row['ne_model_export']
         imp_cap = row['ne_model_import']
-        ramp = row['max_ramp_rate'] if pd.notna(row['max_ramp_rate']) else 0
+        if not exp_cap and not imp_cap:
+            continue
 
         # forward direction (from -> to)
         rows.append({
-            'grid':               row['grid'],
+            'grid':               'elec',
             'from_country':        row['from'],
             'to_country':          row['to'],
-            'scenario':           row['scenario'],
-            'Year':               row['Year'],
+            'scenario':           'National Trends',
+            'Year':               year,
             'transferCap':        exp_cap,
-            'rampLimit':          0,
             'variableTransCost':  1,
             'transferLoss':       0.01,
         })
 
         # reverse direction (to -> from)
-        ramp_reverse = (ramp * exp_cap / imp_cap) if imp_cap else 0
         rows.append({
-            'grid':               row['grid'],
+            'grid':               'elec',
             'from_country':        row['to'],
             'to_country':          row['from'],
-            'scenario':           row['scenario'],
-            'Year':               row['Year'],
+            'scenario':           'National Trends',
+            'Year':               year,
             'transferCap':        imp_cap,
-            'rampLimit':          0,
             'variableTransCost':  1,
             'transferLoss':       0.01,
         })
@@ -652,8 +669,8 @@ def process_year_data(year):
     native_demands_ne_input = process_native_demands(plexos_caps_demands, year)
     
     installed_capacities_ne_input = process_installed_capacities(plexos_caps_demands,
-                                                                 gen_id_renamings,
-                                                                 gen_id_aggregations_loc,
+                                                                 tyndp_to_unittype,
+                                                                 unittype_aggregations_loc,
                                                                  year)
     installed_capacities_ne_input = split_nuclear_flex_capacity(installed_capacities_ne_input)
 
@@ -675,9 +692,7 @@ def process_year_data(year):
                                          min_max_exchanges_agg,
                                          year)
 
-    trans_ne_input = process_ramp_limits(merged_cap,
-                                         ramp_limits,
-                                         year)
+    trans_ne_input = build_directional_transfers(merged_cap, year)
 
     merged_cap, missing_capacities, lost_lines = create_doc_sheets(ref_capacities_year,
                                                                    ref_capacities_agg,
@@ -703,9 +718,6 @@ if __name__ == "__main__":
     # the reference grid (transmission capacities before investments in 2030)
     ref_capacities = pd.read_excel(path_to_ref_grid_inv_candidates_file, sheet_name='1. Elec Ref Grid').set_index('Border')
 
-    # ramp limits from historical ramp limits
-    ramp_limits = pd.read_excel(historical_ramp_limits_file_path, sheet_name='summary', skiprows=9, usecols='AZ:BG')
-
     processed_data = {
         year: process_year_data(year) for year in chosen_NT_years
     }
@@ -720,7 +732,7 @@ if __name__ == "__main__":
     # Write concatenated data to Excel
     with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
         # also add a remove_units sheet with no content other than the headers
-        remove_units_sheet = pd.DataFrame(columns=['Country', 'unit_name_prefix', 'Generator_ID', 'Scenario', 'Year'])
+        remove_units_sheet = pd.DataFrame(columns=['Country', 'unit_name_prefix', 'unittype', 'Scenario', 'Year'])
         
         processed_data_concatenated['unitdata'].to_excel(writer, index=False, sheet_name='unitdata')
         processed_data_concatenated['demanddata_elec'].to_excel(writer, index=False, sheet_name='demanddata_elec')

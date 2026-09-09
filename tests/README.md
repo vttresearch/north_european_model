@@ -50,7 +50,7 @@ codebase's history lives at the seam. This table is what the suite is organised 
 |---|---|---|---|---|---|
 | 1 | Excel cell → source DataFrame | blank cell | `pd.NA`; all-NA column → `object` | `read_input_excels` → `normalize_dataframe` → `standardize_df_dtypes` | specified |
 | 2 | within source merging | `pd.NA` ≠ `0` | same | `merge_row_by_row` truth table (`:884-909`) | specified |
-| 3 | source DataFrames → BB Excel builder | `pd.NA` ≠ `0` | `0 = NA = None = not set` | `fill_all_na` / `fill_numeric_na` (`utils.py:107,119`) | specified |
+| 3 | source DataFrames → BB Excel builder | `pd.NA` ≠ `0` | `0 = NA = None = not set` | `fill_all_na` / `fill_numeric_na` | specified |
 | 4 | BB builder → `inputData.xlsx` | `0 = empty` | GAMS reads it | `is_col_empty` drops all-zero columns, via `drop_empty_parameter_columns` | specified |
 | 4b | BB frame → written sheet | dtype is meaningful | every parameter column is `object` | `create_fake_MultiIndex` inserts a text header row, in `write_workbook` | specified |
 | 5 | processor `process()` → `main_result` | NaN = no data | NaN = no data | validation in `ProcessorRunner` | specified |
@@ -166,8 +166,11 @@ neighbouring assertion about warnings failed. `TestFormalityIsJudgedBeforeReleva
 `route/test_route_reader_rules.py` now pins the pipeline order behaviourally.
 
 The one check that deliberately runs late is `merge_unittypedata_into_unitdata`'s unmatched
-`generator_id` report: it is a cross-reference rather than a property of the row, so it
-should only speak about rows the run actually uses.
+`unittype` report: it is a cross-reference rather than a property of the row, so it
+should only speak about rows the run actually uses. Its counterpart -- a row with no
+`unittype` at all -- stays early in `canonicalize_unittype_and_build_unit`, because that
+*is* a property of the row, and because the provenance columns naming the sheet are
+still attached there.
 
 ### `##` is what the author declares is not input
 
@@ -191,8 +194,8 @@ real numbers and values that look like numbers but do not parse (`1,000.0`, `100
 Blanking rather than interpreting is the point: `1.000` is a thousand to one author and one
 to another, and the cell does not say which. Blanking also lets `standardize_df_dtypes` type
 the column `Float64` by itself, which is what stops one bad cell demoting a whole column to
-`object` — the failure that dropped every row of a sheet through
-`filter_nonzero_numeric_rows`, and stopped the `_output1` rename from firing.
+`object` — the failure that stopped the `_output1` rename from firing, so a poisoned
+`capacity_output1` kept its suffix and the capacity was never read at all.
 
 The rule is *starts with a digit after any sign or currency symbol*, not *contains a digit*:
 the weaker test blanked `chp1` out of an identifier column. A purely textual value in a
@@ -245,7 +248,7 @@ logged message, but never crash and never silently coerce. That property is swep
 2. **Arithmetic that is the contract** — `_safe_eval_int("365*5") == 1825`,
    `t_max = ceil((L*24 + 10920) / 1000) * 1000`, TWh/yr → MWh/h.
 3. **Documented truth tables** — `merge_row_by_row`'s six methods, whose docstring at
-   `source_data_loader.py:884-909` *is* the specification. Cite the line in a comment.
+   `merge_row_by_row`'s own docstring *is* the specification. Name it in a comment.
 4. **Format contracts** — the fake-MultiIndex first row, the `_output1` strip,
    `input_output ∈ {input, output}`, the 21 sheet names.
 5. **Error-message identity** — a stable substring, never the whole message.

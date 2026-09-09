@@ -27,7 +27,7 @@ property is swept in ``tests/unit/source_data/test_contract_sweep.py``.
 What is deliberately NOT asserted
 ---------------------------------
 Only guarantees the code actually makes.  ``standardize_df_dtypes`` converts the
-string ``'nan'`` to NA (utils.py:75) but leaves ``'NA'``, ``'None'`` and
+string ``'nan'`` to NA but leaves ``'NA'``, ``'None'`` and
 ``'null'`` alone -- and rightly so, since ``'NA'`` could be a legitimate value.
 Asserting those away would fail on behaviour that was never promised, which is
 how a contract turns into noise and then gets deleted.
@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 
 #: The only dtypes ``standardize_df_dtypes`` is allowed to leave behind
-#: (utils.py:88-95).  ``string`` appears as ``string[python]``, hence the prefix
+#: in standardize_df_dtypes.  ``string`` appears as ``string[python]``, hence the prefix
 #: match in :func:`_dtype_is_allowed`.
 ALLOWED_DTYPES = ("Float64", "object", "string")
 
@@ -72,7 +72,7 @@ NASTY_CELLS: list[Any] = [
     None,
     np.nan,
     pd.NA,
-    # -- the string/real confusion. Only 'nan' is converted (utils.py:75);
+    # -- the string/real confusion. Only 'nan' is converted;
     #    the rest ride through as text and must not break anything.
     "nan",
     "NaN",
@@ -227,9 +227,11 @@ def frame_with_poisoned_numeric_column(
     column ``Float64``, and about a dozen consumers branch on precisely that.
 
     Why not simply pass ``filler=1.0`` to :func:`frame_with_cell`: that makes
-    *every* column numeric, ``generator_id`` and ``country`` included, and then
-    a merge against a text-keyed fixture fails on the key dtype rather than on
-    anything the test is about. The frame has to stay realistic everywhere
+    *every* column numeric, ``unittype`` and ``country`` included, and then a
+    merge against a text-keyed fixture fails on the key dtype rather than on
+    anything the test is about. Nothing forces ``unittype`` to text -- it is not
+    in normalize_dataframe's ``lowercase_col_values`` -- so that failure is
+    reachable rather than hypothetical. The frame has to stay realistic everywhere
     except the one column under examination, or the failure it produces is the
     test's own.
     """
@@ -291,8 +293,8 @@ def assert_normalized(df: Any, *, where: str = "", require_clean_index: bool = F
     1. every column dtype is one of :data:`ALLOWED_DTYPES`;
     2. an all-NA column is ``object`` -- never ``Float64`` (the cascade-bug fix);
     3. object columns hold ``pd.NA`` for missing, never ``None``, ``np.nan`` or
-       ``pd.NaT`` (utils.py:100-102);
-    4. no ``'nan'`` string survived as text (utils.py:74-76);
+       ``pd.NaT``, which standardize_df_dtypes' last pass guarantees;
+    4. no ``'nan'`` string survived as text;
     5. no duplicate column names.
 
     Parameters

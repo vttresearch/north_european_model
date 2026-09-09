@@ -57,12 +57,15 @@ class TestBothDirections:
         logger.assert_logged("appear in nodedata but not in demanddata", level="warn")
 
     def test_the_message_does_not_assert_which_cause_it_is(self):
-        """A demand row written as 0 and a mistyped country cell look identical here.
+        """A node missing from one table has more than one cause.
 
-        ``filter_nonzero_numeric_rows`` drops an all-zero row, so a node whose
-        demand is deliberately zero arrives looking exactly like one nobody
-        wrote. Naming either cause sends the reader hunting for the wrong thing,
-        so the message names the node and the two tables and stops there.
+        A mistyped country cell is one; a node genuinely absent from the other
+        table is the next. Naming either sends the reader hunting for the wrong
+        thing, so the message names the node and the two tables and stops there.
+
+        A demand row written as ``0`` used to be a third and worse cause: it was
+        deleted before reaching here, so a deliberate zero looked exactly like a
+        row nobody wrote. That deletion is gone.
         """
         nodedata = frame(*dheat("FI00", "SE03", "PL00", "AT00"))
         demanddata = frame(*dheat("FI00", "SE03", "PL00"))

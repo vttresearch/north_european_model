@@ -249,11 +249,11 @@ def find_malformed_numeric_cells(df: pd.DataFrame) -> MalformedCellReport:
     ``standardize_df_dtypes`` converts a column to numeric only when
     ``pd.to_numeric`` introduces no new NA, so one unparseable cell leaves the
     *entire* column ``object`` -- and a dozen places downstream branch on dtype.
-    The column then silently changes behaviour rather than failing: a sheet whose
-    only numeric column is poisoned is dropped whole by
-    ``filter_nonzero_numeric_rows``, and ``normalize_dataframe``'s ``_output1``
-    rename stops firing, which loses the capacity column outright. A visible
-    ``TypeError`` is the lucky outcome.
+    The column then silently changes behaviour rather than failing:
+    ``normalize_dataframe``'s ``_output1`` rename fires only on ``Float64``, so a
+    poisoned ``capacity_output1`` keeps its suffix and the capacity is never read
+    at all, and ``merge_row_by_row``'s ``add`` and ``multiply`` concatenate
+    strings. A visible ``TypeError`` is the lucky outcome.
 
     Structural on purpose: no column list and no ``{column: dtype}`` map, which
     would need editing on every schema change (tests/README.md, R7). The rule is
@@ -360,7 +360,7 @@ def find_excel_error_values(df: pd.DataFrame) -> MalformedCellReport:
     return MalformedCellReport(mask=mask, counts=counts, examples=examples)
 
 
-def gate_xlsx_frame(df: pd.DataFrame, source: str, logger) -> pd.DataFrame:
+def gate_xlsx_frame(df: pd.DataFrame, source: str, logger, collector=None) -> pd.DataFrame:
     """Report malformed cells in a freshly read sheet, and blank them.
 
     Applied at the one place every source workbook passes through, so it is
@@ -392,6 +392,11 @@ def gate_xlsx_frame(df: pd.DataFrame, source: str, logger) -> pd.DataFrame:
         Where the sheet came from, as ``file.xlsx:sheetname``. Goes into the
         message; it is the finest locator the source stage has.
     logger : IterationLogger
+    collector : list, optional
+        When given, findings are appended to it as
+        ``(source, what, column, count, examples)`` instead of being logged, so
+        a caller reading many sheets can say it once per workbook. See
+        :func:`render_gate_findings`.
 
     Returns
     -------
@@ -407,6 +412,9 @@ def gate_xlsx_frame(df: pd.DataFrame, source: str, logger) -> pd.DataFrame:
         if report.ok:
             continue
         for col, count in report.counts.items():
+            if collector is not None:
+                collector.append((source, what, col, count, report.examples[col]))
+                continue
             shown = ", ".join(repr(v) for v in report.examples[col])
             logger.log_status(
                 f"[{source}] Column '{col}': {count} {what}(s) -- {shown}. "
@@ -416,6 +424,34 @@ def gate_xlsx_frame(df: pd.DataFrame, source: str, logger) -> pd.DataFrame:
         df = df.mask(report.mask, other=pd.NA)
 
     return df
+
+
+def render_gate_findings(file_name: str, findings) -> str:
+    """One message for everything a workbook's sheets got wrong.
+
+    A line per column per sheet is right when one cell is wrong and unreadable
+    when a hundred are: a workbook whose export changed format produces a wall
+    of them, and the wall is what stops anyone reading the rest of the build.
+    A few named cells and a count is what a reader acts on either way.
+    """
+    total = sum(count for _, _, _, count, _ in findings)
+    sheets = {source for source, _, _, _, _ in findings}
+    head = (f"[{file_name}] {total} cell(s) in {len(findings)} column(s) across "
+            f"{len(sheets)} sheet(s) could not be read and are treated as not set")
+
+    # Worst columns first: the biggest is the one most likely to be a format
+    # change rather than a typo, and it is what survives the truncation.
+    ordered = sorted(findings, key=lambda f: -f[3])
+    lines = [
+        f"    {source.split(':', 1)[-1]}, column '{col}': {count} {what}(s) -- "
+        + ", ".join(repr(v) for v in examples)
+        for source, what, col, count, examples in ordered[:LOG_LIST_LIMIT]
+    ]
+    rest = len(ordered) - LOG_LIST_LIMIT
+    if rest > 0:
+        lines.append(f"    and {rest} more column(s).")
+    return (head + ":\n" + "\n".join(lines)
+            + "\n  Fix the cells in the source workbook.")
 
 
 def standardize_df_dtypes(df: pd.DataFrame) -> pd.DataFrame:

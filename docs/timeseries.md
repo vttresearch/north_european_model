@@ -309,9 +309,29 @@ unaffected and its GDX is still written.
 
 ## What is cached, and what forces a rebuild
 
-A processor is rerun when its `timeseries_specs` entry changed, when its own
-source file changed (the runner hashes it), or when `force_full_rerun = True` at
-the top of the config. Otherwise its previous output stands.
+A processor is rerun when any of five things is true, and otherwise its previous
+output stands:
+
+- its `timeseries_specs` entry changed;
+- its own source file changed — the runner hashes it;
+- a source workbook it declared in `requires_source_data` changed;
+- it has a `demand_grid` and the demand workbooks changed;
+- `force_full_rerun = True` at the top of the config.
+
+The third is the one that surprises. `VRE_PECD` declares
+`requires_source_data = ('unitdata',)` — it reads unitdata to learn which nodes
+have a unit of its flow — so editing one `unitdata` sheet reruns PV and both wind
+processors, and a build that starts three weather processors after a workbook
+edit is doing the right thing rather than the wrong one. `unittypedata` counts as
+`unitdata` here, because `merge_unittypedata_into_unitdata` folds the type-level
+defaults in before a processor ever sees the frame. A processor whose
+requirements have never been recorded — a first run, a cleared cache, one that
+has never completed — is rerun whenever any workbook changed, since unknown
+requirements are not the same as none.
+
+The build says which of these applied. `CacheManager` prints a run plan before
+the first phase starts: one line for what the run will do, and one naming the
+processors that rerun and why.
 
 What is kept between runs is what each processor *returned*: its GDX files, and
 its contributions to the source data tables exactly as it produced them. Nothing

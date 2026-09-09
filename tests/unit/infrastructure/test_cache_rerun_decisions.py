@@ -165,6 +165,34 @@ class TestSourceDataRequirementsDriveReruns:
             "editing hydroUpd-v1.xlsx must re-run a processor that reads nodedata"
         )
 
+    def test_unittypedata_reaches_a_processor_that_asked_for_unitdata(self, tmp_path):
+        """df_unitdata is the merged result, so unittypedata is part of it.
+
+        merge_unittypedata_into_unitdata folds the type-level defaults in, so a
+        processor handed df_unitdata receives something a unittypedata sheet can
+        change. The link used to hold by accident: the hashing prefix for
+        unitdata_files was the truncated 'unit', which also matched every
+        unittypedata sheet. Exact prefixes removed the accident, so the
+        dependency is declared.
+        """
+        manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
+        manager.save_processor_requirements("some_processor", ["unitdata"])
+
+        changed = manager._detect_timeseries_spec_changes(
+            manager.config, self._prev_config(), {"unittypedata_files": True}
+        )
+        assert changed["hydro"]
+
+    def test_the_dependency_does_not_run_the_other_way(self, tmp_path):
+        """Nothing folds unitdata into df_unittypedata."""
+        manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
+        manager.save_processor_requirements("some_processor", ["unittypedata"])
+
+        changed = manager._detect_timeseries_spec_changes(
+            manager.config, self._prev_config(), {"unitdata_files": True}
+        )
+        assert not changed["hydro"]
+
     def test_an_undeclared_category_changing_does_not(self, tmp_path):
         """Only the frames a processor asked for should wake it."""
         manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
@@ -261,6 +289,119 @@ class TestARebuildAlwaysGetsItsSourceData:
         assert not manager.any_timeseries_changed
         assert not manager.rebuild_bb_excel
         assert not manager.reimport_source_excels
+
+
+class TestTheBuildSaysWhatItWillRerun:
+    """The run plan, and the reasons under it.
+
+    Editing one unitdata sheet reruns all three VRE processors, because they
+    declare ``requires_source_data = ('unitdata',)``. That is correct and it is
+    also indistinguishable from having edited the wrong file -- the build used to
+    say only "rerunning necessary steps", from a point in ``run()`` where which
+    steps those are has not been decided yet. These pin what a reader is told,
+    by substring: the wording is free, the facts in it are not.
+    """
+
+    def _prev_config(self, spec=None):
+        return {"timeseries_specs": {"hydro": json.loads(json.dumps(spec or SPEC))}}
+
+    def test_the_reason_names_the_source_the_processor_declared(self, tmp_path):
+        manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
+        manager.save_processor_requirements("some_processor", ["nodedata"])
+
+        reasons = manager._detect_timeseries_spec_changes(
+            manager.config, self._prev_config(), {"nodedata_files": True}
+        )
+        assert "nodedata" in reasons["hydro"], (
+            "the name of the workbook that woke the processor is the whole answer"
+        )
+
+    def test_the_unittypedata_alias_names_unittypedata(self, tmp_path):
+        """Naming only unitdata here would read as a mistake.
+
+        The processor asked for unitdata and a unittypedata sheet is what moved.
+        They are one table by the time a processor sees them -- see
+        merge_unittypedata_into_unitdata -- and the reason has to say so.
+        """
+        manager = make_manager(tmp_path, timeseries_specs={"hydro": dict(SPEC)})
+        manager.save_processor_requirements("some_processor", ["unitdata"])
+
+        reasons = manager._detect_timeseries_spec_changes(
+            manager.config, self._prev_config(), {"unittypedata_files": True}
+        )
+        assert "unittypedata" in reasons["hydro"]
+        assert "unitdata" in reasons["hydro"]
+
+    def test_a_changed_processor_file_says_so(self, tmp_path):
+        specs = {"PV": dict(VRE_SPEC)}
+        settle_cache(make_manager(tmp_path, timeseries_specs=specs),
+                     stale_processors=("VRE_PECD",))
+
+        manager = make_manager(tmp_path, timeseries_specs=specs)
+        manager.run()
+
+        assert "processor code" in manager.timeseries_change_reasons["PV"]
+
+    def test_a_changed_workbook_is_reported_once_naming_the_sheet(self, tmp_path):
+        """One line, not the two that said the same thing.
+
+        _compare_sheet_hashes names the first difference and the caller wraps it;
+        the category and the sheet belong in the same sentence.
+        """
+        reason = CacheManager._compare_sheet_hashes(
+            {"Finland_dheat_and_industry.xlsx": {"unitdata_Finland": "new"}},
+            {"Finland_dheat_and_industry.xlsx": {"unitdata_Finland": "old"}},
+        )
+        assert reason == "sheet 'unitdata_Finland' in 'Finland_dheat_and_industry.xlsx'"
+
+    def test_a_different_file_list_is_no_longer_silent(self, tmp_path):
+        """The case that used to change a build with nothing in the log."""
+        reason = CacheManager._compare_sheet_hashes({"new.xlsx": {}}, {"old.xlsx": {}})
+        assert reason and "files" in reason
+
+    def test_identical_hashes_give_no_reason(self, tmp_path):
+        """The control -- otherwise every assertion above passes on anything."""
+        sheets = {"a.xlsx": {"unitdata_a": "same"}}
+        assert CacheManager._compare_sheet_hashes(sheets, dict(sheets)) is None
+
+    def test_the_plan_names_the_phases_and_the_count(self, tmp_path):
+        """A workbook edit, read end to end the way a build reads it."""
+        specs = {"PV": dict(VRE_SPEC), "District heating demand": dict(DH_SPEC)}
+        settle_cache(make_manager(tmp_path, timeseries_specs=specs))
+
+        manager = make_manager(tmp_path, timeseries_specs=specs)
+        manager.save_processor_requirements("VRE_PECD", ["unitdata"])
+        manager.timeseries_changed = {"PV": True}
+        manager.timeseries_change_reasons = {"PV": "unitdata changed and they read it"}
+        manager.reimport_source_excels = True
+        manager.rebuild_bb_excel = True
+        manager._log_run_plan()
+
+        manager.logger.assert_logged("This run will")
+        manager.logger.assert_logged("run 1 of 2 timeseries processor(s)")
+        manager.logger.assert_logged("rebuild the Backbone input excel")
+        manager.logger.assert_logged("Timeseries reruns -- unitdata changed and they read it: PV")
+        manager.logger.assert_clean()
+
+    def test_a_settled_cache_says_it_will_do_nothing(self, tmp_path):
+        specs = {"PV": dict(VRE_SPEC), "District heating demand": dict(DH_SPEC)}
+        settle_cache(make_manager(tmp_path, timeseries_specs=specs))
+
+        manager = make_manager(tmp_path, timeseries_specs=specs)
+        manager.run()
+
+        manager.logger.assert_logged("Nothing changed since the last run")
+        manager.logger.assert_not_logged("This run will")
+
+    def test_a_full_rerun_does_not_repeat_itself(self, tmp_path):
+        """Its one reason is printed above the plan, and every processor shares it."""
+        specs = {"PV": dict(VRE_SPEC), "District heating demand": dict(DH_SPEC)}
+        manager = make_manager(tmp_path, timeseries_specs=specs, force_full_rerun=True)
+        manager.run()
+
+        assert manager.full_rerun
+        manager.logger.assert_logged("This run will")
+        manager.logger.assert_not_logged("Timeseries reruns --")
 
 
 class TestSourceExcelsAreLoadedForDeclaringProcessors:

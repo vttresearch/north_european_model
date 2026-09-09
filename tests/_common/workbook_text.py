@@ -12,7 +12,7 @@ Why a sectioned file rather than one CSV per sheet
 --------------------------------------------------
 The two highest-value behaviours of the reader are *about blank lines and hash
 lines*: ``read_input_excels`` truncates a sheet at the first fully-empty row
-(source_data_loader.py:102-107) and ``normalize_dataframe`` drops rows whose
+in ``read_input_excels`` and ``normalize_dataframe`` drops rows whose
 cells start with ``#`` (:201-208). CSV cannot express either without an
 out-of-band convention, at which point it is no longer just CSV. Here ``//`` is
 the fixture's own comment marker, so ``#`` passes straight through to Excel and

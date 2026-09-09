@@ -37,14 +37,66 @@ not build and why, and has a documentation page of its own.
 
 ## Source workbooks
 
+- `generator_ID` is removed. A `unitdata` row names its `unittype` directly, and
+  `unittypedata` is keyed on `unittype` with a free-text `## Description` column
+  in place of the old name.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- `transferdata` is unidirectional: one row per line per direction, with
+  `transferCap` in place of `export_capacity` and `import_capacity`. Either old
+  column is named by the build and contributes nothing.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
 - `##` in a cell skips the row, `##` in a column header skips the column.
   [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- A build no longer holds every source workbook open for its whole run, which
+  made them read-only in Excel while it ran.
+- Excel error values now reach the report at all. pandas turns every error cell
+  into an empty one before anything can look, so no `#REF!` or `#N/A` had ever
+  been named.
+- Malformed cells are reported once per workbook, naming the worst three columns,
+  instead of once per column.
 - Malformed numbers (`1,000.0`, `100 MW`, `#REF!`) are reported and treated as
   not set, in source excels and timeseries files alike.
+- Warnings about a unittype or a node name the workbook and sheet it was written
+  in, and say when another sheet spells the same name differently.
+- A row with no unittype is identified by its country, scenario and year.
+- A blank key column, or a year that is neither a real year nor the `1` meaning
+  every year, is an error naming the spreadsheet row. Such a row used to be
+  dropped in silence.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- Source workbooks renamed for what they hold: `dheat_balticData.xlsx`,
+  `dheat_unitdata_PL_DE_AT.xlsx`, `dheat_unitdata_SE_DK.xlsx`. The unused
+  `unitdata_TYNDP-2020.xlsx` and `unitdata_additional-*.xlsx` are removed, and
+  some content moved between the remaining ones.
+- Unit types and several fuel nodes renamed.
+- Finnish city units and district heating transfer links no longer share
+  identical costs, and VRE costs are slightly higher.
+- Three AT00 units are deactivated with `method = remove` rather than a year that
+  matched nothing; the sub-10 MW rule drops one further unit.
 - Blank rows, unnamed columns and repeated headers inside a table are reported
   rather than silently dropped.
 - A node that only one of `nodedata` and `demanddata` knows about is reported.
 - `merge_row_by_row`: column titles compared case-insensitively, first spelling kept.
+- Excluding a grid or node says how many units it removed.
+- A column no stage reads is reported by file and sheet.
+  [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
+- What the source data phase does with a workbook:
+  [docs/source-data.md](docs/source-data.md)
+- A demand written as `0` is kept instead of being deleted as an empty row.
+- `multiply` leaves a value unchanged when either side is missing, instead of
+  writing `0`.
+- An `add` or `multiply` row whose key matches nothing is reported; `multiply`
+  no longer creates a record.
+- A row with no `scenario` or `year` is reported before it is dropped.
+- A sheet that overwrites its own earlier row with `replace` is reported.
+- A sheet dropped for a missing `country`, `grid` or `unittype` says how
+  many rows that cost.
+- A user constraint sheet without a `country` column no longer stops the build.
+- `emissiondata` is merged on `emission` and `group` together.
+- `transferdata` is filtered once for both link ends rather than twice.
+- Sheet hashes use the full category prefix, so `unittypedata` is no longer
+  hashed as `unitdata` too.
+- Config file lists name `Finland_dheat_and_industry.xlsx` with the case the
+  folder uses.
 
 ## Input excel builder
 

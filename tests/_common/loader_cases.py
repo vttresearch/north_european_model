@@ -31,7 +31,7 @@ SWEEP_COLUMNS: tuple[str, ...] = (
     "to_suffix",
     "scenario",
     "year",
-    "generator_id",
+    "unittype",
     "unit_name_prefix",
     "capacity",
     "method",
@@ -42,7 +42,6 @@ SWEEP_COLUMNS: tuple[str, ...] = (
 #: make a failure ambiguous about which side caused it.
 UNITTYPEDATA = pd.DataFrame(
     {
-        "generator_id": pd.Series(["gen1"], dtype="object"),
         "unittype": pd.Series(["coalplant"], dtype="object"),
         "grid_input1": pd.Series(["coal"], dtype="object"),
         "grid_output1": pd.Series(["elec"], dtype="object"),
@@ -91,8 +90,8 @@ LOADER_CASES: list[LoaderCase] = [
         lambda df, log: loader.build_from_to_columns(df, log),
     ),
     LoaderCase(
-        "build_unittype_unit_column",
-        lambda df, log: loader.build_unittype_unit_column(df, UNITTYPEDATA, log),
+        "canonicalize_unittype_and_build_unit",
+        lambda df, log: loader.canonicalize_unittype_and_build_unit(df, UNITTYPEDATA, log),
     ),
     LoaderCase(
         "build_unit_grid_and_node_columns",
@@ -117,15 +116,15 @@ LOADER_CASES: list[LoaderCase] = [
     ),
     LoaderCase(
         "apply_blacklist",
-        lambda df, log: loader.apply_blacklist(df, "sweep", {"grid": ["excluded"]}, log),
+        lambda df, log: loader.apply_blacklist(df, {"grid": ["excluded"]}),
     ),
     LoaderCase(
         "apply_unit_grids_blacklist",
-        lambda df, log: loader.apply_unit_grids_blacklist(df, ["excluded"], "sweep", log),
+        lambda df, log: loader.apply_unit_grids_blacklist(df, ["excluded"]),
     ),
     LoaderCase(
         "apply_unit_nodes_blacklist",
-        lambda df, log: loader.apply_unit_nodes_blacklist(df, ["excluded"], "sweep", log),
+        lambda df, log: loader.apply_unit_nodes_blacklist(df, ["excluded"]),
     ),
     LoaderCase(
         # Two frames, so the merge machinery actually runs rather than
@@ -134,9 +133,5 @@ LOADER_CASES: list[LoaderCase] = [
         lambda df, log: loader.merge_row_by_row(
             [df, df], log, key_columns=["country", "grid"]
         ),
-    ),
-    LoaderCase(
-        "filter_nonzero_numeric_rows",
-        lambda df, log: loader.filter_nonzero_numeric_rows(df),
     ),
 ]

@@ -36,17 +36,17 @@ def units(source):
 
 class TestRowsThatSurvive:
     def test_an_ordinary_row_is_read(self, units):
-        assert cell(units, "capacity", generator_id="keeper", unit_name_prefix=None) == 100
+        assert cell(units, "capacity", unittype="keeper", unit_name_prefix=None) == 100
 
     def test_scenario_all_and_year_1_pass_the_whitelist(self, units):
         # The magic values (apply_whitelist:762-771). Nearly every real row uses
         # them, so a regression here would empty most of the input data.
-        assert not rows_for(units, generator_id="keeper", unit_name_prefix=None).empty
+        assert not rows_for(units, unittype="keeper", unit_name_prefix=None).empty
 
     def test_an_explicit_scenario_and_year_also_pass(self, units):
         # The run is scenario='test', year=2030; both the catch-all and the
         # explicit spelling must be admitted, or scenario overrides stop working.
-        assert cell(units, "capacity", generator_id="keeper", unit_name_prefix="scen") == 144
+        assert cell(units, "capacity", unittype="keeper", unit_name_prefix="scen") == 144
 
 
 class TestRowsThatAreDropped:
@@ -54,12 +54,12 @@ class TestRowsThatAreDropped:
         # Used in real workbooks to park a row without deleting it, so it must
         # not reach the model. Every other field of that row is valid, so it can
         # only be missing because the marker was honoured -- see the fixture.
-        assert rows_for(units, generator_id="commented").empty
+        assert rows_for(units, unittype="commented").empty
 
     def test_a_value_containing_an_underscore_drops_its_row(self, units):
         # drop_underscore_values:255. Underscore is the node-name separator, so
         # a value containing one would produce an ambiguous GAMS set element.
-        assert rows_for(units, generator_id="underscored").empty
+        assert rows_for(units, unittype="undersc").empty
 
     def test_the_dropped_underscore_row_is_reported(self, source):
         # Dropping data silently is what this rule must never do.
@@ -70,7 +70,7 @@ class TestRowsThatAreDropped:
         """This is how the previous fixture died: a blank row directly under
         every header truncated all seven sheets to zero data rows, and nothing
         said so."""
-        assert rows_for(units, generator_id="truncated").empty
+        assert rows_for(units, unittype="truncated").empty
 
     def test_and_the_truncation_is_now_reported(self, source):
         # "nothing said so" was the whole problem. A blank row with real rows
@@ -110,7 +110,7 @@ class TestMethodHandling:
     def test_an_unknown_method_is_coerced_rather_than_dropping_the_row(self, units):
         # Losing a row because of a typo in an optional column would be a harsh
         # response; the row survives with the default method.
-        assert cell(units, "capacity", generator_id="methodless") == 133
+        assert cell(units, "capacity", unittype="methodless") == 133
 
     def test_and_it_is_reported(self, source):
         _, logger = source
@@ -161,8 +161,8 @@ class TestFormalityIsJudgedBeforeRelevance:
 
     FIXTURE = """
 [unittypedata]
-scenario | year | Generator_ID | unittype | grid_output1 | eff00 | isSource
-all      | 1    | wanted       | Wanted   | elec         | 1     | 1
+scenario | year | unittype | grid_output1 | eff00 | isSource
+all      | 1    | Wanted   | elec         | 1     | 1
 
 [nodedata]
 Country | Grid | Scenario | Year | nodeBalance
@@ -171,9 +171,9 @@ FI      | elec | all      | 1    | 1
 // ZZ is not in country_codes, so the whitelist removes this row. Its capacity
 // is malformed all the same, and that is what has to be reported.
 [unitdata]
-Country | Generator_ID | Scenario | Year | capacity_output1 | method
-FI      | wanted       | all      | 1    | 100              | replace
-ZZ      | wanted       | all      | 1    | 1,000.0          | replace
+Country | unittype | Scenario | Year | capacity_output1 | method
+FI      | wanted   | all      | 1    | 100              | replace
+ZZ      | wanted   | all      | 1    | 1,000.0          | replace
 """
 
     def test_a_malformed_cell_is_reported_even_when_the_row_is_filtered_out(self, tmp_path):

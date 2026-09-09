@@ -55,6 +55,11 @@ class elec_demand_TYNDP2024(BaseProcessor):
     #: can state, and a maximum of 0.0 would only restate the sign.
     value_sign = "non_positive"
 
+    #: The demand table columns this processor reads by name. Declared so the
+    #: source stage does not report them as read by nothing; see
+    #: source_workbook_shape.DERIVATION_INPUTS, which a test holds this equal to.
+    reads_source_columns = ("twh/year", "constant_share")
+
     #: Divisor for the flat share, deliberately the nominal year rather than the
     #: real one. `DH_demand_fromTemperature` uses the identical formula, so the
     #: two have to move together or not at all.

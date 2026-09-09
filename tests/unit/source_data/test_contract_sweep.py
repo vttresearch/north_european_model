@@ -59,7 +59,7 @@ def _normalized(df: pd.DataFrame) -> pd.DataFrame:
     """Put a frame through the gatekeeper.
 
     Most loader functions document a precondition of normalized input
-    (``merge_row_by_row``'s docstring states it outright at :875).  Feeding them
+    (``merge_row_by_row``'s docstring states the precondition outright).  Feeding them
     raw frames would test a situation the pipeline never produces.
     """
     return normalize_dataframe(df, "sweep-setup", FakeLogger())
@@ -123,7 +123,7 @@ def test_all_na_object_column_is_tolerated(case, blank_column):
     """The cascade bug, as a property.
 
     An all-``pd.NA`` column is typed ``object`` precisely so that no assumption
-    is baked in about what it holds (utils.py:90-91).  The price is that every
+    is baked in about what it holds.  The price is that every
     consumer must cope with seeing ``object`` where it expected ``Float64``:
     handle it, or reject it with a logged message -- but never crash, and never
     silently coerce it into something else.
@@ -152,7 +152,7 @@ def test_source_stage_never_collapses_na_to_zero(case):
     # only 'capacity' carries the NA under test.
     raw = frame_with_cell(SWEEP_COLUMNS, "FI", rows=2, filler="SE")
     raw["grid"] = ["elec", "elec"]
-    raw["generator_id"] = ["gen1", "gen1"]
+    raw["unittype"] = ["coalplant", "coalplant"]
     raw["scenario"] = ["test", "test"]
     raw["year"] = [2030, 2030]
     raw["method"] = ["replace", "replace"]
@@ -182,7 +182,31 @@ def test_the_sweep_table_covers_the_public_loader_surface():
     # report_node_disagreements takes two frames and returns nothing: it only
     # reports, deliberately, because which of the two workbooks is wrong is not
     # something it can know. Covered in test_node_disagreements.py.
-    deliberately_excluded = {"read_input_excels", "report_node_disagreements"}
+    # report_unused_columns takes a frame and returns nothing, for the same
+    # reason: whether a column is a typo or an intention is not something it can
+    # know, so it names the column and offers the remedies. Covered in
+    # test_unused_columns.py.
+    # count_units_without_exclusions answers "how many units would this run have
+    # had", so it returns a number rather than a frame. Covered in
+    # route/test_route_excluded_nodes.py.
+    # collect_origins and describe_origins index and render where a value was
+    # written down. Neither takes or returns a frame, so there is no dtype
+    # contract to sweep. Covered in unit/source_data/test_origins.py.
+    deliberately_excluded = {
+        "read_input_excels",
+        "report_node_disagreements",
+        "report_unused_columns",
+        "count_units_without_exclusions",
+        "collect_origins",
+        "describe_origins",
+        # restore_excel_error_values needs a live openpyxl worksheet beside the
+        # frame, so there is nothing to hand it here. Covered in
+        # unit/source_data/test_numeric_cell_mistakes.py through the real reader.
+        "restore_excel_error_values",
+        # report_unusable_keys reports and returns nothing. Covered in
+        # unit/source_data/test_unusable_keys.py.
+        "report_unusable_keys",
+    }
 
     public = {
         name

@@ -63,7 +63,7 @@ def test_merge_row_by_row_creates_the_key_columns_it_says_it_will():
 
 
 def test_merge_reports_and_retypes_when_nothing_matches():
-    """A unitdata file whose generator_ids match nothing in unittypedata.
+    """A unitdata file whose unittypes match nothing in unittypedata.
 
     ``merge_unittypedata_into_unitdata`` left-joins the type defaults onto the
     unit rows.  When *no* row matches, every column contributed by the unittype
@@ -73,19 +73,19 @@ def test_merge_reports_and_retypes_when_nothing_matches():
     indistinguishable so that no consumer can assume a dtype.
 
     Two things were wrong and both are asserted here, because fixing only the
-    dtype would have left the worse half in place: a generator_id matching
-    nothing is a misconfiguration, and it used to pass in complete silence.
+    dtype would have left the worse half in place: a unittype matching nothing is
+    a misconfiguration, and it used to pass in complete silence.
     """
     unitdata = pd.DataFrame(
         {
             "country": pd.Series(["FI"], dtype="object"),
-            "generator_id": pd.Series(["absent_from_unittypedata"], dtype="object"),
+            "unittype": pd.Series(["absentFromUnittypedata"], dtype="object"),
             "method": pd.Series(["replace"], dtype="object"),
         }
     )
     unittypedata = pd.DataFrame(
         {
-            "generator_id": pd.Series(["gen1"], dtype="object"),
+            "unittype": pd.Series(["coalplant"], dtype="object"),
             "eff00": pd.Series([0.4], dtype="Float64"),
             "method": pd.Series(["replace"], dtype="object"),
         }
@@ -94,9 +94,9 @@ def test_merge_reports_and_retypes_when_nothing_matches():
 
     merged = merge_unittypedata_into_unitdata(unitdata, unittypedata, logger)
 
-    # Named, not merely counted: the whole point is that the user can find the
-    # typo without reading the code.
-    logger.assert_logged("absent_from_unittypedata", level="warn")
+    # Named, not merely counted, and spelled the way the sheet spells it: the
+    # whole point is that the user can find the typo without reading the code.
+    logger.assert_logged("'absentFromUnittypedata'", level="warn")
 
     assert merged["eff00"].isna().all()
     assert str(merged["eff00"].dtype) == "object"
@@ -113,13 +113,13 @@ def test_merge_stays_quiet_and_typed_when_everything_matches():
     unitdata = pd.DataFrame(
         {
             "country": pd.Series(["FI"], dtype="object"),
-            "generator_id": pd.Series(["gen1"], dtype="object"),
+            "unittype": pd.Series(["coalplant"], dtype="object"),
             "method": pd.Series(["replace"], dtype="object"),
         }
     )
     unittypedata = pd.DataFrame(
         {
-            "generator_id": pd.Series(["gen1"], dtype="object"),
+            "unittype": pd.Series(["coalplant"], dtype="object"),
             "eff00": pd.Series([0.4], dtype="Float64"),
             "method": pd.Series(["replace"], dtype="object"),
         }
@@ -130,4 +130,8 @@ def test_merge_stays_quiet_and_typed_when_everything_matches():
 
     assert merged["eff00"].tolist() == [0.4]
     assert str(merged["eff00"].dtype) == "Float64"
-    logger.assert_not_logged("No unittypedata found")
+    # The stem of the real message. A negative assertion on a string that no
+    # longer appears passes for ever without testing anything, so it has to be
+    # kept in step with merge_unittypedata_into_unitdata's wording -- it has
+    # already drifted once.
+    logger.assert_not_logged("no unittypedata declares")
