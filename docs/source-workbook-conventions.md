@@ -534,36 +534,25 @@ already.
 
 ## Renaming a value a formula depends on
 
-This is the one hazard on this page that no build check can reach, and the one
-that has cost the most.
+This is the one hazard on source excels that no build check can reach, and the one
+that can cost the most.
 
-A name typed in a cell is often also a **lookup key**. `SUMIF`, `VLOOKUP` and
-`COUNTIF` criteria, and the helper tables they point at, refer to unittypes, node
-names and country codes by their text. None of them fails when the data is
-renamed. They return `0`, or the value from a neighbouring row, and the sheet
+A name in an excel cell can be also a **lookup key**. `SUMIF`, `VLOOKUP` and
+`COUNTIF` criteria. Changing a name or definition in other sheets they depend on can invalidate hard-coded rules in formula and make it return return `0`, or the value from a neighbouring row, and the sheet
 still looks finished.
 
-Renaming the unittypes in one pass broke six such formulas. One of them silently
+Renaming the unittypes for the v3 of this model broke six such formulas. One of them silently
 deleted every Finnish district-heating heat pump and electric boiler from the
-model. Not one was found by the build; all six were found by comparing numbers
-before and after.
+model. Only some of these were found by the automated log messages as it is often impossible to know if e.g. zero capacity is intended or mistake.
 
-So when you rename anything a formula might key on:
-
-- Use Excel's Find & Replace with **Within: Workbook** and **Match entire cell
-  contents**. Workbook scope is what moves the helper tables in the same pass as
-  the data they key; whole-cell matching is what stops `Nuclear` from eating
-  `Nuclear-flex`.
+Save results.gdx before and after changes and run gdxdiff. If something unexpected differs:
 - Re-read any formula that classified rows by the text of a name. A criterion
   like `"*heat pump*"` stops matching when `Ground source heat pump` becomes
   `GSHP`.
-- Check the result by number, not by eye. `tools/compare_source_workbooks.py`
+- Compare workbook by code, not eye. `tools/compare_source_workbooks.py`
   compares two versions of the workbooks row by row on their dimension columns,
   and `--git-ref` takes the earlier version straight from git. It is also the
   only readable diff a binary `.xlsx` has.
-- `python tools/check_unittype_columns.py src_files/data_files` is the cheaper
-  name-level check: every `unitdata` unittype declared by some `unittypedata`
-  sheet, and with `--legacy-names`, no cell anywhere still holding an old name.
 
 ## Editing a workbook reruns processors
 
