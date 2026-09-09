@@ -220,7 +220,6 @@ def run_fake_processor(
         "input_sub_folder": "",
         "attached_grid": "",
         "scaling_factor": 1,
-        "annual_summary": "",
         "cutoff_below": None,
     }
     spec.update(spec_overrides or {})

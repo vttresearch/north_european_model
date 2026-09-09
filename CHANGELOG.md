@@ -45,6 +45,8 @@ not build and why, and has a documentation page of its own.
 - `reads_input_files` declares the files a processor opens, so a replaced PECD
   download is noticed. A processor declaring none is rerun every build.
   [docs/timeseries.md](docs/timeseries.md)
+- The annual summary CSVs are removed; the `annual_summary` spec field is
+  retired and a config still setting it is ignored.
 - A cold build is about a third faster.
 
 ## Source workbooks

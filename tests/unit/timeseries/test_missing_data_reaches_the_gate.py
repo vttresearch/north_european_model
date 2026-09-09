@@ -112,8 +112,8 @@ class TestForecastGapsStayMissing:
     def test_the_input_frame_is_not_mutated(self):
         """Regression: 'hour_of_year' used to be written into the caller's frame.
 
-        ProcessorRunner passes main_result here and keeps using it afterwards for
-        domain collection and the annual summary CSV.
+        ProcessorRunner passes main_result here and keeps using it afterwards
+        for domain collection.
         """
         df = _january_only()
         before = list(df.columns)

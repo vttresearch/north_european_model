@@ -668,10 +668,10 @@ class ProcessorRunner:
         )
 
         # --- Slice and write climate windows' data ---
-        # main_result stays unsorted on purpose: the annual summary, the
-        # climatological forecasts and the domain caches all read it below, and
-        # reordering it would change the row order of the forecast GDX and the
-        # element order of the domain JSON -- same content, different bytes.
+        # main_result stays unsorted on purpose: the climatological forecasts
+        # and the domain caches both read it below, and reordering it would
+        # change the row order of the forecast GDX and the element order of the
+        # domain JSON -- same content, different bytes.
         self.logger.log_status("Preparing annual GDX files...")
         annual_dfs = split_timeseries_to_climate_windows(
             ordered_result,
@@ -710,40 +710,6 @@ class ProcessorRunner:
             bb_parameter=bb_parameter,
             gdx_name_suffix=gdx_name_suffix,
         )
-
-        # --- Annual summary CSV ---
-        annual_summary = spec.get("annual_summary", "")
-        if annual_summary:
-            valid_methods = {'avg', 'sum'}
-            if annual_summary not in valid_methods:
-                self.logger.log_status(
-                    f"Processor '{processor_name}': invalid annual_summary value "
-                    f"'{annual_summary}'. Expected 'avg' or 'sum'. Skipping summary.",
-                    level="warn",
-                )
-            else:
-                self.logger.log_status("Writing annual summary CSV...")
-                summary_df = main_result.copy()
-                summary_df['year'] = summary_df['time'].dt.year
-
-                group_cols = group_dim_cols + ['year']
-                agg_func = 'mean' if annual_summary == 'avg' else 'sum'
-                summary_df = (
-                    summary_df
-                    .groupby(group_cols, observed=True)['value']
-                    .agg(agg_func)
-                    .round(rounding_precision)
-                    .reset_index()
-                )
-                summary_df['aggregation'] = annual_summary
-
-                summary_filename = f"{bb_parameter}_{gdx_name_suffix}_summary.csv"
-                summary_path = os.path.join(self.output_folder, summary_filename)
-                summary_df.to_csv(summary_path, index=False)
-                self.logger.log_status(
-                    f"Annual summary ({annual_summary}) written to {summary_filename}",
-                    level="info",
-                )
 
         # --- Climatological forecasts ---
         # Built whenever the spec has 'f', 't' and something to group by.

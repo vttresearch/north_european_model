@@ -313,7 +313,6 @@ Timeseries processors are selected and configured in the `timeseries_specs = {}`
 		'rounding_precision': 5,
 		'input_sub_folder': 'PECD-onshore/',   # folder, not file
 		'attached_grid': 'elec',
-		'annual_summary': 'avg',
 	},
 
 The keys each spec accepts are documented in the comment block above `timeseries_specs` in any shipped config file.

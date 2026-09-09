@@ -76,9 +76,6 @@ Into the output folder, per source:
 - **A line in `import_timeseries.inc`**, the GAMS include file that loads them.
   For the per-year case it reads the year from `%climateYear%`, so Backbone picks
   the window at run time rather than at build time.
-- **An annual summary CSV**, for a source whose spec sets `annual_summary` — the
-  annual mean or sum of each series, which is the quickest way to see whether one
-  is the right size.
 
 Two things do not belong to any one source. Demand grids that appear in the
 demand tables but have no processor of their own get a **constant** demand rather

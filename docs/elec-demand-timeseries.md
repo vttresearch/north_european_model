@@ -78,7 +78,7 @@ mean while individual years run above or below by weather:
 | coldest year of any node | 106.9% (NOS0) |
 | mildest year of any node | 95.5% (NOS0) |
 
-Measured over 1982–2016 from a built `ts_influx_elec_summary.csv`, across the 22
+Measured over 1982–2016 from a built `ts_influx_elec` series, across the 22
 electricity nodes that ship today. Each node spans 2.4% (NL00) to 11.4% (NOS0)
 between its own mildest and coldest year — far narrower than district heating's
 21%–26%, because only part of electricity demand follows the weather. Every build

@@ -107,7 +107,6 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'input_sub_folder': '',
     'attached_grid': '',
     'scaling_factor': 1,
-    'annual_summary': '',
     'cutoff_below': None,
 }
 
