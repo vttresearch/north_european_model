@@ -489,7 +489,9 @@ class TestOutputContract:
 class TestDeclarations:
     def test_it_declares_the_source_data_it_needs(self):
         """Without this the cache cannot know a nodedata edit should rerun it."""
-        assert hydro_storage_limits_MAF2019.requires_source_data == ("nodedata",)
+        assert hydro_storage_limits_MAF2019.requires_source_data == {
+            "nodedata": ("node", "upwardLimit")
+        }
 
     def test_stored_energy_is_declared_non_negative(self):
         assert hydro_storage_limits_MAF2019.value_sign == "non_negative"

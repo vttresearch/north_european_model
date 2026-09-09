@@ -415,3 +415,73 @@ class TestHashIsAlwaysUpdated:
         """
         run = run_fake_processor(tmp_path, main_result)
         assert "FakeProcessor" in run.cache_manager.processor_hashes
+
+
+class TestDeclaredSourceData:
+    """What a processor is handed from the source data, and what it is not.
+
+    ``requires_source_data`` names tables and the columns of each. The runner
+    delivers exactly those columns, which is what lets the cache tell a workbook
+    edit this processor reads from one it does not.
+    """
+
+    NODEDATA = pd.DataFrame({
+        "node": ["FI00_elec", "SE01_elec"],
+        "upwardLimit": [1.0, 2.0],
+        "unrelated_cost": [10.0, 20.0],
+    })
+
+    def test_only_the_declared_columns_are_delivered(self, tmp_path):
+        run = run_fake_processor(
+            tmp_path, GOOD,
+            class_body="requires_source_data = {'nodedata': ('node',)}",
+            body="assert list(self.kwargs['df_nodedata'].columns) == ['node'], "
+                 "self.kwargs['df_nodedata'].columns.tolist()",
+            source_data={"nodedata": self.NODEDATA},
+        )
+        run.logger.assert_not_logged("raised an exception")
+
+    def test_a_prefix_pattern_matches_a_family_of_columns(self, tmp_path):
+        """``node_output*`` has to be a pattern: which of node_output1..5 exist
+        is decided by the workbook, not by this processor."""
+        frame = pd.DataFrame({
+            "flow": ["onshore"], "node_output1": ["FI00_elec"],
+            "node_output2": ["FI00_heat"], "capacity": [1.0],
+        })
+        run = run_fake_processor(
+            tmp_path, GOOD,
+            class_body="requires_source_data = {'unitdata': ('flow', 'node_output*')}",
+            body="assert sorted(self.kwargs['df_unitdata'].columns) == "
+                 "['flow', 'node_output1', 'node_output2'], "
+                 "self.kwargs['df_unitdata'].columns.tolist()",
+            source_data={"unitdata": frame},
+        )
+        run.logger.assert_not_logged("raised an exception")
+
+    def test_naming_a_table_without_columns_still_delivers_all_of_it(self, tmp_path):
+        """The older declaration form, and what a processor written elsewhere
+        will use. It keeps working; it just cannot narrow the cache key."""
+        run = run_fake_processor(
+            tmp_path, GOOD,
+            class_body="requires_source_data = ('nodedata',)",
+            body="assert 'unrelated_cost' in self.kwargs['df_nodedata'].columns",
+            source_data={"nodedata": self.NODEDATA},
+        )
+        run.logger.assert_not_logged("raised an exception")
+
+    def test_a_processor_cannot_reach_the_pipeline_frame_through_what_it_is_given(self, tmp_path):
+        """The frames outlive the processor and are read again after it returns.
+
+        Nothing mutates a delivered frame today, and nothing has ever stopped it
+        -- they were handed over by reference. Asserted here rather than per
+        processor so that it covers the ones users write too.
+        """
+        run = run_fake_processor(
+            tmp_path, GOOD,
+            class_body="requires_source_data = {'nodedata': ('node', 'upwardLimit')}",
+            body="self.kwargs['df_nodedata'].loc[:, 'upwardLimit'] = 999.0",
+            source_data={"nodedata": self.NODEDATA.copy()},
+        )
+        run.logger.assert_not_logged("raised an exception")
+        delivered = run.source_data_pipeline.df_nodedata
+        assert delivered["upwardLimit"].tolist() == [1.0, 2.0]

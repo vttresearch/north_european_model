@@ -18,6 +18,23 @@ class SourceDataError(Exception):
     """
 
 
+def declared_source_data(processor_class) -> dict[str, tuple[str, ...] | None]:
+    """``{table name: the columns it declared}``, or ``None`` for a table whose
+    columns it did not.
+
+    Two spellings reach here. The mapping form names columns and gets a slice;
+    the older tuple-of-names form does not and gets the whole frame, which still
+    works and is what a processor written elsewhere will use. ``None`` is the
+    "cannot tell" of this module -- distinct from an empty tuple, which would
+    say the processor reads no columns at all.
+    """
+    declared = getattr(processor_class, "requires_source_data", None) or {}
+    if isinstance(declared, dict):
+        return {name: tuple(columns) if columns else None
+                for name, columns in declared.items()}
+    return {name: None for name in declared}
+
+
 class BaseProcessor(ABC):
     """
     Abstract base class for all timeseries processors.
@@ -62,20 +79,32 @@ class BaseProcessor(ABC):
         Whether the output is meant to be a complete, regular grid with one row
         per step per group. True for everything shipped.
 
-    requires_source_data : tuple of str
-        Which merged source-data frames this processor needs, named without the
-        `df_` prefix -- `('nodedata',)` asks for `SourceDataPipeline.df_nodedata`
-        and receives it as a `df_nodedata` kwarg. Use it instead of keeping a
-        private copy of a value the source workbooks already carry: the copy and
-        the original drift apart with nothing able to notice.
+    requires_source_data : dict of str to tuple of str
+        Which merged source-data frames this processor needs, and which columns
+        of each. `{'nodedata': ('node', 'upwardLimit')}` asks for
+        `SourceDataPipeline.df_nodedata` and receives those two columns of it as
+        a `df_nodedata` kwarg. Use it instead of keeping a private copy of a
+        value the source workbooks already carry: the copy and the original
+        drift apart with nothing able to notice.
+
+        **Name every column you read.** What arrives is what you declared and
+        nothing else, so a column you read without declaring raises a `KeyError`
+        rather than going unnoticed. Names are matched case-insensitively, and a
+        name ending in `*` matches by prefix -- `node_output*` has to, because
+        which of `node_output1..5` exist depends on the workbook.
+
+        The declaration is also the cache key. A build compares the columns it
+        handed you against the ones it handed you last time, so a workbook edit
+        that does not touch them does not rerun you -- which is why declaring
+        the whole table costs rebuilds you did not need. The older form, a plain
+        tuple of table names, still works and still delivers the whole frame;
+        it just compares the whole frame too.
 
         Declared on the class rather than in the config spec so that the cache
-        follows it, and with two consequences for the author. The frames are
-        whitelisted per scenario, year and country, so declaring one makes the
-        processor input-data-dependent and it will no longer be copied from a
-        reference folder between scenarios. And the frames obey the source-side
-        conventions, not the timeseries ones: `0` and `pd.NA` are distinct there,
-        and an all-NA column arrives as `object` rather than `Float64`.
+        follows it. The frames are whitelisted per scenario, year and country,
+        and they obey the source-side conventions, not the timeseries ones: `0`
+        and `pd.NA` are distinct there, and an all-NA column arrives as `object`
+        rather than `Float64`.
 
     reads_source_columns : tuple of str
         Which workbook columns this processor reads by name, lower-cased. Unlike
@@ -89,6 +118,23 @@ class BaseProcessor(ABC):
         `source_workbook_shape.DERIVATION_INPUTS`, and this attribute is the
         processor's own statement of the same thing; a test asserts the two agree
         rather than one importing the other.
+
+    reads_input_files : tuple of str
+        Which files under this processor's `input_folder` it opens, as glob
+        patterns -- `('Temperature.csv',)`, or `('*.csv',)` for a whole folder.
+        Their size and modification time go into the cache record, which is the
+        only way a replaced download can be noticed: nothing else in the build
+        looks at these files.
+
+        **Declaring nothing means rerunning every build.** There is no comparing
+        files nobody named, and a cache that assumed "no files" would serve the
+        old GDX after a new download with nothing saying so. The cost is visible
+        rather than silent, which is the point.
+
+        Name only what you read. A file the build itself writes into the input
+        folder -- `elec_demand_TYNDP2024`'s parquet cache is the one shipped
+        example -- would otherwise change the record after every cold build and
+        rerun the processor once for nothing.
 
     main_result : pd.DataFrame or None
         Primary output, set by `run_processor()`. Do not modify directly.
@@ -122,8 +168,9 @@ class BaseProcessor(ABC):
     value_range: tuple = (None, None)
     value_sign: str = "any"
     expects_complete_datetime_axis: bool = True
-    requires_source_data: tuple[str, ...] = ()
+    requires_source_data: dict[str, tuple[str, ...]] | tuple[str, ...] = {}
     reads_source_columns: tuple[str, ...] = ()
+    reads_input_files: tuple[str, ...] = ()
 
     def __init__(self, **kwargs):
         """

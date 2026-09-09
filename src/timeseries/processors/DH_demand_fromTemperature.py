@@ -46,6 +46,12 @@ class DH_demand_fromTemperature(BaseProcessor):
     #: source_workbook_shape.DERIVATION_INPUTS, which a test holds this equal to.
     reads_source_columns = ("twh/year", "constant_share")
 
+    #: demanddata reaches this processor as df_annual_demands, already filtered
+    #: to its demand_grid by ProcessorRunner. These are the columns read from it.
+    requires_source_data = {'demanddata': ('country', 'node', 'twh/year', 'constant_share')}
+
+    reads_input_files = ('Temperature.csv',)
+
     #: Outdoor temperature above which no space heating is needed. A modelling
     #: choice, not a tuning constant.
     BALANCE_POINT_C = 17.0
@@ -319,8 +325,10 @@ class DH_demand_fromTemperature(BaseProcessor):
                        if c is None]
             self.logger.log_status(
                 f"The {self.demand_grid} demand table has no {' or '.join(missing)} "
-                f"column, so its rows cannot be turned into nodes. Columns found: "
-                f"{', '.join(str(c) for c in df.columns)}. "
+                f"column, so its rows cannot be turned into nodes. Columns received: "
+                f"{', '.join(str(c) for c in df.columns)}. A processor receives "
+                f"only the columns it declares in requires_source_data, so check "
+                f"that declaration as well as the workbook. "
                 f"No district heating demand can be built.",
                 level="error",
             )
@@ -330,8 +338,10 @@ class DH_demand_fromTemperature(BaseProcessor):
         if twh_col is None:
             self.logger.log_status(
                 f"The {self.demand_grid} demand table has no 'twh/year' column, so there is "
-                f"no annual energy to distribute. Columns found: "
-                f"{', '.join(str(c) for c in df.columns)}. "
+                f"no annual energy to distribute. Columns received: "
+                f"{', '.join(str(c) for c in df.columns)}. A processor receives "
+                f"only the columns it declares in requires_source_data, so check "
+                f"that declaration as well as the workbook. "
                 f"No district heating demand can be built.",
                 level="error",
             )

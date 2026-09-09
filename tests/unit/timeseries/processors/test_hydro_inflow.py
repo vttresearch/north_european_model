@@ -517,4 +517,4 @@ class TestOutputContract:
         assert hydro_inflow_MAF2019.value_sign == "non_negative"
 
     def test_it_reads_nodedata_to_learn_which_nodes_exist(self):
-        assert hydro_inflow_MAF2019.requires_source_data == ('nodedata',)
+        assert hydro_inflow_MAF2019.requires_source_data == {'nodedata': ('node',)}

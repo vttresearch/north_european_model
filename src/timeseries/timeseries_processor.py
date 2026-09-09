@@ -56,12 +56,15 @@ import src.hash_utils as hash_utils
 import src.GDX_exchange as GDX_exchange
 import src.source_data.source_data_contributions as source_data_contributions
 import src.source_workbook_shape as source_workbook_shape
+import src.infrastructure.processor_input_record as processor_input_record
 from src.infrastructure.cache_manager import CacheManager
 from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.processors.base_processor import declared_source_data
 from src.timeseries.timeseries_helpers import (
     find_incomplete_climate_windows,
     find_time_axis_defects,
     order_timeseries_for_labelling,
+    select_declared_columns,
     update_import_timeseries_inc,
     split_timeseries_to_climate_windows,
     calculate_climatological_forecasts,
@@ -70,6 +73,14 @@ from src.timeseries.timeseries_results import ProcessorOutput, ProcessorRunResul
 from src.utils import summarise
 from src.infrastructure.logger import IterationLogger
 from typing import Optional
+
+
+@dataclass
+class _Prepared:
+    """A processor class, the kwargs it will get, and the record of them."""
+    processor_class: type
+    kwargs: dict
+    record: dict
 
 
 @dataclass
@@ -113,6 +124,24 @@ class ProcessorRunner:
         """
         hash_value = hash_utils.compute_file_hash(processor_file)
         self.cache_manager.save_processor_hash(processor_name, hash_value)
+
+
+    def _narrow(self, frame: pd.DataFrame, columns) -> pd.DataFrame:
+        """The declared columns of a source frame, as its own object.
+
+        ``columns`` of None means the processor named a table but no columns --
+        the older declaration form, and what a processor written elsewhere will
+        use -- so it gets the whole frame. Narrowing is what lets the cache tell
+        an edit this processor reads from one it does not.
+
+        A copy either way. The pipeline's frames outlive the processor and are
+        read again after it returns, by `_report_unknown_dimension_values` and by
+        the Excel builder, so handing over a view would let an in-place edit
+        reach them. Nothing does that today; nothing has ever stopped it.
+        """
+        if columns is None:
+            return frame.copy()
+        return frame[select_declared_columns(frame, columns)].copy()
 
 
     def _warn_on_declaration_breaches(
@@ -302,10 +331,142 @@ class ProcessorRunner:
         """
         self.logger.log_status(message, level=level)
         self._update_processor_hash(processor_file, self.processor_spec["name"])
+        # Forget what this spec was given, so the next run cannot skip it on the
+        # strength of the run before this one. The hash update above says "the
+        # code has not changed"; without this, the input record would say "the
+        # input has not changed" and together they would skip a processor that
+        # is failing.
+        self.cache_manager.forget_processor_input_record(self.processor_spec["human_name"])
         return ProcessorRunResult(
             processor_name=self.processor_spec["name"],
             human_name=self.processor_spec["human_name"],
         )
+
+    def _prepare(self):
+        """Load the processor class and assemble what it will be given.
+
+        Returns ``(prepared, None)`` or ``(None, (message, level))``. It logs
+        nothing: `run` turns a failure into the abandon path that reports it,
+        while `input_record` treats one as "cannot tell" and lets the rerun it
+        forces produce the message once, where it belongs.
+
+        Shared by both so that what the cache compares is built by the same code
+        that hands the processor its input, rather than by a second description
+        of it.
+        """
+        spec = self.processor_spec["spec"]
+        processor_name = self.processor_spec["name"]
+        human_name = self.processor_spec["human_name"]
+        processor_file = Path(self.processor_spec["file"])
+
+        module_spec = importlib.util.spec_from_file_location(processor_name, processor_file)
+        if module_spec is None or module_spec.loader is None:
+            return None, (
+                f"Could not load processor module '{processor_name}' from '{processor_file}'. "
+                f"Check that the file exists and that timeseries_specs names it correctly. "
+                f"No GDX output will be written.", "warn",
+            )
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+
+        if not hasattr(module, processor_name):
+            return None, (
+                f"Processor module '{processor_name}' is missing a class named "
+                f"'{processor_name}'. No GDX output will be written.", "warn",
+            )
+
+        # Resolved here rather than just before instantiation, because the class
+        # carries requires_source_data and that is read before the kwargs are
+        # assembled.
+        ProcessorClass = getattr(module, processor_name)
+        declared_source = declared_source_data(ProcessorClass)
+
+        # input_folder is pre-joined with the spec's input_sub_folder, so that a
+        # processor receives one ready path and needs no knowledge of the base
+        # timeseries directory.
+        ts_base = os.path.join(self.input_folder, "timeseries")
+        processor_kwargs = {
+            "input_folder": os.path.join(ts_base, spec.get("input_sub_folder") or ""),
+            "country_codes": self.config["country_codes"],
+            "start_year": self.config["start_year"],
+            "end_year": self.config["end_year"],
+            "scenario_year": self.scenario_year,
+            "exclude_nodes": self.config["exclude_nodes"],
+            "logger": self.logger,
+            **{k: v for k, v in spec.items() if k != "input_sub_folder"},
+        }
+
+        demand_grid = spec.get("demand_grid")
+        if demand_grid:
+            df_annual_demands = self.source_data_pipeline.df_demanddata
+            if "grid" not in df_annual_demands.columns:
+                return None, (
+                    f"Demand data has not been loaded (df_demanddata has no columns). "
+                    f"Cannot run processor '{human_name}'. Re-run to trigger source "
+                    f"excel import.", "warn",
+                )
+            df_filtered = df_annual_demands[
+                df_annual_demands["grid"].str.lower() == demand_grid.lower()
+            ]
+            if df_filtered.empty:
+                return None, (
+                    f"No demand data found for grid '{demand_grid}'. Skipping processor "
+                    f"'{human_name}'.", "warn",
+                )
+            # demanddata is delivered here rather than by the loop below, under
+            # the name df_annual_demands and already filtered to this grid.
+            # Popped so the loop does not hand over the unfiltered table as well.
+            processor_kwargs["df_annual_demands"] = self._narrow(
+                df_filtered, declared_source.pop("demanddata", None)
+            )
+
+        # The merged source-data frames the processor declared.
+        #
+        # SourceDataPipeline.run() is conditional in build_input_data.py, so the
+        # object can arrive with every frame still at its empty default. An empty
+        # frame means the source excels were skipped this run, not that the user
+        # has no data -- so refuse rather than hand over a frame the processor
+        # would silently build nothing from. CacheManager forces
+        # reimport_source_excels for a declaring processor, making this the
+        # backstop for when that wiring is wrong.
+        for source_name, columns in declared_source.items():
+            frame = getattr(self.source_data_pipeline, f"df_{source_name}", None)
+            if frame is None or frame.empty:
+                return None, (
+                    f"Source data '{source_name}' has not been loaded, which processor "
+                    f"'{human_name}' declares it needs. Cannot run it. Re-run to trigger "
+                    f"source excel import.", "warn",
+                )
+            processor_kwargs[f"df_{source_name}"] = self._narrow(frame, columns)
+
+        # What is recorded is what was handed over, not a description of it, so
+        # the two cannot disagree -- see processor_input_record.
+        record = processor_input_record.build_record(
+            frames={name[len("df_"):]: frame
+                    for name, frame in processor_kwargs.items()
+                    if name.startswith("df_")},
+            scalars={name: value for name, value in processor_kwargs.items()
+                     if not name.startswith("df_") and name != "logger"},
+            files=processor_input_record.file_manifest(
+                processor_kwargs["input_folder"],
+                getattr(ProcessorClass, "reads_input_files", ()),
+            ),
+        )
+        return _Prepared(ProcessorClass, processor_kwargs, record), None
+
+
+    def input_record(self) -> dict | None:
+        """What this spec would be given if it ran now, or None if that cannot
+        be worked out.
+
+        None means rerun: the run will then fail in its own way and say so once.
+        Called by TimeseriesPipeline before deciding, which is why it must not
+        log -- a message here would be printed for a processor that then runs
+        perfectly well.
+        """
+        prepared, _failure = self._prepare()
+        return prepared.record if prepared is not None else None
+
 
     def run(self) -> ProcessorRunResult:
         """
@@ -346,89 +507,21 @@ class ProcessorRunner:
             if pd.Timestamp(f"{yr}-{bb_ts_start}") + pd.Timedelta(bb_ts_length * 24 - 1, unit="h") <= data_end
         ]
 
-        module_spec = importlib.util.spec_from_file_location(processor_name, processor_file)
-        if module_spec is None or module_spec.loader is None:
-            return self._abandon(
-                f"Could not load processor module '{processor_name}' from '{processor_file}'. "
-                f"Check that the file exists and that timeseries_specs names it correctly. "
-                f"No GDX output will be written.",
-                level="warn", processor_file=processor_file,
-            )
-        module = importlib.util.module_from_spec(module_spec)
-        module_spec.loader.exec_module(module)
+        prepared, failure = self._prepare()
+        if failure is not None:
+            return self._abandon(failure[0], level=failure[1], processor_file=processor_file)
 
-        if not hasattr(module, processor_name):
-            return self._abandon(
-                f"Processor module '{processor_name}' is missing a class named '{processor_name}'. "
-                f"No GDX output will be written.",
-                level="warn", processor_file=processor_file,
-            )
-
-        # Resolved here rather than just before instantiation, because the class
-        # carries requires_source_data and that is read before the kwargs are
-        # assembled.
-        ProcessorClass = getattr(module, processor_name)
+        ProcessorClass = prepared.processor_class
+        processor_kwargs = prepared.kwargs
+        input_record = prepared.record
 
         # Recorded so the next run's CacheManager can rerun this processor when
         # one of those source files changes: it cannot import processor modules
         # itself, and reading the declaration back from cache is cheaper than
         # teaching it to.
-        required_source_data = tuple(getattr(ProcessorClass, "requires_source_data", ()) or ())
-        self.cache_manager.save_processor_requirements(processor_name, required_source_data)
-
-        # input_folder is pre-joined with the spec's input_sub_folder, so that a
-        # processor receives one ready path and needs no knowledge of the base
-        # timeseries directory.
-        ts_base = os.path.join(self.input_folder, "timeseries")
-        processor_kwargs = {
-            "input_folder": os.path.join(ts_base, spec.get("input_sub_folder") or ""),
-            "country_codes": country_codes,
-            "start_year": start_year,
-            "end_year": end_year,
-            "scenario_year": self.scenario_year,
-            "exclude_nodes": self.config["exclude_nodes"],
-            "logger": self.logger,
-            **{k: v for k, v in spec.items() if k != "input_sub_folder"},
-        }
-
-        demand_grid = spec.get("demand_grid")
-        if demand_grid:
-            df_annual_demands = self.source_data_pipeline.df_demanddata
-            if "grid" not in df_annual_demands.columns:
-                return self._abandon(
-                    f"Demand data has not been loaded (df_demanddata has no columns). "
-                    f"Cannot run processor '{human_name}'. Re-run to trigger source excel import.",
-                    level="warn", processor_file=processor_file,
-                )
-            df_filtered = df_annual_demands[
-                df_annual_demands["grid"].str.lower() == demand_grid.lower()
-            ]
-            if df_filtered.empty:
-                return self._abandon(
-                    f"No demand data found for grid '{demand_grid}'. Skipping processor '{human_name}'.",
-                    level="warn", processor_file=processor_file,
-                )
-            processor_kwargs["df_annual_demands"] = df_filtered
-
-        # The merged source-data frames the processor declared.
-        #
-        # SourceDataPipeline.run() is conditional in build_input_data.py, so the
-        # object can arrive with every frame still at its empty default. An empty
-        # frame means the source excels were skipped this run, not that the user
-        # has no data -- so refuse rather than hand over a frame the processor
-        # would silently build nothing from. CacheManager forces
-        # reimport_source_excels for a declaring processor, making this the
-        # backstop for when that wiring is wrong.
-        for source_name in required_source_data:
-            frame = getattr(self.source_data_pipeline, f"df_{source_name}", None)
-            if frame is None or frame.empty:
-                return self._abandon(
-                    f"Source data '{source_name}' has not been loaded, which processor "
-                    f"'{human_name}' declares it needs. Cannot run it. Re-run to trigger "
-                    f"source excel import.",
-                    level="warn", processor_file=processor_file,
-                )
-            processor_kwargs[f"df_{source_name}"] = frame
+        self.cache_manager.save_processor_requirements(
+            processor_name, tuple(declared_source_data(ProcessorClass))
+        )
 
         try:
             processor_instance = ProcessorClass(**processor_kwargs)
@@ -727,6 +820,7 @@ class ProcessorRunner:
         self._report_unknown_dimension_values(main_result, group_dim_cols, frames, processor_name)
 
         self._update_processor_hash(processor_file, processor_name)
+        self.cache_manager.save_processor_input_record(human_name, input_record)
 
         self.logger.log_status("Processing completed.", level="info")
 

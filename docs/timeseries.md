@@ -309,29 +309,54 @@ unaffected and its GDX is still written.
 
 ## What is cached, and what forces a rebuild
 
-A processor is rerun when any of five things is true, and otherwise its previous
-output stands:
+**A processor is rerun when the input it is given changed, or its own code
+changed.** Nothing else, and its previous output stands otherwise.
 
-- its `timeseries_specs` entry changed;
-- its own source file changed — the runner hashes it;
-- a source workbook it declared in `requires_source_data` changed;
-- it has a `demand_grid` and the demand workbooks changed;
-- `force_full_rerun = True` at the top of the config.
+The decision is taken in two stages, because the two questions can be answered
+at different times.
 
-The third is the one that surprises. `VRE_PECD` declares
-`requires_source_data = ('unitdata',)` — it reads unitdata to learn which nodes
-have a unit of its flow — so editing one `unitdata` sheet reruns PV and both wind
-processors, and a build that starts three weather processors after a workbook
-edit is doing the right thing rather than the wrong one. `unittypedata` counts as
-`unitdata` here, because `merge_unittypedata_into_unitdata` folds the type-level
-defaults in before a processor ever sees the frame. A processor whose
-requirements have never been recorded — a first run, a cleared cache, one that
-has never completed — is rerun whenever any workbook changed, since unknown
-requirements are not the same as none.
+**What might need rerunning** is `CacheManager`'s, before any data is read. It
+is deliberately generous: a `timeseries_specs` entry that moved, a processor
+file whose hash changed, a source workbook a processor declared, a demand
+workbook when the spec has a `demand_grid`, an input file that is no longer what
+it was, or `force_full_rerun`. A sheet hash cannot tell which *cell* moved, so
+this stage answers "a workbook you read was edited, somewhere".
 
-The build says which of these applied. `CacheManager` prints a run plan before
-the first phase starts: one line for what the run will do, and one naming the
-processors that rerun and why.
+**What actually needs rerunning** is `TimeseriesPipeline`'s, once the source
+data has been read and the input exists. It compares what the processor would be
+handed now against what it was handed last time — the record described below —
+and spares the ones whose input is identical. This is why a cost tweak in
+`unitdata` no longer rebuilds 742 MB of PECD: `VRE_PECD` is given the `flow` and
+node columns of `unitdata` and nothing else, so a `vomCosts` cell is not part of
+its input and cannot move its record.
+
+### The record
+
+Per spec, in `cache/processor_inputs/`, and readable on purpose: it is what the
+build quotes when it says why something reran. It holds the source-data frames
+the processor was handed, narrowed to the columns its `requires_source_data`
+declares; the spec and config values it was called with; and the size and
+modification time of the input files its `reads_input_files` declares.
+
+The recorded frame **is** the delivered frame, not a description of one, so the
+two cannot drift apart. That is the reason `ProcessorRunner` narrows the
+delivery rather than only the comparison.
+
+Two "cannot tell" answers both mean rerun, and both are deliberate:
+
+- **A processor that declares no `reads_input_files` reruns every build.** There
+  is no comparing files nobody named, and a replaced PECD download touches no
+  workbook and no config — so a cache that assumed "no files" would serve the
+  old GDX with nothing saying so.
+- **A processor that names a table without naming columns** gets the whole frame
+  and compares the whole frame. It still works, which is what a processor
+  written outside this repo will do; it just cannot tell an edit it reads from
+  one it does not.
+
+The build says what it found. `CacheManager` prints the run plan before the
+first phase; the timeseries phase then prints which processors it spared and, for
+those it did not, the value that actually changed — `demanddata country=FI
+twh/year 100.0 -> 101.0` rather than "the demand data changed".
 
 What is kept between runs is what each processor *returned*: its GDX files, and
 its contributions to the source data tables exactly as it produced them. Nothing

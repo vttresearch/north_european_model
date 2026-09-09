@@ -43,6 +43,12 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
     #: Bounds are stored energy, which cannot be negative.
     value_sign = "non_negative"
 
+    #: The two nodedata boundary columns this processor writes series for.
+    #: Class attributes so that requires_source_data can name the one it reads
+    #: rather than spelling the column a second time.
+    MAXVARIABLE = 'upwardLimit'
+    MINVARIABLE = 'downwardLimit'
+
     #: Reservoir sizes come from nodedata rather than from a CSV of this
     #: processor's own, which used to hold the same numbers in different units
     #: with nothing able to tell whether the two had drifted apart.
@@ -50,7 +56,14 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
     #: No value_range to go with value_sign: the valid maximum is each node's own
     #: size in MWh, which no single class-level tuple can say. The equivalent
     #: check is on the input instead, where the ratios are read.
-    requires_source_data = ('nodedata',)
+    requires_source_data = {'nodedata': ('node', MAXVARIABLE)}
+
+    #: The Norwegian workbooks are read per country code, so the pattern
+    #: covers them rather than naming three files a config might not use.
+    reads_input_files = (
+        'PECD-hydro-weekly-reservoir-levels.csv',
+        'PEMMDB_*_Hydro Inflow_SOR 20.xlsx',
+    )
 
     #: Stated exceptions to "a run longer than one week needs a decision". Each
     #: entry is a decision taken after looking at the numbers, and the list
@@ -89,8 +102,8 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         self.end_date   = pd.Timestamp(f"{self.end_year}-12-31 23:00")
 
         # Parameters for processing "reservoir" data.
-        self.minvariable = 'downwardLimit'
-        self.maxvariable = 'upwardLimit'
+        self.minvariable = self.MINVARIABLE
+        self.maxvariable = self.MAXVARIABLE
         self.minvariable_header = 'Minimum Reservoir levels at beginning of each week (ratio) 0<=x<=1.0'
         self.maxvariable_header = 'Maximum Reservoir level at beginning of each week (ratio) 0<=x<=1.0'
         self.suffix_reservoir = '_reservoir'
@@ -679,10 +692,14 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         )
 
         # Long format. The grid is the node name's own suffix, which is what the
-        # three suffix_* constants put there.
+        # three suffix_* constants put there. Derived once per node rather than
+        # once per row: the melt turns a few dozen node names into millions of
+        # rows, and splitting each row's string cost 16 million calls.
         result = summary_df.reset_index()
         node_cols = [c for c in result.columns if c not in ('time', 'param_gnBoundaryTypes')]
+        grid_of = dict(zip(node_cols, pd.Series(node_cols).str.split('_').str[1]))
+
         result = result.melt(id_vars=['time', 'param_gnBoundaryTypes'], value_vars=node_cols,
                              var_name='node', value_name='value')
-        result['grid'] = result['node'].str.split('_').str[1]
+        result['grid'] = result['node'].map(grid_of)
         return result[['grid', 'node', 'param_gnBoundaryTypes', 'time', 'value']]

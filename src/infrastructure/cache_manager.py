@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import src.hash_utils as hash_utils
+import src.infrastructure.processor_input_record as processor_input_record
 import src.json_exchange as json_exchange
 import src.utils as utils
 import pickle
@@ -77,6 +78,11 @@ class CacheManager:
         # And which table declares which dimension, which decides what the build
         # reports about a value nothing declares.
         Path("./src/source_workbook_shape.py"),
+        # The shape of the input record. Changing how a cell is canonicalised
+        # makes every stored record incomparable with a new one, so the honest
+        # answer to "did the input change" becomes "cannot tell" for everything
+        # at once -- a full rerun rather than a silent mismatch.
+        Path("./src/infrastructure/processor_input_record.py"),
     ]
     _SOURCE_PIPELINE_FILES = [
         Path("./src/source_data/source_data_pipeline.py"),
@@ -141,6 +147,7 @@ class CacheManager:
         self.processor_hash_file = self.cache_folder / "processor_hashes.json"
         self.processor_requirements_file = self.cache_folder / "processor_requirements.json"
         self.processor_frames_file = self.cache_folder / "processor_frames.pkl"
+        self.processor_inputs_folder = self.cache_folder / "processor_inputs"
 
         self.input_file_folder = Path(input_folder) / "data_files"
         self.config = config
@@ -584,6 +591,54 @@ class CacheManager:
         json_exchange.save_json(self.processor_requirements_file, requirements)
 
 
+    @staticmethod
+    def _input_record_name(human_name: str) -> str:
+        """A spec's key as a filename. Keyed on the spec, not the processor:
+        the three VRE specs share a class and must not share a record."""
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in human_name)
+        return f"{safe}.json"
+
+
+    def save_processor_input_record(self, human_name: str, record: dict) -> None:
+        """Write down what this spec was given, for the next run to compare.
+
+        Written only after a successful run, and removed by
+        ``forget_processor_input_record`` on every failure path, so a record can
+        never describe an input that produced no output.
+        """
+        self.processor_inputs_folder.mkdir(parents=True, exist_ok=True)
+        json_exchange.save_json(
+            self.processor_inputs_folder / self._input_record_name(human_name), record
+        )
+
+
+    def load_processor_input_record(self, human_name: str) -> dict | None:
+        """What this spec was given last time, or None if nothing was recorded.
+
+        None is "cannot tell" and the caller reruns. An unreadable record counts
+        as the same answer rather than as an error: the cheap mistake here is
+        rebuilding, and a corrupt cache file should never stop a build.
+        """
+        path = self.processor_inputs_folder / self._input_record_name(human_name)
+        if not path.exists():
+            return None
+        try:
+            return json_exchange.load_json(path) or None
+        except Exception:
+            return None
+
+
+    def forget_processor_input_record(self, human_name: str) -> None:
+        """Drop this spec's record, so the next run cannot skip it.
+
+        Called from every path that ends without output. Leaving the previous
+        record in place would let a processor that has started failing be
+        skipped on the strength of the run before it.
+        """
+        path = self.processor_inputs_folder / self._input_record_name(human_name)
+        path.unlink(missing_ok=True)
+
+
     def load_processor_requirements(self) -> dict:
         """
         Load the source-data requirements recorded on the previous run.
@@ -698,6 +753,44 @@ class CacheManager:
         self.timeseries_pipeline_code_updated = self._check_source_code_changes(
             self._TS_PIPELINE_FILES, "timeseries_pipeline_hashes.json"
         )
+
+
+    def _detect_processor_input_file_changes(self) -> dict:
+        """Which specs read input files that are no longer what they were.
+
+        The only check that can see a replaced download. A new PECD folder
+        touches no workbook and no config, so every other signal in this class
+        says nothing changed and the build would serve the old GDX -- the
+        failure docs/vre-timeseries.md warns about hardest.
+
+        Answered from the record alone: it carries the folder and the patterns
+        as well as the file list, so this can re-glob without importing a
+        processor module, which this class has no business doing. A spec that
+        declared no input files has nothing to compare and reruns, which is the
+        stated cost of not declaring them.
+
+        Returns:
+            dict[str, str | None]: spec key -> why it reruns, or None.
+        """
+        reasons = {}
+        for human_name in self.config["timeseries_specs"]:
+            record = self.load_processor_input_record(human_name)
+            if record is None:
+                # No record: the other detectors decide. Saying "changed" here
+                # would rerun everything on the first build after this feature
+                # lands, for a reason that would read as a file change.
+                reasons[human_name] = None
+                continue
+            files = record.get("files")
+            if files is None:
+                reasons[human_name] = (
+                    "it does not declare which input files it reads, so it always reruns"
+                )
+            elif not processor_input_record.files_still_match(files):
+                reasons[human_name] = "its input files changed"
+            else:
+                reasons[human_name] = None
+        return reasons
 
 
     def _record_timeseries_reruns(self, reasons: dict) -> None:
@@ -896,6 +989,9 @@ class CacheManager:
 
         # Detect processor code changes and merge into timeseries_changed
         self._record_timeseries_reruns(self._detect_processor_code_changes())
+
+        # And the input files each processor reads, which nothing else sees.
+        self._record_timeseries_reruns(self._detect_processor_input_file_changes())
 
         # Load flags for granular checks
         general_flags = self.load_dict_from_cache("general_flags.json")

@@ -172,6 +172,12 @@ is no longer buried under two countries that are landlocked. Austria's `Offshore
 Wind` row is zero capacity with `method: remove`, so the merged unitdata has no
 such unit at all.
 
+That (flow, node) set is also the whole of what these processors read from the
+source workbooks, and therefore the whole of what the cache compares. Editing a
+cost or a capacity in `unitdata` does not move it, so it no longer rebuilds the
+PECD folders; adding, removing or re-siting a wind or solar unit does. See
+[what is cached](timeseries.md#what-is-cached-and-what-forces-a-rebuild).
+
 ## Zeros and holes
 
 A zero capacity factor is an ordinary statement — midnight for PV, a calm hour

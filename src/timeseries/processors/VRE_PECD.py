@@ -139,7 +139,11 @@ class VRE_PECD(BaseProcessor):
     #: series for every configured country and then warned about the ones PECD
     #: could not fill -- AT00 and CH00 offshore on the shipped data, where the
     #: workbook removes the unit and nobody ordered anything. See _needed_nodes.
-    requires_source_data = ('unitdata',)
+    requires_source_data = {'unitdata': ('flow', 'node', 'node_output*')}
+
+    #: Whatever CSVs input_sub_folder holds -- the download is chosen by
+    #: pointing a spec at a folder, so the file list is not knowable here.
+    reads_input_files = ('*.csv',)
 
     #: How hard both neighbours must be blowing before a flat hour between them
     #: is called a dropout, as a capacity factor. A modelling choice: the source

@@ -29,6 +29,8 @@ directive appended to ``import_timeseries.inc``.
 from pathlib import Path
 import pandas as pd
 import src.source_data.source_data_contributions as source_data_contributions
+import src.infrastructure.processor_input_record as processor_input_record
+import src.utils as utils
 from src.infrastructure.cache_manager import CacheManager
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
@@ -199,6 +201,38 @@ class TimeseriesPipeline:
         return all_demand_grids - processed_grids
 
 
+    def _input_difference(self, processor: dict) -> str | None:
+        """Why this spec would be handed something other than last time, or None.
+
+        The comparison lives here because this is where the input exists: the
+        source data phase has run by the time this phase does, and building the
+        record needs the frames. The processor's own code hash stays with
+        CacheManager, which is the division that was wrong when this pipeline
+        checked file hashes itself.
+
+        A record that cannot be built is "cannot tell", so the processor reruns
+        and reports its own failure properly rather than being skipped on a
+        question nobody could answer.
+        """
+        human_name = processor["human_name"]
+        runner = ProcessorRunner(
+            processor_spec=processor,
+            config=self.config,
+            input_folder=self.input_folder,
+            output_folder=self.output_folder,
+            source_data_pipeline=self.source_data_pipeline,
+            cache_manager=self.cache_manager,
+            scenario_year=self.scenario_year,
+            logger=self.logger,
+        )
+        current = runner.input_record()
+        if current is None:
+            return "its input could not be worked out"
+
+        previous = self.cache_manager.load_processor_input_record(human_name)
+        return processor_input_record.describe_difference(previous, current)
+
+
     def run(self) -> dict[str, pd.DataFrame]:
         """
         Execute the full timeseries processing pipeline.
@@ -228,6 +262,8 @@ class TimeseriesPipeline:
         )
 
         processors_to_rerun = set()
+        spared = {}
+        causes = {}
         self.processors = self._create_enriched_processor_specs()
 
         # timeseries_changed already folds in config changes and code changes.
@@ -237,6 +273,19 @@ class TimeseriesPipeline:
                 self.cache_manager.full_rerun
                 or self.cache_manager.timeseries_changed.get(human_name, False)
             )
+
+            if needs_rerun and not self.cache_manager.full_rerun:
+                # The flag above is the coarse answer -- a workbook was edited,
+                # somewhere. Here is the exact one: what this processor would be
+                # handed now, against what it was handed last time. A cost cell
+                # in unitdata is not in the columns VRE_PECD is given, so its
+                # record does not move and it does not rebuild 742 MB of PECD.
+                difference = self._input_difference(proc)
+                if difference is None:
+                    spared[human_name] = True
+                    needs_rerun = False
+                else:
+                    causes[human_name] = difference
 
             if needs_rerun:
                 processors_to_rerun.add(human_name)
@@ -252,6 +301,25 @@ class TimeseriesPipeline:
             f"{', '.join(sorted(processors_to_rerun)) if processors_to_rerun else 'none'}",
             level="info"
         )
+
+        # Said here rather than in the run plan, because this is the first point
+        # at which it is known. The plan is written before the source data has
+        # been read, so it can only report that a workbook moved.
+        if spared:
+            self.logger.log_status(
+                f"The source data changed but not the part {utils.summarise(sorted(spared))} "
+                f"read, so they keep their previous output.",
+                level="none"
+            )
+        # What actually moved, rather than which workbook was touched. Grouped by
+        # cause so an edit that woke several processors reads as one line.
+        by_cause = {}
+        for name in sorted(causes):
+            by_cause.setdefault(causes[name], []).append(name)
+        for cause, names in by_cause.items():
+            self.logger.log_status(
+                f"{utils.summarise(names)}: {cause}.", level="none"
+            )
 
         # Said once here rather than per processor: every processor reaches the
         # same answer, and a window longer than a year is the usual cause.

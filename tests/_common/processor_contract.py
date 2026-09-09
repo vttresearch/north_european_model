@@ -62,6 +62,7 @@ class StubCacheManager:
         self.processor_hashes: dict[str, str] = {}
         self.processor_frames: dict[str, dict] = {}
         self.processor_requirements: dict[str, tuple] = {}
+        self.processor_input_records: dict[str, dict] = {}
 
     def save_processor_hash(self, processor_name: str, hash_value: str) -> None:
         self.processor_hashes[processor_name] = hash_value
@@ -71,6 +72,15 @@ class StubCacheManager:
 
     def save_processor_requirements(self, processor_name, source_names) -> None:
         self.processor_requirements[processor_name] = tuple(source_names)
+
+    def save_processor_input_record(self, human_name, record) -> None:
+        self.processor_input_records[human_name] = record
+
+    def load_processor_input_record(self, human_name):
+        return self.processor_input_records.get(human_name)
+
+    def forget_processor_input_record(self, human_name) -> None:
+        self.processor_input_records.pop(human_name, None)
 
 
 class StubSourceDataPipeline:
@@ -101,6 +111,7 @@ class FakeRun:
     logger: FakeLogger
     output_folder: Path
     cache_manager: StubCacheManager
+    source_data_pipeline: "StubSourceDataPipeline | None" = None
 
     @property
     def gdx_files(self) -> list[Path]:
@@ -216,6 +227,7 @@ def run_fake_processor(
 
     logger = FakeLogger()
     cache_manager = StubCacheManager(tmp_path / "cache")
+    source_data_pipeline = StubSourceDataPipeline(**(source_data or {}))
     runner = ProcessorRunner(
         processor_spec={
             "human_name": name,
@@ -227,7 +239,7 @@ def run_fake_processor(
         input_folder=tmp_path / "input",
         output_folder=output_folder,
         cache_manager=cache_manager,
-        source_data_pipeline=StubSourceDataPipeline(**(source_data or {})),
+        source_data_pipeline=source_data_pipeline,
         logger=logger,
     )
 
@@ -236,6 +248,7 @@ def run_fake_processor(
         logger=logger,
         output_folder=output_folder,
         cache_manager=cache_manager,
+        source_data_pipeline=source_data_pipeline,
     )
 
 

@@ -11,6 +11,36 @@ import pandas as pd
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
+def select_declared_columns(frame, patterns: Sequence[str]) -> list:
+    """The columns of `frame` a processor's ``requires_source_data`` asks for.
+
+    Patterns are matched case-insensitively against the column names, because
+    every reader of these frames already looks them up that way. A pattern
+    ending in ``*`` matches by prefix: ``node_output*`` has to, since which of
+    ``node_output1..5`` exist is decided at source-load time by
+    ``build_unit_grid_and_node_columns`` from unittypedata's ``grid_output{i}``
+    columns, so a fixed list would be wrong on a different workbook.
+
+    Returns the columns in the frame's own order, spelled as the frame spells
+    them. A pattern matching nothing contributes nothing rather than raising:
+    the processor asking for it will fail on its own terms, saying which column
+    it wanted, and that is a better message than one from here.
+    """
+    if frame is None:
+        return []
+
+    selected = []
+    for column in frame.columns:
+        lowered = str(column).lower()
+        for pattern in patterns:
+            wanted = str(pattern).lower()
+            hit = lowered.startswith(wanted[:-1]) if wanted.endswith("*") else lowered == wanted
+            if hit:
+                selected.append(column)
+                break
+    return selected
+
+
 def nodes_present_in_nodedata(df_nodedata, *, suffixes: Sequence[str]) -> set:
     """Which nodes with these name endings does the model actually contain?
 

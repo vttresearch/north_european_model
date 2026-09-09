@@ -34,6 +34,18 @@ not build and why, and has a documentation page of its own.
 - `is_input_data_dependent` is retired and a timeseries processor is never copied
   between scenario folders; a config still setting it is ignored, and a
   multi-scenario build costs about a minute more per scenario.
+- A processor reruns when the input it is given changed or its own code changed,
+  and the build names the value that changed. Editing a cost in `unitdata` no
+  longer rebuilds the wind and solar timeseries.
+  [docs/timeseries.md](docs/timeseries.md)
+- `requires_source_data` names the columns of each table a processor reads, and
+  a processor receives only those. The older tuple-of-table-names form still
+  works and delivers the whole frame.
+  [docs/timeseries.md](docs/timeseries.md)
+- `reads_input_files` declares the files a processor opens, so a replaced PECD
+  download is noticed. A processor declaring none is rerun every build.
+  [docs/timeseries.md](docs/timeseries.md)
+- A cold build is about a third faster.
 
 ## Source workbooks
 

@@ -537,7 +537,11 @@ class TestDeclarations:
     def test_it_declares_the_sign_of_what_it_produces(self):
         assert DH_demand_fromTemperature.value_sign == "non_positive"
 
-    def test_it_needs_no_source_data(self):
-        # The node cross-check lives in SourceDataPipeline, where it covers every
-        # grid rather than only dheat, so this processor asks for no frame.
-        assert DH_demand_fromTemperature.requires_source_data == ()
+    def test_it_declares_the_demand_columns_it_reads(self):
+        # demanddata arrives as df_annual_demands, already filtered to this
+        # processor's demand_grid, so the declaration names the columns rather
+        # than asking for a second frame. The node cross-check still lives in
+        # SourceDataPipeline, where it covers every grid rather than only dheat.
+        assert DH_demand_fromTemperature.requires_source_data == {
+            "demanddata": ("country", "node", "twh/year", "constant_share")
+        }

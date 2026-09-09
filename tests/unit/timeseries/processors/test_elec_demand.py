@@ -735,10 +735,13 @@ class TestDeclarations:
     def test_it_declares_the_sign_of_what_it_produces(self):
         assert elec_demand_TYNDP2024.value_sign == "non_positive"
 
-    def test_it_needs_no_source_data(self):
-        # Electricity nodes carry no nodedata rows, so there is no frame to ask
-        # for; the demand table arrives via demand_grid instead.
-        assert elec_demand_TYNDP2024.requires_source_data == ()
+    def test_it_declares_the_demand_columns_it_reads(self):
+        # Electricity nodes carry no nodedata rows, so there is no second frame
+        # to ask for. The demand table arrives via demand_grid, already filtered,
+        # and the declaration names the columns read from it.
+        assert elec_demand_TYNDP2024.requires_source_data == {
+            "demanddata": ("country", "node", "twh/year", "constant_share")
+        }
 
     def test_every_scenario_year_reads_the_same_workbook(self):
         """The 2040 workbook is deliberately unused -- see the constant's comment.

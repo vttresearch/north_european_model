@@ -153,8 +153,12 @@ def unknown_dimension_values(
         return []
 
     known = known | {str(v) for v in also_known}
-    # Iterated rather than put through pd.Series: `values` is a categorical
-    # column here and a plain set there, and Series() accepts only one of those.
+    # Reduced to its distinct values first where it can be. `values` is the
+    # processor's whole output column here -- one row per node per hour, so
+    # millions -- and a plain set or list there, which is why the fallback
+    # iterates. A scalar pd.notna per row cost 90 million calls of a build.
+    if hasattr(values, "dropna"):
+        values = values.dropna().unique()
     used = {str(v) for v in values if pd.notna(v)}
     return sorted(used - known)
 
@@ -285,8 +289,10 @@ DERIVATION_INPUTS: dict[str, tuple[str, ...]] = {
     # Written on unittypedata and reaching unitdata through the unittype merge.
     "unittypedata": ("lp/mip",),
     "unitdata": ("lp/mip",),
-    # DH_demand_fromTemperature, elec_demand_TYNDP2024 and
-    # TimeseriesPipeline._create_other_demands read both by name.
+    # DH_demand_fromTemperature and elec_demand_TYNDP2024 read both by name.
+    # TimeseriesPipeline._influx_for_grids_without_a_processor reads twh/year
+    # alone -- a grid reaches it precisely because nothing knows its shape, so
+    # there is no profile for a constant_share to sit beside.
     "demanddata": ("twh/year", "constant_share"),
 }
 

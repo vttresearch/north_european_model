@@ -38,7 +38,12 @@ class hydro_inflow_MAF2019(BaseProcessor):
     #: nodedata answers which hydro nodes the model actually has. Without it this
     #: processor reported on the cross product of every country code and every
     #: hydro type, burying the few nodes that exist. See _model_hydro_nodes.
-    requires_source_data = ('nodedata',)
+    requires_source_data = {'nodedata': ('node',)}
+
+    reads_input_files = (
+        'PECD-hydro-weekly-inflows.csv',
+        'PECD-hydro-daily-ror-generation.csv',
+    )
 
     #: How far a week 52 -> week 1 change may exceed the node's own 95th-percentile
     #: within-year weekly change before the build says so. The seam is one sample
@@ -581,8 +586,13 @@ class hydro_inflow_MAF2019(BaseProcessor):
         self._report_coverage(list(summary_df.columns))
 
         # Long format. The grid is the node name's own suffix, which is what the
-        # three inflow*_suffix constants put there.
+        # three inflow*_suffix constants put there. Derived once per node rather
+        # than once per row: the melt turns a few dozen node names into millions
+        # of rows, and splitting each row's string cost 16 million calls.
+        nodes = list(summary_df.columns)
+        grid_of = dict(zip(nodes, pd.Series(nodes).str.split('_').str[1]))
+
         result = summary_df.reset_index(names='time')
         result = result.melt(id_vars=['time'], var_name='node', value_name='value')
-        result['grid'] = result['node'].str.split('_').str[1]
+        result['grid'] = result['node'].map(grid_of)
         return result[['grid', 'node', 'time', 'value']]

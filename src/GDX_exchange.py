@@ -153,9 +153,15 @@ def prepare_values_for_gdx(
                 blank |= np.append(bad, True)[col.cat.codes.to_numpy()]
             else:
                 # Compare as text: a whitespace-only label is as unusable as an
-                # empty one.
-                as_text = col.astype("string")
-                blank |= col.isna() | as_text.fillna("").str.strip().eq("")
+                # empty one. Decided once per distinct label and mapped back
+                # through the codes, exactly as above -- not every dimension
+                # column arrives categorical, and asking per row cost 47 million
+                # string strips across a build. factorize's -1 sentinel marks
+                # the missing values the categorical branch reads off the codes.
+                codes, uniques = pd.factorize(col, use_na_sentinel=True)
+                as_text = pd.Series(uniques).astype("string")
+                bad = (as_text.isna() | as_text.str.strip().eq("")).to_numpy()
+                blank |= np.append(bad, True)[codes]
         if blank.any():
             examples = ", ".join(
                 str(v) for v in work.loc[blank, present_dims[0]].head(3).tolist()

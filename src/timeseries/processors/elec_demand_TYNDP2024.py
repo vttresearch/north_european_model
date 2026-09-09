@@ -60,6 +60,15 @@ class elec_demand_TYNDP2024(BaseProcessor):
     #: source_workbook_shape.DERIVATION_INPUTS, which a test holds this equal to.
     reads_source_columns = ("twh/year", "constant_share")
 
+    #: demanddata reaches this processor as df_annual_demands, already filtered
+    #: to its demand_grid by ProcessorRunner. These are the columns read from it.
+    requires_source_data = {'demanddata': ('country', 'node', 'twh/year', 'constant_share')}
+
+    #: The workbook only. The parquet beside it is this processor's own cache,
+    #: written into the input folder, so recording it would rerun this spec
+    #: once after every cold build for a file the build itself created.
+    reads_input_files = ('elec_2030_National_Trends.xlsx',)
+
     #: Divisor for the flat share, deliberately the nominal year rather than the
     #: real one. `DH_demand_fromTemperature` uses the identical formula, so the
     #: two have to move together or not at all.
@@ -833,8 +842,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
                        if c is None]
             self.logger.log_status(
                 f"The {self.demand_grid} demand table has no {' or '.join(missing)} "
-                f"column, so its rows cannot be turned into nodes. Columns found: "
-                f"{', '.join(str(c) for c in df.columns)}. "
+                f"column, so its rows cannot be turned into nodes. Columns received: "
+                f"{', '.join(str(c) for c in df.columns)}. A processor receives "
+                f"only the columns it declares in requires_source_data, so check "
+                f"that declaration as well as the workbook. "
                 f"No electricity demand can be built.",
                 level="error",
             )
@@ -844,8 +855,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
         if twh_col is None:
             self.logger.log_status(
                 f"The {self.demand_grid} demand table has no 'twh/year' column, so there "
-                f"is no annual energy to distribute. Columns found: "
-                f"{', '.join(str(c) for c in df.columns)}. "
+                f"is no annual energy to distribute. Columns received: "
+                f"{', '.join(str(c) for c in df.columns)}. A processor receives "
+                f"only the columns it declares in requires_source_data, so check "
+                f"that declaration as well as the workbook. "
                 f"No electricity demand can be built.",
                 level="error",
             )
