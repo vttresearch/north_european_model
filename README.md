@@ -91,9 +91,15 @@ taking part in one, each documenting itself in its module docstring:
   numerically, with `--git-ref` to take the earlier one from git. The way to review a
   deliberate data edit, since a binary `.xlsx` has no readable diff, and the only thing
   that catches a renamed value that a `SUMIF` or `VLOOKUP` still keys on.
+- `input_data_summary.py` — what is in one built folder, written as a `report.md` with
+  its figures into a subfolder of it: capacity, demand, storage, interconnection and
+  prices by country, plus a net-load duration curve and what 35 weather years do to the
+  numbers. Run it after a build to see the scenario you just produced, or hand the
+  folder to a colleague who was not going to run Python.
 - `check_unittype_columns.py` — a folder of workbooks checked against the unittype rule.
 - `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
   compared on values, and as zip archives part by part.
+- `profile_build.py` — a build run under a profiler, reported by phase.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,
@@ -161,9 +167,10 @@ where xx.y.z is your GAMS version. You can find the correct version by opening G
 
 After these steps, you should have the required software and environment ready.
 
-`environment.yml` covers both building the input data and the plotting done by
-`analyze_ts.py`. If you already have a `northEuropeanModel` environment from an earlier
-version, run the update command in the next section to pick up packages added since.
+`environment.yml` covers both building the input data and the figures
+`tools/input_data_summary.py` draws. If you already have a `northEuropeanModel`
+environment from an earlier version, run the update command in the next section to pick
+up packages added since.
 
  
 ## Updating the conda environment

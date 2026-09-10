@@ -27,10 +27,20 @@ the folder is for, and a tool that already exists has already been debugged.
 
 Each tool documents itself in its module docstring: what it checks, what it cannot
 see, and its usage line. They take command-line arguments, print a report, and exit
-0 / 1 so they can gate a loop; they are not imported by `src/` and are not in the
-pytest suite. Reference artifacts they compare against live in the untracked `dev/`,
-so a usage example may name a file the reader does not have.
+0 / 1 so they can gate a loop; they are not imported by `src/` and, with one
+exception noted below, are not in the pytest suite. Reference artifacts they compare
+against live in the untracked `dev/`, so a usage example may name a file the reader
+does not have.
 
+- `input_data_summary.py` -- one built output folder described as a `report.md` with
+  embedded figures, written into a subfolder of it. Country-level capacity, demand,
+  storage, interconnection and prices from `inputData.xlsx`, plus a net-load duration
+  curve and the interannual spread from the per-year GDX files. The only tool that
+  reads a build's GDX, and the only one with tests (`tests/unit/test_input_data_summary.py`,
+  which covers three arithmetic conventions whose failures a reader could not see).
+  It is also the only plotting code in the repo.
+- `profile_build.py` -- a build run under a profiler and reported by phase, with the
+  caveat that pstats cannot be trusted with it.
 - `compare_input_excels.py` -- two `inputData.xlsx` files compared sheet by sheet on
   *values*, read as text. Row order does not matter. Blind to formatting.
 - `compare_workbook_parts.py` -- two `.xlsx` files compared as zip archives, part by

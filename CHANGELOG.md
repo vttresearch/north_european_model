@@ -137,6 +137,17 @@ not build and why, and has a documentation page of its own.
 - A pytest suite, and 20+ latent minor bugs found and fixed with it. Current
   scenarios unimpacted.
 
+## Tools
+
+- `tools/input_data_summary.py` describes one built folder as a `report.md` with
+  embedded figures: capacity, demand, storage, interconnection and prices by country
+  and carrier, a net-load duration curve, and what the climate years do. Replaces the
+  untracked `analyze_ts.py` draft and its ~874 per-node figures.
+- `GDX_exchange.read_gdx_parameter_over_files` reads a parameter across many files on
+  one container, the way the write path already does. Reading a build's 245 per-year
+  files takes seconds rather than minutes; `read_gdx_parameter` builds a container per
+  call and should not be called in a loop.
+
 ## Running the model
 
 - `%init_file%` command line parameter, for switching between schedule and invest.

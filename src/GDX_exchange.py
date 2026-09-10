@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 import numpy as np
 import pandas as pd
 import os
@@ -228,6 +228,10 @@ def read_gdx_parameter(
         DataFrame with one column per domain dimension plus a 'value' column.
         Returns an empty DataFrame if the parameter is missing or has no records.
         Note: GAMS drops zero values; missing keys should be treated as 0 by callers.
+
+    Reading more than a handful of files? Use ``read_gdx_parameter_over_files``
+    instead. This function builds a container per call, and that -- not the GDX
+    parse -- is what a read costs.
     """
     m = new_container(gdx_file)
     if parameter_name not in m.data:
@@ -237,6 +241,78 @@ def read_gdx_parameter(
     if df is None or len(df) == 0:
         return pd.DataFrame()
     return df.reset_index(drop=True)
+
+
+def read_gdx_parameter_over_files(
+    gdx_files: Sequence[str],
+    parameter_name: str,
+    reduce_fn: Callable[[str, pd.DataFrame], Optional[pd.DataFrame]],
+    *,
+    container: Optional["gt.Container"] = None,
+    progress_desc: Optional[str] = None,
+    ) -> pd.DataFrame:
+    """
+    Read one parameter from many GDX files, reducing each before the next is read.
+
+    One container is built for the whole sweep, the way
+    ``write_climate_window_GDX_files`` already builds one for a whole write.
+    Container construction binds gams.transfer to a GAMS installation, and that
+    binding is the entire cost of a read: measured on this repo's own files, a
+    fresh container per file costs 0.3-6 s depending on machine state, while
+    reusing one costs 0.01-0.3 s. A 245-file sweep is seconds rather than
+    minutes. Nothing here read GDX in a loop until a tool wanted to, which is
+    why ``read_gdx_parameter`` never needed this.
+
+    ``reduce_fn(gdx_file, records)`` runs on each file's own records -- up to
+    ~250k rows in this repo -- before the next file is read, so only its (small)
+    return value accumulates. Return None to contribute nothing.
+
+    A file that does not exist, or that has no records for ``parameter_name``,
+    calls ``reduce_fn`` with an empty frame rather than being skipped: whether
+    an absent parameter means "0" or "no data" is the caller's question, not
+    this function's.
+
+    Parameters:
+        gdx_files: paths to read, in order
+        parameter_name: name of the parameter to read from each
+        reduce_fn: called per file, returns the rows to keep or None
+        container: reuse an existing container across several calls; a
+                   container is created when this is None
+        progress_desc: show a tqdm bar with this label
+
+    Returns:
+        The reduce_fn results concatenated, or an empty DataFrame if none
+        produced rows.
+    """
+    m = container if container is not None else new_container()
+    parts = []
+    files = tqdm(gdx_files, desc=progress_desc, unit="file") if progress_desc else gdx_files
+
+    for gdx_file in files:
+        records = pd.DataFrame()
+        # Existence is checked rather than caught: gams.transfer raises a bare
+        # Exception for a missing file, which no narrower except clause can
+        # separate from a real read failure.
+        if Path(gdx_file).is_file():
+            try:
+                m.read(str(gdx_file), [parameter_name])
+            except Exception:
+                # The parameter is not a symbol in this file. Same contract as
+                # read_gdx_parameter: the caller sees an empty frame.
+                pass
+            else:
+                found = m[parameter_name].records if parameter_name in m.data else None
+                if found is not None and len(found):
+                    records = found.reset_index(drop=True)
+            finally:
+                if parameter_name in m.data:
+                    m.removeSymbols([parameter_name])
+
+        reduced = reduce_fn(str(gdx_file), records)
+        if reduced is not None and len(reduced):
+            parts.append(reduced)
+
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
 def write_df_to_gdx(
