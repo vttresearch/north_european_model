@@ -233,3 +233,168 @@ class TestAnInternalCorridorIsCountedOnce:
         per_area, _, _ = summary.transfer_by_area(workbook, zones=True)
         assert per_area.loc["SE01", "cross_border_MW"] == pytest.approx(3300.0)
         assert per_area.loc["SE02", "cross_border_MW"] == pytest.approx(3300.0)
+
+
+class TestStorageEnergyIsPowerTimesItsRatio:
+    """The report once said this energy did not exist. It is 1.06 TWh."""
+
+    def _workbook(self, ratio=4.0, per_state=1.0, active=1):
+        return make_workbook(
+            p_gnu_io=pd.DataFrame({
+                "grid": ["battery4h"],
+                "node": ["DE00_battery4h"],
+                "unit": ["DE00_BatteryDisch4h"],
+                "input_output": ["input"],
+                "isActive": [active],
+                "capacity": [116821.4],
+                "upperLimitCapacityRatio": [ratio],
+            }),
+            p_gn=pd.DataFrame({
+                "grid": ["battery4h"],
+                "node": ["DE00_battery4h"],
+                "energyStoredPerUnitOfState": [per_state],
+            }),
+        )
+
+    def test_energy_is_capacity_times_hours(self):
+        table, facts = summary.storage_energy_from_ratio(self._workbook(), zones=False)
+        assert table["MWh"].sum() == pytest.approx(116821.4 * 4.0)
+        assert facts["by_grid"]["battery4h"]["hours"] == pytest.approx(4.0)
+        assert facts["total_TWh"] == pytest.approx(116821.4 * 4.0 * 1e-6)
+
+    def test_the_state_conversion_is_applied_not_assumed(self):
+        """v_state is only MWh when energyStoredPerUnitOfState says it is."""
+        table, _ = summary.storage_energy_from_ratio(self._workbook(per_state=0.5), zones=False)
+        assert table["MWh"].sum() == pytest.approx(116821.4 * 4.0 * 0.5)
+
+    def test_a_node_that_cannot_be_converted_is_named_not_guessed(self):
+        """Zero is "not set" in this project, so the ratio is not hours here."""
+        table, facts = summary.storage_energy_from_ratio(self._workbook(per_state=0.0), zones=False)
+        assert table.empty
+        assert facts["unconvertible"] == ["DE00_battery4h"]
+        assert facts["total_TWh"] == 0.0
+
+    def test_a_retired_storage_adds_nothing(self):
+        _, facts = summary.storage_energy_from_ratio(self._workbook(active=0), zones=False)
+        assert facts["total_TWh"] == 0.0
+
+    def test_a_label_spanning_two_durations_claims_neither(self):
+        """heatStor, heatStorL and heatStorXL are one label and 10, 100, 450 hours."""
+        facts = {"by_grid": {
+            "heatStor": {"hours_seen": [10.0]},
+            "heatStorL": {"hours_seen": [100.0]},
+            "battery4h": {"hours_seen": [4.0]},
+        }}
+        durations = summary.duration_by_label(facts)
+        assert durations["battery"] == pytest.approx(4.0)
+        assert "heat storage" not in durations
+
+
+class TestTheNoiseFloorComesFromTheNumberOfYears:
+    """A round 0.3 sits below the level 35 points can resolve, which is 0.33."""
+
+    def test_thirty_five_years(self):
+        assert summary.significance_floor(35) == pytest.approx(0.334, abs=0.002)
+
+    def test_fewer_years_need_a_stronger_correlation(self):
+        assert summary.significance_floor(10) > summary.significance_floor(35)
+
+    def test_too_few_points_to_say(self):
+        assert summary.significance_floor(4) is None
+
+
+class TestAMissingMapAssetDegradesRatherThanFails:
+    """A report without geometry is still a report, and says why it has no map."""
+
+    def test_an_absent_asset_says_what_it_wanted(self, tmp_path):
+        shapes = summary.load_zone_shapes(tmp_path / "nothing.geojson")
+        assert not shapes.available
+        assert "prepare_zone_geometry" in shapes.missing
+
+    def test_an_unreadable_asset_is_reported_not_raised(self, tmp_path):
+        broken = tmp_path / "zone_shapes.geojson"
+        broken.write_text("{not json", encoding="utf-8")
+        shapes = summary.load_zone_shapes(broken)
+        assert not shapes.available
+        assert shapes.missing
+
+
+class TestCountryGeometryIsTheUnionOfItsZones:
+    """SE is drawn from SE01..SE04, because the source has no dissolved outline."""
+
+    def _shapes(self):
+        ring = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]
+        return summary.ZoneShapes(by_zone={
+            "SE01": [[ring]], "SE02": [[ring]], "FI00": [[ring]], "PT00": [[ring]],
+        })
+
+    def test_a_country_collects_every_zone_it_has(self):
+        out = summary.shapes_for_areas(self._shapes(), ["SE", "FI"], zones=False)
+        assert len(out["SE"]) == 2
+        assert len(out["FI"]) == 1
+
+    def test_a_zone_level_map_keeps_them_apart(self):
+        out = summary.shapes_for_areas(self._shapes(), ["SE01", "SE02"], zones=True)
+        assert set(out) == {"SE01", "SE02"}
+
+    def test_a_zone_this_build_does_not_report_becomes_context(self):
+        """PT00 is in the asset and in no shipped scenario; it must still be drawn."""
+        context = summary.context_polygons(self._shapes(), ["SE", "FI"], zones=False)
+        assert len(context) == 1
+
+
+class TestResidualDemandByTimescale:
+    """Storage of a given duration removes a swing of that period, and no other.
+
+    The windows have to be nested -- each a whole multiple of the one before --
+    or a longer window can cancel *less* than a shorter one and the difference
+    between them, which is what the figure draws, comes out negative. A calendar
+    month of 730 hours against a week of 168 does exactly that.
+    """
+
+    def _windows(self):
+        import numpy as np
+        return [1] + [w for _, w in summary.DURATION_WINDOWS]
+
+    def _chain(self, values):
+        return [summary._residue(values, w) for w in self._windows()]
+
+    def test_a_flat_deficit_survives_every_window(self):
+        import numpy as np
+        chain = self._chain(np.full(8760, 10.0))
+        assert chain == pytest.approx([87600.0] * len(chain))
+
+    def test_a_daily_swing_is_gone_after_a_day(self):
+        import numpy as np
+        day = np.tile(np.r_[np.full(12, 10.0), np.full(12, -10.0)], 365)
+        chain = self._chain(day)
+        assert chain[0] == pytest.approx(43800.0)
+        assert chain[1] == pytest.approx(0.0)
+
+    def test_a_seasonal_swing_survives_a_week_and_not_a_year(self):
+        import numpy as np
+        half = np.r_[np.full(4380, 10.0), np.full(4380, -10.0)]
+        chain = self._chain(half)
+        assert chain[2] > 0.0            # still there after a week
+        assert chain[-1] == pytest.approx(0.0)
+
+    def test_every_window_cancels_at_least_as_much_as_a_shorter_one(self):
+        """The property the nesting exists to guarantee."""
+        import numpy as np
+        rng = np.random.default_rng(0)
+        for values in (rng.normal(5, 20, 8760),
+                       rng.normal(-5, 40, 8760),
+                       np.r_[np.full(4380, 10.0), np.full(4380, -10.0)]):
+            chain = self._chain(values)
+            for shorter, longer in zip(chain, chain[1:]):
+                assert longer <= shorter + 1e-6
+
+    def test_the_windows_are_nested(self):
+        windows = [w for _, w in summary.DURATION_WINDOWS if w is not None]
+        for finer, coarser in zip(windows, windows[1:]):
+            assert coarser % finer == 0, f"{coarser} is not a multiple of {finer}"
+
+    def test_the_last_window_is_the_whole_series(self):
+        import numpy as np
+        assert summary.DURATION_WINDOWS[-1][1] is None
+        assert summary._residue(np.r_[np.full(10, 1.0), np.full(10, -1.0)], None) == 0.0

@@ -143,6 +143,30 @@ not build and why, and has a documentation page of its own.
   embedded figures: capacity, demand, storage, interconnection and prices by country
   and carrier, a net-load duration curve, and what the climate years do. Replaces the
   untracked `analyze_ts.py` draft and its ~874 per-node figures.
+- The report said battery and heat storage carry no energy capacity anywhere. They
+  carry 1.06 TWh, as `upperLimitCapacityRatio` in `p_gnu_io` -- a duration per grid,
+  now reported as one and shown in the storage figure's legend.
+- The fuel table listed seven of the ten fuels and was sorted by a column the sentence
+  did not name; it now carries all ten, sorted by the one it points at, and says that
+  ordering fuels is not ordering plants.
+- The correlation threshold is the level the number of climate years can resolve,
+  0.33 at 35, rather than a round 0.3 that sits below it.
+- Two maps, from `tools/data/zone_shapes.geojson`: which carriers each area models and
+  whether anything demands them, and the transfer corridors, which replace the capacity
+  heatmap. Built by `tools/prepare_zone_geometry.py` from an ENTSO-E bidding-zone layer
+  (Mopo, CC BY 4.0) plus Natural Earth for Great Britain; zone names are read from the
+  `area codes` sheet rather than hardcoded. No geometry library: `json` and matplotlib
+  patches. A missing asset skips the maps and leaves the report otherwise whole.
+  `--no-neighbours` drops the grey ring of unmodelled countries.
+- The net-load table does the subtraction it promised -- firm, storage and demand
+  response, imports, and what is left of the peak -- adds potential VRE energy as a
+  share of demand, and a system row summed hour by hour rather than peak by peak.
+- A new section decomposes residual demand by the storage duration that could remove
+  it, and a new one counts what the build lets a unit do: no ramp limits, availability
+  1 everywhere, no unit commitment.
+- Carrier figures pair the absolute panel with a normalised one, because six of the
+  sixteen countries were a hairline beside Germany. Raw grid identifiers used as table
+  headers are defined, with their durations derived from the data.
 - `GDX_exchange.read_gdx_parameter_over_files` reads a parameter across many files on
   one container, the way the write path already does. Reading a build's 245 per-year
   files takes seconds rather than minutes; `read_gdx_parameter` builds a container per
