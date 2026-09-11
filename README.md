@@ -100,6 +100,9 @@ taking part in one, each documenting itself in its module docstring:
 - `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
   compared on values, and as zip archives part by part.
 - `profile_build.py` — a build run under a profiler, reported by phase.
+- `prepare_zone_geometry.py` — the two map assets `input_data_summary.py` draws on, one
+  per level, built once by hand from Natural Earth plus an ENTSO-E bidding-zone layer.
+  Run it only to change what the maps look like, never as part of a build.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,

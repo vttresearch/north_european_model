@@ -41,6 +41,12 @@ does not have.
   It is also the only plotting code in the repo.
 - `profile_build.py` -- a build run under a profiler and reported by phase, with the
   caveat that pstats cannot be trusted with it.
+- `prepare_zone_geometry.py` -- the two map assets `input_data_summary.py` draws,
+  `tools/data/country_shapes.geojson` and `zone_shapes.geojson`, built by hand and
+  committed. Never run by a build. Every border comes from Natural Earth; the
+  ENTSO-E layer only says which zone a piece of land belongs to, its own Norway
+  outline being 31% sea. Its sources live in the untracked `example_maps/`, so the
+  committed assets are the only copy anyone else has.
 - `compare_input_excels.py` -- two `inputData.xlsx` files compared sheet by sheet on
   *values*, read as text. Row order does not matter. Blind to formatting.
 - `compare_workbook_parts.py` -- two `.xlsx` files compared as zip archives, part by

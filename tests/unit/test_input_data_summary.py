@@ -319,28 +319,46 @@ class TestAMissingMapAssetDegradesRatherThanFails:
         assert shapes.missing
 
 
-class TestCountryGeometryIsTheUnionOfItsZones:
-    """SE is drawn from SE01..SE04, because the source has no dissolved outline."""
+class TestAnAreaCollectsEveryFeatureThatMapsToIt:
+    """Each level has its own asset, and the same lookup serves both.
 
-    def _shapes(self):
-        ring = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]
+    A two-letter country code is its own ``country_of``, so a country feature
+    keyed ``SE`` and a zone feature keyed ``SE01`` both land under ``SE`` on a
+    country map. The tool no longer draws a country from its zones' outlines --
+    the country asset carries the dissolved border -- but the lookup that finds
+    them has not changed, and this is what pins it.
+    """
+
+    RING = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]
+
+    def _zone_level(self):
         return summary.ZoneShapes(by_zone={
-            "SE01": [[ring]], "SE02": [[ring]], "FI00": [[ring]], "PT00": [[ring]],
+            "SE01": [[self.RING]], "SE02": [[self.RING]],
+            "FI00": [[self.RING]], "PT00": [[self.RING]],
         })
 
-    def test_a_country_collects_every_zone_it_has(self):
-        out = summary.shapes_for_areas(self._shapes(), ["SE", "FI"], zones=False)
-        assert len(out["SE"]) == 2
-        assert len(out["FI"]) == 1
+    def _country_level(self):
+        return summary.ZoneShapes(by_zone={
+            "SE": [[self.RING]], "FI": [[self.RING]], "PT": [[self.RING]],
+        })
 
-    def test_a_zone_level_map_keeps_them_apart(self):
-        out = summary.shapes_for_areas(self._shapes(), ["SE01", "SE02"], zones=True)
+    def test_a_country_is_one_feature(self):
+        out = summary.shapes_for_areas(self._country_level(), ["SE", "FI"], zones=False)
+        assert len(out["SE"]) == 1 and len(out["FI"]) == 1
+
+    def test_a_zone_level_map_keeps_the_zones_apart(self):
+        out = summary.shapes_for_areas(self._zone_level(), ["SE01", "SE02"], zones=True)
         assert set(out) == {"SE01", "SE02"}
 
-    def test_a_zone_this_build_does_not_report_becomes_context(self):
-        """PT00 is in the asset and in no shipped scenario; it must still be drawn."""
-        context = summary.context_polygons(self._shapes(), ["SE", "FI"], zones=False)
+    def test_an_area_this_build_does_not_report_becomes_context(self):
+        """PT is in the asset and in no shipped scenario; it must still be drawn."""
+        context = summary.context_polygons(self._country_level(), ["SE", "FI"], zones=False)
         assert len(context) == 1
+
+    def test_both_assets_are_named(self):
+        """The maps use both at once: zone fills, country borders over them."""
+        assert summary.ZONE_ASSET.name == "zone_shapes.geojson"
+        assert summary.COUNTRY_ASSET.name == "country_shapes.geojson"
 
 
 class TestResidualDemandByTimescale:
@@ -398,3 +416,91 @@ class TestResidualDemandByTimescale:
         import numpy as np
         assert summary.DURATION_WINDOWS[-1][1] is None
         assert summary._residue(np.r_[np.full(10, 1.0), np.full(10, -1.0)], None) == 0.0
+
+
+class TestDemandCountsBothRoutesWithoutDoubleCounting:
+    """A constant influx and a timeseries are alternatives, never a sum.
+
+    `p_gn`'s `influx` is "overridden by time series if provided", and the model
+    gates it on `not gn_influxTs(grid, node)` in six places. Adding them would
+    double-count every node carrying both, in every table at once, and the
+    result would look entirely plausible. Industrial steam is 495 TWh/yr of
+    constant in the shipped scenarios -- more than district heat -- so reading
+    only the `ts_influx` families misses a carrier whole.
+    """
+
+    def _steam_workbook(self, influx=(-1000.0, -500.0)):
+        return make_workbook(
+            p_gn=pd.DataFrame({
+                "grid": ["steam", "steam"],
+                "node": ["FI00_steam_industry", "SE03_steam_industry"],
+                "influx": list(influx),
+            }),
+        )
+
+    def test_a_constant_becomes_annual_energy(self):
+        out = summary.constant_demand(self._steam_workbook(), "steam", zones=False)
+        expected = 1000.0 * summary.HOURS_PER_YEAR * summary.MWH_TO_TWH
+        assert out.set_index("area").loc["FI", "mean"] == pytest.approx(expected)
+
+    def test_demand_is_positive_though_influx_is_negative(self):
+        out = summary.constant_demand(self._steam_workbook(), "steam", zones=False)
+        assert (out["mean"] > 0).all()
+
+    def test_an_area_written_as_exactly_zero_is_not_an_area_with_demand(self):
+        """Two Danish steam nodes are written 0.00; they are not steam areas."""
+        workbook = self._steam_workbook(influx=(-1000.0, 0.0))
+        out = summary.constant_demand(workbook, "steam", zones=False)
+        assert set(out["area"]) == {"FI"}
+
+    def test_inflow_at_one_node_never_cancels_demand_at_another(self):
+        """Only the outflux is summed. A net would be a number that is neither."""
+        workbook = self._steam_workbook(influx=(-1000.0, 900.0))
+        out = summary.constant_demand(workbook, "steam", zones=False)
+        expected = 1000.0 * summary.HOURS_PER_YEAR * summary.MWH_TO_TWH
+        assert out["mean"].sum() == pytest.approx(expected)
+
+    def test_a_timeseries_wins_and_is_not_added_to(self):
+        workbook = make_workbook(p_gn=pd.DataFrame({
+            "grid": ["elec"], "node": ["FI00_elec"], "influx": [-1000.0],
+        }))
+        timeseries = summary.Timeseries(
+            years=[1995], areas=["FI"], hours_per_year=8760,
+            annual=pd.DataFrame({"key": ["demand_elec"], "area": ["FI"],
+                                 "year": [1995], "TWh": [80.0]}),
+        )
+        frame, is_constant = summary.carrier_demand(workbook, timeseries, "elec", zones=False)
+        assert not is_constant
+        assert frame.set_index("area").loc["FI", "mean"] == pytest.approx(80.0)
+
+    def test_the_constant_survives_a_run_that_read_no_gdx(self):
+        """It is a workbook fact, so no GAMS install is needed to report it."""
+        nothing = summary.Timeseries(skipped="gamsapi is not importable")
+        frame, is_constant = summary.carrier_demand(
+            self._steam_workbook(), nothing, "steam", zones=False)
+        assert is_constant and not frame.empty
+
+
+class TestTheCarrierMapOnlyColoursWhatIsDemanded:
+    """A map that shades an area for a carrier nothing draws on claims it uses it."""
+
+    def _presence(self, **states):
+        return pd.DataFrame(states, index=["FI00"]).reindex(
+            columns=[g for g, _, _ in summary.CARRIERS], fill_value=summary.PRESENCE_ABSENT)
+
+    def test_a_node_with_no_demand_does_not_tint(self):
+        presence = self._presence(elec=[summary.PRESENCE_DEMAND], H2=[summary.PRESENCE_NODE])
+        demanded = [c for c in summary.MAP_CARRIERS
+                    if presence.loc["FI00", c] == summary.PRESENCE_DEMAND]
+        assert demanded == ["elec"]
+
+    def test_steam_is_in_the_report_and_off_the_map(self):
+        assert "steam" in [g for g, _, _ in summary.CARRIERS]
+        assert "steam" not in summary.MAP_CARRIERS
+
+    def test_the_palette_covers_every_combination_the_map_can_draw(self):
+        """_blend_for falls back to a grey, which would hide a missing entry."""
+        from itertools import combinations
+        for size in range(1, len(summary.MAP_CARRIERS) + 1):
+            for combination in combinations(summary.MAP_CARRIERS, size):
+                assert frozenset(combination) in summary.CARRIER_BLEND

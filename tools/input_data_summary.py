@@ -1,14 +1,14 @@
 """
 input_data_summary.py -- what is in one built input-data folder, as a report.
 
-Reads <built_folder>/inputData.xlsx and, unless told not to, the per-climate-year
-ts_influx_*, ts_cf_* and ts_node_hydro_storage_limits_* GDX files beside it.
+Reads <built_folder>/inputData.xlsx and the per-climate-year ts_influx_*, ts_cf_*
+and ts_node_hydro_storage_limits_* GDX files beside it.
 Writes one self-contained report.md, with its figures, into a subfolder of the
 built folder -- so a colleague can be handed a folder and read it.
 
 Usage:
     python tools/input_data_summary.py <built_folder> [--zones]
-        [--no-timeseries] [--no-neighbours] [--out-subdir NAME]
+        [--no-neighbours] [--out-subdir NAME]
 
 Examples:
     python tools/input_data_summary.py input_ObservedTrends_2030
@@ -17,18 +17,20 @@ Examples:
 
 What it shows
 -------------
-Sixteen countries by default, the 22 bidding zones with --zones. A map of which
-carriers each area models and whether anything demands them; then one section
-per energy carrier -- electricity, district heat, hydrogen -- each with
-production capacity, consumption capacity and annual demand. Then storage,
+Countries by default, the bidding zones with --zones. A map of which carriers
+each area has demand for; then one section per energy carrier -- electricity,
+district heat, hydrogen, industrial steam -- each with production capacity,
+consumption capacity and annual demand. Then storage,
 interconnection as a corridor map, a net-load duration curve, how much 35
 weather years move the numbers, and fuel, CO2 and emission prices.
 
-The two maps need ``tools/data/zone_shapes.geojson``, which
-``tools/prepare_zone_geometry.py`` writes. Without it the rest of the report is
-unaffected and the map panels say what they wanted -- the same documented
-degradation as a missing GAMS install. Nothing here imports a geometry library:
-the asset is read with ``json`` and drawn with matplotlib patches.
+The two maps need both ``tools/data/zone_shapes.geojson`` and
+``country_shapes.geojson``, which ``tools/prepare_zone_geometry.py`` writes: the
+zones are filled and the country borders drawn over them. Without them the rest
+of the report is unaffected and the map panels say
+what they wanted -- the same documented degradation as a missing GAMS install.
+Nothing here imports a geometry library: the asset is read with ``json`` and
+drawn with matplotlib patches.
 
 A carrier with no data still gets its section, saying so. That is deliberate:
 during a data-adding phase an empty panel is the thing worth seeing, and a
@@ -41,9 +43,7 @@ Nothing below zone level -- there is no per-node figure at any flag setting. No
 none is invented, and zone and country are the only two levels offered.
 
 Where anything is inside an area. The maps place a zone's whole capacity at one
-point, because the build states no location below the zone, and a country map
-is drawn from its zones' outlines rather than a dissolved border -- adjacent
-zones in the source do not share vertices, so a seam would have to be guessed.
+point, because the build states no location below the zone.
 
 Whether a unit can actually run: availability and the efficiency curve are read
 but never judged, because every unit in the shipped scenarios has availability
@@ -59,7 +59,7 @@ report counts how many fell outside the groups -- watch that count, not this
 paragraph, for a unittype the grouping has not met yet.
 
 Exit code is 0 when report.md was written -- including when the timeseries
-sections were skipped by request or for want of a GAMS install, which is
+sections were skipped for want of a GAMS install or a GDX file, which is
 documented degradation rather than failure -- 1 when inputData.xlsx is there but
 unreadable, and 2 when the folder or the workbook is missing, so it can gate a
 loop.
@@ -69,7 +69,7 @@ import argparse
 import json
 import math
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -139,13 +139,19 @@ FUEL_GRID_LABELS = {
 HYDRO_INFLOW_GRIDS_FALLBACK = frozenset({"psOpen", "reservoir", "ror"})
 
 #: Carrier sections, in report order. A carrier absent from a build still gets
-#: its section. 'steam' is deliberately not here: it is reported as one line,
-#: because it carries no timeseries and has never been scenario-differentiated.
+#: its section.
 CARRIERS = [
     ("elec", "Electricity", "elec"),
     ("dheat", "District heat", "dheat"),
     ("H2", "Hydrogen", "h2"),
+    ("steam", "Industrial steam", "steam"),
 ]
+
+#: The carriers the map tints, which is not all of them. Three carriers make
+#: seven combinations and a fill colour can carry that; a fourth makes fifteen
+#: and it cannot. Steam is the one left off -- it is site-local, it has no
+#: weather variation, and its story is a table rather than a colour.
+MAP_CARRIERS = ("elec", "dheat", "H2")
 
 #: Which ts_influx family carries each carrier's demand. A carrier missing here
 #: has no hourly demand in the build.
@@ -245,12 +251,22 @@ FIG_WIDTH_IN = 9.0
 #: figure that is not sized from its row count.
 MAP_HEIGHT_IN = 9.5
 
-#: Written by tools/prepare_zone_geometry.py. Absent is not an error: the maps
-#: say what they wanted and the rest of the report is unaffected.
-MAP_ASSET = Path(__file__).resolve().parent / "data" / "zone_shapes.geojson"
+#: Written by tools/prepare_zone_geometry.py, one per level. Absent is not an
+#: error: the maps say what they wanted and the rest of the report is
+#: unaffected. Both are cut from the same land, so flipping between the two
+#: levels does not move a coastline -- bar a fraction of a pixel on the
+#: Norwegian and Swedish mainlands, which are the only ones cut on a grid.
+ZONE_ASSET = Path(__file__).resolve().parent / "data" / "zone_shapes.geojson"
+COUNTRY_ASSET = Path(__file__).resolve().parent / "data" / "country_shapes.geojson"
 
 NEIGHBOUR_FILL = "#efefef"
 NEIGHBOUR_EDGE = "#d8d8d8"
+
+#: Country borders over the zone fills. Heavy enough to read as the senior
+#: boundary against the hairline white seams between zones, dark enough to show
+#: on both the grey ring and the carrier fills.
+COUNTRY_EDGE = "#4a4a57"
+COUNTRY_EDGE_WIDTH = 1.1
 
 #: What a carrier is doing in an area. Kept as words rather than booleans
 #: because "a node exists but nothing demands it" is a third thing, and it is
@@ -260,12 +276,6 @@ PRESENCE_NODE = "node"
 PRESENCE_DEMAND = "demand"
 PRESENCE_UNKNOWN = "unknown"
 
-PRESENCE_STYLE = {
-    PRESENCE_DEMAND: ("#33333a", ""),
-    PRESENCE_NODE: ("#ffffff", "///"),
-    PRESENCE_UNKNOWN: ("#b9b9c0", ""),
-    PRESENCE_ABSENT: ("#ffffff", ""),
-}
 PRESENCE_LABEL = {
     PRESENCE_DEMAND: "modelled, has demand",
     PRESENCE_NODE: "modelled, nothing demands it",
@@ -699,18 +709,33 @@ def capacity_by_area(classification: Classification, carrier: str, zones: bool) 
     return table[ordered + extra]
 
 
-def steam_demand_twh(workbook: Workbook, carrier: str = "steam") -> float:
-    """Constant influx carried in the workbook, as annual energy.
+def constant_demand(workbook: Workbook, carrier: str, zones: bool) -> pd.DataFrame:
+    """A carrier's constant demand per area, in the shape ``annual_range`` returns.
 
-    Demand grids with no timeseries processor get a flat MWh/h instead of an
-    hourly series, stored negative like every other demand.
+    Demand with no timeseries processor of its own is written as a flat MWh/h in
+    ``p_gn``'s ``influx`` column instead of an hourly series, stored negative the
+    way Backbone consumes it. Industrial steam is the whole of it in the shipped
+    scenarios -- 495 TWh/yr, more than district heat -- and reading only the
+    ``ts_influx`` families misses every watt of it.
+
+    Only the outflux is summed, never the net. A grid with inflow at one node and
+    demand at another would otherwise cancel down to a number that is neither.
     """
     gn = workbook.p_gn
-    if gn.empty or "grid" not in gn.columns:
-        return 0.0
-    rows = gn[gn["grid"].astype(str) == carrier]
+    if gn.empty or "grid" not in gn.columns or "influx" not in gn.columns:
+        return pd.DataFrame()
+    rows = gn[gn["grid"].astype(str) == carrier].copy()
+    if rows.empty:
+        return pd.DataFrame()
     influx = col_or(rows, "influx", 0.0).fillna(0.0)
-    return float(-influx.sum() * 8760 * MWH_TO_TWH)
+    rows["TWh"] = (-influx).clip(lower=0.0) * HOURS_PER_YEAR * MWH_TO_TWH
+    rows["area"] = [area_of(n, zones) for n in rows["node"]]
+    per_area = rows.groupby("area", observed=True)["TWh"].sum()
+    per_area = per_area[per_area > 0]
+    if per_area.empty:
+        return pd.DataFrame()
+    return (pd.DataFrame({"area": per_area.index, "mean": per_area.to_numpy()})
+            .sort_values("mean", ascending=False))
 
 
 def transfer_by_area(workbook: Workbook, zones: bool) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
@@ -1472,6 +1497,39 @@ def _read_storage_limit(container, folder: Path) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def roll_up_to_countries(timeseries: Timeseries) -> Timeseries:
+    """The same series summed from bidding zones to countries.
+
+    The GDX files are always read at zone level, because that is the finest
+    grain the build writes and a country is exactly the sum of its zones. A
+    country report rolls them up here rather than re-reading 35 climate years
+    at the coarser grain, which also lets the maps stay per zone while the
+    tables are per country.
+
+    ``node_cf_mean`` and ``storage_limit`` are keyed by node, not area, so they
+    pass through untouched.
+    """
+    if not timeseries.areas:
+        return timeseries
+    countries = sorted({country_of(area) for area in timeseries.areas})
+    index = {country: position for position, country in enumerate(countries)}
+
+    hourly: Dict[str, np.ndarray] = {}
+    for key, array in timeseries.hourly.items():
+        rolled = np.zeros((array.shape[0], len(countries)), dtype=array.dtype)
+        for column, area in enumerate(timeseries.areas):
+            rolled[:, index[country_of(area)]] += array[:, column]
+        hourly[key] = rolled
+
+    annual = timeseries.annual
+    if not annual.empty:
+        annual = (annual.assign(area=[country_of(a) for a in annual["area"]])
+                  .groupby(["key", "area", "year"], observed=True)["TWh"]
+                  .sum().reset_index())
+
+    return replace(timeseries, areas=countries, hourly=hourly, annual=annual)
+
+
 def netload_by_area(timeseries: Timeseries) -> Dict[str, np.ndarray]:
     """Demand minus wind and solar, per area, every climate year pooled.
 
@@ -1608,6 +1666,25 @@ def annual_range(timeseries: Timeseries, key: str) -> pd.DataFrame:
 # Figures
 # ============================================================================
 
+def carrier_demand(workbook: Workbook, timeseries: Timeseries, carrier: str,
+                   zones: bool) -> Tuple[pd.DataFrame, bool]:
+    """``(per-area annual demand, whether it is a constant)`` for one carrier.
+
+    The two sources are never added. ``p_gn``'s constant is *overridden* by a
+    timeseries wherever one exists -- the model gates it on
+    ``not gn_influxTs(grid, node)`` in six places -- so summing them would
+    double-count every node carrying both, in every table at once.
+
+    The constant is a workbook fact, so it survives a run that could not read a
+    single GDX file. That is why the two meet here rather than inside
+    ``read_timeseries``.
+    """
+    hourly = annual_range(timeseries, f"demand_{carrier}")
+    if not hourly.empty:
+        return hourly, False
+    return constant_demand(workbook, carrier, zones), True
+
+
 def _style_for(label: str) -> Tuple[str, str]:
     return TECH_STYLE.get(label, TECH_STYLE[OTHER_LABEL])
 
@@ -1715,7 +1792,7 @@ def load_zone_shapes(path: Path = None) -> ZoneShapes:
     A missing asset is documented degradation, not failure: the rest of the
     report is unaffected and the maps say what they wanted.
     """
-    path = path or MAP_ASSET
+    path = path or ZONE_ASSET
     if not path.exists():
         return ZoneShapes(missing=f"no map asset at {path.name}; run tools/prepare_zone_geometry.py")
     try:
@@ -1788,13 +1865,11 @@ def context_polygons(shapes: ZoneShapes, drawn: Sequence[str], zones: bool) -> L
 
 
 def shapes_for_areas(shapes: ZoneShapes, areas: Sequence[str], zones: bool) -> Dict[str, List]:
-    """Geometry per reported area -- one zone, or every zone of a country.
+    """Geometry per reported area.
 
-    Country-level maps are drawn from the same zone polygons rather than a
-    dissolved outline. Adjacent zones in the source do not share vertices, so
-    a union without a geometry library would have to invent the seam; drawing
-    the parts in one colour shows the same shape and says what the model
-    actually solves.
+    Each level has its own asset, and the key in it -- ``SE01`` or ``SE`` -- is
+    already the area this reports on, so the same lookup serves both: a
+    two-letter country code is its own ``country_of``.
     """
     out: Dict[str, List] = {}
     for zone, polygons in shapes.by_zone.items():
@@ -1822,22 +1897,24 @@ def carrier_presence(workbook: Workbook, timeseries: Timeseries, zones: bool) ->
         return states
 
     demanded: Dict[str, set] = {}
-    if timeseries.available and not timeseries.annual.empty:
-        annual = timeseries.annual
-        for carrier in states.columns:
-            key = f"demand_{carrier}"
-            rows = annual[(annual["key"] == key) & (annual["TWh"].abs() > 0)]
-            demanded[carrier] = set(rows["area"].astype(str))
+    for carrier in states.columns:
+        frame, _ = carrier_demand(workbook, timeseries, carrier, zones)
+        if not frame.empty:
+            demanded[carrier] = set(frame["area"].astype(str))
 
     for carrier in states.columns:
+        # Unknown only where the answer was in a file that could not be read. A
+        # carrier whose demand is a constant in the workbook is known either way,
+        # and one with no demand anywhere is known to have none.
+        unreadable = carrier in DEMAND_FAMILY and not timeseries.available
         nodes = gn.loc[gn["grid"].astype(str) == carrier, "node"].astype(str)
         for area in {area_of(n, zones) for n in nodes}:
             if area not in states.index:
                 continue
-            if not timeseries.available:
-                states.loc[area, carrier] = PRESENCE_UNKNOWN
-            elif area in demanded.get(carrier, set()):
+            if area in demanded.get(carrier, set()):
                 states.loc[area, carrier] = PRESENCE_DEMAND
+            elif unreadable:
+                states.loc[area, carrier] = PRESENCE_UNKNOWN
             else:
                 states.loc[area, carrier] = PRESENCE_NODE
     return states
@@ -1857,19 +1934,76 @@ def _blend_for(present: Sequence[str]) -> str:
     return CARRIER_BLEND.get(frozenset(present), CARRIER_BLEND_UNKNOWN)
 
 
+def _draw_context(ax, shapes: ZoneShapes, drawn: Sequence[str], neighbours: bool) -> None:
+    """The grey ring behind everything: unmodelled countries, and zones this run skips."""
+    if not neighbours:
+        return
+    context = context_polygons(shapes, list(drawn), True)
+    patches = [p for p in (_polygon_path(poly) for poly in context) if p]
+    ax.add_collection(PatchCollection(
+        [PathPatch(p) for p in patches],
+        facecolor=NEIGHBOUR_FILL, edgecolor=NEIGHBOUR_EDGE, linewidth=0.4, zorder=1))
+
+
+def _draw_country_outlines(ax, countries: ZoneShapes, drawn: Sequence[str]) -> None:
+    """Country borders over the zone fills, so both levels read at once.
+
+    The maps are always drawn per bidding zone, which on a country report would
+    otherwise leave the reader working out which zones belong together. A
+    country's zones cover exactly its country outline, so this sits on the
+    seams rather than near them.
+    """
+    if not countries.available:
+        return
+    wanted = sorted({country_of(area) for area in drawn})
+    geometry = shapes_for_areas(countries, wanted, False)
+    paths = [p for polygons in geometry.values()
+             for p in (_polygon_path(poly) for poly in polygons) if p]
+    if not paths:
+        return
+    ax.add_collection(PatchCollection(
+        [PathPatch(p) for p in paths],
+        facecolor="none", edgecolor=COUNTRY_EDGE, linewidth=COUNTRY_EDGE_WIDTH, zorder=3))
+
+
+def _label_geometry(shapes: ZoneShapes, countries: ZoneShapes,
+                    areas: Sequence[str], zones: bool) -> Dict[str, List]:
+    """Where to write the names: one per zone with --zones, one per country without."""
+    if zones:
+        return shapes_for_areas(shapes, list(areas), True)
+    return shapes_for_areas(countries, sorted({country_of(a) for a in areas}), False)
+
+
+def _draw_area_labels(ax, geometry: Dict[str, List]) -> None:
+    """Name each area at its own centroid, in white-stroked type over the fill."""
+    for area, polygons in geometry.items():
+        centre = _polygons_centroid(polygons)
+        if centre is None:
+            continue
+        ax.text(centre[0], centre[1], area, fontsize=7.5, ha="center", va="center",
+                zorder=5, color="#1a1a1f",
+                path_effects=[pe.withStroke(linewidth=2.2, foreground="#ffffff")])
+
+
 def figure_carrier_map(
     out_dir: Path,
     shapes: ZoneShapes,
+    countries: ZoneShapes,
     presence: pd.DataFrame,
     zones: bool,
     neighbours: bool = True,
     ) -> str:
-    """Which carriers each area models, and whether anything demands them.
+    """Which carriers each area models and something actually demands.
 
-    The fill answers the first question and a three-cell chip the second. The
-    chip is what makes the figure worth drawing: in a build where every zone has
-    a hydrogen node, the fills are nearly uniform and the chips are hollow
-    everywhere, which is the whole finding.
+    Always drawn per bidding zone, whatever level the tables use, with country
+    borders over the top -- the zones are the thing the model solves and the
+    borders are how a reader finds them.
+
+    The fill counts a carrier only where something demands it. A carrier with a
+    node and no sink does not tint anything, because a map that shades an area
+    for a carrier nothing draws on is claiming the area uses it. What that
+    leaves out is in the table under this figure, which is a better place for it
+    than three unreadable boxes.
     """
     path = out_dir / "fig_carrier_map.png"
     if not shapes.available or presence.empty:
@@ -1877,24 +2011,20 @@ def figure_carrier_map(
         _empty_panel(ax, shapes.missing or "No nodes to map")
         return _finish(fig, path)
 
-    geometry = shapes_for_areas(shapes, list(presence.index), zones)
+    geometry = shapes_for_areas(shapes, list(presence.index), True)
     fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, MAP_HEIGHT_IN))
 
-    if neighbours:
-        context = context_polygons(shapes, list(presence.index), zones)
-        patches = [p for p in (_polygon_path(poly) for poly in context) if p]
-        ax.add_collection(PatchCollection(
-            [PathPatch(p) for p in patches],
-            facecolor=NEIGHBOUR_FILL, edgecolor=NEIGHBOUR_EDGE, linewidth=0.4, zorder=1))
-
+    _draw_context(ax, shapes, list(presence.index), neighbours)
     for area, polygons in geometry.items():
-        present = [c for c in presence.columns if presence.loc[area, c] != PRESENCE_ABSENT]
+        demanded = [c for c in MAP_CARRIERS
+                    if c in presence.columns and presence.loc[area, c] == PRESENCE_DEMAND]
         patches = [p for p in (_polygon_path(poly) for poly in polygons) if p]
         ax.add_collection(PatchCollection(
             [PathPatch(p) for p in patches],
-            facecolor=_blend_for(present), edgecolor="#ffffff", linewidth=0.5, zorder=2))
+            facecolor=_blend_for(demanded), edgecolor="#ffffff", linewidth=0.5, zorder=2))
 
-    _draw_area_chips(ax, geometry, presence)
+    _draw_country_outlines(ax, countries, list(presence.index))
+    _draw_area_labels(ax, _label_geometry(shapes, countries, list(presence.index), zones))
     _finish_map(ax)
     _carrier_map_legend(ax, presence)
     ax.set_title(_carrier_map_claim(presence), fontsize=10)
@@ -1913,37 +2043,9 @@ def _carrier_map_claim(presence: pd.DataFrame) -> str:
         modelled = int((presence[carrier] != PRESENCE_ABSENT).sum())
         hollow = int((presence[carrier] == PRESENCE_NODE).sum())
         if modelled and hollow == modelled:
-            return (f"{titles.get(carrier, carrier)} is modelled in {modelled} areas "
-                    f"and demanded in none")
-    return "What each area models, and what demands it"
-
-
-def _draw_area_chips(ax, geometry: Dict[str, List], presence: pd.DataFrame) -> None:
-    """One small cell per carrier, at each area's centroid."""
-    centroids = {area: _polygons_centroid(polygons) for area, polygons in geometry.items()}
-    drawn = [c for c in centroids.values() if c]
-    if not drawn:
-        return
-    span = max(max(x for x, _ in drawn) - min(x for x, _ in drawn), 1e-6)
-    cell = span / 52.0
-    carriers = list(presence.columns)
-
-    for area, centre in centroids.items():
-        if centre is None:
-            continue
-        cx, cy = centre
-        width = cell * len(carriers)
-        for index, carrier in enumerate(carriers):
-            state = presence.loc[area, carrier]
-            x = cx - width / 2 + index * cell
-            face, hatch = PRESENCE_STYLE[state]
-            ax.add_patch(Rectangle(
-                (x, cy - cell / 2), cell, cell,
-                facecolor=face, edgecolor="#33333a", linewidth=0.5,
-                hatch=hatch, zorder=4))
-        ax.text(cx, cy + cell * 0.85, area, fontsize=7, ha="center", va="bottom",
-                zorder=5, color="#1a1a1f",
-                path_effects=[pe.withStroke(linewidth=1.8, foreground="#ffffff")])
+            return (f"{titles.get(carrier, carrier)} is modelled in {modelled} bidding "
+                    f"zones and demanded in none")
+    return "What each bidding zone demands"
 
 
 def _finish_map(ax) -> None:
@@ -1960,31 +2062,21 @@ def _finish_map(ax) -> None:
 
 
 def _carrier_map_legend(ax, presence: pd.DataFrame) -> None:
-    """Two legends: what a fill means, and what a chip cell means."""
+    """What a fill means. One entry per combination the map actually draws."""
     seen = []
     for area in presence.index:
-        present = tuple(c for c in presence.columns if presence.loc[area, c] != PRESENCE_ABSENT)
-        if present and present not in seen:
-            seen.append(present)
+        demanded = tuple(c for c in MAP_CARRIERS
+                         if c in presence.columns and presence.loc[area, c] == PRESENCE_DEMAND)
+        if demanded and demanded not in seen:
+            seen.append(demanded)
     titles = {grid: title for grid, title, _ in CARRIERS}
     fills = [mpatches.Patch(facecolor=_blend_for(combination), edgecolor="#ffffff",
                             label=" + ".join(titles.get(c, c) for c in combination))
              for combination in sorted(seen, key=len)]
-    if fills:
-        first = ax.legend(handles=fills, loc="upper left", fontsize=7,
-                          title="carriers modelled", title_fontsize=7, framealpha=0.9)
-        ax.add_artist(first)
-
-    order = [PRESENCE_DEMAND, PRESENCE_NODE, PRESENCE_UNKNOWN, PRESENCE_ABSENT]
-    states = [s for s in order if (presence.values == s).any()]
-    cells = [mpatches.Patch(facecolor=PRESENCE_STYLE[s][0], edgecolor="#33333a",
-                            hatch=PRESENCE_STYLE[s][1], label=PRESENCE_LABEL[s])
-             for s in states]
-    if cells:
-        ax.legend(handles=cells, loc="lower left", fontsize=7,
-                  title=f"chip cells, left to right: "
-                        f"{', '.join(titles.get(c, c) for c in presence.columns)}",
-                  title_fontsize=7, framealpha=0.9)
+    if not fills:
+        return
+    ax.legend(handles=fills, loc="upper left", fontsize=7,
+              title="carriers with demand", title_fontsize=7, framealpha=0.9)
 
 
 def figure_carrier(
@@ -2153,30 +2245,30 @@ def figure_storage(
     return _finish(fig, out_dir / "fig_storage_capacity.png")
 
 
-def _draw_corridors(ax, shapes: ZoneShapes, matrix: pd.DataFrame, zones: bool,
+def _draw_corridors(ax, shapes: ZoneShapes, countries: ZoneShapes, matrix: pd.DataFrame,
                     neighbours: bool = True) -> Dict:
     """The corridor graph on the map, width linear in capacity.
 
-    Returns what the legend needs to state the width scale. An arrow or a line
-    whose width encodes a quantity is decoration unless the reader is told what
-    a given width is worth, so the caller must draw that key.
+    Always per bidding zone, whatever level the table beside it uses. Rolled up
+    to countries the intra-country corridors disappear from the picture while
+    the text above still counts them, and the Nordic ring -- which is most of
+    what this figure has to say -- is drawn as four dots.
+
+    Returns what the legend needs to state the width scale. A line whose width
+    encodes a quantity is decoration unless the reader is told what a given
+    width is worth, so the caller must draw that key.
     """
     areas = sorted(set(matrix.index) | set(matrix.columns))
-    geometry = shapes_for_areas(shapes, areas, zones)
+    geometry = shapes_for_areas(shapes, areas, True)
     centres = {area: _polygons_centroid(polygons) for area, polygons in geometry.items()}
 
-    if neighbours:
-        context = context_polygons(shapes, areas, zones)
-        paths = [p for p in (_polygon_path(poly) for poly in context) if p]
-        ax.add_collection(PatchCollection(
-            [PathPatch(p) for p in paths],
-            facecolor=NEIGHBOUR_FILL, edgecolor=NEIGHBOUR_EDGE, linewidth=0.4, zorder=1))
-
+    _draw_context(ax, shapes, areas, neighbours)
     paths = [p for polygons in geometry.values()
              for p in (_polygon_path(poly) for poly in polygons) if p]
     ax.add_collection(PatchCollection(
         [PathPatch(p) for p in paths],
         facecolor="#dce7f0", edgecolor="#ffffff", linewidth=0.5, zorder=2))
+    _draw_country_outlines(ax, countries, areas)
 
     # Square and symmetric, so one triangle is the corridor list.
     grid = matrix.reindex(index=areas, columns=areas).fillna(0.0)
@@ -2240,8 +2332,9 @@ def figure_interconnection(
     matrix: pd.DataFrame,
     per_area: pd.DataFrame,
     peak: Optional[pd.Series],
-    zones: bool,
+    zone_matrix: pd.DataFrame,
     shapes: Optional[ZoneShapes] = None,
+    countries: Optional[ZoneShapes] = None,
     neighbours: bool = True,
     ) -> str:
     """Who connects to whom, and who leans on it.
@@ -2250,6 +2343,10 @@ def figure_interconnection(
     thing better -- the matrix could not show that the Nordic zones form a ring
     while Germany is a hub -- and the exact numbers the heatmap carried are in
     the table above it, where they can be read to a decimal.
+
+    The two panels are at different levels on purpose. The map is always per
+    bidding zone, because that is what a corridor connects; the bars beside it
+    are per reported area, because that is what the table above them lists.
     """
     if matrix is None or matrix.empty:
         fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, 3.0))
@@ -2264,10 +2361,11 @@ def figure_interconnection(
     )
 
     if shapes is not None and shapes.available:
-        info = _draw_corridors(axes[0], shapes, matrix, zones, neighbours)
+        info = _draw_corridors(axes[0], shapes, countries or ZoneShapes(),
+                               zone_matrix, neighbours)
         _finish_map(axes[0])
         _corridor_width_legend(axes[0], info)
-        axes[0].set_title("Electricity transfer capacity between areas", fontsize=9)
+        axes[0].set_title("Electricity transfer capacity between bidding zones", fontsize=9)
     else:
         _empty_panel(axes[0], (shapes.missing if shapes is not None
                                else "No map asset") + "\n-- the table above has the capacities")
@@ -2463,7 +2561,8 @@ def figure_duration(out_dir: Path, decomposition: Dict, zones: bool) -> str:
 # Checks
 # ============================================================================
 
-def run_checks(workbook: Workbook, classification: Classification, transfer: Dict) -> List[Tuple[str, str, bool]]:
+def run_checks(workbook: Workbook, classification: Classification, transfer: Dict,
+               served_by_timeseries: Sequence[str] = ()) -> List[Tuple[str, str, bool]]:
     """Structurally impossible values only.
 
     Nothing here is a judgement about whether a number is plausible. A check
@@ -2490,7 +2589,23 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
         not negatives,
     ))
 
+    # A constant influx is overridden by a timeseries, never added to it -- the
+    # model gates it on `not gn_influxTs(grid, node)`. A node carrying both has a
+    # number in the workbook that does nothing, and nothing would say so.
     gn = workbook.p_gn
+    with_constant = set()
+    if not gn.empty and "influx" in gn.columns and "grid" in gn.columns:
+        live = col_or(gn, "influx", 0.0).fillna(0.0) != 0
+        with_constant = {(str(g), str(n)) for g, n in zip(gn.loc[live, "grid"],
+                                                          gn.loc[live, "node"])}
+    overridden = sorted(f"{n}" for g, n in with_constant if g in served_by_timeseries)
+    checks.append((
+        "Constant influx on a node that also has a timeseries",
+        (f"none of {len(with_constant)} node(s) with a constant influx" if not overridden
+         else f"the constant is ignored on {summarise(overridden)}"),
+        not overridden,
+    ))
+
     priced = gn[col_or(gn, "usePrice", 0.0).fillna(0.0) == 1] if not gn.empty else pd.DataFrame()
     bad_price = priced[pd.to_numeric(col_or(priced, "price", np.nan), errors="coerce").fillna(0) <= 0] \
         if not priced.empty else pd.DataFrame()
@@ -2606,20 +2721,32 @@ def build_report(
     out_dir: Path,
     zones: bool,
     shapes: Optional[ZoneShapes] = None,
+    countries: Optional[ZoneShapes] = None,
     neighbours: bool = True,
     ) -> Tuple[str, List[str]]:
     """The whole report.md, and the figure names written beside it."""
     level = "bidding zone" if zones else "country"
     report = Report()
     figures: List[str] = []
-    shapes = shapes if shapes is not None else load_zone_shapes()
+    # Both assets, whatever the report's level: the maps are always drawn per
+    # bidding zone, with country borders over them.
+    shapes = shapes if shapes is not None else load_zone_shapes(ZONE_ASSET)
+    countries = countries if countries is not None else load_zone_shapes(COUNTRY_ASSET)
+    # The files are read per zone; a country report is the roll-up of that. The
+    # maps stay per zone either way, so they need the finer one.
+    zone_timeseries = timeseries
+    timeseries = timeseries if zones else roll_up_to_countries(timeseries)
     presence = carrier_presence(workbook, timeseries, zones)
+    zone_presence = presence if zones else carrier_presence(workbook, zone_timeseries, True)
 
     per_area_transfer, matrix, transfer_facts = transfer_by_area(workbook, zones)
+    _, zone_matrix, _ = transfer_by_area(workbook, True)
     energy_table, storage_facts = storage_energy(workbook, timeseries.storage_limit, zones)
     power_table = storage_power_by_area(workbook, zones)
     ratio_table, ratio_facts = storage_energy_from_ratio(workbook, zones)
-    checks = run_checks(workbook, classification, transfer_facts)
+    checks = run_checks(workbook, classification, transfer_facts,
+                        [c for c in DEMAND_FAMILY if not annual_range(
+                            timeseries, f"demand_{c}").empty])
     peak = _peak_demand(timeseries)
 
     capacity_factors = capacity_weighted_cf(timeseries, workbook, zones)
@@ -2630,7 +2757,8 @@ def build_report(
             "slug": slug,
             "capacity": capacity_by_area(classification, carrier, zones),
             "consumption": consumption_capacity(workbook, carrier, zones),
-            "demand": annual_range(timeseries, f"demand_{carrier}"),
+            **dict(zip(("demand", "demand_is_constant"),
+                       carrier_demand(workbook, timeseries, carrier, zones))),
             "capacity_factor": capacity_factors if carrier == "elec" else pd.DataFrame(),
         }
 
@@ -2662,8 +2790,8 @@ def build_report(
     report.add()
     report.add(f"- **Scenario**: {workbook.scenario}, {workbook.year}, read from "
                f"`{workbook.path.name}` in `{workbook.path.parent.name}/`.")
-    report.add(f"- **Reported by {level}**: "
-               f"{'all 22 bidding zones' if zones else '16 countries; pass `--zones` to split them'}.")
+    report.add(f"- **Reported by {level}**: {len(presence)} {level}(s)"
+               + ("." if zones else "; pass `--zones` to split them into bidding zones."))
     for carrier, data in carrier_data.items():
         total = _total_gw(data["capacity"])
         consumed = float(data["consumption"]["capacity"].sum() * MW_TO_GW) if not data["consumption"].empty else 0.0
@@ -2676,10 +2804,6 @@ def build_report(
             parts.append(f"{_num(consumed)} GW consuming")
         parts.append(f"{_num(demand, 0)} TWh/yr demanded" if demand else "no demand built")
         report.add(f"- **{data['title']}**: " + ", ".join(parts) + ".")
-    steam = steam_demand_twh(workbook)
-    if steam:
-        report.add(f"- **Industrial steam**: {_num(steam, 0)} TWh/yr, carried as a flat hourly "
-                   f"rate in the workbook rather than a timeseries, so it has no weather variation.")
     if storage_facts["constant_TWh"] or storage_facts["timeseries_TWh"]:
         hydro_total = storage_facts["constant_TWh"] + storage_facts["timeseries_TWh"]
         report.add(f"- **Hydro storage**: {_num(hydro_total)} TWh"
@@ -2749,12 +2873,14 @@ def build_report(
     report.add("## Where the model is")
     report.add()
     _coverage_section(report, presence, shapes, zones)
-    figures.append(figure_carrier_map(out_dir, shapes, presence, zones, neighbours))
+    figures.append(figure_carrier_map(out_dir, shapes, countries, zone_presence, zones,
+                                      neighbours))
     report.figure(
         figures[-1],
-        "Each area filled by the carriers it models, with a chip showing whether anything "
-        "demands each of them. Take-away: which carriers are modelled where, and where a "
-        "carrier exists as a node that nothing draws on.",
+        "Each bidding zone filled by the carriers something in it demands, with country "
+        "borders over the top. Take-away: which carriers are actually used where -- a zone "
+        "with a node and no demand is not tinted for it, and the table above says which "
+        "those are.",
     )
 
     # ---- carrier sections -------------------------------------------------
@@ -2784,8 +2910,8 @@ def build_report(
     report.add("## Interconnection")
     report.add()
     _transfer_section(report, per_area_transfer, transfer_facts, peak, zones)
-    figures.append(figure_interconnection(out_dir, matrix, per_area_transfer, peak, zones,
-                                          shapes, neighbours))
+    figures.append(figure_interconnection(out_dir, matrix, per_area_transfer, peak,
+                                          zone_matrix, shapes, countries, neighbours))
     report.figure(
         figures[-1],
         "Transfer capacity as a map, and each area's total as a share of its own peak demand. "
@@ -2978,9 +3104,15 @@ def _carrier_section(report, workbook, data, carrier, timeseries, out_dir, zones
         rows = [[display_name(r["area"], zones), _num(r["mean"], 1)]
                 for _, r in demand.iterrows()]
         rows.append(["**total**", f"**{_num(float(demand['mean'].sum()), 1)}**"])
-        report.add(f"Annual demand, TWh/yr, the mean over {len(timeseries.years)} climate year(s). "
-                   f"How far individual years move is in "
-                   f"[What the weather years do](#what-the-weather-years-do).")
+        if data.get("demand_is_constant"):
+            report.add(f"Annual demand, TWh/yr. It is a constant hourly rate in `p_gn`'s "
+                       f"`influx` column rather than an hourly series, so it is the same in "
+                       f"every climate year and does not appear in "
+                       f"[What the weather years do](#what-the-weather-years-do).")
+        else:
+            report.add(f"Annual demand, TWh/yr, the mean over {len(timeseries.years)} "
+                       f"climate year(s). How far individual years move is in "
+                       f"[What the weather years do](#what-the-weather-years-do).")
         report.add()
         report.table([level_header(zones), "TWh/yr"], rows)
     elif carrier in DEMAND_FAMILY and timeseries.skipped:
@@ -2992,9 +3124,13 @@ def _carrier_section(report, workbook, data, carrier, timeseries, out_dir, zones
         report.add(f"No `{DEMAND_FAMILY[carrier]}_<year>.gdx` file was found in this folder, so "
                    f"there is no demand to report. The units above still exist.")
         report.add()
-    elif carrier not in DEMAND_FAMILY:
-        report.add(f"No hourly demand series exists for {data['title'].lower()} in this build -- "
-                   f"no `ts_influx` family is written for it.")
+    else:
+        # Both routes checked: no ts_influx family is written for this carrier,
+        # and p_gn carries no constant influx for it either. The units above are
+        # built and nothing draws on what they make.
+        report.add(f"Nothing demands {data['title'].lower()} in this build, by either route -- "
+                   f"there is no `ts_influx` family for it and no constant `influx` in `p_gn`. "
+                   f"The capacity above has no sink.")
         report.add()
 
     if not consumption.empty:
@@ -3093,6 +3229,10 @@ def _coverage_section(report, presence: pd.DataFrame, shapes: ZoneShapes, zones:
     is worth a reader's attention is the third state -- a carrier with a node
     that nothing demands -- which is a modelling choice they may not know they
     made.
+
+    This is where the map's three-cell chips went. The map now colours only what
+    is demanded, which is the claim it can make honestly at that size; the state
+    of every area and carrier is a table, where it can be read.
     """
     if presence.empty:
         report.add("No nodes are written in this scenario.")
@@ -3120,11 +3260,20 @@ def _coverage_section(report, presence: pd.DataFrame, shapes: ZoneShapes, zones:
                        f"{summarise(areas)}.")
             report.add()
 
+    report.add("Where each carrier stands, area by area. The map below tints an area only "
+               "for the carriers in the first state, and it is drawn per bidding zone, so it "
+               "separates areas this table rolls together.")
+    report.add()
+    report.table(
+        [level_header(zones)] + [titles.get(c, c) for c in presence.columns],
+        [[display_name(area, zones)] + [PRESENCE_LABEL[presence.loc[area, c]]
+                                        for c in presence.columns]
+         for area in presence.index],
+    )
+
     if not shapes.available:
         report.add(f"There is no map in this report: {shapes.missing}.")
         report.add()
-
-
 def _storage_section(report, facts, energy_table, power_table, ratio_table, ratio_facts,
                      timeseries, zones) -> None:
     total = facts["constant_TWh"] + facts["timeseries_TWh"]
@@ -3227,8 +3376,11 @@ def _transfer_section(report, per_area, facts, peak, zones) -> None:
     titles = {grid: title for grid, title, _ in CARRIERS}
     carried = set(facts.get("carrier_grids", []))
     exists = set(facts.get("node_grids", []))
+    # Steam is left out for the opposite reason to elec: elec's corridors are the
+    # section itself, and industrial steam is site-local -- no build would pipe it
+    # between countries, so saying it has none would fire on correct data forever.
     silent = [grid for grid in titles
-              if grid not in carried and grid != "elec" and grid in exists]
+              if grid not in carried and grid not in ("elec", "steam") and grid in exists]
     for grid, counts in sorted(facts.get("other_grids", {}).items()):
         name = titles.get(grid, grid)
         if counts["between_areas"]:
@@ -3621,8 +3773,9 @@ def _limits_section(report, workbook, timeseries, storage_facts, zones) -> None:
     """
     report.add("There is no figure or table below zone level, at any flag setting, and no "
                "\"Nordics\" or \"CWE\" grouping, because nothing in the tracked source data "
-               "defines one. The maps inherit that: a zone's whole fleet sits at one point, "
-               "and a country is drawn from its zones' outlines rather than a single border.")
+               "defines one. The maps inherit that: a zone's whole fleet sits at one point. "
+               "They are always drawn per bidding zone whatever level the tables use, with "
+               "country borders over them.")
     report.add()
     if not timeseries.available:
         report.add(f"**The timeseries sections are missing from this report**: "
@@ -3652,11 +3805,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--zones", action="store_true",
         help="report the bidding zones instead of rolling them up into countries",
-    )
-    parser.add_argument(
-        "--no-timeseries", action="store_true",
-        help="skip every section that reads a .gdx file. Applied automatically, with a "
-             "printed reason, when GAMS or gamsapi cannot be opened",
     )
     parser.add_argument(
         "--no-neighbours", action="store_true",
@@ -3690,15 +3838,14 @@ def main(argv=None) -> int:
         print(f"Could not read {xlsx_path}: {type(exc).__name__}: {exc}")
         return 1
 
-    timeseries = Timeseries(skipped="--no-timeseries was given")
-    if not args.no_timeseries:
-        try:
-            timeseries = read_timeseries(folder, workbook, args.zones)
-        except Exception as exc:
-            # A mid-sweep failure degrades the same way a missing GAMS install
-            # does. The workbook half of the report is still worth writing.
-            timeseries = Timeseries(skipped=f"the timeseries read failed "
-                                            f"({type(exc).__name__}: {exc})")
+    try:
+        # Always the finest grain the build writes; build_report rolls it up.
+        timeseries = read_timeseries(folder, workbook, True)
+    except Exception as exc:
+        # A mid-sweep failure degrades the same way a missing GAMS install does.
+        # The workbook half of the report is still worth writing.
+        timeseries = Timeseries(skipped=f"the timeseries read failed "
+                                        f"({type(exc).__name__}: {exc})")
     if timeseries.skipped:
         print(f"Timeseries sections skipped: {timeseries.skipped}")
 
@@ -3707,7 +3854,8 @@ def main(argv=None) -> int:
         inflow_grids = _inflow_grids_from_data(folder, workbook, timeseries)
     classification = classify_capacity(workbook, inflow_grids)
 
-    shapes = load_zone_shapes()
+    shapes = load_zone_shapes(ZONE_ASSET)
+    countries = load_zone_shapes(COUNTRY_ASSET)
     if not shapes.available:
         print(f"Maps skipped: {shapes.missing}")
 
@@ -3715,7 +3863,7 @@ def main(argv=None) -> int:
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         text, figures = build_report(workbook, classification, timeseries, out_dir, args.zones,
-                                     shapes, not args.no_neighbours)
+                                     shapes, countries, not args.no_neighbours)
         (out_dir / "report.md").write_text(text, encoding="utf-8")
     except OSError as exc:
         print(f"Could not write the report into {out_dir}: {exc}")

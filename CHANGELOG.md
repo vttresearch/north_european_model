@@ -151,13 +151,31 @@ not build and why, and has a documentation page of its own.
   ordering fuels is not ordering plants.
 - The correlation threshold is the level the number of climate years can resolve,
   0.33 at 35, rather than a round 0.3 that sits below it.
-- Two maps, from `tools/data/zone_shapes.geojson`: which carriers each area models and
-  whether anything demands them, and the transfer corridors, which replace the capacity
-  heatmap. Built by `tools/prepare_zone_geometry.py` from an ENTSO-E bidding-zone layer
-  (Mopo, CC BY 4.0) plus Natural Earth for Great Britain; zone names are read from the
-  `area codes` sheet rather than hardcoded. No geometry library: `json` and matplotlib
-  patches. A missing asset skips the maps and leaves the report otherwise whole.
-  `--no-neighbours` drops the grey ring of unmodelled countries.
+- Two maps: which carriers each area models and whether anything demands them, and the
+  transfer corridors, which replace the capacity heatmap. `--no-neighbours` drops the
+  grey ring of unmodelled countries, and a missing asset skips the maps and leaves the
+  report otherwise whole.
+- One map asset per level, both from `tools/prepare_zone_geometry.py`:
+  `country_shapes.geojson` and `zone_shapes.geojson`. Every border is Natural Earth's
+  (public domain); the ENTSO-E layer (Mopo, CC BY 4.0) now only says which zone a piece
+  of land belongs to. Its Norway outline was 31% sea. A country's zones cover exactly
+  its country outline, so the two maps agree. No geometry library.
+- Both maps are always drawn per bidding zone, with country borders over them, whatever
+  level the tables use. A country report was drawing the Nordic ring as four dots while
+  the text above it counted 46 corridors.
+- The carrier map tints an area only for carriers something actually demands, and the
+  three-cell chips are gone; what they carried is a table under the map, which also
+  reads at publication size. The map now separates what the country tables roll
+  together -- DKE1 has district heat demand and DKW1 does not.
+- Demand counts the constant `influx` in `p_gn`, not just the `ts_influx` families. The
+  two are alternatives, never a sum: the model overrides the constant wherever a series
+  exists, and a check names any node carrying both. Industrial steam was the whole of
+  it -- 495 TWh/yr, more than district heat -- and it now has a section rather than one
+  bullet. Its number survives a run that can read no GDX file at all.
+- Timeseries are read per bidding zone and rolled up for a country report, so one read
+  serves both levels.
+- `--no-timeseries` is removed. Every report reads the climate years; a missing GAMS
+  install or GDX file still degrades the same way, with the reason printed.
 - The net-load table does the subtraction it promised -- firm, storage and demand
   response, imports, and what is left of the peak -- adds potential VRE energy as a
   share of demand, and a system row summed hour by hour rather than peak by peak.
