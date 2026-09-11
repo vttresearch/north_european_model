@@ -792,3 +792,38 @@ class TestACountryIsItsMostDevelopedZone:
         rolled = summary.presence_by_country(zones)
         assert len(rolled) == 2 and len(zones) == 3
         assert list(rolled.columns) == list(zones.columns)
+
+
+class TestTheSummaryHasATopLevelEntryPoint:
+    """build_input_summary.py sits beside build_input_data.py and does nothing else.
+
+    The wrapper exists so that building a folder and reading it are one command
+    each. What it must not become is a second command line: an argument handled
+    there and not in the tool would work from the root and fail from tools/.
+    """
+
+    def test_it_passes_the_arguments_through_and_returns_the_exit_code(self, monkeypatch):
+        import build_input_summary
+
+        seen = {}
+
+        def fake_main(argv):
+            seen["argv"] = argv
+            return 2
+
+        monkeypatch.setattr(build_input_summary.input_data_summary, "main", fake_main)
+        assert build_input_summary.main(["input_OT2030", "--zones"]) == 2
+        assert seen["argv"] == ["input_OT2030", "--zones"]
+
+    def test_it_wraps_the_one_tool_and_not_a_copy_of_it(self):
+        """Two module objects would mean two sets of constants to keep in step."""
+        import build_input_summary
+
+        assert build_input_summary.input_data_summary is summary
+
+    def test_the_help_description_names_no_file(self):
+        """argparse prints the real program name; a filename in the description
+        as well would be the wrong one whenever the wrapper is what was run."""
+        description = summary.build_arg_parser().description
+        assert ".py" not in description
+        assert description.startswith("what is in one built input-data folder")

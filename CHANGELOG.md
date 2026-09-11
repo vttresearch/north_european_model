@@ -146,6 +146,9 @@ not build and why, and has a documentation page of its own.
 - The report said battery and heat storage carry no energy capacity anywhere. They
   carry 1.06 TWh, as `upperLimitCapacityRatio` in `p_gnu_io` -- a duration per grid,
   now reported as one and shown in the storage figure's legend.
+- `build_input_summary.py` at the repository root: a thin wrapper on
+  `tools/input_data_summary.py`, so building a folder and reading it are one command
+  each. Same arguments, same exit codes.
 - The carrier map tinted only what was demanded, so hydrogen -- nodes in 22 bidding
   zones, demand in none -- tinted nothing and the TYNDP map came out identical to a
   scenario with no hydrogen in it. It now tints what is modelled, in four fills, and

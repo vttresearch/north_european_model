@@ -95,7 +95,9 @@ taking part in one, each documenting itself in its module docstring:
   its figures into a subfolder of it: capacity, demand, storage, interconnection and
   prices by country, plus a net-load duration curve and what 35 weather years do to the
   numbers. Run it after a build to see the scenario you just produced, or hand the
-  folder to a colleague who was not going to run Python.
+  folder to a colleague who was not going to run Python. Run it as
+  `python build_input_summary.py <built_folder>` from the model folder; that wrapper is
+  the same tool under a name that sits beside `build_input_data.py`.
 - `check_unittype_columns.py` — a folder of workbooks checked against the unittype rule.
 - `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
   compared on values, and as zip archives part by part.
@@ -299,6 +301,13 @@ Inputs are build with a python script which is easiest to run with Miniconda han
  * In Miniconda, activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
  * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2030.ini`).
 
+
+Once it finishes, read what you built by typing
+`python build_input_summary.py <output_folder>`, using the output folder named below.
+That writes a `summary/report.md` inside it with the figures beside it: how far each
+carrier reaches, capacity and demand by country, storage, interconnection, and what the
+35 weather years do to the numbers. It only reads the build; everything it writes goes
+into that one subfolder, which it overwrites on every run.
 
 At the time of writing, the created "National Trends" takes about 500 Mb, is generated in ~7 minutes, and has ~300 files. Writing some larger sets of GDX files might take up to 60 seconds and the code might seem stuck for those periods, but should eventually proceed.
 

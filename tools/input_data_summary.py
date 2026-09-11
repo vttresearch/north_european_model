@@ -4461,7 +4461,11 @@ def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
 # ============================================================================
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1].strip())
+    # The docstring's first line is 'input_data_summary.py -- what it does'. The
+    # filename half is already in the usage line above the description, and it is
+    # the wrong filename when this is reached through build_input_summary.py.
+    headline = __doc__.splitlines()[1].strip().split(' -- ', 1)[-1]
+    parser = argparse.ArgumentParser(description=headline)
     parser.add_argument(
         "built_folder", type=Path,
         help="a folder build_input_data.py wrote, e.g. input_ObservedTrends_2030",

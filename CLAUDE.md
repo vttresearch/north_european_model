@@ -38,7 +38,10 @@ does not have.
   curve and the interannual spread from the per-year GDX files. The only tool that
   reads a build's GDX, and the only one with tests (`tests/unit/test_input_data_summary.py`,
   which covers five arithmetic conventions whose failures a reader could not see).
-  It is also the only plotting code in the repo.
+  It is also the only plotting code in the repo, and the only tool with an entry point
+  of its own at the repository root -- `build_input_summary.py`, a thin wrapper that
+  adds `tools/` to the path and delegates. The implementation and its documentation
+  stay here; keep them here.
 - `profile_build.py` -- a build run under a profiler and reported by phase, with the
   caveat that pstats cannot be trusted with it.
 - `prepare_zone_geometry.py` -- the two map assets `input_data_summary.py` draws,
