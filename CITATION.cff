@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+title: North European energy system model
+message: >-
+  If you use this model, please cite it using these metadata, and
+  state which version you used. The version history is in README.md.
+type: software
+authors:
+  - family-names: Lindroos
+    given-names: Tomi J.
+  - family-names: Ikäheimo
+    given-names: Jussi
+  - family-names: Purhonen
+    given-names: Anu
+  - family-names: Rämä
+    given-names: Miika
+  - family-names: Hiltunen
+    given-names: Pauli
+  - family-names: Harrison
+    given-names: Eric
+  - family-names: Jasiūnas
+    given-names: Justinas
+  - family-names: Kumpulainen
+    given-names: Touko
+abstract: >-
+  Input data builder for the North European energy system model, built
+  for the Backbone modelling framework. Covers European power systems
+  including district heating and hydrogen.
+repository-code: https://github.com/vttresearch/north_european_model
+license: CC-BY-4.0
+version: 3.0.0-dev
+preferred-citation:
+  type: article
+  title: >-
+    Profitability of demand side management systems under growing shares
+    of wind and solar in power systems
+  authors:
+    - family-names: Lindroos
+      given-names: Tomi J.
+    - family-names: Ikäheimo
+      given-names: Jussi
+  journal: "Energy Sources, Part B: Economics, Planning, and Policy"
+  volume: 19
+  issue: 1
+  year: 2024
+  doi: 10.1080/15567249.2024.2331487

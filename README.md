@@ -14,26 +14,91 @@ This readme has the following main sections
 
 
 ## Authors and acknowledgments
-* Jussi Ikäheimo - Model development, time series, testing
 * Tomi J. Lindroos - Model development, time series, testing
+* Jussi Ikäheimo - Model development, time series, testing
 * Anu Purhonen - Time series
 * Miika Rämä - District heating data
 * Pauli Hiltunen - District heating data, testing
 * Eric Harrison - Data sets, testing
-* Justinas Jasiunas - H2 heavy scenario, testing
+* Justinas Jasiūnas - H2 heavy scenario, testing
 * Touko Kumpulainen - District heating data, testing
 
 
 ## License
 
-This work is licenced under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) license.
+Copyright (c) 2026 VTT Technical Research Centre of Finland Ltd
 
-https://creativecommons.org/licenses/by-nc-sa/4.0/ 
+This work is licensed under a Creative Commons Attribution 4.0 International
+(CC BY 4.0) license. See [LICENSE](LICENSE) for the full terms.
+
+https://creativecommons.org/licenses/by/4.0/
+
+The licence covers this repository's own code and the data files shipped in it.
+It does not cover the electricity demand and VRE time series you download
+separately from ENTSO-E and Copernicus, which keep their providers' terms, nor
+the Backbone files in `src_files/GAMS_files/`, which carry their own LGPL-3.0
+headers. [ATTRIBUTION.md](ATTRIBUTION.md) records where each data source comes
+from and what was changed.
 
 
 ## Citation
 
-Ikäheimo, J., Lindroos, T.J., Purhonen, A., Rämä, M., Hiltunen, P., and Harrison, E. North European energy system model. https://github.com/vttresearch/north_european_model
+Lindroos, T.J., Ikäheimo, J., Purhonen, A., Rämä, M., Hiltunen, P., Harrison, E., Jasiūnas, J., and Kumpulainen, T. North European energy system model. https://github.com/vttresearch/north_european_model
+
+Cite the version you used; the versions are listed below. [CITATION.cff](CITATION.cff)
+carries the same details in machine-readable form.
+
+
+## Version history
+
+The model is cited by version. v1 and v2 predate this repository's git history,
+which begins in March 2023.
+
+### v3 -- in development
+
+See [CHANGELOG.md](CHANGELOG.md) for what has changed.
+
+### v2 -- a major rewrite of v1
+
+Documented in:
+
+* Lindroos, T. J., & Ikäheimo, J. (2024). Profitability of demand side management
+  systems under growing shares of wind and solar in power systems. *Energy Sources,
+  Part B: Economics, Planning, and Policy*, 19(1).
+  https://doi.org/10.1080/15567249.2024.2331487
+
+and used in:
+
+* Hiltunen, P., Lindroos, T. J., & Rämä, M. (2025). The impact of electric boilers
+  and heat storages in the Nordic power markets and district heating systems.
+  *Cleaner Engineering and Technology*, 27, 101028.
+  https://doi.org/10.1016/j.clet.2025.101028
+* Jasiūnas, J., & Lindroos, T. J. (2026). Powering future Europe through variable
+  renewable energy droughts. *Energy Conversion and Management*, 358, 121493.
+  https://doi.org/10.1016/j.enconman.2026.121493
+* Kiehle, J., Lindroos, T. J., Louis, J.-N., & Pongrácz, E. (2026). Lost flexibility:
+  Hydropower capabilities in large-scale, Pan-European Energy system models.
+  *Applied Energy*, 423, 128324. https://doi.org/10.1016/j.apenergy.2026.128324
+* Harrison, E., Rasku, T., Kiviluoma, J., & Helistö, N. Energy system impacts of
+  globally versus locally optimised residential heating and cooling demand response
+  in Finland across multiple weather years -- A North European case study. SSRN.
+  http://dx.doi.org/10.2139/ssrn.6471140
+* Rasku, T., & Louis, J.-N. (2026). Capacity expansion prospects of small modular
+  light water reactors for electricity and district heat production in Europe.
+  *2026 22nd International Conference on the European Energy Market (EEM)*,
+  Trondheim, Norway, 1-6. https://doi.org/10.1109/EEM68581.2026.11589630
+
+### v1 -- the first version
+
+Used in:
+
+* Rasku, T., & Kiviluoma, J. (2019). A Comparison of Widespread Flexible Residential
+  Electric Heating and Energy Efficiency in a Future Nordic Power System. *Energies*,
+  12(1), 5. https://doi.org/10.3390/en12010005
+* Lindroos, T. J., Mäki, E., Koponen, K., Hannula, I., Kiviluoma, J., & Raitila, J.
+  (2021). Replacing fossil fuels with bioenergy in district heating -- Comparison of
+  technology options. *Energy*, 231, 120799.
+  https://doi.org/10.1016/j.energy.2021.120799
 
 
 ## Support
@@ -103,7 +168,9 @@ taking part in one, each documenting itself in its module docstring:
   compared on values, and as zip archives part by part.
 - `profile_build.py` — a build run under a profiler, reported by phase.
 - `prepare_zone_geometry.py` — the two map assets `input_data_summary.py` draws on, one
-  per level, built once by hand from Natural Earth plus an ENTSO-E bidding-zone layer.
+  per level, built once by hand from Natural Earth plus an ENTSO-E bidding-zone layer and
+  committed to `tools/maps/`. Where they come from and what was changed is recorded by
+  hand in [ATTRIBUTION.md](ATTRIBUTION.md) at the repository root.
   Run it only to change what the maps look like, never as part of a build.
 
 For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`

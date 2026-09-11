@@ -1,8 +1,11 @@
 # Changelog -- North European Energy System Model
 
-Grouped by subject rather than by date.
+Grouped by subject rather than by date. For what v1 and v2 were, see the version
+history in [README.md](README.md).
 
-## Timeseries
+## v3 (in development)
+
+### Timeseries
 
 Every processor now proves its input data before using it, names what it could
 not build and why, and has a documentation page of its own.
@@ -49,7 +52,7 @@ not build and why, and has a documentation page of its own.
   retired and a config still setting it is ignored.
 - A cold build is about a third faster.
 
-## Source workbooks
+### Source workbooks
 
 - `generator_ID` is removed. A `unitdata` row names its `unittype` directly, and
   `unittypedata` is keyed on `unittype` with a free-text `## Description` column
@@ -112,7 +115,7 @@ not build and why, and has a documentation page of its own.
 - Config file lists name `Finland_dheat_and_industry.xlsx` with the case the
   folder uses.
 
-## Input excel builder
+### Input excel builder
 
 - How the builder turns the source data tables into `inputData.xlsx`:
   [docs/input-excel.md](docs/input-excel.md).
@@ -132,12 +135,12 @@ not build and why, and has a documentation page of its own.
 - Warnings name the first three offenders and then count the rest, instead of
   one line each. [docs/timeseries.md](docs/timeseries.md)
 
-## Test suite
+### Test suite
 
 - A pytest suite, and 20+ latent minor bugs found and fixed with it. Current
   scenarios unimpacted.
 
-## Tools
+### Tools
 
 - `tools/input_data_summary.py` describes one built folder as a `report.md` with
   embedded figures: capacity, demand, storage, interconnection and prices by country
@@ -210,8 +213,11 @@ not build and why, and has a documentation page of its own.
   one container, the way the write path already does. Reading a build's 245 per-year
   files takes seconds rather than minutes; `read_gdx_parameter` builds a container per
   call and should not be called in a loop.
+- The map assets moved to `tools/maps/`, and `ATTRIBUTION.md` moved to the repository
+  root, where it now covers the repository's other data sources too.
+  `prepare_zone_geometry.py` no longer writes it.
 
-## Running the model
+### Running the model
 
 - `%init_file%` command line parameter, for switching between schedule and invest.
 - changes_loop.inc: tighter `vq_userconstraint.up` limits, to speed up the solver.

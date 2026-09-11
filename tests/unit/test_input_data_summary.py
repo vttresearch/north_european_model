@@ -530,6 +530,16 @@ class TestAnAreaCollectsEveryFeatureThatMapsToIt:
         assert summary.ZONE_ASSET.name == "zone_shapes.geojson"
         assert summary.COUNTRY_ASSET.name == "country_shapes.geojson"
 
+    def test_both_assets_are_where_the_names_say(self):
+        """A half-done rename of the folder would not fail anywhere else.
+
+        ``load_zone_shapes`` returns empty for a file it cannot read, so the
+        report keeps building and simply draws no maps. Nothing else notices.
+        """
+        for asset in (summary.ZONE_ASSET, summary.COUNTRY_ASSET):
+            assert asset.parent.name == "maps"
+            assert asset.is_file(), f"{asset} is committed and must be readable"
+
 
 class TestRequiredStorageDepth:
     """How deep a store must be to flatten a swing, window by window.

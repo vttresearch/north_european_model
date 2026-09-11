@@ -34,7 +34,7 @@ bounds, the seasonal envelope is the widest swing a year permits, and nameplate
 is the ceiling alone. In the shipped scenarios the ceiling is about twice the
 usable volume, and reporting it alone was wrong by that much.
 
-The two maps need both ``tools/data/zone_shapes.geojson`` and
+The two maps need both ``tools/maps/zone_shapes.geojson`` and
 ``country_shapes.geojson``, which ``tools/prepare_zone_geometry.py`` writes: the
 zones are filled and the country borders drawn over them. Without them the rest
 of the report is unaffected and the map panels say
@@ -292,8 +292,8 @@ MAP_HEIGHT_IN = 9.5
 #: unaffected. Both are cut from the same land, so flipping between the two
 #: levels does not move a coastline -- bar a fraction of a pixel on the
 #: Norwegian and Swedish mainlands, which are the only ones cut on a grid.
-ZONE_ASSET = Path(__file__).resolve().parent / "data" / "zone_shapes.geojson"
-COUNTRY_ASSET = Path(__file__).resolve().parent / "data" / "country_shapes.geojson"
+ZONE_ASSET = Path(__file__).resolve().parent / "maps" / "zone_shapes.geojson"
+COUNTRY_ASSET = Path(__file__).resolve().parent / "maps" / "country_shapes.geojson"
 
 NEIGHBOUR_FILL = "#efefef"
 NEIGHBOUR_EDGE = "#d8d8d8"
