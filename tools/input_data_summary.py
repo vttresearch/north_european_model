@@ -17,12 +17,22 @@ Examples:
 
 What it shows
 -------------
-Countries by default, the bidding zones with --zones. A map of which carriers
-each area has demand for; then one section per energy carrier -- electricity,
+Countries by default, the bidding zones with --zones. How far each carrier
+reaches, counted at both levels whatever the report is written at, as a map of
+what each bidding zone models and a list of where each carrier is missing or
+has nothing demanding it; then one section per energy carrier -- electricity,
 district heat, hydrogen, industrial steam -- each with production capacity,
-consumption capacity and annual demand. Then storage,
-interconnection as a corridor map, a net-load duration curve, how much 35
-weather years move the numbers, and fuel, CO2 and emission prices.
+consumption capacity and annual demand. Then storage in two nested groups --
+what the power system fills itself, and what the weather fills for it --
+interconnection as a corridor map, a net-load duration curve, how deep a store
+the residual needs at each timescale against how deep a store there is, how much
+35 weather years move the numbers, and fuel, CO2 and emission prices.
+
+A storage volume is reported three ways, because a reservoir bounded by two
+seasonal series has no single size: usable is the mean of the gap between the
+bounds, the seasonal envelope is the widest swing a year permits, and nameplate
+is the ceiling alone. In the shipped scenarios the ceiling is about twice the
+usable volume, and reporting it alone was wrong by that much.
 
 The two maps need both ``tools/data/zone_shapes.geojson`` and
 ``country_shapes.geojson``, which ``tools/prepare_zone_geometry.py`` writes: the
@@ -51,7 +61,14 @@ but never judged, because every unit in the shipped scenarios has availability
 
 How the model behaves. Every number here comes from the input data, never from a
 solved run, so the net-load curve ignores storage, trade and dispatch, and the
-VRE figures ignore curtailment and outages.
+VRE figures ignore curtailment and outages. The timescale chapter is the one
+place a store and a demand meet, and it meets them at their upper bound:
+lossless, unlimited in power, free, and with no trade between areas.
+
+Which carrier a store really serves. Heat storage shifts district heat and
+reaches the electricity balance only through whatever produced that heat, so it
+is reported and never added to the electricity groups. Putting a number on that
+help needs a solved run.
 
 The technology grouping is this tool's own: the source data names 63 unittypes
 and no grouping of them. Units are grouped by which grids they touch, and the
@@ -209,15 +226,36 @@ GRID_GLOSS = {
     "steam": "industrial steam",
 }
 
-#: Storage durations the residual demand is decomposed over, shortest first.
+#: The two nested groups the electricity-balancing analysis reports, widest
+#: last. Each contains the one before it, so the second row is the first plus
+#: hydro rather than hydro alone.
+#:
+#: Fixed and ordered rather than discovered, so a build with no closed-loop
+#: pumped hydro prints a zero instead of losing the row -- but *membership* is
+#: derived from the data, in storage_group_of, because the scenario families
+#: rename their grids.
+STORAGE_GROUPS = [
+    ("elec_literal", "electricity storage", "#1f5f52"),
+    ("elec_practical", "+ inflow hydro", "#4f9d8c"),
+]
+
+#: What each group means, in one clause, for the reader who meets it in a table.
+GROUP_GLOSS = {
+    "elec_literal": "battery and closed-loop pumped hydro, which hold energy the "
+                    "power system put there itself",
+    "elec_practical": "plus reservoir, open-loop pumped hydro and run-of-river, which "
+                      "hold energy the weather puts there",
+}
+
+#: Storage durations the residual is measured against, shortest first.
 #:
 #: Every window is a whole multiple of the one before it, and that is not
-#: decoration. The decomposition subtracts each window's leftover from the next
-#: one's, so a longer window must always cancel at least as much as a shorter
-#: one. That holds only when the coarser blocks are unions of the finer ones:
-#: with a calendar month of 730 hours against a week of 168 the blocks cut
-#: across each other, a pure seasonal swing came out *higher* at the quarter
-#: than at the day, and the difference between them was a negative bar.
+#: decoration. The figure stacks the increase from each window to the next, so
+#: a longer window must always need at least as deep a store as a shorter one.
+#: That holds only when the coarser blocks are unions of the finer ones: with a
+#: calendar month of 730 hours against a week of 168 the blocks cut across each
+#: other, a pure seasonal swing came out *higher* at the quarter than at the
+#: day, and the difference between them was a negative bar.
 #:
 #: So these are four weeks and sixteen weeks, not a month and a quarter, and
 #: they are labelled as what they are rather than rounded to a calendar the
@@ -229,7 +267,6 @@ DURATION_WINDOWS = [
     ("within sixteen weeks", 2688),
     ("within the year", None),          # None: the whole series as one block
 ]
-DURATION_REMAINDER = "left after the year"
 
 #: Short timescales light, long timescales dark: the eye reads the dark end as
 #: the hard part, which is what it is. Fixed, so two scenarios compare.
@@ -239,7 +276,6 @@ DURATION_STYLE = {
     "within four weeks": "#6b9fd0",
     "within sixteen weeks": "#3d6fa5",
     "within the year": "#2a4d6e",
-    DURATION_REMAINDER: "#c46a4f",
 }
 
 #: Sharp at the width a markdown viewer renders an embedded PNG, without the
@@ -284,15 +320,26 @@ PRESENCE_LABEL = {
 }
 
 #: One fill per carrier combination. See _blend_for for why this is a table and
-#: not arithmetic. Ordered so that adding a carrier deepens the fill.
+#: not arithmetic.
+#:
+#: Every area in every shipped scenario has electricity, so the four fills that
+#: are actually drawn are the four that contain it. Those four carry the design:
+#: district heat turns the blue green, hydrogen turns it violet, and both
+#: together go to an indigo dark enough that no reader mistakes it for the light
+#: blue of electricity alone. The earlier pair for the hydrogen combinations sat
+#: too close to that light blue to be told apart across a map this size.
+#:
+#: The three combinations without electricity cannot occur here and are kept
+#: anyway: a lookup that returns grey for an unlisted set would be a silent
+#: answer, and this one costs nothing.
 CARRIER_BLEND = {
     frozenset({"elec"}): "#a8cbe8",
     frozenset({"dheat"}): "#e8b48f",
     frozenset({"H2"}): "#dda8c8",
     frozenset({"elec", "dheat"}): "#7fb3a8",
-    frozenset({"elec", "H2"}): "#a98fc4",
+    frozenset({"elec", "H2"}): "#c49bd4",
     frozenset({"dheat", "H2"}): "#cf9099",
-    frozenset({"elec", "dheat", "H2"}): "#6b86b8",
+    frozenset({"elec", "dheat", "H2"}): "#6b6fa8",
 }
 CARRIER_BLEND_UNKNOWN = "#e4e4e8"
 
@@ -501,28 +548,62 @@ def display_name(code: str, zones: bool) -> str:
 # Classifying units by the grids they touch
 # ============================================================================
 
-def derive_storage_grids(workbook: Workbook, inflow_grids: Optional[set]) -> set:
-    """Grids that hold energy but receive no natural inflow.
+def state_grids(workbook: Workbook) -> set:
+    """Every grid whose nodes hold energy, by the model's own definition.
 
-    Read from the data rather than listed by name. A literal set would have been
-    written against one scenario's vocabulary, and the TYNDP scenarios rename
-    'battery' to 'battery4h' -- which silently dropped a tenth of that build's
+    A state is ``p_gn.energyStoredPerUnitOfState`` above zero. Reading it from
+    the boundary sheet instead -- every grid with a row there -- looked
+    equivalent and was not: dheat and steam carry balancePenalty and maxSpill
+    rows without holding anything, so both came back as storage grids and a
+    district-heat charger was labelled pumped storage.
+
+    Derived rather than listed, because the TYNDP scenarios rename 'battery' to
+    'battery4h' and a literal set silently dropped a tenth of that build's
     capacity into "other" the one time it was tried.
     """
-    if "grid" not in workbook.boundary.columns:
+    gn = workbook.p_gn
+    if gn.empty or not {"grid", "energyStoredPerUnitOfState"} <= set(gn.columns):
+        # The builder drops an all-zero column, so an absent one means no node
+        # in this build holds a state. That is an answer, not a gap.
         return set()
-    state_grids = set(workbook.boundary["grid"].dropna().astype(str))
-    return state_grids - set(inflow_grids or HYDRO_INFLOW_GRIDS_FALLBACK)
+    held = pd.to_numeric(gn["energyStoredPerUnitOfState"], errors="coerce").fillna(0.0) > 0
+    return set(gn.loc[held, "grid"].dropna().astype(str))
+
+
+def derive_storage_grids(workbook: Workbook, inflow_grids: Optional[set]) -> set:
+    """Grids that hold energy but receive no natural inflow."""
+    return state_grids(workbook) - set(inflow_grids or HYDRO_INFLOW_GRIDS_FALLBACK)
+
+
+def technology_label(grid: str, inflow_grids: set) -> str:
+    """What a storage grid is reported as, inflow taking precedence over form.
+
+    The same ladder _label_for climbs: a grid with natural inflow is hydro
+    whatever machinery sits on it. Without this, psOpen read as "pumped
+    storage" in the storage tables and "hydro" in the capacity table, and the
+    Norwegian fleet -- which pumps a few per cent of what it turbines -- was
+    the whole difference between them.
+    """
+    return "hydro" if str(grid) in inflow_grids else storage_label(grid)
 
 
 def storage_label(grid: str) -> str:
-    """Storage grids kept apart where their duration story differs."""
+    """Storage grids kept apart where their duration story differs.
+
+    An unrecognised grid falls to OTHER_LABEL, not to 'pumped storage'. The old
+    fall-through made every future storage grid -- and, while dheat was wrongly
+    counted as one, a heat charger -- read as a Norwegian reservoir.
+    """
     g = str(grid).lower()
     if g.startswith("battery"):
         return "battery"
     if g.startswith("heatstor"):
         return "heat storage"
-    return "pumped storage"
+    if g.startswith("ps"):
+        return "pumped storage"
+    if g in ("reservoir", "ror"):
+        return "hydro"
+    return OTHER_LABEL
 
 
 @dataclass
@@ -531,7 +612,8 @@ class Classification:
     rows: pd.DataFrame               # node, unit, carrier, capacity, label
     unlabelled: pd.DataFrame         # rows that fell to 'other', with the reason
     inflow_grids: set
-    storage_grids: set
+    storage_grids: set               # states with no inflow, for the technology labels
+    states: set                      # every grid that holds energy, inflow or not
 
 
 def classify_capacity(
@@ -552,13 +634,14 @@ def classify_capacity(
     io = workbook.p_gnu_io
     if io.empty or "input_output" not in io.columns:
         empty = pd.DataFrame(columns=["node", "unit", "carrier", "capacity", "label"])
-        return Classification(empty, empty, set(), set())
+        return Classification(empty, empty, set(), set(), set())
 
     active = col_or(io, "isActive", 1.0).fillna(1.0) == 1
     io = io[active]
 
     inflow = set(inflow_grids) if inflow_grids else set(HYDRO_INFLOW_GRIDS_FALLBACK)
-    storage = derive_storage_grids(workbook, inflow)
+    states = state_grids(workbook)
+    storage = states - inflow
 
     outputs = io[io["input_output"].astype(str) == "output"].copy()
     inputs = io[io["input_output"].astype(str) == "input"]
@@ -587,7 +670,7 @@ def classify_capacity(
     for unit, out_grid in zip(outputs["unit"], outputs["grid"]):
         in_grids = feeds.get(unit, frozenset())
         flow = str(flow_of.get(unit, "")) if unit in flow_of else ""
-        label, reason = _label_for(str(out_grid), in_grids, flow, inflow, storage)
+        label, reason = _label_for(str(out_grid), in_grids, flow, inflow, storage, states)
         if label == OTHER_LABEL and unit in sources:
             label, reason = "demand response", ""
         labels.append(label)
@@ -602,7 +685,7 @@ def classify_capacity(
     unlabelled = outputs.loc[
         outputs["label"] == OTHER_LABEL, ["node", "unit", "carrier", "capacity", "reason"]
     ].copy()
-    return Classification(rows, unlabelled, inflow, storage)
+    return Classification(rows, unlabelled, inflow, storage, states)
 
 
 def _label_for(
@@ -611,6 +694,7 @@ def _label_for(
     flow: str,
     inflow_grids: set,
     storage_grids: set,
+    states: set,
     ) -> Tuple[str, str]:
     """The technology label for one output row, and why, if it has none."""
     # A flow-driven generator has no input grid; the flow names the resource.
@@ -624,6 +708,17 @@ def _label_for(
             return "solar", ""
         if "wind" in flow.lower():
             return "wind onshore", ""
+
+    # A unit whose output is a state is charging it, and the store it fills is
+    # the technology. A heat-storage charger consumes district heat and a pump
+    # consumes electricity; neither is a district-heat or an electricity plant,
+    # and labelling them by their input grid put 8.7 GW of heat chargers under
+    # whatever the input grid happened to resolve to.
+    if out_grid in states:
+        charging = storage_label(out_grid)
+        if charging != OTHER_LABEL:
+            return charging, ""
+        return OTHER_LABEL, f"storage grid '{out_grid}' is in no technology group"
 
     if not in_grids:
         return OTHER_LABEL, "no input grid and no flow"
@@ -639,7 +734,10 @@ def _label_for(
     if in_grid in inflow_grids:
         return "hydro", ""
     if in_grid in storage_grids:
-        return storage_label(in_grid), ""
+        label = storage_label(in_grid)
+        if label != OTHER_LABEL:
+            return label, ""
+        return OTHER_LABEL, f"storage grid '{in_grid}' is in no technology group"
     if in_grid in FUEL_GRID_LABELS:
         return FUEL_GRID_LABELS[in_grid], ""
     if in_grid == "H2":
@@ -851,81 +949,312 @@ def _uniform_or_none(df: pd.DataFrame, column: str) -> Optional[float]:
     return float(vals[0]) if len(vals) == 1 else None
 
 
-def storage_energy(
-    workbook: Workbook,
-    storage_limit_ts: Optional[pd.DataFrame],
-    zones: bool,
-    ) -> Tuple[pd.DataFrame, Dict]:
-    """Energy storage capacity, from the two places it is written.
+#: Per-node energy, in the three ways a storage's size can honestly be stated.
+STORAGE_MEASURES = ["nameplate_MWh", "usable_mean_MWh", "usable_envelope_MWh"]
 
-    An upwardLimit row either carries a constant or says useTimeseries, never
-    both. The twelve rows that say useTimeseries are every large Nordic and
-    Alpine reservoir, and their constant cell is empty -- so a reader of the
-    workbook alone sees about six per cent of the system's real reservoir
-    energy.
+
+def storage_carriers(workbook: Workbook) -> Dict[str, Tuple[frozenset, frozenset]]:
+    """``{grid: (charged from, discharged to)}`` for every grid units connect.
+
+    Which carrier a store serves is a fact about the units attached to it, not
+    about its name, and the scenario families do not agree on the names.
+    """
+    io = workbook.p_gnu_io
+    out: Dict[str, Tuple[set, set]] = {}
+    if io.empty or not {"grid", "unit", "input_output"} <= set(io.columns):
+        return {}
+    active = col_or(io, "isActive", 1.0).fillna(1.0) == 1
+    io = io[active]
+    side = io["input_output"].astype(str)
+    ins = io[side == "input"].groupby("unit", observed=True)["grid"].agg(
+        lambda s: {str(v) for v in s}).to_dict()
+    outs = io[side == "output"].groupby("unit", observed=True)["grid"].agg(
+        lambda s: {str(v) for v in s}).to_dict()
+    for unit, produced in outs.items():
+        for grid in produced:                       # this unit charges `grid`
+            entry = out.setdefault(grid, (set(), set()))
+            entry[0].update(ins.get(unit, set()) - {grid})
+    for unit, consumed in ins.items():
+        for grid in consumed:                       # this unit discharges `grid`
+            entry = out.setdefault(grid, (set(), set()))
+            entry[1].update(outs.get(unit, set()) - {grid})
+    return {g: (frozenset(a), frozenset(b)) for g, (a, b) in out.items()}
+
+
+def storage_group_of(
+    grid: str,
+    inflow_grids: set,
+    states: set,
+    carriers: Dict[str, Tuple[frozenset, frozenset]],
+    ) -> Optional[str]:
+    """Which nested group a storage grid belongs to, or None for neither.
+
+    Inflow makes a store practical rather than literal: an open-loop pumped
+    hydro node is filled by weather far more than by its pump -- Norwegian
+    psOpen pumping is a few per cent of its turbining -- so counting it as
+    energy the power system put there would be counting the spring melt.
+
+    A literal store must take electricity *and* give it back. Testing only one
+    end would file an electrolyser's product under electricity storage. A store
+    charged and discharged on some other carrier is in neither group, which is
+    where heat storage sits: it is real and it helps, but not at full value and
+    not on this balance.
+    """
+    grid = str(grid)
+    if grid not in states:
+        return None
+    if grid in inflow_grids:
+        return "elec_practical"
+    charged, discharged = carriers.get(grid, (frozenset(), frozenset()))
+    if "elec" in charged and "elec" in discharged:
+        return "elec_literal"
+    return None
+
+
+def storage_groups_by_grid(workbook: Workbook, inflow_grids: set) -> Dict[str, Optional[str]]:
+    """The group of every grid that holds energy, derived from the data."""
+    states = state_grids(workbook)
+    carriers = storage_carriers(workbook)
+    return {g: storage_group_of(g, set(inflow_grids), states, carriers) for g in states}
+
+
+@dataclass
+class StorageInventory:
+    """Every store in the build, sized three ways and grouped two ways."""
+    by_node: pd.DataFrame            # grid, node, area, group, label, source, measures, power_MW
+    by_group: pd.DataFrame           # cumulative group x measures, TWh, plus power_GW
+    by_area: pd.DataFrame            # area x group, cumulative, TWh and GW
+    power: pd.DataFrame              # area x label discharge power, GW
+    ratio_facts: Dict
+    facts: Dict
+
+
+def _boundary_storage_energy(
+    workbook: Workbook,
+    storage_limit: Optional[pd.DataFrame],
+    facts: Dict,
+    ) -> pd.DataFrame:
+    """Per-node energy for the stores whose size is an upwardLimit.
+
+    A row either carries a constant or says useTimeseries, never both. The
+    constant rows are paired with their downwardLimit, which the builder writes
+    as Eps for every storage node, so their usable volume is the ceiling. The
+    twelve rows that say useTimeseries are every large Nordic and Alpine
+    reservoir; their size -- and the seasonal floor underneath it -- is only in
+    the GDX, which is why reading the workbook alone sees a fraction of it.
     """
     boundary = workbook.boundary
-    facts = {"constant_TWh": 0.0, "timeseries_TWh": 0.0, "timeseries_nodes": [],
-             "by_grid_constant": {}, "grids_without_energy": []}
     if boundary.empty or "param_gnBoundaryTypes" not in boundary.columns:
-        return pd.DataFrame(), facts
+        return pd.DataFrame()
+    kinds = boundary["param_gnBoundaryTypes"].astype(str)
+    rows = boundary[kinds.isin(["upwardLimit", "downwardLimit"])].copy()
+    if rows.empty:
+        return pd.DataFrame()
+    rows["kind"] = kinds[rows.index]
+    rows["grid"] = rows["grid"].astype(str)
+    rows["node"] = rows["node"].astype(str)
+    rows["constant"] = col_or(rows, "constant", np.nan)
+    rows["use_ts"] = col_or(rows, "useTimeseries", 0.0).fillna(0.0) == 1
 
-    upward = boundary[boundary["param_gnBoundaryTypes"].astype(str) == "upwardLimit"].copy()
-    if upward.empty:
-        return pd.DataFrame(), facts
+    wide = rows.pivot_table(index=["grid", "node"], columns="kind",
+                            values="constant", observed=True)
+    tops = rows[rows["kind"] == "upwardLimit"].set_index(["grid", "node"])
+    flags = tops["use_ts"]
+    flags = flags[~flags.index.duplicated()]
+    upward = tops.index.unique()
+    if not len(upward):
+        return pd.DataFrame()
 
-    use_constant = col_or(upward, "useConstant", 0.0).fillna(0.0) == 1
-    use_ts = col_or(upward, "useTimeseries", 0.0).fillna(0.0) == 1
-    constant = col_or(upward, "constant", np.nan)
+    ceiling = wide["upwardLimit"] if "upwardLimit" in wide.columns else pd.Series(dtype="float64")
+    floor = (wide["downwardLimit"] if "downwardLimit" in wide.columns
+             else pd.Series(0.0, index=wide.index)).fillna(0.0)
 
-    fixed = upward[use_constant].assign(MWh=constant[use_constant].fillna(0.0))
-    facts["constant_TWh"] = float(fixed["MWh"].sum() * MWH_TO_TWH)
-    facts["by_grid_constant"] = {
-        str(g): float(v * MWH_TO_TWH)
-        for g, v in fixed.groupby("grid", observed=True)["MWh"].sum().items()
-    }
-    facts["timeseries_nodes"] = sorted(str(n) for n in upward.loc[use_ts, "node"])
+    series = storage_limit if storage_limit is not None else pd.DataFrame()
+    if not series.empty:
+        series = series.set_index(
+            pd.MultiIndex.from_arrays([series["grid"].astype(str), series["node"].astype(str)])
+        )
 
-    parts = [fixed[["grid", "node", "MWh"]].assign(source="workbook constant")]
-    if storage_limit_ts is not None and not storage_limit_ts.empty:
-        ts = storage_limit_ts.rename(columns={"value": "MWh"})
-        facts["timeseries_TWh"] = float(ts["MWh"].sum() * MWH_TO_TWH)
-        parts.append(ts[["grid", "node", "MWh"]].assign(source="timeseries"))
+    built, missing = [], []
+    for key in upward:
+        if bool(flags.get(key, False)):
+            if not series.empty and key in series.index:
+                row = series.loc[key]
+                built.append({
+                    "grid": key[0], "node": key[1], "source": "timeseries",
+                    "nameplate_MWh": float(row["nameplate_MWh"]),
+                    "usable_mean_MWh": float(row["usable_mean_MWh"]),
+                    "usable_envelope_MWh": float(row["usable_envelope_MWh"]),
+                })
+            else:
+                missing.append(key[1])
+            continue
+        top = float(ceiling.get(key, np.nan)) if len(ceiling) else float("nan")
+        if not np.isfinite(top):
+            continue
+        usable = max(top - float(floor.get(key, 0.0)), 0.0)
+        built.append({
+            "grid": key[0], "node": key[1], "source": "workbook constant",
+            "nameplate_MWh": top, "usable_mean_MWh": usable, "usable_envelope_MWh": usable,
+        })
+    facts["timeseries_nodes"] = sorted(str(k[1]) for k in upward if bool(flags.get(k, False)))
+    facts["timeseries_missing"] = sorted(missing)
+    return pd.DataFrame(built)
 
-    table = pd.concat(parts, ignore_index=True)
-    table["area"] = [area_of(n, zones) for n in table["node"]]
 
-    # Storage grids that hold power but no stated energy -- a property of the
-    # data worth naming, not a gap in this tool.
+def storage_power_by_node(workbook: Workbook, states: set) -> pd.DataFrame:
+    """Discharge power per storage node, read on the storage side of the unit.
+
+    The input-side row of a discharging unit: a battery's charger has an output
+    row on the same grid, and counting both would double every store. These are
+    the same megawatts the electricity capacity table reports as hydro or
+    battery -- read there per carrier, here per store.
+    """
     io = workbook.p_gnu_io
-    if not io.empty and "grid" in io.columns:
-        power_grids = {
-            str(g) for g in io["grid"].unique()
-            if storage_label(str(g)) in ("battery", "heat storage")
-            and str(g).lower().startswith(("battery", "heatstor"))
-        }
-        facts["grids_without_energy"] = sorted(power_grids - set(table["grid"].astype(str)))
-    return table, facts
-
-
-def storage_power_by_area(workbook: Workbook, zones: bool) -> pd.DataFrame:
-    """Discharge power of the storages whose energy capacity is never stated."""
-    io = workbook.p_gnu_io
+    empty = pd.DataFrame(columns=["grid", "node", "power_MW"])
     if io.empty or "input_output" not in io.columns:
-        return pd.DataFrame()
+        return empty
     active = col_or(io, "isActive", 1.0).fillna(1.0) == 1
-    inputs = io[active & (io["input_output"].astype(str) == "input")]
-    wanted = inputs[inputs["grid"].astype(str).str.lower().str.startswith(("battery", "heatstor"))]
+    inputs = io[active & (io["input_output"].astype(str) == "input")].copy()
+    inputs["grid"] = inputs["grid"].astype(str)
+    wanted = inputs[inputs["grid"].isin(set(states))]
     if wanted.empty:
-        return pd.DataFrame()
+        return empty
     work = wanted.copy()
-    work["label"] = [storage_label(str(g)) for g in work["grid"]]
+    work["node"] = work["node"].astype(str)
+    work["power_MW"] = pd.to_numeric(work["capacity"], errors="coerce").fillna(0.0)
+    return work.groupby(["grid", "node"], observed=True)["power_MW"].sum().reset_index()
+
+
+def storage_power_by_area(
+    workbook: Workbook,
+    zones: bool,
+    states: set,
+    inflow_grids: set,
+    ) -> pd.DataFrame:
+    """area x technology discharge power, GW, for every store in the build."""
+    per_node = storage_power_by_node(workbook, states)
+    if per_node.empty:
+        return pd.DataFrame()
+    work = per_node.copy()
+    work["label"] = [technology_label(g, inflow_grids) for g in work["grid"]]
     work["area"] = [area_of(n, zones) for n in work["node"]]
-    work["capacity"] = pd.to_numeric(work["capacity"], errors="coerce").fillna(0.0)
-    return (
-        work.groupby(["area", "label"], observed=True)["capacity"].sum().unstack(fill_value=0.0)
+    table = (
+        work.groupby(["area", "label"], observed=True)["power_MW"].sum().unstack(fill_value=0.0)
         * MW_TO_GW
     )
+    ordered = [l for l in TECH_STYLE if l in table.columns]
+    return table[ordered + [c for c in table.columns if c not in ordered]]
+
+
+def storage_inventory(
+    workbook: Workbook,
+    timeseries: "Timeseries",   # defined below, in the timeseries layer
+    zones: bool,
+    inflow_grids: Optional[set] = None,
+    ) -> StorageInventory:
+    """Every store, sized three ways, in two nested electricity groups.
+
+    The two routes a size is written by stay separate until the last step: an
+    upwardLimit in MWh for hydro, a duration per MW in p_gnu_io for battery and
+    heat. Nothing in the shipped scenarios states both, and a node that did
+    would be counted once, by its upwardLimit, and named.
+    """
+    inflow = set(inflow_grids) if inflow_grids else set(HYDRO_INFLOW_GRIDS_FALLBACK)
+    states = state_grids(workbook)
+    groups = storage_groups_by_grid(workbook, inflow)
+    facts: Dict = {"timeseries_nodes": [], "timeseries_missing": [], "both_routes": [],
+                   "grids_without_energy": [], "outside_groups": {}, "by_source": {},
+                   "provenance": timeseries.storage_limit_from}
+
+    bounded = _boundary_storage_energy(workbook, timeseries.storage_limit, facts)
+    ratio_table, ratio_facts = storage_energy_from_ratio(workbook, zones)
+
+    parts = [bounded] if not bounded.empty else []
+    if not ratio_table.empty:
+        seen = set(zip(bounded["grid"], bounded["node"])) if not bounded.empty else set()
+        by_ratio = ratio_table.groupby(["grid", "node"], observed=True)["MWh"].sum().reset_index()
+        by_ratio["grid"] = by_ratio["grid"].astype(str)
+        by_ratio["node"] = by_ratio["node"].astype(str)
+        facts["both_routes"] = sorted(
+            n for g, n in zip(by_ratio["grid"], by_ratio["node"]) if (g, n) in seen)
+        by_ratio = by_ratio[[(g, n) not in seen
+                             for g, n in zip(by_ratio["grid"], by_ratio["node"])]]
+        if not by_ratio.empty:
+            # A duration store has no seasonal bound, so its three measures agree.
+            for measure in STORAGE_MEASURES:
+                by_ratio[measure] = by_ratio["MWh"]
+            parts.append(by_ratio.assign(source="duration in p_gnu_io").drop(columns=["MWh"]))
+
+    power = storage_power_by_node(workbook, states)
+    if not parts:
+        empty = pd.DataFrame(columns=["grid", "node", "area", "group"] + STORAGE_MEASURES)
+        facts["grids_without_energy"] = sorted(set(power["grid"])) if not power.empty else []
+        return StorageInventory(empty, pd.DataFrame(), pd.DataFrame(),
+                                storage_power_by_area(workbook, zones, states, inflow),
+                                ratio_facts, facts)
+
+    by_node = pd.concat(parts, ignore_index=True)
+    by_node["area"] = [area_of(n, zones) for n in by_node["node"]]
+    by_node["label"] = [technology_label(g, inflow) for g in by_node["grid"]]
+    by_node["group"] = [groups.get(str(g)) for g in by_node["grid"]]
+    by_node = by_node.merge(power, on=["grid", "node"], how="left")
+    by_node["power_MW"] = by_node["power_MW"].fillna(0.0)
+
+    # A state grid carrying discharge power but no stated energy anywhere is a
+    # property of the data worth naming, not a gap in this tool.
+    facts["grids_without_energy"] = (
+        sorted(set(power["grid"]) - set(by_node["grid"].astype(str))) if not power.empty else [])
+    facts["by_source"] = {
+        str(s): float(v * MWH_TO_TWH)
+        for s, v in by_node.groupby("source", observed=True)["usable_mean_MWh"].sum().items()
+    }
+    facts["outside_groups"] = {
+        str(g): float(v * MWH_TO_TWH)
+        for g, v in by_node[by_node["group"].isna()]
+        .groupby("grid", observed=True)["usable_mean_MWh"].sum().items()
+    }
+    return StorageInventory(
+        by_node=by_node,
+        by_group=_group_totals(by_node, None),
+        by_area=_group_totals(by_node, "area"),
+        power=storage_power_by_area(workbook, zones, states, inflow),
+        ratio_facts=ratio_facts,
+        facts=facts,
+    )
+
+
+def _group_totals(by_node: pd.DataFrame, within: Optional[str]) -> pd.DataFrame:
+    """Cumulative group totals in TWh and GW, for the build or per area.
+
+    Cumulative because the groups are nested: the practical row is the literal
+    row plus hydro, and a reader who has to add two rows to get the number the
+    figure draws will eventually add them wrong.
+    """
+    if by_node.empty:
+        return pd.DataFrame()
+    keys = ([within] if within else []) + ["group"]
+    columns = STORAGE_MEASURES + ["power_MW"]
+    grouped = by_node.groupby(keys, observed=True)[columns].sum()
+    areas = sorted(by_node[within].unique()) if within else [None]
+
+    rows = []
+    for area in areas:
+        running = {c: 0.0 for c in columns}
+        for key, _, _ in STORAGE_GROUPS:
+            index = (area, key) if within else key
+            if index in grouped.index:
+                for column in columns:
+                    running[column] += float(grouped.loc[index, column])
+            row = {"group": key}
+            if within:
+                row[within] = area
+            for measure in STORAGE_MEASURES:
+                row[measure.replace("_MWh", "_TWh")] = running[measure] * MWH_TO_TWH
+            row["power_GW"] = running["power_MW"] * MW_TO_GW
+            rows.append(row)
+    table = pd.DataFrame(rows)
+    return table.set_index([within, "group"] if within else "group")
 
 
 def model_permissions(workbook: Workbook) -> Dict:
@@ -1191,6 +1520,7 @@ class Timeseries:
     annual: pd.DataFrame = field(default_factory=pd.DataFrame)
     node_cf_mean: pd.DataFrame = field(default_factory=pd.DataFrame)
     storage_limit: pd.DataFrame = field(default_factory=pd.DataFrame)
+    storage_limit_from: Optional[str] = None
     skipped: Optional[str] = None
 
     @property
@@ -1404,6 +1734,7 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         {"flow": flow, "node": node, "cf": float(np.mean(values))}
         for (flow, node), values in cf_seen.items()
     ]
+    storage_limit, storage_limit_from = _read_storage_limit(container, folder)
     return Timeseries(
         years=years,
         areas=areas,
@@ -1411,7 +1742,8 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         hourly=hourly,
         annual=annual,
         node_cf_mean=pd.DataFrame(cf_rows),
-        storage_limit=_read_storage_limit(container, folder),
+        storage_limit=storage_limit,
+        storage_limit_from=storage_limit_from,
     )
 
 
@@ -1465,15 +1797,27 @@ def _stack(stacks, n_areas: int, hours: int) -> Dict[str, np.ndarray]:
     return out
 
 
-def _read_storage_limit(container, folder: Path) -> pd.DataFrame:
-    """The reservoir energy ceiling, from exactly one file.
+def _read_storage_limit(container, folder: Path) -> Tuple[pd.DataFrame, Optional[str]]:
+    """How much energy each seasonally-bounded node can actually move.
 
-    upwardLimit in ts_node_hydro_storage_limits is identical in every climate
-    year and every forecast branch: it is a reservoir's physical size wrapped in
-    a useTimeseries flag, not a weather-dependent quantity. So one file answers
-    it. The forecast file is tried first only because it is one file rather than
-    35; a per-year file is the fallback for a deterministic or single-year build,
-    which writes no forecast file at all.
+    Three measures per (grid, node), because a reservoir whose bounds are a
+    season-long shape has no single size:
+
+      nameplate_MWh        max(upwardLimit)        -- the physical reservoir
+      usable_mean_MWh      mean(up - down)         -- the room on an average hour
+      usable_envelope_MWh  max(up) - min(down)     -- the widest swing the year allows
+
+    Reading only the ceiling, and only its annual maximum, made the twelve
+    seasonal nodes hold 149 TWh when the mean usable volume is 70. Both are
+    true statements about the same data and only one of them is a storage size.
+
+    One file and one forecast branch. The aggregates above agree across climate
+    years and across forecast branches to within 0.01%, which is the checkable
+    version of the claim this docstring used to make; the hourly values do not,
+    differing by up to 113 GWh, so the branches are never blended. The forecast
+    file is tried first because it is one file rather than 35 -- it carries
+    f01/f02/f03 and no f00, while a per-year file carries f00 alone, so the
+    lowest label present is the branch either way.
     """
     candidates = [folder / "ts_node_hydro_storage_limits_forecasts.gdx"]
     per_year = year_files(folder, "ts_node_hydro_storage_limits")
@@ -1485,16 +1829,56 @@ def _read_storage_limit(container, folder: Path) -> pd.DataFrame:
             continue
         if "param_gnBoundaryTypes" not in records.columns:
             continue
-        upward = records[records["param_gnBoundaryTypes"].astype(str) == "upwardLimit"]
-        if upward.empty:
+        table, branch = _storage_limit_measures(records)
+        if table.empty:
             continue
-        return (
-            upward.assign(
-                node=upward["node"].astype(str), grid=upward["grid"].astype(str)
-            )
-            .groupby(["grid", "node"], observed=True)["value"].max().reset_index()
-        )
-    return pd.DataFrame()
+        return table, f"{path.name}, branch {branch}" if branch else path.name
+    return pd.DataFrame(), None
+
+
+def _storage_limit_measures(records: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str]]:
+    """The three measures, from one ts_node frame, on one forecast branch.
+
+    Split out from the read so the arithmetic can be tested without a GDX file.
+    Every dimension column is cast to str first: gams.transfer returns
+    categoricals, and a groupby over those builds the full cartesian product of
+    grid and node -- which manufactures a psOpen row for every reservoir node
+    and fills it with NaN.
+    """
+    work = records.copy()
+    for column in ("grid", "node", "param_gnBoundaryTypes", "f"):
+        if column in work.columns:
+            work[column] = work[column].astype(str)
+
+    branch = None
+    if "f" in work.columns and len(work):
+        branch = min(work["f"].unique())
+        work = work[work["f"] == branch]
+
+    work = work[work["param_gnBoundaryTypes"].isin(["upwardLimit", "downwardLimit"])]
+    if work.empty or "upwardLimit" not in set(work["param_gnBoundaryTypes"]):
+        return pd.DataFrame(), branch
+
+    wide = work.pivot_table(
+        index=["grid", "node", "t"], columns="param_gnBoundaryTypes",
+        values="value", observed=True,
+    ).reset_index()
+    # A node bounded only from above has no floor, which is a zero floor.
+    if "downwardLimit" not in wide.columns:
+        wide["downwardLimit"] = 0.0
+    wide["downwardLimit"] = wide["downwardLimit"].fillna(0.0)
+    wide = wide[wide["upwardLimit"].notna()]
+    if wide.empty:
+        return pd.DataFrame(), branch
+
+    wide["band"] = wide["upwardLimit"] - wide["downwardLimit"]
+    grouped = wide.groupby(["grid", "node"], observed=True)
+    table = pd.DataFrame({
+        "nameplate_MWh": grouped["upwardLimit"].max(),
+        "usable_mean_MWh": grouped["band"].mean(),
+        "usable_envelope_MWh": grouped["upwardLimit"].max() - grouped["downwardLimit"].min(),
+    }).reset_index()
+    return table, branch
 
 
 def roll_up_to_countries(timeseries: Timeseries) -> Timeseries:
@@ -1530,50 +1914,90 @@ def roll_up_to_countries(timeseries: Timeseries) -> Timeseries:
     return replace(timeseries, areas=countries, hourly=hourly, annual=annual)
 
 
+def _hourly_balance(timeseries: Timeseries, subtract: Sequence[str]) -> Dict[str, np.ndarray]:
+    """Electricity demand less the named hourly series, per area."""
+    demand = timeseries.hourly.get("demand_elec")
+    if demand is None:
+        return {}
+    net = demand
+    for key in subtract:
+        part = timeseries.hourly.get(key)
+        if part is not None:
+            net = net - part
+    return {area: net[:, i] for i, area in enumerate(timeseries.areas)}
+
+
 def netload_by_area(timeseries: Timeseries) -> Dict[str, np.ndarray]:
     """Demand minus wind and solar, per area, every climate year pooled.
 
     Hydro is not subtracted: reservoir hydro is dispatchable, so subtracting it
     would answer a different question than what firm capacity has to cover.
+    That other question -- how far in time energy has to be moved -- is asked by
+    residual_after_inflow, and it needs hydro on the supply side.
     """
-    demand = timeseries.hourly.get("demand_elec")
-    if demand is None:
-        return {}
-    vre = timeseries.hourly.get("vre")
-    net = demand if vre is None else demand - vre
-    return {area: net[:, i] for i, area in enumerate(timeseries.areas)}
+    return _hourly_balance(timeseries, ("vre",))
 
 
-def _residue(values: np.ndarray, window: Optional[int]) -> float:
-    """Net load left over when it may be cancelled freely within ``window`` hours.
+def residual_after_inflow(timeseries: Timeseries) -> Dict[str, np.ndarray]:
+    """Demand minus wind, solar and hydro inflow, per area.
 
-    ``None`` means the whole series as a single block. Blocks are fixed rather
-    than sliding: a sliding window would let the same surplus hour cancel two
-    different deficits, and the answer would depend on where the year is cut in
-    a way no reader could check.
+    Inflow is what a reservoir exists to move in time, so a storage question
+    that leaves it out is not asking about storage. Left out, Norway -- whose
+    inflow is three times its demand -- read as the area least able to cover
+    itself, which is the exact inverse of what its reservoirs do.
+
+    Run-of-river inflow is subtracted on the same footing even though barely
+    any of it can be held: hour for hour it is generation that happens, and
+    treating it as such is what makes the remainder the part that must move.
     """
-    if window is None:
-        return float(max(values.sum(), 0.0))
-    if window <= 1:
-        return float(np.maximum(values, 0.0).sum())
-    edges = np.arange(0, len(values), window)
-    # reduceat handles the ragged final block: a week does not divide a year,
-    # and 52 blocks plus a remainder is the honest split.
-    return float(np.maximum(np.add.reduceat(values, edges), 0.0).sum())
+    return _hourly_balance(timeseries, ("vre", "inflow_hydro"))
 
 
-def residual_by_timescale(curves: Dict[str, np.ndarray], timeseries: Timeseries) -> Dict:
-    """How much of the residual demand storage of each duration could remove.
+def storage_depth(values: np.ndarray, window: Optional[int]) -> float:
+    """How deep a store must be to flatten ``values`` inside blocks of ``window``.
 
-    Net load summed inside a window lets surplus hours pay for deficit hours
-    within it, which is what a perfect, lossless, free store of that duration
-    would do. The difference between two windows is the energy that only the
-    longer one can reach; what survives a whole year is what no amount of
-    storage can move, because the energy is not there to move.
+    Within a block, firm generation supplies the mean and the store supplies
+    the deviation from it; the store must therefore hold the full range of the
+    running sum of that deviation. ``None`` means the whole series as one block.
 
-    It is an upper bound on what storage can do and therefore a lower bound on
-    what else is needed: nothing here is charged an efficiency, a power limit or
-    a cost.
+    The answer is an energy in MWh, which is what installed storage is measured
+    in -- unlike the unservable energy per year this used to report, which
+    could never be held against a storage volume however the caption was worded.
+
+    Blocks are fixed rather than sliding: a sliding window would let the same
+    surplus hour pay for two different deficits, and the answer would depend on
+    where the year is cut in a way no reader could check.
+    """
+    values = np.asarray(values, dtype="float64")
+    n = len(values)
+    if not n:
+        return 0.0
+    w = n if window is None else max(int(window), 1)
+    whole = (n // w) * w
+    deepest = 0.0
+    if whole:
+        block = values[:whole].reshape(-1, w)
+        running = np.cumsum(block - block.mean(axis=1, keepdims=True), axis=1)
+        deepest = float((running.max(axis=1) - running.min(axis=1)).max())
+    if whole < n:
+        # A week does not divide a year. The ragged last block is a real block,
+        # and dropping it moves the daily number by a few tenths of a per cent
+        # -- too little to notice and too much to be right.
+        tail = values[whole:]
+        running = np.cumsum(tail - tail.mean())
+        deepest = max(deepest, float(running.max() - running.min()))
+    return deepest
+
+
+def depth_by_timescale(curves: Dict[str, np.ndarray], timeseries: Timeseries) -> Dict:
+    """The store each area's residual needs, window by window, in TWh.
+
+    Returned as increments -- what each window needs that the one before it did
+    not -- so a stacked bar's colour boundaries are the depths themselves.
+
+    It is an upper bound on what a store could do, and therefore a lower bound
+    on the store needed: nothing here is charged an efficiency, a power limit,
+    a cost, or a megawatt-hour of trade with the neighbours.
     """
     if not curves or not timeseries.available or not timeseries.years:
         return {}
@@ -1582,8 +2006,8 @@ def residual_by_timescale(curves: Dict[str, np.ndarray], timeseries: Timeseries)
     if not hours or n_years < 1:
         return {}
 
-    windows = [1] + [w for _, w in DURATION_WINDOWS]
-    labels = [label for label, _ in DURATION_WINDOWS] + [DURATION_REMAINDER]
+    labels = [label for label, _ in DURATION_WINDOWS]
+    windows = [w for _, w in DURATION_WINDOWS]
 
     per_area_year: Dict[str, np.ndarray] = {}
     usable = n_years * hours
@@ -1593,12 +2017,16 @@ def residual_by_timescale(curves: Dict[str, np.ndarray], timeseries: Timeseries)
         if len(values) < usable:
             continue
         block = np.asarray(values[:usable], dtype="float64").reshape(n_years, hours)
-        residues = np.array([[_residue(block[y], w) for w in windows] for y in range(n_years)])
-        # Segment i is what window i+1 removes that window i did not. Nested
-        # windows make this non-negative by construction; the clip is against
-        # floating-point dust, not against a real negative.
-        segments = np.clip(np.diff(residues, axis=1) * -1.0, 0.0, None)
-        per_area_year[area] = np.column_stack([segments, residues[:, -1]]) * MWH_TO_TWH
+        depths = np.array([[storage_depth(block[y], w) for w in windows]
+                           for y in range(n_years)])
+        # A store that covers the season covers the day inside it, but the raw
+        # quantity does not always say so: a longer block subtracts a different
+        # mean, which tilts the running sum and can shrink its range. It is rare
+        # and it has never been seen on a real 8760-hour series, and a stacked
+        # bar must still be unable to draw a negative segment.
+        depths = np.maximum.accumulate(depths, axis=1)
+        increments = np.column_stack([depths[:, :1], np.diff(depths, axis=1)])
+        per_area_year[area] = np.clip(increments, 0.0, None) * MWH_TO_TWH
 
     if not per_area_year:
         return {}
@@ -1920,6 +2348,31 @@ def carrier_presence(workbook: Workbook, timeseries: Timeseries, zones: bool) ->
     return states
 
 
+#: Strongest state first. A country is what its most-developed zone is: one
+#: Finnish zone with district-heat demand makes Finland a district-heat country,
+#: and the zones that do not have it are the --zones view's business.
+PRESENCE_ORDER = [PRESENCE_DEMAND, PRESENCE_NODE, PRESENCE_UNKNOWN, PRESENCE_ABSENT]
+
+
+def presence_by_country(zone_presence: pd.DataFrame) -> pd.DataFrame:
+    """Zone-level presence rolled up, so both counts come from one frame.
+
+    Counting countries from a separately-built country-level frame would be the
+    same answer twice over, and the two could drift.
+    """
+    if zone_presence.empty:
+        return zone_presence
+    rows = {}
+    for country, block in zone_presence.groupby(
+            [country_of(z) for z in zone_presence.index], observed=True):
+        rows[country] = {
+            carrier: next(state for state in PRESENCE_ORDER
+                          if (block[carrier] == state).any())
+            for carrier in zone_presence.columns
+        }
+    return pd.DataFrame.from_dict(rows, orient="index")[list(zone_presence.columns)]
+
+
 def _blend_for(present: Sequence[str]) -> str:
     """The fill for one carrier set.
 
@@ -1999,11 +2452,13 @@ def figure_carrier_map(
     borders over the top -- the zones are the thing the model solves and the
     borders are how a reader finds them.
 
-    The fill counts a carrier only where something demands it. A carrier with a
-    node and no sink does not tint anything, because a map that shades an area
-    for a carrier nothing draws on is claiming the area uses it. What that
-    leaves out is in the table under this figure, which is a better place for it
-    than three unreadable boxes.
+    The fill counts a carrier where the area models it at all. It used to count
+    only what something demanded, which sounds stricter and drew a worse map:
+    hydrogen has nodes in 22 bidding zones of the TYNDP scenarios and demand in
+    none, so the carrier the scenario was built to study tinted nothing, and the
+    map came out identical to a scenario with no hydrogen in it. Which carriers
+    have no sink is a fact about demand, and it is listed as one in the chapter
+    around this figure.
     """
     path = out_dir / "fig_carrier_map.png"
     if not shapes.available or presence.empty:
@@ -2016,36 +2471,40 @@ def figure_carrier_map(
 
     _draw_context(ax, shapes, list(presence.index), neighbours)
     for area, polygons in geometry.items():
-        demanded = [c for c in MAP_CARRIERS
-                    if c in presence.columns and presence.loc[area, c] == PRESENCE_DEMAND]
+        modelled = [c for c in MAP_CARRIERS
+                    if c in presence.columns and presence.loc[area, c] != PRESENCE_ABSENT]
         patches = [p for p in (_polygon_path(poly) for poly in polygons) if p]
         ax.add_collection(PatchCollection(
             [PathPatch(p) for p in patches],
-            facecolor=_blend_for(demanded), edgecolor="#ffffff", linewidth=0.5, zorder=2))
+            facecolor=_blend_for(modelled), edgecolor="#ffffff", linewidth=0.5, zorder=2))
 
     _draw_country_outlines(ax, countries, list(presence.index))
     _draw_area_labels(ax, _label_geometry(shapes, countries, list(presence.index), zones))
     _finish_map(ax)
     _carrier_map_legend(ax, presence)
-    ax.set_title(_carrier_map_claim(presence), fontsize=10)
+    ax.set_title("What each bidding zone models", fontsize=10)
     return _finish(fig, path)
 
 
-def _carrier_map_claim(presence: pd.DataFrame) -> str:
-    """A title that states the finding when there is one, and labels when there is not.
+def _carriers_without_demand(presence: pd.DataFrame) -> List[str]:
+    """Carriers modelled somewhere and demanded nowhere, by their display names.
 
-    Computed from the data rather than written down, so it cannot go stale
-    against a scenario that fixes what it points at: the moment something
-    demands the hydrogen, this stops saying nothing does.
+    Read from the data rather than written down, so it cannot go stale against a
+    scenario that fixes what it points at: the moment something demands the
+    hydrogen, this stops saying nothing does. It used to be the map's title,
+    where a caveat was wearing the clothes of a finding.
     """
     titles = {grid: title for grid, title, _ in CARRIERS}
-    for carrier in presence.columns:
+    named = []
+    # Only the carriers this map can draw. Industrial steam is off it, and a key
+    # that explained a fill the reader cannot find would be worse than silence;
+    # the omissions table in the chapter carries steam.
+    for carrier in [c for c in MAP_CARRIERS if c in presence.columns]:
         modelled = int((presence[carrier] != PRESENCE_ABSENT).sum())
         hollow = int((presence[carrier] == PRESENCE_NODE).sum())
         if modelled and hollow == modelled:
-            return (f"{titles.get(carrier, carrier)} is modelled in {modelled} bidding "
-                    f"zones and demanded in none")
-    return "What each bidding zone demands"
+            named.append(titles.get(carrier, carrier).lower())
+    return named
 
 
 def _finish_map(ax) -> None:
@@ -2062,21 +2521,30 @@ def _finish_map(ax) -> None:
 
 
 def _carrier_map_legend(ax, presence: pd.DataFrame) -> None:
-    """What a fill means. One entry per combination the map actually draws."""
+    """What a fill means, and the one thing the fill cannot say.
+
+    A carrier modelled everywhere and demanded nowhere looks, on this map,
+    exactly like a carrier in full use. That belongs beside the key rather than
+    above the map as a title, which is where it used to sit.
+    """
     seen = []
     for area in presence.index:
-        demanded = tuple(c for c in MAP_CARRIERS
-                         if c in presence.columns and presence.loc[area, c] == PRESENCE_DEMAND)
-        if demanded and demanded not in seen:
-            seen.append(demanded)
+        modelled = tuple(c for c in MAP_CARRIERS
+                         if c in presence.columns and presence.loc[area, c] != PRESENCE_ABSENT)
+        if modelled and modelled not in seen:
+            seen.append(modelled)
     titles = {grid: title for grid, title, _ in CARRIERS}
     fills = [mpatches.Patch(facecolor=_blend_for(combination), edgecolor="#ffffff",
                             label=" + ".join(titles.get(c, c) for c in combination))
              for combination in sorted(seen, key=len)]
     if not fills:
         return
+    hollow = _carriers_without_demand(presence)
+    title = "carriers modelled"
+    if hollow:
+        title += "\n(" + summarise(hollow) + ": nothing demands it)"
     ax.legend(handles=fills, loc="upper left", fontsize=7,
-              title="carriers with demand", title_fontsize=7, framealpha=0.9)
+              title=title, title_fontsize=7, framealpha=0.9)
 
 
 def figure_carrier(
@@ -2177,22 +2645,19 @@ def figure_carrier(
     return _finish(fig, out_dir / f"fig_{slug}.png")
 
 
-def figure_storage(
-    out_dir: Path,
-    power: pd.DataFrame,
-    energy: pd.DataFrame,
-    ratio_facts: Optional[Dict],
-    zones: bool,
-    ) -> str:
+def figure_storage(out_dir: Path, inventory: "StorageInventory", zones: bool) -> str:
     """Power on the left, energy on the right, because they are different facts.
 
-    Battery and heat storage state their size as a duration rather than an
-    energy, and the duration is one number per grid. So the left panel stays a
-    power chart and carries the duration in its legend: a reader multiplies the
-    two rather than reading a second bar whose shape would be identical.
+    The right panel stacks the two nested groups, so the dark part of a bar is
+    the hydro that the light part is not, and marks each area's nameplate with
+    a tick. The gap between the bar and the tick is the reservoir space the
+    seasonal floor never releases -- for the system it is most of the number,
+    and a figure that drew nameplate alone would hide that it had.
     """
+    power = inventory.power
+    by_area = inventory.by_area
     n_rows = max(len(power) if power is not None else 0,
-                 energy["area"].nunique() if energy is not None and not energy.empty else 0)
+                 by_area.index.get_level_values(0).nunique() if len(by_area) else 0)
     fig, axes = plt.subplots(1, 2, figsize=(FIG_WIDTH_IN, _barh_height(n_rows)))
 
     if power is not None and not power.empty:
@@ -2202,47 +2667,68 @@ def figure_storage(
                       "discharge power, GW")
         # The duration rides in the legend, so the bar keeps meaning power while
         # the reader can still get to energy without leaving the figure.
-        hours = duration_by_label(ratio_facts or {})
+        hours = duration_by_label(inventory.ratio_facts or {})
         handles, labels = axes[0].get_legend_handles_labels()
         axes[0].legend(handles,
                        [f"{l} ({_num(hours[l], 0)} h)" if l in hours else l for l in labels],
                        fontsize=7, loc="lower right")
-        total = (ratio_facts or {}).get("total_TWh") or 0.0
-        axes[0].set_title(
-            "Battery and heat storage\n"
-            + (f"(size is a duration per grid: {_num(total * 1000, 0)} GWh in total)"
-               if total else "(no energy capacity is set)"),
-            fontsize=9)
+        axes[0].set_title(f"Discharge power of every store\n"
+                          f"({_num(float(table.to_numpy().sum()))} GW in total)", fontsize=9)
     else:
-        _empty_panel(axes[0], "No battery or heat storage\nin this scenario")
+        _empty_panel(axes[0], "No storage in this scenario")
 
-    if energy is not None and not energy.empty:
-        pivot = (
-            energy.groupby(["area", "source"], observed=True)["MWh"].sum().unstack(fill_value=0.0)
-            * MWH_TO_TWH
-        )
-        pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
-        positions = np.arange(len(pivot))
-        left = np.zeros(len(pivot))
-        for source, colour in (("workbook constant", "#7fb3a8"), ("timeseries", "#2f6f62")):
-            if source not in pivot.columns:
+    increments = group_increments(by_area, "usable_mean_TWh")
+    if not increments.empty and float(increments.to_numpy().sum()) > 0:
+        order = list(increments.sum(axis=1).sort_values(ascending=False).index)
+        increments = increments.loc[order]
+        positions = np.arange(len(order))
+        left = np.zeros(len(order))
+        for key, label, colour in STORAGE_GROUPS:
+            if key not in increments.columns:
                 continue
-            values = pivot[source].to_numpy(dtype="float64")
-            axes[1].barh(positions, values, left=left, label=source, color=colour,
+            values = increments[key].to_numpy(dtype="float64")
+            axes[1].barh(positions, values, left=left, color=colour, label=label,
                          edgecolor="white", linewidth=0.4, height=0.74)
             left += values
+        widest = [key for key, _, _ in STORAGE_GROUPS][-1]
+        nameplate = np.array([
+            float(by_area.loc[(area, widest), "nameplate_TWh"])
+            if (area, widest) in by_area.index else 0.0 for area in order])
+        axes[1].plot(nameplate, positions, marker="|", markersize=9, linestyle="none",
+                     color="#333333", zorder=5, label="nameplate ceiling")
         axes[1].set_yticks(positions)
-        axes[1].set_yticklabels([display_name(a, zones) for a in pivot.index], fontsize=8)
+        axes[1].set_yticklabels([display_name(a, zones) for a in order], fontsize=8)
         axes[1].invert_yaxis()
-        axes[1].set_xlabel("reservoir and pumped storage, TWh", fontsize=9)
+        axes[1].set_xlim(left=0)
+        axes[1].set_xlabel("usable storage energy, TWh", fontsize=9)
         axes[1].grid(axis="x", alpha=0.25)
         axes[1].tick_params(axis="x", labelsize=8)
         axes[1].legend(fontsize=7, loc="lower right")
-        axes[1].set_title("Hydro storage energy\n(where the number is written)", fontsize=9)
+        axes[1].set_title("Usable electricity storage\n(tick: the nameplate ceiling)",
+                          fontsize=9)
     else:
-        _empty_panel(axes[1], "No hydro storage energy capacity\ncould be read")
+        _empty_panel(axes[1], "No electricity storage energy\nis stated in this build")
 
     return _finish(fig, out_dir / "fig_storage_capacity.png")
+
+
+def group_increments(by_area: pd.DataFrame, measure: str) -> pd.DataFrame:
+    """area x group, each group holding only what the one before it did not.
+
+    ``by_area`` is cumulative, which is what a table wants and a stacked bar
+    cannot use: stacking cumulative totals would draw the literal storage twice.
+    """
+    if by_area is None or not len(by_area):
+        return pd.DataFrame()
+    wide = by_area[measure].unstack("group")
+    order = [key for key, _, _ in STORAGE_GROUPS if key in wide.columns]
+    if not order:
+        return pd.DataFrame()
+    wide = wide[order].fillna(0.0)
+    out = wide.copy()
+    for later, earlier in zip(order[1:], order[:-1]):
+        out[later] = (wide[later] - wide[earlier]).clip(lower=0.0)
+    return out
 
 
 def _draw_corridors(ax, shapes: ZoneShapes, countries: ZoneShapes, matrix: pd.DataFrame,
@@ -2499,18 +2985,18 @@ def figure_netload(out_dir: Path, curves: Dict[str, np.ndarray], zones: bool) ->
     return _finish(fig, out_dir / "fig_netload_duration.png")
 
 
-def figure_duration(out_dir: Path, decomposition: Dict, zones: bool) -> str:
-    """On what timescale each area's residual demand sits, and which years were hard.
+def figure_duration(out_dir: Path, decomposition: Dict, installed: pd.DataFrame,
+                    zones: bool) -> str:
+    """How deep a store each area needs, against how deep a store it has.
 
-    Left is each area as a share of its own residual demand, so a small country
-    is comparable with a large one; right is the system in TWh, year by year,
-    because the question there is which weather years were hard and on what
-    timescale -- and that is a quantity, not a share.
+    Left is each area in TWh with its own fleet marked on the same axis, so the
+    comparison is a glance rather than an arithmetic exercise; right is the
+    system year by year, because which weather years are hard is a quantity.
     """
     path = out_dir / "fig_duration_decomposition.png"
     if not decomposition:
         fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, 3.0))
-        _empty_panel(ax, "The timescale decomposition needs the timeseries files")
+        _empty_panel(ax, "The timescale comparison needs the timeseries files")
         return _finish(fig, path)
 
     by_area = decomposition["by_area"]
@@ -2518,25 +3004,59 @@ def figure_duration(out_dir: Path, decomposition: Dict, zones: bool) -> str:
     labels = decomposition["labels"]
     height = max(4.2, 0.30 * max(len(by_area), 8) + 1.8)
     fig, axes = plt.subplots(1, 2, figsize=(FIG_WIDTH_IN, height),
-                             gridspec_kw={"width_ratios": [1.0, 1.15]})
+                             gridspec_kw={"width_ratios": [1.15, 1.0]})
 
-    totals = by_area.sum(axis=1).replace(0.0, np.nan)
-    shares = (by_area.div(totals, axis=0) * 100.0).dropna(how="all")
-    shares = shares.loc[shares[DURATION_REMAINDER].sort_values().index]
-    positions = np.arange(len(shares))
-    left = np.zeros(len(shares))
+    # The order is fixed here and every overlay is looked up through it. Any
+    # re-sort after this point would attach Norway's reservoir to Germany's bar
+    # and the figure would still look plausible.
+    order = list(by_area.sum(axis=1).sort_values(ascending=False).index)
+    positions = np.arange(len(order))
+    left = np.zeros(len(order))
     for label in labels:
-        values = shares[label].to_numpy(dtype="float64")
+        values = by_area.loc[order, label].to_numpy(dtype="float64")
         axes[0].barh(positions, values, left=left, color=DURATION_STYLE[label],
                      edgecolor="white", linewidth=0.4, height=0.76, label=label)
         left += values
+
+    # The narrowest group and the widest, whatever sits between them.
+    literal, practical = STORAGE_GROUPS[0][0], STORAGE_GROUPS[-1][0]
+    def column(group: str, measure: str) -> np.ndarray:
+        if installed is None or not len(installed):
+            return np.zeros(len(order))
+        return np.array([
+            float(installed.loc[(area, group), measure])
+            if (area, group) in installed.index else 0.0 for area in order])
+
+    usable = column(practical, "usable_mean_TWh")
+    envelope = column(practical, "usable_envelope_TWh")
+    axes[0].hlines(positions, usable, np.maximum(envelope, usable),
+                   colors="#1f5f52", linewidth=2.0, zorder=4)
+    axes[0].plot(usable, positions, marker="|", markersize=9, linestyle="none",
+                 color="#1f5f52", zorder=5)
+    axes[0].plot(column(literal, "usable_mean_TWh"), positions, marker="D", markersize=3.6,
+                 linestyle="none", color="#111111", zorder=6)
+
     axes[0].set_yticks(positions)
-    axes[0].set_yticklabels([display_name(a, zones) for a in shares.index], fontsize=7)
-    axes[0].set_xlabel("share of the area's own residual demand, %", fontsize=8)
-    axes[0].set_xlim(0, 100)
+    axes[0].set_yticklabels([display_name(a, zones) for a in order], fontsize=7)
+    # Largest at the top, as every other bar chart here. Inverting the view does
+    # not move the data coordinates, so the overlays above stay on their bars.
+    axes[0].invert_yaxis()
+    axes[0].set_xlabel("storage energy, TWh", fontsize=8)
+    axes[0].set_xlim(left=0)
     axes[0].grid(axis="x", alpha=0.25)
     axes[0].tick_params(axis="x", labelsize=7)
-    axes[0].set_title("On what timescale each area's\nresidual demand sits", fontsize=9)
+    axes[0].set_title("How deep a store the residual needs,\nand how deep a store there is",
+                      fontsize=9)
+    handles, names = axes[0].get_legend_handles_labels()
+    handles = handles[:len(labels)] + [
+        mlines.Line2D([], [], color="#111111", marker="D", linestyle="none", markersize=3.6,
+                      label="installed: battery and closed pumped hydro"),
+        mlines.Line2D([], [], color="#1f5f52", linewidth=2.0,
+                      label="installed, + hydro: usable to seasonal envelope"),
+    ]
+    axes[0].legend(handles=handles, fontsize=6.0, loc="lower right", framealpha=0.92)
+    # The smallest areas are at the bottom once inverted, so the legend sits over
+    # empty space rather than over Germany.
 
     years = list(by_year.index)
     at = np.arange(len(years))
@@ -2548,10 +3068,11 @@ def figure_duration(out_dir: Path, decomposition: Dict, zones: bool) -> str:
         bottom += values
     axes[1].set_xticks(at)
     axes[1].set_xticklabels([str(y) for y in years], fontsize=5.5, rotation=90)
-    axes[1].set_ylabel("system residual demand, TWh", fontsize=8)
+    axes[1].set_ylabel("store the system needs, TWh", fontsize=8)
     axes[1].grid(axis="y", alpha=0.25)
     axes[1].tick_params(axis="y", labelsize=7)
     axes[1].set_title("The system, year by year", fontsize=9)
+    axes[1].set_ylim(top=float(bottom.max()) * 1.22)
     axes[1].legend(fontsize=6.5, loc="upper right", ncol=2, framealpha=0.9)
 
     return _finish(fig, path)
@@ -2741,9 +3262,8 @@ def build_report(
 
     per_area_transfer, matrix, transfer_facts = transfer_by_area(workbook, zones)
     _, zone_matrix, _ = transfer_by_area(workbook, True)
-    energy_table, storage_facts = storage_energy(workbook, timeseries.storage_limit, zones)
-    power_table = storage_power_by_area(workbook, zones)
-    ratio_table, ratio_facts = storage_energy_from_ratio(workbook, zones)
+    inventory = storage_inventory(workbook, timeseries, zones, classification.inflow_grids)
+    ratio_facts = inventory.ratio_facts
     checks = run_checks(workbook, classification, transfer_facts,
                         [c for c in DEMAND_FAMILY if not annual_range(
                             timeseries, f"demand_{c}").empty])
@@ -2804,17 +3324,18 @@ def build_report(
             parts.append(f"{_num(consumed)} GW consuming")
         parts.append(f"{_num(demand, 0)} TWh/yr demanded" if demand else "no demand built")
         report.add(f"- **{data['title']}**: " + ", ".join(parts) + ".")
-    if storage_facts["constant_TWh"] or storage_facts["timeseries_TWh"]:
-        hydro_total = storage_facts["constant_TWh"] + storage_facts["timeseries_TWh"]
-        report.add(f"- **Hydro storage**: {_num(hydro_total)} TWh"
-                   + (f", of which only {_num(storage_facts['constant_TWh'])} TWh is a number in "
-                      f"the workbook -- the rest is in a timeseries, see Storage."
-                      if storage_facts["timeseries_TWh"] else
-                      ", every megawatt-hour of it a constant in the workbook."))
-    if ratio_facts.get("total_TWh"):
-        report.add(f"- **Battery and heat storage**: "
-                   f"{_num(ratio_facts['total_TWh'] * 1000, 0)} GWh, written as a duration per "
-                   f"grid rather than an energy, see Storage.")
+    if len(inventory.by_group) and float(inventory.by_group["usable_mean_TWh"].max()):
+        narrow = inventory.by_group.loc[STORAGE_GROUPS[0][0]]
+        wide = inventory.by_group.loc[STORAGE_GROUPS[-1][0]]
+        report.add(f"- **Storage**: {_num(narrow['usable_mean_TWh'])} TWh usable as "
+                   f"{STORAGE_GROUPS[0][1]}, {_num(wide['usable_mean_TWh'])} TWh with inflow "
+                   f"hydro added ({_num(wide['usable_envelope_TWh'])} TWh across a season, "
+                   f"{_num(wide['nameplate_TWh'])} TWh of nameplate ceiling), "
+                   f"{_num(wide['power_GW'])} GW of discharge power, see Storage.")
+    outside_total = sum((inventory.facts.get("outside_groups") or {}).values())
+    if outside_total:
+        report.add(f"- **Heat storage**: {_num(outside_total * 1000, 0)} GWh, on the district "
+                   f"heat balance rather than the electricity one, see Storage.")
     if transfer_facts:
         report.add(f"- **Interconnection**: {_num(transfer_facts['total_GW'])} GW over "
                    f"{transfer_facts['pairs']} zone pair(s).")
@@ -2831,11 +3352,13 @@ def build_report(
             f"{_num(demand_total, 0)} TWh/yr mean, largest {worst['area']} at {_num(worst['mean'], 0)}",
             f"`ts_influx_elec`, {len(timeseries.years)} climate year(s)",
         ])
-    if storage_facts["timeseries_TWh"]:
+    if len(inventory.by_group) and float(inventory.by_group["usable_mean_TWh"].max()):
+        widest = [key for key, _, _ in STORAGE_GROUPS][-1]
         summary_rows.append([
-            "Hydro storage",
-            f"{_num(storage_facts['constant_TWh'] + storage_facts['timeseries_TWh'])} TWh",
-            "`p_gnBoundaryPropertiesForStates` + `ts_node_hydro_storage_limits`",
+            "Electricity storage",
+            f"{_num(inventory.by_group.loc[widest, 'usable_mean_TWh'])} TWh usable, "
+            f"{_num(inventory.by_group.loc[widest, 'nameplate_TWh'])} TWh of nameplate",
+            "`p_gnBoundaryPropertiesForStates` + `ts_node_hydro_storage_limits` + `p_gnu_io`",
         ])
     price = co2_price(workbook)
     if price is not None:
@@ -2872,16 +3395,17 @@ def build_report(
     report.add()
     report.add("## Where the model is")
     report.add()
-    _coverage_section(report, presence, shapes, zones)
+    _coverage_section(report, presence, zone_presence, shapes, zones)
     figures.append(figure_carrier_map(out_dir, shapes, countries, zone_presence, zones,
                                       neighbours))
     report.figure(
         figures[-1],
-        "Each bidding zone filled by the carriers something in it demands, with country "
-        "borders over the top. Take-away: which carriers are actually used where -- a zone "
-        "with a node and no demand is not tinted for it, and the table above says which "
-        "those are.",
+        "Each bidding zone filled by the carriers it models, with country borders over the "
+        "top. Industrial steam is not on the map: three carriers make seven fills and a "
+        "colour can carry that, a fourth makes fifteen and it cannot. Take-away: how far "
+        "each carrier reaches, and how much of the map is electricity alone.",
     )
+    _omissions_section(report, presence, zones)
 
     # ---- carrier sections -------------------------------------------------
     for carrier, data in carrier_data.items():
@@ -2893,15 +3417,15 @@ def build_report(
     report.add()
     report.add("## Storage")
     report.add()
-    _storage_section(report, storage_facts, energy_table, power_table, ratio_table,
-                     ratio_facts, timeseries, zones)
-    figures.append(figure_storage(out_dir, power_table, energy_table, ratio_facts, zones))
+    _storage_section(report, inventory, timeseries, zones)
+    figures.append(figure_storage(out_dir, inventory, zones))
     report.figure(
         figures[-1],
-        "Left: battery and heat storage discharge power, with each technology's duration in the "
-        "legend. Right: hydro reservoir and pumped-storage energy, split by which of the two "
-        "places it is written. Take-away: a handful of countries carry the system's seasonal "
-        "energy in hydro, and the rest hold hours rather than months.",
+        "Left: the discharge power of every store, with each duration-sized technology's hours in "
+        "the legend. Right: usable storage energy, the dark part being the hydro that the light "
+        "part is not, and the tick each area's nameplate ceiling. Take-away: a handful of "
+        "countries carry the system's seasonal energy in hydro, the rest hold hours rather than "
+        "months, and the ceiling is roughly twice what is usable.",
     )
 
     # ---- interconnection --------------------------------------------------
@@ -2948,14 +3472,15 @@ def build_report(
     report.add()
     report.add("## On what timescale")
     report.add()
-    decomposition = residual_by_timescale(curves, timeseries)
-    _duration_section(report, decomposition, timeseries, zones)
-    figures.append(figure_duration(out_dir, decomposition, zones))
+    decomposition = depth_by_timescale(residual_after_inflow(timeseries), timeseries)
+    _duration_section(report, decomposition, inventory, timeseries, zones)
+    figures.append(figure_duration(out_dir, decomposition, inventory.by_area, zones))
     report.figure(
         figures[-1],
-        "Residual demand split by the storage duration that could remove it. Take-away: an area "
-        "whose bar is mostly light needs hours of storage; one whose bar is mostly dark needs "
-        "months, or needs energy it does not have.",
+        "How deep a store each area's residual needs at each timescale, with the store it has "
+        "marked on the same axis: a diamond for battery and closed-loop pumped hydro, a bar from "
+        "usable to seasonal envelope once hydro is added. Take-away: where the markers sit inside "
+        "the light end, the fleet covers hours; where they reach the dark end, it covers a season.",
     )
 
     report.add('<a id="what-the-weather-years-do"></a>')
@@ -3015,7 +3540,7 @@ def build_report(
     report.add()
     report.add("## What this cannot see")
     report.add()
-    _limits_section(report, workbook, timeseries, storage_facts, zones)
+    _limits_section(report, workbook, timeseries, inventory, zones)
 
     report.add("---")
     report.add()
@@ -3221,18 +3746,19 @@ def _permissions_section(report, facts: Dict) -> None:
     report.add()
 
 
-def _coverage_section(report, presence: pd.DataFrame, shapes: ZoneShapes, zones: bool) -> None:
-    """Which carriers each area models -- every area gets a row, including empty ones.
+def _coverage_section(report, presence: pd.DataFrame, zone_presence: pd.DataFrame,
+                     shapes: ZoneShapes, zones: bool) -> None:
+    """What the build covers, in two counts and a list of what it does not.
 
     Absence is not a defect here and nothing below calls it one: an area with no
-    district heating is stating what the model contains, not a gap to fix. What
-    is worth a reader's attention is the third state -- a carrier with a node
-    that nothing demands -- which is a modelling choice they may not know they
-    made.
+    district heating is stating what the model contains, not a gap to fix. The
+    omissions are listed at the end all the same, because a reader who wants to
+    know whether Spain has district heat should not have to read a map to find
+    out that it does not.
 
-    This is where the map's three-cell chips went. The map now colours only what
-    is demanded, which is the claim it can make honestly at that size; the state
-    of every area and carrier is a table, where it can be read.
+    Both counts always, whatever level the report is written at. A country total
+    with no zone total behind it hides that Finland's district heat is in four
+    zones of five, and a zone total alone is not the number anyone quotes.
     """
     if presence.empty:
         report.add("No nodes are written in this scenario.")
@@ -3240,76 +3766,155 @@ def _coverage_section(report, presence: pd.DataFrame, shapes: ZoneShapes, zones:
         return
 
     titles = {grid: title for grid, title, _ in CARRIERS}
-    counts = {c: int((presence[c] != PRESENCE_ABSENT).sum()) for c in presence.columns}
-    total = len(presence)
-    report.add(f"{total} {level_header(zones)}(s), and what each one carries: "
-               + ", ".join(f"{titles.get(c, c).lower()} in {counts[c]}" for c in presence.columns)
-               + ".")
-    report.add()
+    by_country = presence_by_country(zone_presence) if not zone_presence.empty else presence
+    countries, zone_areas = len(by_country), len(zone_presence)
 
-    hollow = {c: sorted(presence.index[presence[c] == PRESENCE_NODE]) for c in presence.columns}
-    for carrier, areas in hollow.items():
-        if areas and len(areas) == counts[carrier]:
-            report.add(f"Every one of the {len(areas)} {level_header(zones)}(s) with a "
-                       f"{titles.get(carrier, carrier).lower()} node has nothing demanding it: "
-                       f"the units are built and the carrier has no sink in this build.")
-            report.add()
-        elif areas:
-            report.add(f"{len(areas)} {level_header(zones)}(s) carry a "
-                       f"{titles.get(carrier, carrier).lower()} node that nothing demands: "
-                       f"{summarise(areas)}.")
-            report.add()
-
-    report.add("Where each carrier stands, area by area. The map below tints an area only "
-               "for the carriers in the first state, and it is drawn per bidding zone, so it "
-               "separates areas this table rolls together.")
+    report.add(f"The input data covers {countries} country(s), {zone_areas} bidding zone(s).")
     report.add()
-    report.table(
-        [level_header(zones)] + [titles.get(c, c) for c in presence.columns],
-        [[display_name(area, zones)] + [PRESENCE_LABEL[presence.loc[area, c]]
-                                        for c in presence.columns]
-         for area in presence.index],
-    )
+    for carrier in presence.columns:
+        in_countries = int((by_country[carrier] != PRESENCE_ABSENT).sum())
+        in_zones = int((zone_presence[carrier] != PRESENCE_ABSENT).sum())
+        report.add(f"- {titles.get(carrier, carrier).lower()} is modelled for "
+                   f"{in_countries}/{countries} countries, {in_zones}/{zone_areas} bidding zones")
+    report.add()
 
     if not shapes.available:
         report.add(f"There is no map in this report: {shapes.missing}.")
         report.add()
-def _storage_section(report, facts, energy_table, power_table, ratio_table, ratio_facts,
-                     timeseries, zones) -> None:
-    total = facts["constant_TWh"] + facts["timeseries_TWh"]
-    if total:
-        report.add(f"Hydro reservoir and pumped storage hold **{_num(total)} TWh**, and the number "
-                   f"comes from two places that must not be confused.")
+
+
+def _omissions_section(report, presence: pd.DataFrame, zones: bool) -> None:
+    """Which areas a carrier skips, and where it is built with nothing to serve.
+
+    One row per carrier that has something to say. A carrier modelled everywhere
+    and demanded everywhere is not listed, because a line reading "- none, -"
+    asks the reader to check that it is empty every time they read the report.
+    """
+    if presence.empty:
+        return
+    titles = {grid: title for grid, title, _ in CARRIERS}
+    level = level_header(zones)
+
+    def name(areas: list, out_of: int) -> str:
+        """The areas, or the word for all of them. A list of sixteen is not a list."""
+        if not areas:
+            return "-"
+        if len(areas) == out_of:
+            return f"every {level}"
+        return summarise(areas)
+
+    rows = []
+    for carrier in presence.columns:
+        column = presence[carrier]
+        absent = sorted(column.index[column == PRESENCE_ABSENT])
+        hollow = sorted(column.index[column == PRESENCE_NODE])
+        unread = sorted(column.index[column == PRESENCE_UNKNOWN])
+        if not (absent or hollow or unread):
+            continue
+        cells = [name(absent, len(column)), name(hollow, len(column) - len(absent))]
+        if unread:
+            note = f"demand not read for {len(unread)}"
+            cells[1] = note if cells[1] == "-" else f"{cells[1]}; {note}"
+        rows.append([titles.get(carrier, carrier)] + cells)
+
+    if not rows:
+        report.add(f"Every carrier is modelled in every {level} and something demands each one.")
         report.add()
-        report.add(f"- **{_num(facts['constant_TWh'])} TWh** is a constant in "
-                   f"`p_gnBoundaryPropertiesForStates`"
-                   + (f" ({', '.join(f'{g} {_num(v)}' for g, v in sorted(facts['by_grid_constant'].items(), key=lambda x: -x[1]))})"
-                      if facts["by_grid_constant"] else "") + ".")
-        if facts["timeseries_TWh"]:
-            report.add(f"- **{_num(facts['timeseries_TWh'])} TWh** is in "
-                       f"`ts_node_hydro_storage_limits`, because {len(facts['timeseries_nodes'])} "
-                       f"node(s) set `useTimeseries` and leave their constant empty: "
-                       f"{summarise(facts['timeseries_nodes'])}. That value is identical in every "
-                       f"climate year -- it is the reservoir's physical size, not a weather-driven "
-                       f"quantity -- so it is read from one file and reported as one number.")
-            share = 100.0 * facts["timeseries_TWh"] / total
+        return
+
+    report.add("Energy carriers not fully modelled:")
+    report.add()
+    report.table(["carrier", f"not modelled ({level})", "modelled, nothing demands it"], rows)
+
+
+def _storage_section(report, inventory: "StorageInventory", timeseries, zones) -> None:
+    facts = inventory.facts
+    groups = inventory.by_group
+    widest = [key for key, _, _ in STORAGE_GROUPS][-1]
+
+    if len(groups) and float(groups["usable_mean_TWh"].max()) > 0:
+        total = float(groups.loc[widest, "usable_mean_TWh"])
+        report.add(f"The build holds **{_num(total)} TWh** of usable electricity storage, in two "
+                   f"nested groups: what the power system fills itself, and what the weather "
+                   f"fills for it.")
+        report.add()
+        rows = []
+        for key, label, _ in STORAGE_GROUPS:
+            if key not in groups.index:
+                continue
+            row = groups.loc[key]
+            rows.append([label, _num(row["usable_mean_TWh"]), _num(row["usable_envelope_TWh"]),
+                         _num(row["nameplate_TWh"]), _num(row["power_GW"])])
+        report.table(["group", "usable TWh", "seasonal envelope TWh", "nameplate TWh",
+                      "discharge GW"], rows)
+        report.add("; ".join(f"**{label}** is {GROUP_GLOSS[key]}"
+                             for key, label, _ in STORAGE_GROUPS if key in GROUP_GLOSS) + ".")
+        report.add()
+        report.add("Three energy columns, because a reservoir whose bounds are a season-long "
+                   "shape has no single size. **Usable** is the mean of `upwardLimit` minus "
+                   "`downwardLimit` over the year: the room to move on an average hour. The "
+                   "**seasonal envelope** is `max(upwardLimit)` minus `min(downwardLimit)`, the "
+                   "widest swing those bounds permit across a year, and it is the one to hold "
+                   "against a seasonal demand. **Nameplate** is the ceiling on its own.")
+        report.add()
+        ceiling = float(groups.loc[widest, "nameplate_TWh"])
+        if ceiling > total * 1.05:
+            report.add(f"The three differ by a factor of {_num(ceiling / total)} here, and the "
+                       f"nameplate is the one this report used to print. It counts reservoir "
+                       f"space that the seasonal floor never lets go of, so it is a fact about "
+                       f"the reservoir rather than about the energy the system can move.")
             report.add()
-            report.add(f"Reading the workbook alone would report {_num(facts['constant_TWh'])} TWh "
-                       f"and silently omit {_num(share, 0)}% of the system's reservoir energy.")
-        report.add()
-    elif timeseries.skipped:
+
+    if timeseries.skipped:
         report.add(f"Storage energy could only be read from the workbook: {timeseries.skipped}. "
-                   f"The number below is incomplete, not a total.")
+                   f"The numbers above are incomplete, not totals.")
         report.add()
 
+    by_source = facts.get("by_source") or {}
+    if by_source:
+        report.add("Where those megawatt-hours are written -- three places, which must not be "
+                   "confused:")
+        report.add()
+        if by_source.get("timeseries"):
+            report.add(f"- **{_num(by_source['timeseries'])} TWh** in "
+                       f"`ts_node_hydro_storage_limits`, where "
+                       f"{len(facts['timeseries_nodes'])} node(s) set `useTimeseries` and leave "
+                       f"their constant empty: {summarise(facts['timeseries_nodes'])}. Both "
+                       f"bounds are seasonal shapes there, and the aggregates above agree across "
+                       f"climate years and forecast branches to within 0.01%, so one file answers "
+                       f"it"
+                       + (f" -- {facts['provenance']}." if facts.get("provenance") else "."))
+        if by_source.get("workbook constant"):
+            report.add(f"- **{_num(by_source['workbook constant'])} TWh** as a constant in "
+                       f"`p_gnBoundaryPropertiesForStates`, against a `downwardLimit` the builder "
+                       f"writes as `Eps`, so for these the usable volume is the ceiling.")
+        if by_source.get("duration in p_gnu_io"):
+            report.add(f"- **{_num(by_source['duration in p_gnu_io'] * 1000, 0)} GWh** as "
+                       f"`upperLimitCapacityRatio` in `p_gnu_io`. Battery and heat storage have "
+                       f"no `upwardLimit` row at all; the ratio is v_state units per MW on the "
+                       f"discharge unit, so where `energyStoredPerUnitOfState` is 1 it is the "
+                       f"store's duration in hours and the energy is power times it.")
+        report.add()
+        if by_source.get("timeseries"):
+            hydro = by_source.get("timeseries", 0.0) + by_source.get("workbook constant", 0.0)
+            share = 100.0 * by_source["timeseries"] / hydro if hydro else 0.0
+            report.add(f"Reading the workbook alone would report "
+                       f"{_num(by_source.get('workbook constant', 0.0))} TWh of hydro storage and "
+                       f"silently omit {_num(share, 0)}% of it.")
+            report.add()
+    if facts.get("timeseries_missing"):
+        report.add(f"{len(facts['timeseries_missing'])} node(s) claim `useTimeseries` and no "
+                   f"series was read for them, so they contribute nothing above: "
+                   f"{summarise(facts['timeseries_missing'])}.")
+        report.add()
+    if facts.get("both_routes"):
+        report.add(f"{len(facts['both_routes'])} node(s) state a size both ways; each is counted "
+                   f"once, by its `upwardLimit`: {summarise(facts['both_routes'])}.")
+        report.add()
+
+    ratio_facts = inventory.ratio_facts or {}
     if ratio_facts.get("total_TWh"):
         by_grid = ratio_facts["by_grid"]
-        report.add(f"Battery and heat storage hold a further **{_num(ratio_facts['total_TWh'])} "
-                   f"TWh**, written a different way. They have no `upwardLimit` row; their size is "
-                   f"`upperLimitCapacityRatio` in `p_gnu_io`, on the input side of the discharge "
-                   f"unit. It is v_state units per MW, so where `energyStoredPerUnitOfState` is 1 "
-                   f"it is the storage's duration in hours and the energy is power times it.")
-        report.add()
         report.add("The duration is one number per grid, not per area, so the energy below is "
                    "each area's power at that grid's duration:")
         report.add()
@@ -3322,28 +3927,45 @@ def _storage_section(report, facts, energy_table, power_table, ratio_table, rati
                          _num(entry["TWh"] * 1000, 0), str(entry["nodes"])])
         rows.append(["**total**", "", "", f"**{_num(ratio_facts['total_TWh'] * 1000, 0)}**", ""])
         report.table(["grid", "hours", "power GW", "energy GWh", "node(s)"], rows)
-        if ratio_facts["unconvertible"]:
+        if ratio_facts.get("unconvertible"):
             report.add(f"{len(ratio_facts['unconvertible'])} node(s) state a ratio but no "
                        f"`energyStoredPerUnitOfState`, so their v_state is not MWh and their "
                        f"energy cannot be read from it: "
                        f"{summarise(ratio_facts['unconvertible'])}.")
             report.add()
-    elif facts["grids_without_energy"]:
-        report.add(f"**{', '.join(facts['grids_without_energy'])}** carry no energy capacity "
-                   f"anywhere in this workbook -- no `upwardLimit` row is written for them, and "
-                   f"no `upperLimitCapacityRatio` either. What is defined is their charge and "
-                   f"discharge power, below. That is a property of the data rather than something "
-                   f"missing from this report.")
+
+    outside = facts.get("outside_groups") or {}
+    if outside:
+        named = ", ".join(f"`{g}` {_num(v * 1000, 0)}"
+                          for g, v in sorted(outside.items(), key=lambda x: -x[1]))
+        report.add(f"A further **{_num(sum(outside.values()) * 1000, 0)} GWh** sits in stores that "
+                   f"are in neither group above ({named} GWh). They are charged and discharged on "
+                   f"district heat, so they shift heat demand and reach the electricity balance "
+                   f"only through whatever produced that heat. That help is real and it is not "
+                   f"worth its full megawatt-hour, so it is reported here and never added to the "
+                   f"electricity totals.")
         report.add()
 
-    if power_table is not None and not power_table.empty:
+    if facts.get("grids_without_energy"):
+        report.add(f"**{', '.join(facts['grids_without_energy'])}** carry discharge power but no "
+                   f"stated energy anywhere in this workbook -- no `upwardLimit` row and no "
+                   f"`upperLimitCapacityRatio`. That is a property of the data rather than "
+                   f"something missing from this report.")
+        report.add()
+
+    power = inventory.power
+    if power is not None and not power.empty:
+        report.add("Discharge power, read on the storage side of each unit. These are the same "
+                   "megawatts the electricity capacity table reports as hydro, battery and pumped "
+                   "storage -- counted there per carrier, here per store.")
+        report.add()
         rows = []
-        for area in power_table.sum(axis=1).sort_values(ascending=False).index:
+        for area in power.sum(axis=1).sort_values(ascending=False).index:
             rows.append([display_name(area, zones)]
-                        + [_num(power_table.loc[area, c]) if power_table.loc[area, c] else "-"
-                           for c in power_table.columns])
-        rows.append(["**total**"] + [f"**{_num(power_table[c].sum())}**" for c in power_table.columns])
-        report.table([level_header(zones)] + list(power_table.columns), rows)
+                        + [_num(power.loc[area, c]) if power.loc[area, c] else "-"
+                           for c in power.columns])
+        rows.append(["**total**"] + [f"**{_num(power[c].sum())}**" for c in power.columns])
+        report.table([level_header(zones)] + list(power.columns), rows)
 
 
 def _transfer_section(report, per_area, facts, peak, zones) -> None:
@@ -3425,49 +4047,91 @@ def _transfer_section(report, per_area, facts, peak, zones) -> None:
         report.add()
 
 
-def _duration_section(report, decomposition: Dict, timeseries: Timeseries, zones: bool) -> None:
-    """What storage of each duration could remove, and what nothing can."""
+def _duration_section(report, decomposition: Dict, inventory, timeseries: Timeseries,
+                      zones: bool) -> None:
+    """How deep a store the residual needs, against how deep a store there is."""
     if not decomposition:
-        report.add("The timescale decomposition needs the hourly timeseries, which were not read"
+        report.add("The timescale comparison needs the hourly timeseries, which were not read"
                    + (f": {timeseries.skipped}" if timeseries.skipped else "") + ".")
         report.add()
         return
 
+    labels = decomposition["labels"]
     by_area = decomposition["by_area"]
     by_year = decomposition["by_year"]
-    report.add("Net load summed inside a window lets a surplus hour pay for a deficit hour within "
-               "it -- what a perfect, lossless, free store of that duration would do. Each row "
-               "below is the energy only a store of that length can reach, and the last is what "
-               "survives a whole year, because the energy to move is simply not there. Blocks are "
-               "fixed, not sliding, so no surplus hour is spent twice.")
+    installed = inventory.by_area if inventory is not None else pd.DataFrame()
+    # The narrowest group and the widest, whatever sits between them.
+    literal, practical = STORAGE_GROUPS[0][0], STORAGE_GROUPS[-1][0]
+
+    report.add("Electricity demand less wind, solar and hydro inflow, and then the question a "
+               "store answers: how much energy has to be held to flatten what is left inside a "
+               "window of each length. Firm generation supplies the average over the window and "
+               "the store supplies the swing around it, so the number below is the store's depth "
+               "in TWh -- the same unit the fleet is measured in, which is what makes the two "
+               "comparable. Blocks are fixed, not sliding, so no surplus hour is spent twice.")
     report.add()
 
-    totals = by_area.sum(axis=1)
+    def held(area: str, group: str, measure: str) -> float:
+        if installed is None or not len(installed) or (area, group) not in installed.index:
+            return 0.0
+        return float(installed.loc[(area, group), measure])
+
+    cumulative = by_area[labels].cumsum(axis=1)
     rows = []
-    for area in totals.sort_values(ascending=False).index:
-        row = by_area.loc[area]
-        rows.append([display_name(area, zones), _num(totals[area], 0)]
-                    + [f"{_num(100.0 * row[l] / totals[area], 0)}%" if totals[area] else "-"
-                       for l in decomposition["labels"]])
-    system = by_year.sum(axis=0) / max(len(by_year), 1)
-    system_total = float(system.sum())
-    rows.append(["**system**", f"**{_num(system_total, 0)}**"]
-                + [f"**{_num(100.0 * system[l] / system_total, 0)}%**" if system_total else "-"
-                   for l in decomposition["labels"]])
-    report.table([level_header(zones), "residual demand TWh/yr"] + decomposition["labels"], rows)
+    for area in cumulative[labels[-1]].sort_values(ascending=False).index:
+        fleet = held(area, practical, "usable_mean_TWh")
+        reaches = [l for l in labels if cumulative.loc[area, l] <= fleet]
+        rows.append([display_name(area, zones)]
+                    + [_num(cumulative.loc[area, l]) for l in labels]
+                    + [_num(held(area, literal, "usable_mean_TWh")), _num(fleet),
+                       reaches[-1][len("within "):] if reaches else "less than a day"])
+    system = cumulative.sum(axis=0)
+    system_fleet = sum(held(a, practical, "usable_mean_TWh") for a in cumulative.index)
+    system_reaches = [l for l in labels if system[l] <= system_fleet]
+    rows.append(["**system**"] + [f"**{_num(system[l])}**" for l in labels]
+                + [f"**{_num(sum(held(a, literal, 'usable_mean_TWh') for a in cumulative.index))}**",
+                   f"**{_num(system_fleet)}**",
+                   f"**{system_reaches[-1][len('within '):] if system_reaches else 'less than a day'}**"])
+    report.table([level_header(zones)] + [f"{l} TWh" for l in labels]
+                 + ["has: storage TWh", "has: + hydro TWh", "reaches"], rows)
+
+    # The usable volume is the average hour's room; a seasonal swing is allowed
+    # the whole envelope, and for the reservoir countries that is the difference
+    # between covering a quarter and covering the year.
+    further = []
+    for area in cumulative.index:
+        reach = [l for l in labels if cumulative.loc[area, l]
+                 <= held(area, practical, "usable_mean_TWh")]
+        wider = [l for l in labels if cumulative.loc[area, l]
+                 <= held(area, practical, "usable_envelope_TWh")]
+        if len(wider) > len(reach):
+            further.append(f"{display_name(area, zones)} to "
+                           f"{wider[-1][len('within '):]}")
+    if further:
+        report.add(f"Read against the seasonal envelope rather than the average usable volume, "
+                   f"{len(further)} area(s) reach further: {summarise(further)}.")
+        report.add()
+
+    report.add("The first installed column is battery and closed-loop pumped hydro. Those are "
+               "hour-scale machines by design and nobody built them to carry a season, so a small "
+               "number there is a description and not a shortfall. The column that decides the "
+               "answer is the second: large hydro is the only thing in these scenarios that holds "
+               "a season at all, and the areas that have it are the areas whose residual can be "
+               "moved that far.")
+    report.add()
 
     hardest = by_year.sum(axis=1)
-    report.add(f"Averaged over the climate years the system's residual demand is "
-               f"{_num(system_total, 0)} TWh/yr, of which "
-               f"{_num(100.0 * float(system[DURATION_REMAINDER]) / system_total, 0)}% is beyond "
-               f"the reach of a year of storage. The hardest climate year is "
-               f"{hardest.idxmax()} at {_num(float(hardest.max()), 0)} TWh and the easiest "
-               f"{hardest.idxmin()} at {_num(float(hardest.min()), 0)} TWh, a spread of "
+    report.add(f"Averaged over the climate years the system needs a store of "
+               f"{_num(float(system[labels[-1]]))} TWh to flatten its residual across the year, "
+               f"and {_num(float(system[labels[0]]))} TWh to flatten it within a day. The hardest "
+               f"climate year is {hardest.idxmax()} at {_num(float(hardest.max()))} TWh and the "
+               f"easiest {hardest.idxmin()} at {_num(float(hardest.min()))} TWh, a spread of "
                f"{_num(100.0 * (float(hardest.max()) / float(hardest.min()) - 1), 0)}%.")
     report.add()
-    report.add("*Every figure here is an upper bound on what storage could do, and so a lower "
-               "bound on what else is needed: nothing is charged an efficiency, a power limit or "
-               "a cost, and no energy is traded between areas.*")
+    report.add("*Every figure here is an upper bound on what a store could do, and so a lower "
+               "bound on the store needed: nothing is charged an efficiency, a power limit or a "
+               "cost, and no energy is traded between areas. The installed columns are the usable "
+               "volume; across a season the envelope is larger, and the figure draws both.*")
     report.add()
 
 
@@ -3762,7 +4426,7 @@ def _not_summarized(report, workbook) -> None:
     report.add()
 
 
-def _limits_section(report, workbook, timeseries, storage_facts, zones) -> None:
+def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
     """What survives here rather than sitting under the figure it qualifies.
 
     Two caveats that used to live in this section now sit in small type under
@@ -3780,8 +4444,8 @@ def _limits_section(report, workbook, timeseries, storage_facts, zones) -> None:
     if not timeseries.available:
         report.add(f"**The timeseries sections are missing from this report**: "
                    f"{timeseries.skipped}. Annual demand, hydro inflow, net load, peak demand, the "
-                   f"climate-year comparison, and the larger half of the hydro storage number all "
-                   f"need those files. Everything read from `inputData.xlsx` -- capacity, "
+                   f"climate-year comparison, and every hydro storage volume with a seasonal "
+                   f"bound all need those files. Everything read from `inputData.xlsx` -- capacity, "
                    f"interconnection capacity, prices, emissions and the structural checks -- is "
                    f"unaffected.")
     report.add()

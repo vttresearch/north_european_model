@@ -146,6 +146,24 @@ not build and why, and has a documentation page of its own.
 - The report said battery and heat storage carry no energy capacity anywhere. They
   carry 1.06 TWh, as `upperLimitCapacityRatio` in `p_gnu_io` -- a duration per grid,
   now reported as one and shown in the storage figure's legend.
+- The carrier map tinted only what was demanded, so hydrogen -- nodes in 22 bidding
+  zones, demand in none -- tinted nothing and the TYNDP map came out identical to a
+  scenario with no hydrogen in it. It now tints what is modelled, in four fills, and
+  says beside the key which carrier has no sink. "Where the model is" is two counts,
+  the map, and a list of what is missing; the 16-row presence table is gone.
+- Hydro storage was read as the annual maximum of `upwardLimit` alone: 159.6 TWh in
+  NT2030. Both bounds are seasonal series, and the usable volume is 80.3 TWh. Reported
+  as usable, seasonal envelope and nameplate, from one forecast branch.
+- Storage is two nested electricity groups -- battery and closed-loop pumped hydro,
+  then plus inflow hydro -- derived from the grids, not listed. Heat storage is in
+  neither and says why.
+- "On what timescale" compared nothing: it reported unservable TWh/yr against storage
+  measured in TWh, and left hydro inflow out, so Norway read as the area least able to
+  cover itself. It now reports the store depth the residual needs at each timescale,
+  with the installed fleet on the same axis, and counts inflow as supply.
+- `dheat` and `steam` were storage grids, because a `balancePenalty` row was read as a
+  state. A state is now `energyStoredPerUnitOfState`, and an unknown storage grid is
+  named rather than assumed to be pumped storage.
 - The fuel table listed seven of the ten fuels and was sorted by a column the sentence
   did not name; it now carries all ten, sorted by the one it points at, and says that
   ordering fuels is not ordering plants.

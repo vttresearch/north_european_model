@@ -141,6 +141,15 @@ Whether that is the right treatment is discussed in
 [the caveats](#some-caveats-from-cross-checking-the-data), which is also where the
 evidence against conjuring a profile for them sits.
 
+The seasonal **floor** matters as much as the ceiling, and it is easy to miss
+because only the series-bound nodes have one worth reading -- every constant node
+is floored at `Eps`. Across the twelve series nodes the ceiling peaks at 149 TWh
+while the mean gap between the two bounds is 70 TWh, so more than half of the
+number a reader would quote as reservoir size is space the floor never releases.
+`tools/input_data_summary.py` reports both, and the widest swing a year permits
+as a third figure; a comparison that uses the ceiling alone is overstating the
+fleet by about a factor of two.
+
 ## Where the PECD files come from
 
 The three `PECD-hydro-*.csv` files are used **unmodified** from:

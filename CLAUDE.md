@@ -37,7 +37,7 @@ does not have.
   storage, interconnection and prices from `inputData.xlsx`, plus a net-load duration
   curve and the interannual spread from the per-year GDX files. The only tool that
   reads a build's GDX, and the only one with tests (`tests/unit/test_input_data_summary.py`,
-  which covers three arithmetic conventions whose failures a reader could not see).
+  which covers five arithmetic conventions whose failures a reader could not see).
   It is also the only plotting code in the repo.
 - `profile_build.py` -- a build run under a profiler and reported by phase, with the
   caveat that pstats cannot be trusted with it.
