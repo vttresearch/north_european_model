@@ -11,6 +11,7 @@ This readme has the following main sections
 - [Downloading required time series files](#downloading-required-time-series-files)
 - [Building input files for Backbone and running the model](#Building-input-files-for-Backbone-and-running-the-model)
 - [Running Backbone](#running-backbone)
+- [Tool assisted running](#tool-assisted-running)
 
 
 ## Authors and acknowledgments
@@ -471,3 +472,61 @@ Working command line options for `backbone.gms` would be, for example:
 
 Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
 
+
+## Tool assisted running
+
+[Back to top](#North-European-energy-system-model)
+
+The sections above are what a modeller needs to run the model by hand. This one is for
+anyone wanting to automate the runs, drive them from a script or an AI assistant, or
+change the pipeline rather than the data.
+
+**Call the interpreter by its full path.** Automation has no Miniconda Prompt to open and
+no `conda activate` step, so name the `northEuropeanModel` environment's `python.exe`
+directly, or go through `conda run -n northEuropeanModel python ...`. Both the build and
+the tests work that way:
+
+```
+<path to northEuropeanModel>\python.exe build_input_data.py src_files config_NT2030.ini
+<path to northEuropeanModel>\python.exe -m pytest
+```
+
+**Do not drive the `run-*.cmd` files unattended.** They end with a `cmd` line that opens
+an interactive shell so the log can be read afterwards — convenient by hand, and it hangs
+forever under a script. For an automated GAMS run, call `gams` with the same arguments
+the `.cmd` file passes.
+
+**The check worth automating.** A one-day run on OT2030 is the cheapest thing that proves
+the whole chain end to end. From cold, building the input data and solving a single day
+take about ten minutes together; once the build cache is warm the build alone is about
+two. `run-OT2030-1998-1d.cmd` is that run by hand — to automate it, build the input data
+and then call `gams` with the arguments that file passes, not the `.cmd` file itself. It
+needs the [time series downloaded earlier](#downloading-required-time-series-files) to be
+in place; nothing in the pipeline can produce those.
+
+**Running the tests.** See [tests/README.md](tests/README.md). About four minutes warm,
+but fifteen or more from cold, and it checks the pipeline's internals rather than a
+finished build — so it is what to run when changing `src/`, rather than the routine gate.
+Its header prints whether `gams.transfer` is the real API or a stub: on a machine without
+GAMS a green run has silently skipped every GAMS test, and that line is the only thing
+that says so.
+
+**Checking the environment.** The `northEuropeanModel` environment covers the Python
+half. Installing GAMS, choosing a solver and matching `gamsapi[transfer]` to it belong to
+the Backbone checkout this model sits inside — its `AGENTS.md` and
+`.claude/skills/backbone-quickstart/` cover all three, and none of it is repeated here.
+Normally there is nothing to configure: `src/GDX_exchange.py` binds `gams.transfer` to
+the GAMS install matching the `gamsapi` you pinned. If GDX reads or writes go wrong, that
+skill's `scripts/check_env.py` reports what the machine actually has.
+
+**Write down what works, where it cannot be shared.** Once the build and the tests are
+proven, record the interpreter, those commands and whether the downloaded time series are
+present in `local-setup.txt` at the model root. It is gitignored, so it describes your
+machine and travels to nobody. Head it with the date, and with the note that if it
+disagrees with `check_env.py` the probe is right and the file is stale. Nothing
+machine-specific belongs in a tracked file — not this README, not `environment.yml`, not
+`docs/` and not the tests, because those are shared and would go stale for everyone else.
+
+**Tools.** `tools/` holds standalone scripts that answer a question about a build rather
+than taking part in one; they are listed under [Documentation](#documentation). Look
+there before writing a throwaway script.

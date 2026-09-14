@@ -225,3 +225,6 @@ not build and why, and has a documentation page of its own.
   expressions (365*5).
 - environment.yml: added matplotlib.
 - Toolbox wrapper import fixed by moving the CLI arg parser to `src/utils.py`.
+- README: a "Tool assisted running" section for automating builds and runs. The
+  environment and GAMS setup are not repeated from the parent Backbone checkout,
+  and machine-specific commands belong in a gitignored `local-setup.txt`.

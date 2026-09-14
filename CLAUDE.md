@@ -150,6 +150,68 @@ the documentation page. A check that fires on correct data every run is not stri
 The full rule, with examples, is "What a build says" in `docs/timeseries.md`.
 
 
+## Environment and how to run things here
+
+**Never guess an interpreter or a command.** Two places hold what has actually been
+proven on this machine, and they are the only two:
+
+- `local-setup.txt` at this repository root -- gitignored, so it describes this checkout
+  on this machine and travels to nobody. Any assistant can read it, and so can the user.
+  Read it first.
+- the `python-env` and `test-command-shape` memory blocks, which carry the same facts
+  plus the permission-rule shape that lets a command run here without a prompt.
+
+`local-setup.txt` is the fuller of the two: the interpreter as a full path to the
+environment's `python.exe`, called directly with no activation step, and the commands
+actually proven here, each dated with what it returned and marked when it was not run.
+
+**GAMS needs no configuration here, and this project does not reason about it.** Two
+independent things: `gams.transfer` reads and writes GDX from the Python side, and
+`GDX_exchange.resolve_gams_system_directory` binds it to the install matching the
+installed `gamsapi`, with no environment variable set; separately, a model run takes
+whichever `gams` is on PATH, with the solver the `run-*.cmd` files name. *Which* install
+and *which* solver those resolve to belongs in `local-setup.txt`, not here. No solver
+selection, no fallback and no licence-ceiling arithmetic belongs in this project: the
+parent checkout owns that compatibility question, and a second copy of it here would go
+stale without anyone noticing.
+
+**If both files are absent, or something GAMS-shaped is actually broken**, the parent's
+`backbone-quickstart` skill (`../.claude/skills/backbone-quickstart/`) owns GAMS
+detection and the `gamsapi[transfer]` pin, and its `scripts/check_env.py` is the probe.
+When the probe and `local-setup.txt` disagree, the probe is right and the file is stale.
+Reach for it when something is wrong, not as a routine step -- nothing here needs
+configuring while it works.
+
+**Machine specifics belong in those two places and nowhere else.** Never an interpreter
+path, environment name, GAMS version or solver choice in `README.md`, `environment.yml`,
+`docs/`, `tests/` or this file: those are git-shared and would go stale for everyone
+else. That is why this section names none of them.
+
+**Running Python here.** Use `python -m pytest`, not bare `pytest`, so the repository
+root lands on `sys.path`; `tests/README.md` has the tiers. The run header prints
+`gams.transfer: real API` or `STUBBED`, and that line is the only thing that reveals a
+green run which skipped every GAMS test. A bare `python` on PATH is a base interpreter
+without pandas -- never install into it. The allow-rules in `.claude/settings.json` are
+prefix matches on one interpreter spelling, so a command led with `cd`, `$env:` or a
+variable assignment prompts where the same command otherwise would not.
+
+**The end-to-end run needs source data this repository does not ship.** The electricity
+demand profiles and the PECD wind and solar downloads are fetched by hand into
+`src_files/timeseries/` -- README's "Downloading required time series files" says how.
+**Whether a build is runnable at all is therefore a fact about the machine, and
+`local-setup.txt` answers it first**; the parent checkout arrives complete, so its own
+file never has to. When those downloads are missing the build cannot produce them, the
+pytest suite is the only check available, and the answer is to say so rather than to
+synthesise inputs or narrow the config until something passes.
+
+**Ask before anything heavy, and know what each one costs.** Warm, the test suite is
+about four minutes and an input-data build about two; from cold the suite is fifteen or
+more, and a build plus a one-day OT2030 solve about ten. That last is the only check that
+proves the whole chain rather than the pipeline's internals, so it is the one worth
+automating -- and none of them is free. A GAMS run can also collide with another stream:
+see the next section.
+
+
 ## Working inside the Backbone checkout
 
 This project is installed inside a Backbone checkout, so the parent directory `../` is

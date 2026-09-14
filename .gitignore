@@ -56,6 +56,10 @@ __pycache__/
 # personal notes
 todo.txt
 
+# This machine's interpreter and the commands proven to work on it. Machine-local by
+# construction -- that is what makes writing it allowed. See CLAUDE.md.
+local-setup.txt
+
 # editor and OS files
 .directory
 .vscode
