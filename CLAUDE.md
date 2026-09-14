@@ -19,55 +19,19 @@ All other subdirectories are generated outputs or ad-hoc analysis folders -- ski
 All `.cmd` files are user-owned run scripts. Do not rewrite them unless explicitly asked.
 
 
+## Editing this file
+
+**A change to this file needs its own approval, asked for and given on its own.** Not
+folded into a plan, not a step inside a larger task, not a tidy-up alongside a code
+change: propose the edit by itself, show what the text would become, and wait for a yes.
+A plan that contains an edit to this file is a plan that has to be split.
+
+
 ## Tools
 
-`tools/` holds standalone scripts that answer a question about a build rather than
-taking part in one. **Look here before writing a throwaway script** -- that is what
-the folder is for, and a tool that already exists has already been debugged.
-
-Each tool documents itself in its module docstring: what it checks, what it cannot
-see, and its usage line. They take command-line arguments, print a report, and exit
-0 / 1 so they can gate a loop; they are not imported by `src/` and, with one
-exception noted below, are not in the pytest suite. Reference artifacts they compare
-against live in the untracked `dev/`, so a usage example may name a file the reader
-does not have.
-
-- `input_data_summary.py` -- one built output folder described as a `report.md` with
-  embedded figures, written into a subfolder of it. Country-level capacity, demand,
-  storage, interconnection and prices from `inputData.xlsx`, plus a net-load duration
-  curve and the interannual spread from the per-year GDX files. The only tool that
-  reads a build's GDX, and the only one with tests (`tests/unit/test_input_data_summary.py`,
-  which covers five arithmetic conventions whose failures a reader could not see).
-  It is also the only plotting code in the repo, and the only tool with an entry point
-  of its own at the repository root -- `build_input_summary.py`, a thin wrapper that
-  adds `tools/` to the path and delegates. The implementation and its documentation
-  stay here; keep them here.
-- `profile_build.py` -- a build run under a profiler and reported by phase, with the
-  caveat that pstats cannot be trusted with it.
-- `prepare_zone_geometry.py` -- the two map assets `input_data_summary.py` draws,
-  `tools/maps/country_shapes.geojson` and `zone_shapes.geojson`, built by hand and
-  committed. Never run by a build. Every border comes from Natural Earth; the
-  ENTSO-E layer only says which zone a piece of land belongs to, its own Norway
-  outline being 31% sea. Its sources live in the untracked `example_maps/`, so the
-  committed assets are the only copy anyone else has.
-- `compare_input_excels.py` -- two `inputData.xlsx` files compared sheet by sheet on
-  *values*, read as text. Row order does not matter. Blind to formatting.
-- `compare_workbook_parts.py` -- two `.xlsx` files compared as zip archives, part by
-  part, ignoring only the build timestamps openpyxl stamps into `docProps/core.xml`.
-  Sees cell values, column order, widths, alignment, table styles -- use it to prove a
-  refactor changed nothing. Literal byte equality is not achievable; those timestamps
-  differ on every build.
-- `compare_source_workbooks.py` -- two versions of the source workbooks compared
-  *numerically*, row by row on their dimension columns, with `--git-ref` to take the
-  earlier version straight from git. The one that catches a name still being used as
-  a lookup key: `SUMIF`, `VLOOKUP` and `COUNTIF` criteria do not fail when the data is
-  renamed, they return 0 or a neighbouring row. Also the way to review a deliberate
-  data edit, since a binary `.xlsx` has no readable diff.
-- `check_unittype_columns.py` -- a folder of source workbooks checked against the
-  unittype rule: no `Generator_ID` header left, every `unitdata` unittype declared by
-  some `unittypedata` sheet, and -- with `--legacy-names` -- no cell anywhere still
-  holding a pre-migration name, which is how a VLOOKUP helper table gets left behind.
-  Reads workbooks rather than a config, so it cannot know which of them a build lists.
+`tools/` holds standalone scripts that answer a question about a build rather than taking
+part in one. **Look there before writing a throwaway script.** Each documents itself in its
+module docstring, and `README.md` lists them all.
 
 
 ## Execution flow
