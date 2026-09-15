@@ -292,7 +292,7 @@
                 },
                 {
                     "type": "literal",
-                    "arg": "--forecasts=4"
+                    "arg": "--forecasts=3"
                 }
             ],
             "kill_completed_processes": false,

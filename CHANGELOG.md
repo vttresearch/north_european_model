@@ -242,3 +242,13 @@ not build and why, and has a documentation page of its own.
 - README: a "Tool assisted running" section for automating builds and runs. The
   environment and GAMS setup are not repeated from the parent Backbone checkout,
   and machine-specific commands belong in a gitignored `local-setup.txt`.
+- `run_model.py`: one run, through the parent checkout's `scripts/run_backbone.py`.
+  Each run gets its own `results/<tag>/`, and an advisory lock stops a second run
+  against an input folder already in use.
+- `docs/running-the-model.md`: how a built folder becomes a solved model.
+- run-*.cmd: the comment claiming unique `scrdir` makes parallel runs safe was
+  wrong. Runs sharing an input folder corrupt each other silently; run them one
+  at a time.
+- README: `--forecasts` takes 1 or 3, not 1/2/4, and defaults to 3. The old list
+  counted the realized branch; `changes.inc` counts only the forecasts beside it.
+  The Spine Toolbox Backbone item passed 4 and now passes 3.

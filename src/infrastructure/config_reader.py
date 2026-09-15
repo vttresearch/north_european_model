@@ -1,9 +1,10 @@
 import configparser
 import ast
 import re
+from itertools import product
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Iterable, List, Tuple
 
 
 def _parse_climate_data(value: str) -> Tuple[int, int]:
@@ -354,3 +355,45 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         )
 
     return config
+
+
+def output_folder_name(
+    output_folder_prefix: str,
+    scenario: str,
+    year: Any,
+    alternatives: Iterable[str] = (),
+) -> str:
+    """
+    Name the folder one (scenario, year, alternatives) combination builds into.
+
+    The rule is prefix, scenario, year, then every non-empty alternative, joined
+    with underscores and with spaces removed from each part -- so 'Observed
+    Trends' in config_OT2030.ini becomes input_ObservedTrends_2030.
+
+    This is the single statement of that rule. `build_input_data.py` uses it to
+    decide where to write, and `run_model.py` uses it to decide what to pass as
+    Backbone's --input_dir, so a run cannot name a folder a build would not have
+    written.
+    """
+    active = [a for a in alternatives if a]
+    parts = [output_folder_prefix, scenario, str(year), *active]
+    return "_".join(part.replace(" ", "") for part in parts)
+
+
+def config_output_folder_names(config: Dict[str, Any]) -> List[str]:
+    """
+    Every folder name a build of this config writes, in the order it writes them.
+
+    The combinations are the Cartesian product of scenarios, scenario_years and
+    the four alternative axes, which is the loop `build_input_data.py` runs.
+    """
+    names: List[str] = []
+    for scenario, year, alt1, alt2, alt3, alt4 in product(
+        config['scenarios'], config['scenario_years'],
+        config['scenario_alternatives'], config['scenario_alternatives2'],
+        config['scenario_alternatives3'], config['scenario_alternatives4'],
+    ):
+        names.append(output_folder_name(
+            config['output_folder_prefix'], scenario, year, [alt1, alt2, alt3, alt4]
+        ))
+    return names

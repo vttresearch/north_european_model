@@ -106,8 +106,9 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         logger.log_status(f"Run timestamp: {now_str}", level="none")
 
         # Build output folder_name, check existence
-        output_folder_prefix = config['output_folder_prefix']
-        folder_name = "_".join(part.replace(" ", "") for part in [output_folder_prefix, scenario, str(year)] + active_alts)
+        folder_name = config_reader.output_folder_name(
+            config['output_folder_prefix'], scenario, year, active_alts
+        )
         output_folder = output_root / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
         logger.log_status(f"Using output folder: {output_folder}", level="info")

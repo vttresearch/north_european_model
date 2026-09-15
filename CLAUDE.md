@@ -132,12 +132,12 @@ actually proven here, each dated with what it returned and marked when it was no
 **GAMS needs no configuration here, and this project does not reason about it.** Two
 independent things: `gams.transfer` reads and writes GDX from the Python side, and
 `GDX_exchange.resolve_gams_system_directory` binds it to the install matching the
-installed `gamsapi`, with no environment variable set; separately, a model run takes
-whichever `gams` is on PATH, with the solver the `run-*.cmd` files name. *Which* install
-and *which* solver those resolve to belongs in `local-setup.txt`, not here. No solver
-selection, no fallback and no licence-ceiling arithmetic belongs in this project: the
-parent checkout owns that compatibility question, and a second copy of it here would go
-stale without anyone noticing.
+installed `gamsapi`, with no environment variable set; separately, a model run goes
+through `run_model.py`, which hands off to the parent's `scripts/run_backbone.py` and
+lets it resolve both. *Which* install and *which* solver it picks belongs in
+`local-setup.txt`, not here. No solver selection, no fallback and no licence-ceiling
+arithmetic belongs in this project: the parent checkout owns that compatibility
+question, and a second copy of it here would go stale without anyone noticing.
 
 **If both files are absent, or something GAMS-shaped is actually broken**, the parent's
 `backbone-quickstart` skill (`../.claude/skills/backbone-quickstart/`) owns GAMS
@@ -145,6 +145,15 @@ detection and the `gamsapi[transfer]` pin, and its `scripts/check_env.py` is the
 When the probe and `local-setup.txt` disagree, the probe is right and the file is stale.
 Reach for it when something is wrong, not as a routine step -- nothing here needs
 configuring while it works.
+
+**Running the model is the parent checkout's subject, and it is not discoverable from
+here.** Skill discovery only looks in this folder, so the six skills in
+`../.claude/skills/` are invisible unless read by path -- `backbone-scenario-runner`
+for running, varying and sweeping, `backbone-result-reader` for whether a result can be
+trusted. `../scripts/run_backbone.py` is the runner both they and `run_model.py` use,
+and `../docs/automation/` covers the same ground for a person. `docs/running-the-model.md`
+is this project's half: the scenarios, the one command, and why two runs of one scenario
+corrupt each other.
 
 **Machine specifics belong in those two places and nowhere else.** Never an interpreter
 path, environment name, GAMS version or solver choice in `README.md`, `environment.yml`,
@@ -190,5 +199,8 @@ the Backbone repository. The two are separate git repos.
   from day to day.** Never assume which one is contended; ask before touching it at all.
 - **Never write to `../input` or `../output`.** Shared with the Backbone repo and with
   whatever else is running.
-- **Never launch GAMS unprompted.** A run from here can collide with a run in another
-  stream. See `run-*.cmd`.
+- **Never launch GAMS unprompted, and check that a dry run is actually dry.** A run
+  from here can collide with a run in another stream, and a wrapper that mis-parses
+  its own arguments can solve while looking like it only printed. Runs start with
+  `run_model.py` and happen from `../`; `docs/running-the-model.md` has the shape
+  and the traps.

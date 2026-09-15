@@ -147,6 +147,11 @@ links to it.
   reference page: what Backbone can express that this build does not write, and which
   of its own rules are known to be provisional. Read it before designing anything that
   adds a parameter or a sheet.
+- [Running the model](docs/running-the-model.md) — how a built input folder becomes
+  a solved model: the one command that starts a run, why runs happen from the Backbone
+  checkout above rather than from here, why two runs of one scenario corrupt each other,
+  how to tell a run worth trusting from one that merely finished, and what the parent
+  checkout's skills and scripts already cover.
 - [Migration guide](docs/Migration%20guide.md) — what to change in a workbook or a
   config when an input format changes, newest entry last.
 
@@ -462,7 +467,7 @@ The model supports the following command line options (use two hyphens in the be
 * `--input_file_excel` is a mandatory parameter for defining the used input Excel file name (e.g. inputData.xlsx)
 * `--climateYear` [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * `--modelledDays` [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
-* `--forecasts` [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
+* `--forecasts` [1, 3]. Default 3. Sets how many forecast branches the model carries beside the realized time series, and requires the 10p, 50p, and 90p time series files in the input folder. Accepted values are 1 (realized values and 1 central forecast) or 3 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 3 forecasts due to improved hydro power modelling.
 * `--input_dir` allows setting a custom location for the input directory. The default value is 'input' pointing `backbone\input` by default. 
 * `--output_dir` allows setting a custom location for the output directory. The default value is 'output' pointing `backbone\output` by default.
 
@@ -472,7 +477,7 @@ See the full list of available command line parameters from Backbone's [document
 ### Examples
 
 Working command line options for `backbone.gms` would be, for example:
-* running the model directly from <output_folder>, full year, climate year 2011: `--input_dir=".\north_european_model\input_ObservedTrends_2030" --input_file_excel=inputData.xlsx --climateYear=1995`
+* running the model directly from <output_folder>, full year, climate year 1995: `--input_dir=".\north_european_model\input_ObservedTrends_2030" --input_file_excel=inputData.xlsx --climateYear=1995`
 * Running the model from `.\backbone\input` with all default assumptions: `--input_file_excel=inputData.xlsx`
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
 
@@ -503,27 +508,34 @@ the tests work that way:
 <path to northEuropeanModel>\python.exe -m pytest
 ```
 
-**Do not drive the `run-*.cmd` files unattended.** They end with a `cmd` line that opens
-an interactive shell so the log can be read afterwards — convenient by hand, and it hangs
-forever under a script. For an automated GAMS run, call `gams` with the same arguments
-the `.cmd` file passes.
+**Starting a run.** `run_model.py` is the one command, and [Running the
+model](docs/running-the-model.md) is the page behind it: where a run's output goes, why
+two runs of one scenario corrupt each other, how to tell a run worth trusting from one
+that merely finished, and what the Backbone checkout above already covers.
+
+```
+python run_model.py --list
+python run_model.py OT2030 --year 1998 --days 1
+```
+
+It runs the model through that checkout, which owns GAMS, the solver and the per-run
+isolation; nothing here assembles a `gams` command line of its own. The `run-*.cmd`
+files stay the quick by-hand route, **one at a time** — they end with a `cmd` line that
+opens an interactive shell, which is convenient by hand and a hang that never ends under
+a script.
 
 **The check worth automating.** A one-day run on OT2030 is the cheapest thing that proves
-the whole chain end to end. From cold, building the input data and solving a single day
-take about ten minutes together; once the build cache is warm the build alone is about
-two. `run-OT2030-1998-1d.cmd` is that run by hand — to automate it, build the input data
-and then call `gams` with the arguments that file passes, not the `.cmd` file itself. It
-needs the [time series downloaded earlier](#downloading-required-time-series-files) to be
-in place; nothing in the pipeline can produce those. Add GAMS's own `o=` pointing into the
-run's scratch folder, or the listing file lands in the shared Backbone root where a
-parallel run would collide with it.
+the whole chain end to end — a build, then `python run_model.py OT2030 --year 1998
+--days 1`. From cold the two take about ten minutes together; with the build cache warm
+the build alone is about two minutes and the solve about twenty seconds. It needs the
+[time series downloaded earlier](#downloading-required-time-series-files) to be in place;
+nothing in the pipeline can produce those.
 
-**Telling whether the run worked.** A run that finishes is not a run to trust, and the
-Backbone checkout's `backbone-result-reader` skill carries the checklist: `warnings.log`
-in full first, then `r_info_solveStatus` (`modelStat` 1 or 8, `solveStat` 1), whether the
-realised cost is plausible, and whether `r_cost_penalty` and the `r_q*` dummy tables are
-empty — a non-zero penalty means the solver bought its way out of an infeasibility. That
-skill also owns the traps that quietly give a wrong number. `tools/input_data_summary.py`
+**Telling whether the run worked.** A run that finishes is not a run to trust: the exit
+code, then `warnings.log` in full, then the solve status, the realised cost and the
+dummy tables. The order and the traps are in [Running the
+model](docs/running-the-model.md), and the Backbone checkout's `backbone-result-reader`
+skill owns the ones that quietly give a wrong number. `tools/input_data_summary.py`
 describes a *build*, not a result; it is not the tool for this.
 
 **Running the tests.** See [tests/README.md](tests/README.md). About four minutes warm,

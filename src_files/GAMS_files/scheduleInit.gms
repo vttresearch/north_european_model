@@ -228,7 +228,7 @@ if (mType('schedule'),
     // Impacts vq_gen, vq_reserveDemand, vq_resMissing, vq_unitConstraint, and vq_userconstraint
     // NOTE: Should be used only with well behaving models
     // NOTE: this changes the shape of the problem and there are typically differences in the decimals of the solutions
-    // NOTE: It is the best to keep 0 here when editing and updating the model and drop the dummies only when running a stable model.      
+    // NOTE: It is the best to keep 0 here when editing and updating the model and drop the dummies only when running a stable model.
     mSettings('schedule', 'reducedDummies') = 1;  
                        
     // Scaling the model with a factor of 10^N. 0 = off = default. Accepted values 1-6.                                         

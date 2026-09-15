@@ -18,7 +18,9 @@ from src.infrastructure.config_reader import (
     _parse_climate_data,
     _safe_eval_int,
     _validate_timeseries_specs,
+    config_output_folder_names,
     load_config,
+    output_folder_name,
 )
 
 MINIMAL_INI = """\
@@ -272,3 +274,73 @@ class TestLoadConfig:
         # The main DI seam: because this is a plain dict, tests everywhere else
         # can synthesise configs without touching configparser.
         assert type(load_config(_write_ini(tmp_path, MINIMAL_INI))) is dict
+
+
+class TestOutputFolderName:
+    """The folder-name rule is shared by the builder and by ``run_model.py``.
+
+    ``build_input_data.py`` uses it to decide where to write and ``run_model.py``
+    to decide what to pass as Backbone's ``--input_dir``, so a run cannot name a
+    folder a build would not have written. Pinned exactly: it names folders on
+    disk, and a change here silently points a run somewhere else.
+    """
+
+    def test_spaces_are_removed_from_every_part(self):
+        assert output_folder_name("input", "Observed Trends", 2030) == "input_ObservedTrends_2030"
+
+    def test_prefix_may_itself_carry_underscores(self):
+        assert output_folder_name(
+            "input_tyndp2024", "National Trends", 2030
+        ) == "input_tyndp2024_NationalTrends_2030"
+
+    def test_year_is_stringified(self):
+        assert output_folder_name("input", "s", 2030) == "input_s_2030"
+        assert output_folder_name("input", "s", "2030") == "input_s_2030"
+
+    def test_empty_alternatives_add_no_segment(self):
+        assert output_folder_name("input", "s", 2030, ["", "", "", ""]) == "input_s_2030"
+
+    def test_active_alternatives_append_in_order(self):
+        assert output_folder_name(
+            "input", "s", 2030, ["alt1", "", "alt3", ""]
+        ) == "input_s_2030_alt1_alt3"
+
+    def test_alternatives_default_to_none(self):
+        assert output_folder_name("input", "s", 2030) == "input_s_2030"
+
+
+class TestConfigOutputFolderNames:
+    """Every folder a build writes, in the order the builder's product loop writes them."""
+
+    def test_single_combination(self, tmp_path):
+        config = load_config(_write_ini(tmp_path, MINIMAL_INI))
+        assert config_output_folder_names(config) == ["output_test_2030"]
+
+    def test_cartesian_product_order(self):
+        config = {
+            "output_folder_prefix": "input",
+            "scenarios": ["A", "B"],
+            "scenario_years": [2030, 2040],
+            "scenario_alternatives": ["x", "y"],
+            "scenario_alternatives2": [""],
+            "scenario_alternatives3": [""],
+            "scenario_alternatives4": [""],
+        }
+        assert config_output_folder_names(config) == [
+            "input_A_2030_x", "input_A_2030_y",
+            "input_A_2040_x", "input_A_2040_y",
+            "input_B_2030_x", "input_B_2030_y",
+            "input_B_2040_x", "input_B_2040_y",
+        ]
+
+    def test_all_four_alternative_axes_contribute(self):
+        config = {
+            "output_folder_prefix": "input",
+            "scenarios": ["s"],
+            "scenario_years": [2030],
+            "scenario_alternatives": ["a1"],
+            "scenario_alternatives2": ["a2"],
+            "scenario_alternatives3": ["a3"],
+            "scenario_alternatives4": ["a4"],
+        }
+        assert config_output_folder_names(config) == ["input_s_2030_a1_a2_a3_a4"]
