@@ -8,7 +8,7 @@ processors are involved — `hydro_inflow_MAF2019` for inflow and
 This describes what the build does **today**, from the sources available today.
 Hydro is the part of this model where the data is least settled: several shapes
 in the processors exist only to fit the quirks of whichever database was
-available, `hydroUpd` v2 is coming, and this page will change with them. See
+available, and this page will change with them. See
 [Timeseries](timeseries.md) for the parts shared by every source.
 
 ## One minute summary
@@ -16,6 +16,11 @@ available, `hydroUpd` v2 is coming, and this page will change with them. See
 - **Pan-European data simplifies hydro to four types** — reservoir,
   run-of-river, open-loop and closed-loop pumped storage. The simplification is
   accepted, not believed.
+- **One workbook states hydro and overwrites everything beneath it.**
+  `hydropower-compilation.xlsx` is a compilation, not a vintage; external capacity
+  datasets are cross-checks rather than sources, because the inflow stays on PECD
+  while they move. `tools/check_hydro_consistency.py` checks the fleet against the
+  water it receives.
 - **`nodedata` decides what exists.** A hydro node absent from it is absent from
   the model, and the build says nothing about it. Both processors gate on that.
 - **Seasonal storage limits exist for two of the four types**, and the rest run on a
@@ -29,8 +34,11 @@ available, `hydroUpd` v2 is coming, and this page will change with them. See
 
 | Quantity | Comes from | Unit |
 |---|---|---|
-| reservoir size | `nodedata` `upwardLimit` in `hydroUpd-v1.xlsx` | MWh |
+| reservoir size | `nodedata` `upwardLimit` in `hydropower-compilation.xlsx` | MWh |
 | turbining / pumping power | `unitdata` `capacity_output1` | MW |
+| ramp rate | `unitdata` `maxRampUp` / `maxRampDown` | p.u. of capacity per minute |
+| practical maximum output | `unitdata` `availability` | fraction of capacity |
+| minimum generation | `userconstraintdata` `constant` | MW |
 | weekly inflow | `PECD-hydro-weekly-inflows.csv` | GWh/week → MWh/h |
 | daily run-of-river | `PECD-hydro-daily-ror-generation.csv` | GWh/day → MWh/h |
 | seasonal fill limits | `PECD-hydro-weekly-reservoir-levels.csv` | ratio 0–1, scaled to MWh |
@@ -39,11 +47,15 @@ available, `hydroUpd` v2 is coming, and this page will change with them. See
 ## Contents
 
 - [The four types](#the-four-types)
+- [Where the capacities come from](#where-the-capacities-come-from)
+  - [What each source can and cannot see](#what-each-source-can-and-cannot-see)
+  - [Does the fleet match its water](#does-the-fleet-match-its-water)
 - [Which nodes get built](#which-nodes-get-built)
 - [What is not built, and why](#what-is-not-built-and-why)
 - [Where the PECD files come from](#where-the-pecd-files-come-from)
 - [Gaps in the source data, and what the builder does](#gaps-in-the-source-data-and-what-the-builder-does)
 - [Minimum generation](#minimum-generation)
+- [Reading the article as ratios](#reading-the-article-as-ratios)
 - [Known open items](#known-open-items)
 - [Some caveats from cross-checking the data](#some-caveats-from-cross-checking-the-data)
 - [Where hydro is defined](#where-hydro-is-defined)
@@ -71,8 +83,76 @@ quirks of the source that was available, and neither side of that bargain was
 written down until this page. If something in `hydro_inflow_MAF2019` or
 `hydro_storage_limits_MAF2019` looks arbitrary, that is usually why.
 
-`hydroUpd-v1.xlsx` is a more complete database than PECD in several respects, and
-a v2 is coming.
+## Where the capacities come from
+
+`hydropower-compilation.xlsx` is the model's complete and independent statement of
+hydro — a compilation rather than any one database. Its capacities descend from
+MAF2019, the only source built on the same PECD2019 the inflow comes from, and are
+checked against that inflow rather than against a newer vintage.
+
+**It overwrites whatever sits beneath it, and external capacity vintages are
+cross-checks rather than sources.** Under `config_OT2030` it is the only workbook
+carrying hydro at all — `ObservedTrends.xlsx` has no hydro rows. Under the NT
+configs it overwrites `TYNDP-2024_National_Trends.xlsx`, and both builds come out
+with the same 53 hydro units and 38 hydro nodes.
+
+That independence is deliberate. ENTSO-E capacity vintages move — TYNDP-2024 already
+disagrees with PECD2019, and TYNDP-2026 has since been released — while the inflow
+stays on PECD. A dataset that tracked the newest vintage would break the match
+between fleet and water on every release. It is also verified rather than assumed: the merge is
+keyed, so a row from a base workbook under a key the compilation does not name would
+survive into the build, and `tools/check_hydro_consistency.py` reports any that do.
+
+### What each source can and cannot see
+
+Every source is partial in a different direction, and which one is wrong about a
+given number usually cannot be established. What can be recorded is what each is in
+a position to say:
+
+| Source | Sees well | Cannot see |
+|---|---|---|
+| **PECD inflow and levels**, what the build receives | the water itself, hourly, 35 climate years, consistent between zones | its classification is not anyone else's; the holes in [`ACCEPTED_LONG_RUNS`](#the-rule); it sends Austrian and German reservoirs almost no water |
+| **MAF2019**, behind the compilation's capacities | matches PECD2019 by construction — the only source that does | hand-adjusted since, with an untrackable history; frozen at a 2019 vintage |
+| **[Kiehle et al. (2026)](https://doi.org/10.5281/zenodo.21469736)**, ENTSO-E Transparency, realised output 2020–24 | operational behaviour — ramping, forced minima, practical maxima, pondage volume — measured rather than assumed | three categories only, so open- and closed-loop pumped storage are indistinguishable; no UK or GB column; no capacity for Sweden; books Finland as run-of-river; its capacities do not match PECD inflow |
+| **TYNDP-2024** | a complete, internally consistent capacity vintage | a different modelling exercise that does not match PECD2019 |
+
+The principle this forces is **consistency rather than truth**. Which capacity figure
+is correct is not knowable from here. Which figure the inflow can actually support
+is, and that is what the checks below measure.
+
+### Does the fleet match its water
+
+Full load hours — annual inflow MWh over turbine capacity MW — is the one ratio both
+sides of a classification argument can answer, because both come from the same build.
+`tools/check_hydro_consistency.py` reports it and fails on four things: a node that
+must spill every year, a zone outside 1200–6500 h, a zone running its run-of-river
+below its own reservoir, and a built hydro row the compilation did not write.
+
+Its denominator is **water-driven** capacity, not every turbine with a hydro label.
+Closed-loop pumped storage has no natural inflow by definition — 21.6 GW of it — and
+several open-loop nodes have so little that they are closed-loop in practice:
+`FR00_psOpen` has no inflow series at all, and `ES00_psOpen` reaches 159 h,
+`DE00_psOpen` 269 h and `PL00_psOpen` 454 h of natural inflow. **`psOpen` is
+genuinely water-driven only in `AT00` and the three Norwegian zones.** The threshold
+sits at 600 h and decides nothing marginal: the highest excluded node reaches 454 h
+and the lowest included one 771 h.
+
+A **low reservoir figure is not a defect** and is not reported as one. A reservoir
+that runs few hours is a store being kept for when it is worth using, which is what
+a reservoir is for. `AT00_reservoir` runs 771 h and `DE00_reservoir` 795 h against
+run-of-river at 5167 h and 3858 h in the same zones; both hold real seasonal storage
+(762 GWh, 21 weeks of its own inflow, and 258 GWh, 13 weeks), and Austria's reservoir
+moves 1.87 TWh against 62 TWh of national demand. They are left as peaking stores
+deliberately. Only the *inversion* — run-of-river below reservoir — is physically
+impossible, and it is what the check looks for.
+
+**`FI00` and `SE04` are exempt from the zone and ordering checks**, by decision rather
+than oversight. Both are mostly run-of-river with a few large reservoirs in the middle
+of the river system, which no clean split between the four types can represent — it is
+why Kiehle et al. book Finland as run-of-river while PECD books it as reservoir, and
+both readings are partly right. SE04 additionally carries the level data described in
+[the caveats](#some-caveats-from-cross-checking-the-data). Neither is corrected until
+better data exists.
 
 ## Which nodes get built
 
@@ -332,7 +412,7 @@ removes is a discontinuity the solver has no reason to be handed.
 ## Minimum generation
 
 Hydro minimum generation comes from hand-written rows in
-`hydroUpd-v1.xlsx :: userconstraintdata`, **not** from PECD.
+`hydropower-compilation.xlsx :: userconstraintdata`, **not** from PECD.
 
 PECD's `min-max-generation` file was tried and abandoned, and it is worth saying
 why so that nobody tries again. Its required minimum generation exceeds the
@@ -343,15 +423,53 @@ week asks for 302.6 GWh against 17.3 GWh of inflow. A constraint like that eithe
 drains the reservoir or makes the model infeasible, and no amount of gap-filling
 repairs it. The file has been removed from this repo.
 
-The hand-written rows that replaced it are an early cut of the data published in
-[Kiehle et al. (2026)](https://www.sciencedirect.com/science/article/pii/S0306261926009785).
-The final dataset from that article is what `hydroUpd` v2 will carry.
+The rows now carry the final data from
+[Kiehle et al. (2026)](https://www.sciencedirect.com/science/article/pii/S0306261926009785),
+applied as a fraction of each unit's capacity rather than as the article's own MW —
+see [reading the article as ratios](#reading-the-article-as-ratios).
+
+One number there is a judgement rather than a measurement. The constant for each
+group is the **weakest of the 52 weeks**, and two French weeks are reporting
+dropouts rather than operation: week 21 publishes a minimum of 0 MW and week 40
+of 16 MW, against a median week of 2038 MW, while `Max` for those weeks is entirely
+normal and the ramp record shows a matching 5806 MW/h spike. An 11.6 GW
+run-of-river fleet does not stop. Both weeks are excluded, which puts
+`UC_FR00_rorTurbine` at 1629 MW — within 2% of the hand-written 1593 it replaced,
+so the earlier number was kept. Fourteen other columns carry a collapsed week; in
+every one the column's median is small enough that it changes nothing.
+
+## Reading the article as ratios
+
+The article's absolute MW cannot be used directly, because it is classified by
+ENTSO-E production type while the inflow is PECD. It puts 634 MW on Swiss
+run-of-river against the 16.9 TWh/yr PECD sends that node — a ceiling that would
+spill 80% of the water. What transfers is the *shape*: a ramp rate, a forced
+minimum and a practical maximum stay meaningful as fractions whatever fleet size
+the classification assumes. CH00's run-of-river ramps at 0.25 p.u./h whether the
+fleet is read as 4031 MW or 634 MW.
+
+So four quantities are carried across, each against the compilation's own capacity:
+
+| Quantity | Written as | Source |
+|---|---|---|
+| run-of-river storage | `nodedata` `upwardLimit`, MWh | pondage hours at the 48 h window x capacity |
+| minimum generation | `p_userconstraint` `constant`, MW | weakest credible week as a fraction of capacity |
+| ramp rate | `unitdata` `maxRampUp` / `maxRampDown`, p.u./min | weekly maximum ramp / reference / 60 |
+| practical maximum | `unitdata` `availability` | 99th-percentile output / capacity |
+
+`availability` and the inflow limit deliberately overlap: the mechanical capacity is
+installed, but an aggregated fleet never reaches it at once, because rivers carry
+navigation, flood-control, ecological-flow and licensing obligations that a thermal
+plant does not. **Inflow caps energy over time; availability caps instantaneous
+power.** The two are not redundant.
+
+Where the article has nothing to say, nothing is written: `UK00` has no UK or GB
+column anywhere, `NL00`'s is all zeros, and pumps get no ramp because the
+pumped-storage figures are generation. Open- and closed-loop pumped storage in the
+same zone receive identical values, because ENTSO-E carries one category for both.
 
 ## Known open items
 
-- **`hydroUpd` v2.** The article above is out and its final data supersedes the
-  early cut currently in `hydroUpd-v1.xlsx`, both for minimum generation and more
-  widely. v2 is the intended route for that.
 - **Pumped storage outside Norway has no seasonal profile**, and is left that
   way deliberately. Thirteen nodes, 9.6 TWh, run on a flat `upwardLimit` with an
   `Eps` floor. Only `AT00_psOpen` (1.72 TWh) looks like a case where a seasonal
@@ -409,10 +527,13 @@ obviously flat one.
 
 ## Where hydro is defined
 
-- `src_files/data_files/hydroUpd-v1.xlsx` — `nodedata` (reservoir sizes, spill,
-  balance penalties), `unitdata` (turbining and pumping power), and
-  `userconstraintdata` (minimum-generation constraints). Listed after
-  `TYNDP-2024_National_Trends.xlsx` in the config, so its rows win.
+- `src_files/data_files/hydropower-compilation.xlsx` — `nodedata` (reservoir sizes,
+  spill, balance penalties), `unitdata` (turbining and pumping power), and
+  `userconstraintdata` (minimum-generation constraints). The only source of hydro
+  under `config_OT2030`; listed after `TYNDP-2024_National_Trends.xlsx` under the NT
+  configs, so its rows win there.
+- `tools/check_hydro_consistency.py` — whether the fleet matches the water, run
+  against a folder a build produced.
 - `src_files/data_files/unittypedata_compilation.xlsx` — declares each hydro
   `unittype` with its grids and efficiency, which is what turns
   `AT00 / rorTurbine` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.
@@ -430,4 +551,4 @@ obviously flat one.
 - [District heating demand timeseries](dh-demand-timeseries.md) — where a zero
   hour is an alarm, and why the rule differs from this one
 - [Source workbook conventions](source-workbook-conventions.md) — how
-  `hydroUpd-v1.xlsx` and its neighbours are read and combined
+  `hydropower-compilation.xlsx` and its neighbours are read and combined

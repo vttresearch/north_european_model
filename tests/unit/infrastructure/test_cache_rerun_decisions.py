@@ -162,7 +162,7 @@ class TestSourceDataRequirementsDriveReruns:
             manager.config, self._prev_config(), {"nodedata_files": True}
         )
         assert changed["hydro"], (
-            "editing hydroUpd-v1.xlsx must re-run a processor that reads nodedata"
+            "editing hydropower-compilation.xlsx must re-run a processor that reads nodedata"
         )
 
     def test_unittypedata_reaches_a_processor_that_asked_for_unitdata(self, tmp_path):

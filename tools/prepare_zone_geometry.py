@@ -79,6 +79,8 @@ Usage:
 The Natural Earth file is ``ne_50m_admin_0_map_units`` from
 https://github.com/nvkelso/natural-earth-vector (the geojson/ folder). The
 ENTSO-E layer is the Mopo extract; see ATTRIBUTION.md at the repository root.
+``example_maps/`` is untracked, so those sources sit on one machine and the
+committed assets in ``tools/maps/`` are the only copy anyone else has.
 
 Exit 0 when both files were written, 1 when a source could not be read.
 """

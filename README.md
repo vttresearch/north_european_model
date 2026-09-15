@@ -164,6 +164,9 @@ taking part in one, each documenting itself in its module docstring:
   folder to a colleague who was not going to run Python. Run it as
   `python build_input_summary.py <built_folder>` from the model folder; that wrapper is
   the same tool under a name that sits beside `build_input_data.py`.
+- `check_hydro_consistency.py` — a build's hydro fleet against the water it receives:
+  full load hours by zone and by type, forced spill, and any hydro unit or node the
+  hydropower workbook did not write. Needs `gamsapi` to read the build's GDX files.
 - `check_unittype_columns.py` — a folder of workbooks checked against the unittype rule.
 - `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
   compared on values, and as zip archives part by part.
@@ -408,17 +411,7 @@ The keys each spec accepts are documented in the comment block above `timeseries
 
 
 
-### Copying input files to c:\backbone\input
-
-A recommended approach is to run the model directly from `<output_folder>` by giving the `--input_folder='.\north_european_model\<output_folder>'` command line option for Backbone.
-
-Alternative use cases are to rename the folder to avoid a case where the consecutive runs of the python script would overwrite the files, or to copy the full content of `<output_folder>` to c:\backbone\input and run the constructed model from there.
-
-
-
 ### Checking run specification files
-
-Users might want the check the contents of following files, but this is not needed if the default settings are ok.
 
 The script automatically copies the following required run specification files from `src_files\GAMS_files` to `<output_folder>`, and the user is free to edit them afterwards. In most cases, users do not need to edit these at all.
 * `1_options.gms` - some solver settings documented inside the file
@@ -431,6 +424,9 @@ The python script constructs following files
 * `import_timeseries.inc` - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
 
 **Note:** The included `scheduleInit.gms` and `changes.inc` files have a specific structure to make them work with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to them.
+
+You can double check the contents of these files, but this is not needed if the default settings are ok.
+
 
 
 
@@ -454,23 +450,39 @@ Processed input files are written to `c:\Backbone\north_european_model\<output_f
 
 [Back to top](#North-European-energy-system-model)
 
-Run the model by running Backbone.gms in GAMS. The model supports the following command line options (use two hyphens in the beginning)
+### Choosing file location
 
+Run the model by running Backbone.gms in GAMS. You can copy created input files to backbone\input or run the directly from the created <output_folder>.
+
+It is recommended to run the model directly ftom <output_folder> to guarantee the most recent files, allow running different scenarios from different folders, etc.
+
+### Command line parameters 
+
+The model supports the following command line options (use two hyphens in the beginning)
 * `--input_file_excel` is a mandatory parameter for defining the used input Excel file name (e.g. inputData.xlsx)
 * `--climateYear` [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * `--modelledDays` [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
 * `--forecasts` [1, 2, 4]. Default 4. Activates forecasts in the model and requires 10p, 50p, and 90p time series filen in the input folder. Currently accepted values are 1 (realized values only), 2 (realized values and 1 central forecast), or 4 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 4 forecasts due to improved hydro power modelling.
-* `--input_dir` allows setting a custom location for the input directory. The default value is 'input'. 
+* `--input_dir` allows setting a custom location for the input directory. The default value is 'input' pointing `backbone\input` by default. 
+* `--output_dir` allows setting a custom location for the output directory. The default value is 'output' pointing `backbone\output` by default.
+
+See the full list of available command line parameters from Backbone's [documentation](https://gitlab.vtt.fi/backbone/backbone/-/blob/master/docs/running-backbone/command-line-parameters.md).
+
+
+### Examples
 
 Working command line options for `backbone.gms` would be, for example:
-* running the model directly from <output_folder>, full year, climate year 2011: `--input_dir=".\north_european_model\input_National Trends_2030" --input_file_excel=inputData.xlsx --climateYear=1995`
+* running the model directly from <output_folder>, full year, climate year 2011: `--input_dir=".\north_european_model\input_ObservedTrends_2030" --input_file_excel=inputData.xlsx --climateYear=1995`
 * Running the model from `.\backbone\input` with all default assumptions: `--input_file_excel=inputData.xlsx`
 * running the selected climate year, 1 week test: `--input_file_excel=inputData.xlsx --modelledDays=7 --climateYear=1995`
 
 
 **NOTE:** Use " instead of ' when writing e.g. folder names with spaces. For example, --input_dir='.\dir with spaces' does not work in many workflows, but --input_dir=".\dir with spaces" should work.
 
-Results from the model run are written to `c:\backbone\output\results.gdx` unless the destination is modified by some option or workflow manager, such as Spine Toolbox.
+
+
+
+
 
 
 ## Tool assisted running
@@ -502,7 +514,17 @@ take about ten minutes together; once the build cache is warm the build alone is
 two. `run-OT2030-1998-1d.cmd` is that run by hand — to automate it, build the input data
 and then call `gams` with the arguments that file passes, not the `.cmd` file itself. It
 needs the [time series downloaded earlier](#downloading-required-time-series-files) to be
-in place; nothing in the pipeline can produce those.
+in place; nothing in the pipeline can produce those. Add GAMS's own `o=` pointing into the
+run's scratch folder, or the listing file lands in the shared Backbone root where a
+parallel run would collide with it.
+
+**Telling whether the run worked.** A run that finishes is not a run to trust, and the
+Backbone checkout's `backbone-result-reader` skill carries the checklist: `warnings.log`
+in full first, then `r_info_solveStatus` (`modelStat` 1 or 8, `solveStat` 1), whether the
+realised cost is plausible, and whether `r_cost_penalty` and the `r_q*` dummy tables are
+empty — a non-zero penalty means the solver bought its way out of an infeasibility. That
+skill also owns the traps that quietly give a wrong number. `tools/input_data_summary.py`
+describes a *build*, not a result; it is not the tool for this.
 
 **Running the tests.** See [tests/README.md](tests/README.md). About four minutes warm,
 but fifteen or more from cold, and it checks the pipeline's internals rather than a

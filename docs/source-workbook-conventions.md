@@ -63,7 +63,7 @@ unitdata_files = ['ObservedTrends.xlsx',
                   ]
 nodedata_files = ['ObservedTrends.xlsx',
                   'industrialCHP.xlsx',
-                  'hydroUpd-v1.xlsx',
+                  'hydropower-compilation.xlsx',
                   ...
                   ]
 ```

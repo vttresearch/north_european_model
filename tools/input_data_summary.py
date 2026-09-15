@@ -75,6 +75,10 @@ and no grouping of them. Units are grouped by which grids they touch, and the
 report counts how many fell outside the groups -- watch that count, not this
 paragraph, for a unittype the grouping has not met yet.
 
+This is the only plotting code in the repository, and the only tool with tests
+of its own -- ``tests/unit/test_input_data_summary.py`` pins five arithmetic
+conventions whose failures a reader of the report could not see.
+
 Exit code is 0 when report.md was written -- including when the timeseries
 sections were skipped for want of a GAMS install or a GDX file, which is
 documented degradation rather than failure -- 1 when inputData.xlsx is there but

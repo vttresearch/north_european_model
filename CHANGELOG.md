@@ -54,6 +54,17 @@ not build and why, and has a documentation page of its own.
 
 ### Source workbooks
 
+- `hydroUpd-v1.xlsx` is `hydropower-compilation.xlsx`: a compilation of several
+  sources rather than an update to one, and the model's complete and independent
+  statement of hydro. External capacity vintages are cross-checks, not sources.
+  It now carries Kiehle et al. (2026) as ratios against its own capacities —
+  run-of-river storage from measured pondage volume, ramp limits, a practical
+  maximum as `availability`, and revised minimum generation. `FR00_ror` capacity
+  falls 20 500 -> 13 614 MW, the one fleet its inflow could not support.
+  [docs/hydro.md](docs/hydro.md)
+- Ramp costs reach thermal, CHP and heat-only units, not only hydro: `unittypedata`
+  supplies `rampUpCost` and `rampDownCost`, taking the units that carry one from 53
+  to 280.
 - `generator_ID` is removed. A `unitdata` row names its `unittype` directly, and
   `unittypedata` is keyed on `unittype` with a free-text `## Description` column
   in place of the old name.
@@ -142,6 +153,9 @@ not build and why, and has a documentation page of its own.
 
 ### Tools
 
+- `tools/check_hydro_consistency.py` checks a build's hydro fleet against the water
+  it receives: full load hours by zone and type over water-driven capacity, forced
+  spill, and any hydro unit or node the compilation did not write.
 - `tools/input_data_summary.py` describes one built folder as a `report.md` with
   embedded figures: capacity, demand, storage, interconnection and prices by country
   and carrier, a net-load duration curve, and what the climate years do. Replaces the

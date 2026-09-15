@@ -233,9 +233,11 @@ and [The source data phase](source-data.md#columns-nothing-reads).
 
 What closed it, kept because it says what "clean" looks like: **every column on
 every prefix-matching sheet the four shipped configs name is recognised**. The
-only unread ones found were four in `unittypedata_compilation.xlsx`, disabled
-years ago by renaming them `disabled-maxRampUp` and so on; they are marked `##`
-now, which is what the builder can see. The figure is deliberately not written
+only unread ones found were four in `unittypedata_compilation.xlsx`, disabled by
+renaming them `disabled-maxRampUp` and so on; they are marked `##` now, which is
+what the builder can see. Two of them, `rampUpCost` and `rampDownCost`, are live
+again — the rename had taken ramp costs away from every thermal, CHP and
+heat-only unit, leaving them only on hydro. The figure is deliberately not written
 down as a count — a tally of sheets and headers goes stale the first time a
 workbook is consolidated, and silently. Run a build and read `summary.log`.
 
