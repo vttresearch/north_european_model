@@ -53,6 +53,15 @@ __pycache__/
 *.tmp*
 *~lock*
 
+# Run scripts. The four listed here are shared: two scenarios, a one-day and a
+# three-day run each. Every other run-*.cmd is somebody's own -- another climate
+# year, a longer horizon, a different solver -- and stays on their machine.
+/*.cmd
+!/run-NT2030-2012-1d.cmd
+!/run-NT2030-2013-3d.cmd
+!/run-OT2030-1998-1d.cmd
+!/run-OT2030-1998-3d.cmd
+
 # personal notes
 todo.txt
 

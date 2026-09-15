@@ -1,4 +1,8 @@
-Title NE Backbone, NT2030, 2012, 1d
+:: Setting the climate year and number of days run
+set "Y=2012"
+set "D=1"
+
+Title NE Backbone, NT2030, %Y%, %D%d
 
 cd..
 
@@ -8,21 +12,21 @@ cd..
 :: without overwriting each other's temporary files. If the runs shared the default
 :: scratch folder, they would fail or return results from the wrong run.
 :: For the same reason, output_file and debug_file are named per run.
-if not exist ".\north_european_model\scratch\NT2030-2012-1d" mkdir ".\north_european_model\scratch\NT2030-2012-1d"
+
+if not exist ".\north_european_model\scratch\NT2030-%Y%-%D%d" mkdir ".\north_european_model\scratch\NT2030-%Y%-%D%d"
 
 :: running backbone
 gams Backbone.gms ^
 --input_dir="./north_european_model/input_tyndp2024_NationalTrends_2030" ^
 --output_dir="./north_european_model/results" ^
---output_file="results-NT2030-2012-1d.gdx" ^
---debug_file="debug-NT2030-2012-1d.gdx" ^
---climateYear=2012 ^
---modelledDays=1 ^
+--output_file="results-NT2030-%Y%-%D%d.gdx" ^
+--debug_file="debug-NT2030-%Y%-%D%d.gdx" ^
+--climateYear=%Y% ^
+--modelledDays=%D% ^
 --input_file_excel=inputData.xlsx ^
 --solver_name=cplex ^
 --debug=1 ^
--profile=4 ^
-scrdir="./north_european_model/scratch/NT2030-2012-1d"
+scrdir="./north_european_model/scratch/NT2030-%Y%-%D%d"
 
 
 cmd
