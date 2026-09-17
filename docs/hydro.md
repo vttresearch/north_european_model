@@ -19,8 +19,8 @@ available, and this page will change with them. See
 - **One workbook states hydro and overwrites everything beneath it.**
   `hydropower-compilation.xlsx` is a compilation, not a vintage; external capacity
   datasets are cross-checks rather than sources, because the inflow stays on PECD
-  while they move. `tools/check_hydro_consistency.py` checks the fleet against the
-  water it receives.
+  while they move. The Hydro section of `build_input_summary.py` sets the fleet
+  against the water it receives.
 - **`nodedata` decides what exists.** A hydro node absent from it is absent from
   the model, and the build says nothing about it. Both processors gate on that.
 - **Seasonal storage limits exist for two of the four types**, and the rest run on a
@@ -99,9 +99,8 @@ with the same 53 hydro units and 38 hydro nodes.
 That independence is deliberate. ENTSO-E capacity vintages move — TYNDP-2024 already
 disagrees with PECD2019, and TYNDP-2026 has since been released — while the inflow
 stays on PECD. A dataset that tracked the newest vintage would break the match
-between fleet and water on every release. It is also verified rather than assumed: the merge is
-keyed, so a row from a base workbook under a key the compilation does not name would
-survive into the build, and `tools/check_hydro_consistency.py` reports any that do.
+between fleet and water on every release. The merge is keyed, so a row from a base
+workbook under a key the compilation does not name would survive into the build.
 
 ### What each source can and cannot see
 
@@ -122,37 +121,48 @@ is, and that is what the checks below measure.
 
 ### Does the fleet match its water
 
-Full load hours — annual inflow MWh over turbine capacity MW — is the one ratio both
-sides of a classification argument can answer, because both come from the same build.
-`tools/check_hydro_consistency.py` reports it and fails on four things: a node that
-must spill every year, a zone outside 1200–6500 h, a zone running its run-of-river
-below its own reservoir, and a built hydro row the compilation did not write.
+The **Hydro** section of `build_input_summary.py` answers it from the built folder
+alone, never from a source workbook. For each hydro type in each country — or bidding
+zone, with `--zones` — it gives the usable storage, what the turbines can draw from the
+store and the pumps put into it, **full-load hours** (mean annual inflow over turbine
+draw), weeks of storage against a mean week of inflow, and the wettest and driest week
+as multiples of the mean. Both sides of full-load hours come from the same build, which
+is what makes it the one ratio a classification argument can settle.
 
-Its denominator is **water-driven** capacity, not every turbine with a hydro label.
-Closed-loop pumped storage has no natural inflow by definition — 21.6 GW of it — and
-several open-loop nodes have so little that they are closed-loop in practice:
-`FR00_psOpen` has no inflow series at all, and `ES00_psOpen` reaches 159 h,
-`DE00_psOpen` 269 h and `PL00_psOpen` 454 h of natural inflow. **`psOpen` is
-genuinely water-driven only in `AT00` and the three Norwegian zones.** The threshold
-sits at 600 h and decides nothing marginal: the highest excluded node reaches 454 h
-and the lowest included one 771 h.
+Each type is its own row, so nothing has to be set aside to keep a ratio honest.
+Closed-loop pumped storage — 22.7 GW of turbine draw — shows no inflow, and so do
+open-loop nodes that are closed-loop in practice: `FR00_psOpen` receives none, and
+`ES00_psOpen`, `DE00_psOpen` and `PL00_psOpen` reach 151, 255 and 430 full-load hours.
+**`psOpen` is water-driven only in `AT00`, at 1563 h, and the three Norwegian zones,
+at 3959–4500 h.**
 
-A **low reservoir figure is not a defect** and is not reported as one. A reservoir
-that runs few hours is a store being kept for when it is worth using, which is what
-a reservoir is for. `AT00_reservoir` runs 771 h and `DE00_reservoir` 795 h against
-run-of-river at 5167 h and 3858 h in the same zones; both hold real seasonal storage
-(762 GWh, 21 weeks of its own inflow, and 258 GWh, 13 weeks), and Austria's reservoir
-moves 1.87 TWh against 62 TWh of national demand. They are left as peaking stores
-deliberately. Only the *inversion* — run-of-river below reservoir — is physically
-impossible, and it is what the check looks for.
+A **low reservoir figure is not a defect**. A reservoir that runs few hours is a store
+being kept for when it is worth using, which is what a reservoir is for.
+`AT00_reservoir` runs 732 h and `DE00_reservoir` 754 h against run-of-river at 4906 h
+and 3663 h in the same zones; both hold real seasonal storage (207 GWh usable, 5.8 weeks
+of its own inflow, and 258 GWh, 13 weeks), and Austria's reservoir moves 1.87 TWh
+against 62 TWh of national demand. They are left as peaking stores deliberately.
 
-**`FI00` and `SE04` are exempt from the zone and ordering checks**, by decision rather
-than oversight. Both are mostly run-of-river with a few large reservoirs in the middle
-of the river system, which no clean split between the four types can represent — it is
-why Kiehle et al. book Finland as run-of-river while PECD books it as reservoir, and
-both readings are partly right. SE04 additionally carries the level data described in
+**`FI00` and `SE04` are the rows to read with care.** Both are mostly run-of-river with
+a few large reservoirs in the middle of the river system, which no clean split between
+the four types can represent — it is why Kiehle et al. book Finland as run-of-river
+while PECD books it as reservoir, and both readings are partly right. Their reservoir
+rows carry a river's hours: 4148 h in `FI00` and 5547 h in `SE04`, the highest of any
+reservoir. SE04 additionally carries the level data described in
 [the caveats](#some-caveats-from-cross-checking-the-data). Neither is corrected until
 better data exists.
+
+Two checks run on every bidding-zone store, whatever the level. **Minimum generation**
+runs each climate window hour by hour, giving exactly the minimum from
+`userconstraintdata` and spilling above the ceiling, and asks whether the store ever
+falls below its floor. **Overflow** releases everything the turbines and `maxSpill` can
+pass, and asks whether the store ever rises above its ceiling. In the OT2030 build no
+store runs short and none overflows in 35 windows; `DE00_ror`, `AT00_ror` and
+`FR00_ror` come within 6, 10 and 12 hours of their own draw of the floor, and are the
+ones to watch. Both checks start each window from the middle of its range until the
+model's start levels, partly set in `changes.inc`, are added, and both see the realised
+years only: the forecast branches, where minimum generation has actually run short,
+are beyond them.
 
 ## Which nodes get built
 
@@ -428,6 +438,9 @@ The rows now carry the final data from
 applied as a fraction of each unit's capacity rather than as the article's own MW —
 see [reading the article as ratios](#reading-the-article-as-ratios).
 
+A minimum is written only where it is large enough to matter at the scale of this
+model. The reservoirs of `AT00` and `SE04` would carry 7 and 5 MW, and carry none.
+
 One number there is a judgement rather than a measurement. The constant for each
 group is the **weakest of the 52 weeks**, and two French weeks are reporting
 dropouts rather than operation: week 21 publishes a minimum of 0 MW and week 40
@@ -532,8 +545,9 @@ obviously flat one.
   `userconstraintdata` (minimum-generation constraints). The only source of hydro
   under `config_OT2030`; listed after `TYNDP-2024_National_Trends.xlsx` under the NT
   configs, so its rows win there.
-- `tools/check_hydro_consistency.py` — whether the fleet matches the water, run
-  against a folder a build produced.
+- `build_input_summary.py`, section Hydro — whether the fleet matches the water, and
+  whether each store can carry its minimum and pass its inflow, read from a folder a
+  build produced.
 - `src_files/data_files/unittypedata_compilation.xlsx` — declares each hydro
   `unittype` with its grids and efficiency, which is what turns
   `AT00 / rorTurbine` into unit `AT00_rorTurbine` on `AT00_ror` → `AT00_elec`.

@@ -163,15 +163,14 @@ taking part in one, each documenting itself in its module docstring:
   deliberate data edit, since a binary `.xlsx` has no readable diff, and the only thing
   that catches a renamed value that a `SUMIF` or `VLOOKUP` still keys on.
 - `input_data_summary.py` — what is in one built folder, written as a `report.md` with
-  its figures into a subfolder of it: capacity, demand, storage, interconnection and
-  prices by country, plus a net-load duration curve and what 35 weather years do to the
-  numbers. Run it after a build to see the scenario you just produced, or hand the
-  folder to a colleague who was not going to run Python. Run it as
+  its figures into a subfolder of it: capacity, demand, storage, hydro, interconnection
+  and prices by country, plus a net-load duration curve and what 35 weather years do to
+  the numbers. Its hydro section checks, per bidding-zone store, whether inflow can
+  carry the minimum generation and whether a full store can pass its inflow. Run it
+  after a build to see the scenario you just produced, or hand the folder to a
+  colleague who was not going to run Python. Run it as
   `python build_input_summary.py <built_folder>` from the model folder; that wrapper is
   the same tool under a name that sits beside `build_input_data.py`.
-- `check_hydro_consistency.py` — a build's hydro fleet against the water it receives:
-  full load hours by zone and by type, forced spill, and any hydro unit or node the
-  hydropower workbook did not write. Needs `gamsapi` to read the build's GDX files.
 - `check_unittype_columns.py` — a folder of workbooks checked against the unittype rule.
 - `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
   compared on values, and as zip archives part by part.

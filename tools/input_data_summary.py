@@ -23,10 +23,23 @@ what each bidding zone models and a list of where each carrier is missing or
 has nothing demanding it; then one section per energy carrier -- electricity,
 district heat, hydrogen, industrial steam -- each with production capacity,
 consumption capacity and annual demand. Then storage in two nested groups --
-what the power system fills itself, and what the weather fills for it --
-interconnection as a corridor map, a net-load duration curve, how deep a store
-the residual needs at each timescale against how deep a store there is, how much
-35 weather years move the numbers, and fuel, CO2 and emission prices.
+what the power system fills itself, and what the weather fills for it -- hydro
+by type, with two checks per bidding-zone store, interconnection as a corridor
+map, a net-load duration curve, how deep a store the residual needs at each
+timescale against how deep a store there is, how much 35 weather years move the
+numbers, and fuel, CO2 and emission prices.
+
+Climate windows are taken as the build wrote them -- 365 days, 200, 400 or five
+years -- never cut to a year or refused. A figure per year is annualised from
+each window, and the hydro checks run every hour of every window, each window on
+its own, because each is its own model run.
+
+Hydro is reported per type: storage, turbine draw, pump delivery, full-load
+hours, weeks of storage, and the wettest and driest week. Its two checks run per
+bidding-zone store whatever the level: whether inflow can carry the minimum
+generation in ``p_userconstraint`` without the store falling below its floor,
+and whether a full store can pass its inflow with turbines and ``maxSpill`` at
+full. Every number is read from the built folder, never from a source workbook.
 
 A storage volume is reported three ways, because a reservoir bounded by two
 seasonal series has no single size: usable is the mean of the gap between the
@@ -48,16 +61,24 @@ section that disappears cannot tell anyone it is empty.
 
 What it cannot see
 ------------------
-Nothing below zone level -- there is no per-node figure at any flag setting. No
-"Nordics" or "CWE" grouping: nothing in the tracked source data defines one, so
-none is invented, and zone and country are the only two levels offered.
+Nothing below zone level -- there is no per-node figure at any flag setting,
+except the hydro checks, which are per store because a minimum binds one store.
+No "Nordics" or "CWE" grouping: nothing in the tracked source data defines one,
+so none is invented, and zone and country are the only two levels offered.
 
 Where anything is inside an area. The maps place a zone's whole capacity at one
 point, because the build states no location below the zone.
 
-Whether a unit can actually run: availability and the efficiency curve are read
-but never judged, because every unit in the shipped scenarios has availability
-1.0 and one efficiency per unittype, so a check would fire on nothing forever.
+Whether a unit can actually run, outside hydro: availability and efficiency are
+read, and only the hydro checks use them -- to turn a minimum into water, and to
+bound what turbines can give and release.
+
+What hydro does in the forecast branches. The checks see the realised climate
+years; Backbone also solves a dry inflow quantile with storage limits that
+``changes.inc`` narrows at run time, and that is where minimum generation has
+actually run short. They also start each window from the middle of its range,
+because the model's own start level is partly set in ``changes.inc`` and is
+still to be added here.
 
 How the model behaves. Every number here comes from the input data, never from a
 solved run, so the net-load curve ignores storage, trade and dispatch, and the
@@ -76,7 +97,7 @@ report counts how many fell outside the groups -- watch that count, not this
 paragraph, for a unittype the grouping has not met yet.
 
 This is the only plotting code in the repository, and the only tool with tests
-of its own -- ``tests/unit/test_input_data_summary.py`` pins five arithmetic
+of its own -- ``tests/unit/test_input_data_summary.py`` pins the arithmetic
 conventions whose failures a reader of the report could not see.
 
 Exit code is 0 when report.md was written -- including when the timeseries
@@ -92,7 +113,7 @@ import math
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -218,6 +239,15 @@ VRE_LABELS = frozenset({"wind onshore", "wind offshore", "solar"})
 SHIFTING_LABELS = frozenset({"battery", "pumped storage", "demand response"})
 
 HOURS_PER_YEAR = 8760
+
+
+def annualise(hours: int) -> float:
+    """The factor that turns a sum over ``hours`` into a per-year figure.
+
+    A climate window is whatever length the build was configured with, and a
+    sum over it is a per-year number only when it happens to be 8760 hours.
+    """
+    return HOURS_PER_YEAR / hours if hours else 0.0
 
 #: Identifiers whose meaning a duration cannot supply. The pumped-storage pair
 #: is the one that matters: psOpen has natural inflow and psClosed does not, and
@@ -458,6 +488,7 @@ class Workbook:
     grids: List[str]
     nodes: List[str]
     unittypes: List[str]
+    userconstraint: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def load_workbook(xlsx_path: Path) -> Workbook:
@@ -498,6 +529,10 @@ def load_workbook(xlsx_path: Path) -> Workbook:
     if "value" in emission_price.columns:
         emission_price["value"] = pd.to_numeric(emission_price["value"], errors="coerce")
 
+    userconstraint = read_bb_sheet(xl, "p_userconstraint")
+    if "value" in userconstraint.columns:
+        userconstraint["value"] = pd.to_numeric(userconstraint["value"], errors="coerce")
+
     def domain(sheet: str, column: str) -> List[str]:
         df = read_bb_sheet(xl, sheet)
         if column not in df.columns:
@@ -520,6 +555,7 @@ def load_workbook(xlsx_path: Path) -> Workbook:
         grids=domain("grid", "grid"),
         nodes=domain("node", "node"),
         unittypes=domain("unittype", "unittype"),
+        userconstraint=userconstraint,
     )
 
 
@@ -1114,14 +1150,25 @@ def storage_power_by_node(workbook: Workbook, states: set) -> pd.DataFrame:
     the same megawatts the electricity capacity table reports as hydro or
     battery -- read there per carrier, here per store.
     """
+    return storage_side_power_by_node(workbook, states, "input")
+
+
+def storage_side_power_by_node(workbook: Workbook, grids: set, side: str) -> pd.DataFrame:
+    """Unit capacity per node, read on the store's own row, from one side of the unit.
+
+    ``side="input"`` is what units can draw out of a store -- a turbine's water,
+    a battery's discharge. ``side="output"`` is what units can put into it -- a
+    pump's delivery. Both are the storage grid's row, so no efficiency sits
+    between the number and the store.
+    """
     io = workbook.p_gnu_io
     empty = pd.DataFrame(columns=["grid", "node", "power_MW"])
     if io.empty or "input_output" not in io.columns:
         return empty
     active = col_or(io, "isActive", 1.0).fillna(1.0) == 1
-    inputs = io[active & (io["input_output"].astype(str) == "input")].copy()
-    inputs["grid"] = inputs["grid"].astype(str)
-    wanted = inputs[inputs["grid"].isin(set(states))]
+    rows = io[active & (io["input_output"].astype(str) == side)].copy()
+    rows["grid"] = rows["grid"].astype(str)
+    wanted = rows[rows["grid"].isin(set(grids))]
     if wanted.empty:
         return empty
     work = wanted.copy()
@@ -1526,6 +1573,12 @@ class Timeseries:
     storage_limit: pd.DataFrame = field(default_factory=pd.DataFrame)
     storage_limit_from: Optional[str] = None
     skipped: Optional[str] = None
+    #: t labels per climate window: the build's window length in days times 24.
+    #: 8760 for the shipped scenarios, but 200 days, 400 days and five years are
+    #: all legitimate, and a window is taken as it is rather than cut to a year.
+    window_hours: int = 0
+    #: Per-node hydro series over each whole window, for the hydro checks.
+    hydro: Optional["HydroSeries"] = None
 
     @property
     def available(self) -> bool:
@@ -1589,25 +1642,35 @@ def _records(container, path: Optional[Path], parameter: str) -> Optional[pd.Dat
     return records
 
 
-def _area_hourly(
-    records: pd.DataFrame,
+def _node_hourly(records: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """One file's records as a t x node frame, or None for no records.
+
+    Pivoted once per file: the area sums and the per-node hydro series are both
+    read from it.
+    """
+    if records is None or records.empty:
+        return None
+    return (
+        records.assign(node=records["node"].astype(str))
+        .pivot_table(index="t", columns="node", values="value", aggfunc="sum", observed=True)
+        .sort_index()
+    )
+
+
+def _collapse_to_areas(
+    wide: Optional[pd.DataFrame],
     areas: List[str],
     weight_by_node: Optional[Dict[str, float]] = None,
     sign: float = 1.0,
     ) -> Optional[np.ndarray]:
-    """One file's records as an (hours x areas) array, summed into areas.
+    """A t x node frame as an (hours x areas) array, summed into areas.
 
     `weight_by_node` turns a per-unit capacity factor into MW. A node with no
     weight contributes nothing, which is how a capacity-factor series for a node
     carrying no units of that flow is ignored rather than counted as 1 MW.
     """
-    if records is None or records.empty:
+    if wide is None:
         return None
-    wide = (
-        records.assign(node=records["node"].astype(str))
-        .pivot_table(index="t", columns="node", values="value", aggfunc="sum", observed=True)
-        .sort_index()
-    )
     out = pd.DataFrame(0.0, index=wide.index, columns=areas, dtype="float64")
     for col in wide.columns:
         area = _AREA_CACHE.get(col)
@@ -1620,6 +1683,140 @@ def _area_hourly(
             if weight:
                 out[area] += wide[col].fillna(0.0) * weight
     return out.to_numpy(dtype="float32") * sign
+
+
+@dataclass
+class HydroSeries:
+    """Per-node hydro series over each whole climate window.
+
+    The rest of the timeseries layer collapses nodes into areas as it reads. The
+    hydro checks cannot: a minimum binds one storage node, and two nodes summed
+    can hold water neither of them has. Every array is (windows, hours), in the
+    order of ``years``, float32, NaN where a window has no data for that node --
+    no file, or hours past the end of a shorter window.
+    """
+    years: List[int] = field(default_factory=list)
+    hours: int = 0
+    grid_of: Dict[str, str] = field(default_factory=dict)        # node -> grid, from ts_influx
+    inflow: Dict[str, np.ndarray] = field(default_factory=dict)   # MWh/h
+    upward: Dict[str, np.ndarray] = field(default_factory=dict)   # MWh, lowest forecast branch
+    downward: Dict[str, np.ndarray] = field(default_factory=dict)  # MWh, 0 where none is written
+
+
+def _t_positions(labels) -> Optional[np.ndarray]:
+    """The 0-based hour of each t label -- 't000123' is 122 -- or None if any is not one."""
+    text = pd.Index(labels).astype(str)
+    digits = text.str.slice(1)
+    if not len(text) or not (text.str.startswith("t").all() and digits.str.isdigit().all()):
+        return None
+    return digits.astype(int).to_numpy() - 1
+
+
+def _node_matrix(wide: Optional[pd.DataFrame]) -> Optional[Tuple[List[str], np.ndarray]]:
+    """A t x node frame as ``(nodes, dense (hours, nodes) float32)``, placed by t label.
+
+    GDX stores no zeros, so an hour that every node spends at zero has no row at
+    all, and an array built from the rows present would pull every later hour
+    one step early. Placed by label instead, the missing cells being the zero
+    they stand for.
+    """
+    if wide is None or wide.empty:
+        return None
+    positions = _t_positions(wide.index)
+    if positions is None:
+        return None
+    matrix = np.zeros((int(positions.max()) + 1, wide.shape[1]), dtype="float32")
+    matrix[positions, :] = wide.fillna(0.0).to_numpy(dtype="float32")
+    return [str(c) for c in wide.columns], matrix
+
+
+def _stack_windows(
+    per_window: Sequence[Optional[Tuple[List[str], np.ndarray]]],
+    absent_node: float,
+    ) -> Dict[str, np.ndarray]:
+    """node -> (windows, hours), one row per window in order.
+
+    A window with no file stays NaN. A node missing from a window that does
+    have a file is ``absent_node``: zero for inflow, which GDX does not store,
+    and NaN for a storage bound, which cannot be read as a ceiling of zero.
+    """
+    present = [part for part in per_window if part is not None]
+    if not present:
+        return {}
+    hours = max(matrix.shape[0] for _, matrix in present)
+    nodes = sorted({node for names, _ in present for node in names})
+    out = {node: np.full((len(per_window), hours), np.nan, dtype="float32") for node in nodes}
+    for window, part in enumerate(per_window):
+        if part is None:
+            continue
+        names, matrix = part
+        length = matrix.shape[0]
+        if not np.isnan(absent_node):
+            for node in nodes:
+                out[node][window, :length] = absent_node
+        for column, node in enumerate(names):
+            out[node][window, :length] = matrix[:, column]
+    return out
+
+
+def _pad_hours(series: Dict[str, np.ndarray], hours: int) -> Dict[str, np.ndarray]:
+    """Every array widened with NaN to ``hours``, so inflow and bounds line up."""
+    out = {}
+    for node, array in series.items():
+        if array.shape[1] < hours:
+            wider = np.full((array.shape[0], hours), np.nan, dtype="float32")
+            wider[:, :array.shape[1]] = array
+            array = wider
+        out[node] = array
+    return out
+
+
+def _read_storage_limit_series(
+    gx, container, folder: Path, years: Sequence[int],
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    """Per-node upward and downward limits for every climate window, hour by hour.
+
+    ``_read_storage_limit`` reads one file for three aggregate measures. The
+    hydro checks need the hours themselves, from the same window as the inflow
+    they are set against, so this reads every per-year file on the lowest
+    forecast branch, which is f00 there.
+    """
+    available = year_files(folder, "ts_node_hydro_storage_limits")
+    if not available or not years:
+        return {}, {}
+    ordered = [available.get(y, folder / f"ts_node_hydro_storage_limits_{y}.gdx") for y in years]
+    parts: Dict[str, List] = {"upwardLimit": [], "downwardLimit": []}
+
+    def reduce_one(_gdx_file, records):
+        usable = (records is not None and not records.empty
+                  and "param_gnBoundaryTypes" in records.columns)
+        if usable and "f" in records.columns:
+            branch = min(str(f) for f in records["f"].unique())
+            records = records[records["f"].astype(str) == branch]
+        for kind, collected in parts.items():
+            part = records[records["param_gnBoundaryTypes"].astype(str) == kind] if usable else None
+            collected.append(_node_matrix(_node_hourly(part)) if usable and len(part) else None)
+        return None
+
+    gx.read_gdx_parameter_over_files(
+        ordered, "ts_node", reduce_one, container=container,
+        progress_desc="ts_node_hydro_storage_limits" if sys.stdout.isatty() else None,
+    )
+    upward = _stack_windows(parts["upwardLimit"], absent_node=np.nan)
+    downward = _stack_windows(parts["downwardLimit"], absent_node=np.nan)
+    # A node bounded only from above has a floor of zero wherever it has a ceiling.
+    for node, top in upward.items():
+        floor = downward.get(node)
+        if floor is None or floor.shape != top.shape:
+            filled = np.where(np.isnan(top), np.nan, 0.0).astype("float32")
+            if floor is not None:
+                width = min(floor.shape[1], top.shape[1])
+                filled[:, :width] = np.where(np.isnan(floor[:, :width]),
+                                             filled[:, :width], floor[:, :width])
+            downward[node] = filled
+        else:
+            downward[node] = np.where(np.isnan(floor) & ~np.isnan(top), 0.0, floor).astype("float32")
+    return upward, {n: a for n, a in downward.items() if n in upward}
 
 
 def _vre_capacity_by_node(workbook: Workbook) -> Dict[str, Dict[str, float]]:
@@ -1677,9 +1874,15 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
     cf_seen: Dict[Tuple[str, str], List[float]] = {}
     annual_parts: List[pd.DataFrame] = []
     hours = 0
+    node_parts: List[Optional[Tuple[List[str], np.ndarray]]] = []
+    grid_of: Dict[str, str] = {}
 
-    def sweep(key, family, parameter, sign=1.0, weights=None, flow=None):
-        """One family, every climate year, reduced per file."""
+    def sweep(key, family, parameter, sign=1.0, weights=None, flow=None, keep_nodes=False):
+        """One family, every climate year, reduced per file.
+
+        ``keep_nodes`` also keeps the per-node hours, whole, for the one family
+        the hydro checks need them from -- without a second read of it.
+        """
         nonlocal hours
         available = year_files(folder, family)
         if not available:
@@ -1691,8 +1894,14 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         frames: List[Optional[np.ndarray]] = []
 
         def reduce_one(gdx_file, records):
-            array = _area_hourly(records, areas, weight_by_node=weights, sign=sign)
+            wide = _node_hourly(records)
+            array = _collapse_to_areas(wide, areas, weight_by_node=weights, sign=sign)
             frames.append(array)
+            if keep_nodes:
+                node_parts.append(_node_matrix(wide))
+                if wide is not None and "grid" in records.columns:
+                    pairs = records[["grid", "node"]].drop_duplicates()
+                    grid_of.update(zip(pairs["node"].astype(str), pairs["grid"].astype(str)))
             if flow is not None and records is not None and not records.empty:
                 means = (
                     records.assign(node=records["node"].astype(str))
@@ -1703,9 +1912,11 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
             if array is None:
                 return None
             year = int(Path(gdx_file).stem.rsplit("_", 1)[-1])
+            # Annualised on this file's own length, so a 400-day window does not
+            # report 110% of a year and a 200-day one 55%.
             return pd.DataFrame({
                 "key": key, "area": areas, "year": year,
-                "TWh": array.sum(axis=0) * MWH_TO_TWH,
+                "TWh": array.sum(axis=0) * MWH_TO_TWH * annualise(array.shape[0]),
             })
 
         annual = gx.read_gdx_parameter_over_files(
@@ -1723,7 +1934,7 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
     for carrier, family in DEMAND_FAMILY.items():
         # Demand is stored negative, the way Backbone consumes it.
         sweep(f"demand_{carrier}", family, "ts_influx", sign=-1.0)
-    sweep("inflow_hydro", "ts_influx_hydro", "ts_influx")
+    sweep("inflow_hydro", "ts_influx_hydro", "ts_influx", keep_nodes=True)
     for flow, (family, _) in VRE_FAMILIES.items():
         sweep(f"vre_{flow}", family, "ts_cf",
               weights=vre_capacity.get(flow, {}), flow=flow)
@@ -1739,6 +1950,19 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         for (flow, node), values in cf_seen.items()
     ]
     storage_limit, storage_limit_from = _read_storage_limit(container, folder)
+
+    hydro = None
+    inflow = _stack_windows(node_parts, absent_node=0.0)
+    if inflow:
+        upward, downward = _read_storage_limit_series(gx, container, folder, years)
+        window = max(array.shape[1] for array in [*inflow.values(), *upward.values()])
+        hydro = HydroSeries(
+            years=list(years), hours=window, grid_of=grid_of,
+            inflow=_pad_hours(inflow, window),
+            upward=_pad_hours(upward, window),
+            downward=_pad_hours(downward, window),
+        )
+
     return Timeseries(
         years=years,
         areas=areas,
@@ -1748,6 +1972,8 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         node_cf_mean=pd.DataFrame(cf_rows),
         storage_limit=storage_limit,
         storage_limit_from=storage_limit_from,
+        window_hours=hours,
+        hydro=hydro,
     )
 
 
@@ -1772,7 +1998,7 @@ def _add_vre_annual(annual, hourly, areas, years, hours) -> pd.DataFrame:
         block = hourly["vre"][index * hours:(index + 1) * hours, :]
         if not block.size:
             continue
-        for area, value in zip(areas, block.sum(axis=0) * MWH_TO_TWH):
+        for area, value in zip(areas, block.sum(axis=0) * MWH_TO_TWH * annualise(hours)):
             rows.append({"key": "vre", "area": area, "year": year, "TWh": float(value)})
     keep = annual[~annual["key"].astype(str).str.startswith("vre_")] if not annual.empty else annual
     return pd.concat([keep, pd.DataFrame(rows)], ignore_index=True)
@@ -1894,8 +2120,8 @@ def roll_up_to_countries(timeseries: Timeseries) -> Timeseries:
     at the coarser grain, which also lets the maps stay per zone while the
     tables are per country.
 
-    ``node_cf_mean`` and ``storage_limit`` are keyed by node, not area, so they
-    pass through untouched.
+    ``node_cf_mean``, ``storage_limit`` and ``hydro`` are keyed by node, not
+    area, so they pass through untouched.
     """
     if not timeseries.areas:
         return timeseries
@@ -2092,6 +2318,547 @@ def annual_range(timeseries: Timeseries, key: str) -> pd.DataFrame:
             "max": float(high["TWh"]), "max_year": int(high["year"]),
         })
     return pd.DataFrame(rows).sort_values("mean", ascending=False)
+
+
+# ============================================================================
+# Hydro
+# ============================================================================
+
+#: Row order for the hydro table, and nothing more: which grids are hydro is
+#: read from the data, and a grid not named here follows these rather than
+#: vanishing.
+HYDRO_TYPE_ORDER = ("reservoir", "ror", "psOpen", "psClosed")
+
+HOURS_PER_WEEK = 168
+
+#: A store is close to its floor when it holds less than this many hours of its
+#: own minimum-generation draw above it. A starting value to iterate on, with an
+#: upper limit: the smallest run-of-river pond in the shipped scenarios holds
+#: 18.8 hours of its draw in all, so a margin above that flags it in every
+#: window whatever the water does.
+MIN_GEN_MARGIN_HOURS = 12.0
+
+#: Hours inside that margin, in any one window, before a store is worth watching.
+MIN_GEN_WATCH_HOURS = 2
+
+#: The userconstraint parameters the minimum-generation check can model. A group
+#: using anything else is named and left unsimulated, never guessed at.
+MIN_GEN_PARAMETERS = frozenset({"v_gen", "gt", "constant", "penalty", "eachTimestep"})
+
+#: How many of the stores that did not overflow the report names, tightest first.
+OVERFLOW_NAMED = 3
+
+
+def hydro_grids(workbook: Workbook, inflow_grids: set) -> set:
+    """The grids the hydro section reports: natural inflow, and pumped storage without it.
+
+    Inflow is read from the data. Closed-loop pumped storage has none by
+    definition, so it is found the way the storage tables find it, by the name
+    of its grid.
+    """
+    pumped = {g for g in state_grids(workbook) if storage_label(g) == "pumped storage"}
+    return set(inflow_grids) | pumped
+
+
+def weekly_shape(hourly: np.ndarray) -> Tuple[float, float, float]:
+    """``(mean week, wettest week / mean, driest week / mean)`` of a (windows, hours) series.
+
+    Weeks are 168-hour blocks cut inside each window from its first hour; a
+    remainder shorter than a week is left out rather than stretched, and a week
+    touching an hour with no data is left out whole. Every window's weeks are
+    pooled, so the wettest week is the wettest of any climate year.
+    """
+    array = np.asarray(hourly, dtype="float64")
+    if array.ndim == 1:
+        array = array[np.newaxis, :]
+    weeks = array.shape[1] // HOURS_PER_WEEK
+    if not weeks:
+        return np.nan, np.nan, np.nan
+    blocks = array[:, :weeks * HOURS_PER_WEEK].reshape(array.shape[0], weeks, HOURS_PER_WEEK)
+    totals = blocks.sum(axis=2)
+    totals = totals[np.isfinite(totals)]
+    if not totals.size:
+        return np.nan, np.nan, np.nan
+    mean = float(totals.mean())
+    if mean <= 0:
+        return mean, np.nan, np.nan
+    return mean, float(totals.max()) / mean, float(totals.min()) / mean
+
+
+def _sum_series(arrays: Sequence[np.ndarray]) -> Optional[np.ndarray]:
+    """Node series added hour by hour; an hour is NaN only where every node's is."""
+    if not arrays:
+        return None
+    stack = np.stack([np.asarray(a, dtype="float64") for a in arrays])
+    total = np.nansum(stack, axis=0)
+    total[np.all(np.isnan(stack), axis=0)] = np.nan
+    return total
+
+
+def hydro_characteristics(
+    workbook: Workbook,
+    inventory: Optional["StorageInventory"],
+    timeseries: Timeseries,
+    zones: bool,
+    grids: set,
+    ) -> pd.DataFrame:
+    """Storage, turbine, pump and inflow per area and hydro type.
+
+    One row per (area, type) that has anything, so an area without hydro is
+    silent. A country's weeks are cut from its zones' series added hour by
+    hour, not from their separate weeks, which would put every zone's wettest
+    week in the same week.
+    """
+    columns = ["area", "grid", "storage_MWh", "turbine_MW", "pump_MW", "inflow_MWh_yr",
+               "flh", "storage_weeks", "wettest_week", "driest_week"]
+    grids = set(grids)
+    turbine = storage_side_power_by_node(workbook, grids, "input")
+    pump = storage_side_power_by_node(workbook, grids, "output")
+    by_node = inventory.by_node if inventory is not None else pd.DataFrame()
+    storage = (by_node[by_node["grid"].astype(str).isin(grids)]
+               if len(by_node) and "usable_mean_MWh" in by_node.columns else pd.DataFrame())
+    hydro = timeseries.hydro
+
+    def per_node(frame: pd.DataFrame, column: str) -> Dict[str, float]:
+        if not len(frame):
+            return {}
+        return dict(zip(frame["node"].astype(str), pd.to_numeric(frame[column], errors="coerce")))
+
+    node_grid: Dict[str, str] = {}
+    for frame in (turbine, pump, storage):
+        if len(frame):
+            node_grid.update(zip(frame["node"].astype(str), frame["grid"].astype(str)))
+    if hydro is not None:
+        node_grid.update({n: g for n, g in hydro.grid_of.items() if g in grids})
+    turbine_mw, pump_mw = per_node(turbine, "power_MW"), per_node(pump, "power_MW")
+    storage_mwh = per_node(storage, "usable_mean_MWh")
+
+    members: Dict[Tuple[str, str], List[str]] = {}
+    for node, grid in node_grid.items():
+        members.setdefault((area_of(node, zones), grid), []).append(node)
+
+    rows = []
+    for (area, grid), nodes in members.items():
+        sizes = [storage_mwh[n] for n in nodes if np.isfinite(storage_mwh.get(n, np.nan))]
+        stored = float(sum(sizes)) if sizes else np.nan
+        turbines = float(sum(turbine_mw.get(n, 0.0) for n in nodes))
+        pumps = float(sum(pump_mw.get(n, 0.0) for n in nodes))
+        inflow_yr = flh = weeks = wettest = driest = np.nan
+        if hydro is not None:
+            series = _sum_series([hydro.inflow[n] for n in nodes if n in hydro.inflow])
+            finite = series is not None and bool(np.isfinite(series).any())
+            mean_hour = float(np.nanmean(series)) if finite else 0.0
+            inflow_yr = mean_hour * HOURS_PER_YEAR
+            if mean_hour > 0:
+                flh = inflow_yr / turbines if turbines > 0 else np.nan
+                weeks = stored / (mean_hour * HOURS_PER_WEEK) if np.isfinite(stored) else np.nan
+                _, wettest, driest = weekly_shape(series)
+            else:
+                flh = 0.0
+        if not (turbines or pumps or (np.isfinite(stored) and stored)
+                or (np.isfinite(inflow_yr) and inflow_yr)):
+            continue
+        rows.append(dict(area=area, grid=grid, storage_MWh=stored, turbine_MW=turbines,
+                         pump_MW=pumps, inflow_MWh_yr=inflow_yr, flh=flh, storage_weeks=weeks,
+                         wettest_week=wettest, driest_week=driest))
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    table = pd.DataFrame(rows, columns=columns)
+    order = {g: i for i, g in enumerate(HYDRO_TYPE_ORDER)}
+    table["_order"] = [order.get(g, len(order)) for g in table["grid"]]
+    return (table.sort_values(["area", "_order", "grid"]).drop(columns="_order")
+            .reset_index(drop=True))
+
+
+def run_store(inflow, upward, downward, outflow, margin=None) -> Dict[str, np.ndarray]:
+    """A store run hour by hour, each climate window on its own.
+
+    ``inflow``, ``upward`` and ``downward`` are (windows, hours, nodes) in MWh
+    per hour and MWh, and a constant bound may be anything that broadcasts to
+    that; ``outflow`` and ``margin`` are per node. Each window is its own run
+    because each climate window is its own model run.
+
+    Every hour the store takes its inflow and gives its outflow. What rises
+    above the ceiling is counted and spilled; what falls below the floor is
+    counted and made good, so one short hour is not charged again in every hour
+    after it. Both sides are kept because the two hydro checks ask opposite
+    questions of the same arithmetic: with the minimum as the outflow, a
+    shortfall is water the minimum cannot have; with everything turbines and
+    spill can pass as the outflow, an overflow is water that cannot leave.
+
+    The start is the middle of the first hour's range. The model starts
+    elsewhere -- from ``reference``, which ``changes.inc`` overrides per hydro
+    type at run time -- and the correct start levels are still to be added.
+
+    An hour with a NaN in any input is not run, which keeps a missing climate
+    year, or the hours past the end of a shorter window, out of the counts.
+
+    Returns (windows, nodes) arrays: ``hours_run``, ``below_hours``,
+    ``below_MWh``, ``above_hours``, ``above_MWh``, ``near_floor_hours`` (hours
+    at most ``margin`` above the floor and not below it), and the closest the
+    store came to each bound, ``floor_gap`` and ``ceiling_gap`` -- negative when
+    it crossed, NaN when nothing ran.
+    """
+    inflow = np.asarray(inflow, dtype="float32")
+    windows, hours, nodes = inflow.shape
+    upward = np.broadcast_to(np.asarray(upward, dtype="float32"), inflow.shape)
+    downward = np.broadcast_to(np.asarray(downward, dtype="float32"), inflow.shape)
+    pairs = (windows, nodes)
+    outflow = np.broadcast_to(np.asarray(outflow, dtype="float64"), pairs)
+    margin = np.broadcast_to(np.asarray(0.0 if margin is None else margin, dtype="float64"), pairs)
+
+    top0 = upward[:, 0, :].astype("float64")
+    bottom0 = downward[:, 0, :].astype("float64")
+    with np.errstate(invalid="ignore"):
+        level = np.where(np.isfinite(top0) & np.isfinite(bottom0), (top0 + bottom0) / 2.0,
+                         np.where(np.isfinite(bottom0), bottom0,
+                                  np.where(np.isfinite(top0), top0, 0.0)))
+
+    counts = {k: np.zeros(pairs, dtype="int32")
+              for k in ("hours_run", "below_hours", "above_hours", "near_floor_hours")}
+    energy = {k: np.zeros(pairs) for k in ("below_MWh", "above_MWh")}
+    floor_gap = np.full(pairs, np.inf)
+    ceiling_gap = np.full(pairs, np.inf)
+
+    with np.errstate(invalid="ignore"):
+        for t in range(hours):
+            water = inflow[:, t, :].astype("float64")
+            top = upward[:, t, :].astype("float64")
+            bottom = downward[:, t, :].astype("float64")
+            valid = ~(np.isnan(water) | np.isnan(top) | np.isnan(bottom))
+            if not valid.any():
+                continue
+            moved = level + np.where(valid, water - outflow, 0.0)
+            above = np.where(valid, moved - top, -np.inf)
+            below = np.where(valid, bottom - moved, -np.inf)
+            over, short = above > 0, below > 0
+            counts["hours_run"] += valid
+            counts["above_hours"] += over
+            counts["below_hours"] += short
+            energy["above_MWh"] += np.where(over, above, 0.0)
+            energy["below_MWh"] += np.where(short, below, 0.0)
+            # Headroom over the floor after the spill, which is what is left to use.
+            floor = np.where(valid, np.minimum(moved, top) - bottom, np.inf)
+            counts["near_floor_hours"] += valid & (floor >= 0) & (floor < margin)
+            np.minimum(floor_gap, floor, out=floor_gap)
+            np.minimum(ceiling_gap, np.where(valid, top - moved, np.inf), out=ceiling_gap)
+            level = np.where(valid, np.minimum(np.maximum(moved, bottom), top), level)
+
+    ran = counts["hours_run"] > 0
+    return {**counts, **energy,
+            "floor_gap": np.where(ran, floor_gap, np.nan),
+            "ceiling_gap": np.where(ran, ceiling_gap, np.nan)}
+
+
+def _unit_numbers(workbook: Workbook) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """``({unit: availability}, {unit: best efficiency})`` from ``p_unit``.
+
+    An availability that is not written is zero, the way Backbone reads it:
+    the unit is deactivated. The efficiency is the largest ``eff*`` column,
+    which is the slope Backbone converts output to input with when no unit has
+    an efficiency curve.
+    """
+    unit = workbook.p_unit
+    if unit.empty or "unit" not in unit.columns:
+        return {}, {}
+    names = unit["unit"].astype(str)
+    availability = pd.to_numeric(col_or(unit, "availability", 0.0), errors="coerce").fillna(0.0)
+    eff_columns = [c for c in unit.columns if str(c).startswith("eff") and str(c)[3:].isdigit()]
+    if eff_columns:
+        effs = unit[eff_columns].apply(pd.to_numeric, errors="coerce")
+        best = effs.where(effs > 0).max(axis=1)
+    else:
+        best = pd.Series(np.nan, index=unit.index)
+    return dict(zip(names, availability.astype(float))), dict(zip(names, best.astype(float)))
+
+
+def _boundary_sources(workbook: Workbook) -> Dict[str, Dict[str, Tuple[str, float]]]:
+    """``{node: {kind: ("constant", value) | ("timeseries", nan)}}`` from the boundary sheet."""
+    boundary = workbook.boundary
+    out: Dict[str, Dict[str, Tuple[str, float]]] = {}
+    if boundary.empty or not {"node", "param_gnBoundaryTypes"} <= set(boundary.columns):
+        return out
+    use_ts = col_or(boundary, "useTimeseries", 0.0).fillna(0.0) == 1
+    constants = pd.to_numeric(col_or(boundary, "constant", np.nan), errors="coerce")
+    for node, kind, ts, value in zip(boundary["node"].astype(str),
+                                     boundary["param_gnBoundaryTypes"].astype(str),
+                                     use_ts, constants):
+        if ts:
+            out.setdefault(node, {})[kind] = ("timeseries", np.nan)
+        elif pd.notna(value):
+            out.setdefault(node, {})[kind] = ("constant", float(value))
+    return out
+
+
+def min_generation_groups(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[Tuple[str, str]]]:
+    """``(groups the check can simulate, [(group, why not)])`` for hydro minimums.
+
+    A group is about hydro when any of its dimensions names a unit drawing on a
+    hydro store, or a hydro node. The simple form -- ``v_gen`` on each unit's
+    output with a positive coefficient, ``gt``, a positive ``constant`` -- is
+    simulated. Anything else is named with the reason, because a minimum the
+    check misread would be a verdict about data it never understood.
+
+    ``draw_MWh`` is the least water that meets the minimum: the constant through
+    the most efficient of the group's units. ``deliverable_MW`` is the most
+    those units can give together, capacity times availability.
+    """
+    columns = ["group", "node", "grid", "units", "minimum_MW", "draw_MWh", "deliverable_MW"]
+    uc = workbook.userconstraint
+    io = workbook.p_gnu_io
+    if uc.empty or io.empty or not {"group", "parameter", "value"} <= set(uc.columns):
+        return pd.DataFrame(columns=columns), []
+
+    io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1].copy()
+    for c in ("grid", "node", "unit", "input_output"):
+        io[c] = io[c].astype(str)
+    io["capacity"] = pd.to_numeric(io["capacity"], errors="coerce").fillna(0.0)
+    coeff = pd.to_numeric(col_or(io, "conversionCoeff", 1.0), errors="coerce").fillna(1.0)
+    io["conversionCoeff"] = coeff.replace(0.0, 1.0)
+    stores = io[(io["input_output"] == "input") & io["grid"].isin(grids)]
+    draws_from = stores.groupby("unit")["node"].agg(lambda s: sorted(set(s))).to_dict()
+    hydro_nodes = set(stores["node"]) | set(io.loc[io["grid"].isin(grids), "node"])
+    availability, efficiency = _unit_numbers(workbook)
+
+    dims = [c for c in uc.columns if str(c).endswith("dimension")]
+    work = uc.copy()
+    work["parameter"] = work["parameter"].astype(str)
+    rows, skipped = [], []
+    for group, part in work.groupby(work["group"].astype(str), sort=True):
+        named = {str(v) for c in dims for v in part[c].dropna()}
+        if not named & (set(draws_from) | hydro_nodes):
+            continue
+        params = set(part["parameter"])
+        unknown = sorted(params - MIN_GEN_PARAMETERS)
+        gens = part[part["parameter"] == "v_gen"]
+        constant = pd.to_numeric(part.loc[part["parameter"] == "constant", "value"],
+                                 errors="coerce").dropna()
+        if unknown:
+            skipped.append((group, "uses " + ", ".join(f"`{p}`" for p in unknown)
+                            + ", which this check does not model"))
+            continue
+        if "gt" not in params:
+            skipped.append((group, "has no `gt`, so it is not a minimum"))
+            continue
+        if gens.empty:
+            skipped.append((group, "names no `v_gen`"))
+            continue
+        if constant.empty or float(constant.sum()) <= 0:
+            skipped.append((group, "has no positive `constant`"))
+            continue
+
+        reason, nodes, units, best, deliverable = None, set(), [], 0.0, 0.0
+        for _, gen in gens.iterrows():
+            grid, node, unit = (str(gen[c]) for c in dims[:3])
+            weight = float(pd.to_numeric(gen["value"], errors="coerce"))
+            unit_rows = io[io["unit"] == unit]
+            if not np.isfinite(weight) or weight <= 0:
+                reason = f"gives `{unit}` a coefficient at or below zero"
+            elif grid in grids:
+                reason = f"constrains the storage side of `{unit}`"
+            elif unit not in draws_from:
+                reason = f"`{unit}` draws on no hydro store"
+            elif (unit_rows["conversionCoeff"] != 1.0).any():
+                reason = f"`{unit}` has a conversionCoeff other than 1"
+            elif not np.isfinite(efficiency.get(unit, np.nan)):
+                reason = f"`{unit}` has no efficiency in `p_unit`"
+            if reason:
+                break
+            nodes.update(draws_from[unit])
+            units.append(unit)
+            best = max(best, weight * efficiency[unit])
+            out_rows = unit_rows[(unit_rows["input_output"] == "output")
+                                 & (unit_rows["grid"] == grid) & (unit_rows["node"] == node)]
+            deliverable += weight * float(out_rows["capacity"].sum()) * availability.get(unit, 0.0)
+        if reason is None and len(nodes) > 1:
+            reason = f"its units draw on {len(nodes)} different stores ({summarise(sorted(nodes))})"
+        if reason:
+            skipped.append((group, reason))
+            continue
+        store = next(iter(nodes))
+        minimum = float(constant.sum())
+        rows.append(dict(group=group, node=store,
+                         grid=str(stores.loc[stores["node"] == store, "grid"].iloc[0]),
+                         units=", ".join(units), minimum_MW=minimum,
+                         draw_MWh=minimum / best, deliverable_MW=deliverable))
+    return pd.DataFrame(rows, columns=columns), skipped
+
+
+def _closest(gap: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Per node, the smallest gap over all windows and which window it was in.
+
+    A node that ran in no window gets NaN, and window 0 as a placeholder.
+    """
+    filled = np.where(np.isnan(gap), np.inf, gap)
+    window = filled.argmin(axis=0)
+    smallest = filled.min(axis=0)
+    return np.where(np.isinf(smallest) & (smallest > 0), np.nan, smallest), window
+
+
+@dataclass
+class HydroChecks:
+    """The two hydro checks, per bidding-zone store."""
+    minimum: pd.DataFrame = field(default_factory=pd.DataFrame)
+    overflow: pd.DataFrame = field(default_factory=pd.DataFrame)
+    not_simulated: List[Tuple[str, str]] = field(default_factory=list)
+    groups: int = 0
+    windows: int = 0
+    window_hours: int = 0
+    skipped: Optional[str] = None
+
+
+def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> HydroChecks:
+    """Minimum generation against inflow, and overflow of a full store.
+
+    Always per bidding-zone store, whatever level the report is written at: a
+    minimum binds one store, and two stores added together can hold water
+    neither of them has.
+    """
+    grids = set(grids)
+    groups, not_simulated = min_generation_groups(workbook, grids)
+    result = HydroChecks(not_simulated=list(not_simulated),
+                         groups=len(groups) + len(not_simulated))
+    availability, _ = _unit_numbers(workbook)
+
+    minimum = groups.copy()
+    if len(minimum):
+        minimum["beyond_turbines"] = minimum["minimum_MW"] > minimum["deliverable_MW"] + 1e-6
+        minimum = (minimum.groupby("node", sort=True)
+                   .agg(group=("group", lambda s: ", ".join(s)), grid=("grid", "first"),
+                        minimum_MW=("minimum_MW", "sum"), draw_MWh=("draw_MWh", "sum"),
+                        deliverable_MW=("deliverable_MW", "sum"),
+                        beyond_turbines=("beyond_turbines", "any"))
+                   .reset_index())
+
+    hydro = timeseries.hydro
+    if hydro is None or not hydro.inflow:
+        result.skipped = timeseries.skipped or "no `ts_influx_hydro_<year>.gdx` file was read"
+        result.minimum = minimum
+        return result
+
+    windows, hours = len(hydro.years), hydro.hours
+    result.windows, result.window_hours = windows, hours
+    shape = (windows, hours)
+    bounds = _boundary_sources(workbook)
+    no_file = np.isnan(next(iter(hydro.inflow.values())))
+
+    def inflow_of(node: str) -> np.ndarray:
+        series = hydro.inflow.get(node)
+        return series if series is not None else np.where(no_file, np.nan, 0.0).astype("float32")
+
+    def bound_of(node: str, kind: str) -> Optional[np.ndarray]:
+        source = bounds.get(node, {}).get(kind)
+        if source is None:
+            return np.full(shape, np.inf if kind == "upwardLimit" else -np.inf, dtype="float32")
+        how, value = source
+        if how == "timeseries":
+            return (hydro.upward if kind == "upwardLimit" else hydro.downward).get(node)
+        return np.full(shape, value, dtype="float32")
+
+    io = workbook.p_gnu_io
+    io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1] if not io.empty else io
+
+    def side_water(node: str, side: str) -> float:
+        """Capacity times availability on the store's own row, for one side."""
+        if io.empty:
+            return 0.0
+        rows = io[(io["node"].astype(str) == node) & (io["input_output"].astype(str) == side)]
+        capacity = pd.to_numeric(rows["capacity"], errors="coerce").fillna(0.0)
+        return float(sum(c * availability.get(str(u), 0.0) for u, c in zip(rows["unit"], capacity)))
+
+    def series_for(nodes: List[str]):
+        usable, missing = [], []
+        for node in nodes:
+            top, bottom = bound_of(node, "upwardLimit"), bound_of(node, "downwardLimit")
+            if top is None or bottom is None:
+                missing.append(node)
+            else:
+                usable.append((node, top, bottom))
+        return usable, missing
+
+    years = np.asarray(hydro.years)
+
+    # ---- minimum generation ------------------------------------------------
+    if len(minimum):
+        usable, missing = series_for(list(minimum["node"]))
+        for node in missing:
+            not_simulated.append((node, "claims a timeseries bound and no series was read"))
+        result.not_simulated = list(not_simulated)
+        minimum = minimum[minimum["node"].isin([n for n, _, _ in usable])].reset_index(drop=True)
+    if len(minimum):
+        names = list(minimum["node"])
+        draw = minimum["draw_MWh"].to_numpy(dtype="float64")
+        water = np.stack([inflow_of(n) for n in names], axis=2)
+        top = np.stack([t for _, t, _ in usable], axis=2)
+        bottom = np.stack([b for _, _, b in usable], axis=2)
+        run = run_store(water, top, bottom, draw, margin=draw * MIN_GEN_MARGIN_HOURS)
+        pumps = np.array([side_water(n, "output") for n in names])
+        with_pumps = run["below_hours"].copy()
+        pumped = np.flatnonzero((run["below_hours"].sum(axis=0) > 0) & (pumps > 0))
+        if len(pumped):
+            again = run_store(water[:, :, pumped] + pumps[pumped].astype("float32"),
+                              top[:, :, pumped], bottom[:, :, pumped], draw[pumped])
+            with_pumps[:, pumped] = again["below_hours"]
+        closest, closest_window = _closest(run["floor_gap"])
+        minimum["pump_MW"] = pumps
+        minimum["windows_run"] = (run["hours_run"] > 0).sum(axis=0)
+        minimum["windows_short"] = (run["below_hours"] > 0).sum(axis=0)
+        minimum["short_hours"] = run["below_hours"].sum(axis=0)
+        minimum["short_GWh"] = run["below_MWh"].sum(axis=0) / 1e3
+        minimum["short_with_pumps"] = with_pumps.sum(axis=0)
+        minimum["closest_MWh"] = closest
+        minimum["closest_hours"] = closest / draw
+        minimum["closest_year"] = years[closest_window]
+        minimum["near_hours_worst"] = run["near_floor_hours"].max(axis=0)
+        states = []
+        for row in minimum.itertuples():
+            if row.beyond_turbines or row.short_with_pumps > 0:
+                states.append(CHECK_ACT)
+            elif row.short_hours > 0 or row.near_hours_worst >= MIN_GEN_WATCH_HOURS:
+                states.append(CHECK_WATCH)
+            else:
+                states.append(CHECK_OK)
+        minimum["state"] = states
+    result.minimum = minimum
+
+    # ---- overflow ------------------------------------------------------------
+    flowing = [n for n in sorted(hydro.inflow)
+               if hydro.grid_of.get(n) in grids and np.nanmax(hydro.inflow[n], initial=0.0) > 0]
+    usable, _ = series_for(flowing)
+    usable = [(n, t, b) for n, t, b in usable if np.isfinite(t).any()]
+    if usable:
+        names = [n for n, _, _ in usable]
+
+        def spill_of(node: str) -> float:
+            how, value = bounds.get(node, {}).get("maxSpill", ("constant", 0.0))
+            return max(value, 0.0) if how == "constant" else 0.0
+
+        spill = np.array([spill_of(n) for n in names])
+        turbines = np.array([side_water(n, "input") for n in names])
+        water = np.stack([inflow_of(n) for n in names], axis=2)
+        run = run_store(water, np.stack([t for _, t, _ in usable], axis=2),
+                        np.stack([b for _, _, b in usable], axis=2), turbines + spill)
+        spare, tightest = _closest(run["ceiling_gap"])
+        overflow = pd.DataFrame({
+            "node": names,
+            "grid": [hydro.grid_of.get(n) for n in names],
+            "turbine_MW": turbines,
+            "spill_MW": spill,
+            "peak_inflow_MW": [float(np.nanmax(hydro.inflow[n], initial=0.0)) for n in names],
+            "windows_run": (run["hours_run"] > 0).sum(axis=0),
+            "windows_over": (run["above_hours"] > 0).sum(axis=0),
+            "over_hours": run["above_hours"].sum(axis=0),
+            "over_GWh": run["above_MWh"].sum(axis=0) / 1e3,
+            "spare_MW": spare,
+            "tightest_year": years[tightest],
+        })
+        overflow["state"] = np.where(overflow["over_hours"] > 0, CHECK_ACT, CHECK_OK)
+        # Tightness relative to what the store can release: in MW alone the
+        # smallest stores would always look tightest.
+        release = overflow["turbine_MW"] + overflow["spill_MW"]
+        overflow["spare_share"] = np.where(release > 0, overflow["spare_MW"] / release, np.nan)
+        result.overflow = overflow.sort_values("spare_share").reset_index(drop=True)
+    return result
 
 
 # ============================================================================
@@ -3086,9 +3853,32 @@ def figure_duration(out_dir: Path, decomposition: Dict, installed: pd.DataFrame,
 # Checks
 # ============================================================================
 
+#: A check's state. Only one of them asks for anything, and the report says so
+#: before the table, so a row that is not "ok" does not read as a failure.
+CHECK_OK = "ok"
+CHECK_WATCH = "watch"
+CHECK_ACT = "act"
+CHECK_NOT_RUN = "not run"
+
+CHECK_MEANING = {
+    CHECK_OK: "nothing found",
+    CHECK_WATCH: "nothing in the data is wrong, but it is close to a limit or a known gap, "
+                 "and worth knowing when reading a run",
+    CHECK_ACT: "the data as written cannot do what it asks, so a run will lean on penalties "
+               "or dummy variables -- follow it up before trusting one",
+    CHECK_NOT_RUN: "the files this check needs were not read",
+}
+
+
+class Check(NamedTuple):
+    name: str
+    result: str
+    state: str
+
+
 def run_checks(workbook: Workbook, classification: Classification, transfer: Dict,
-               served_by_timeseries: Sequence[str] = ()) -> List[Tuple[str, str, bool]]:
-    """Structurally impossible values only.
+               served_by_timeseries: Sequence[str] = ()) -> List[Check]:
+    """Structurally impossible values, plus the known gaps worth watching.
 
     Nothing here is a judgement about whether a number is plausible. A check
     that fires on correct data every run is not strict, it is broken, so a
@@ -3097,6 +3887,10 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
     instead of being judged here.
     """
     checks = []
+
+    def add(name: str, result: str, ok: bool) -> None:
+        checks.append(Check(name, result, CHECK_OK if ok else CHECK_ACT))
+
 
     negatives = []
     io = workbook.p_gnu_io
@@ -3108,11 +3902,11 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
     ne = workbook.n_emission
     if "value" in ne.columns and (ne["value"] < 0).any():
         negatives.append("emission factor")
-    checks.append((
+    add(
         "Negative capacity, transferCap or emission factor",
         "none" if not negatives else f"found in {', '.join(negatives)}",
         not negatives,
-    ))
+    )
 
     # A constant influx is overridden by a timeseries, never added to it -- the
     # model gates it on `not gn_influxTs(grid, node)`. A node carrying both has a
@@ -3124,29 +3918,29 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
         with_constant = {(str(g), str(n)) for g, n in zip(gn.loc[live, "grid"],
                                                           gn.loc[live, "node"])}
     overridden = sorted(f"{n}" for g, n in with_constant if g in served_by_timeseries)
-    checks.append((
+    add(
         "Constant influx on a node that also has a timeseries",
         (f"none of {len(with_constant)} node(s) with a constant influx" if not overridden
          else f"the constant is ignored on {summarise(overridden)}"),
         not overridden,
-    ))
+    )
 
     priced = gn[col_or(gn, "usePrice", 0.0).fillna(0.0) == 1] if not gn.empty else pd.DataFrame()
     bad_price = priced[pd.to_numeric(col_or(priced, "price", np.nan), errors="coerce").fillna(0) <= 0] \
         if not priced.empty else pd.DataFrame()
-    checks.append((
+    add(
         "Price at or below zero on a priced node",
         f"none of {len(priced)} priced node(s)" if bad_price.empty
         else f"{len(bad_price)}: {summarise(bad_price['node'].tolist())}",
         bad_price.empty,
-    ))
+    )
 
-    checks.append((
+    add(
         "One-way transfer capacity (the other direction is zero)",
         f"none of {transfer.get('pairs', 0)} corridor(s)" if not transfer.get("one_way")
         else f"{transfer['one_way']} corridor(s)",
         not transfer.get("one_way"),
-    ))
+    )
 
     unlabelled = classification.unlabelled
     by_reason = {}
@@ -3154,41 +3948,97 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
         for reason, group in unlabelled.groupby("reason", observed=True):
             by_reason[str(reason)] = float(group["capacity"].sum() * MW_TO_GW)
     real = {r: gw for r, gw in by_reason.items() if gw > 0}
-    checks.append((
+    add(
         "Unit capacity the technology grouping has no home for",
         "none -- every unit matched a group" if not real
         else "; ".join(f"{gw:,.1f} GW, {r}" for r, gw in sorted(real.items(), key=lambda x: -x[1])),
         not real,
-    ))
+    )
 
     boundary = workbook.boundary
     if boundary.empty or "param_gnBoundaryTypes" not in boundary.columns:
-        checks.append(("Storage row claiming a constant but carrying none", "no storage rows", True))
+        add("Storage row claiming a constant but carrying none", "no storage rows", True)
     else:
         upward = boundary[boundary["param_gnBoundaryTypes"].astype(str) == "upwardLimit"]
         claims = upward[col_or(upward, "useConstant", 0.0).fillna(0.0) == 1]
         missing = claims[col_or(claims, "constant", np.nan).isna()]
-        checks.append((
+        add(
             "Storage row claiming a constant but carrying none",
             f"none of {len(claims)} row(s)" if missing.empty
             else f"{len(missing)}: {summarise(missing['node'].tolist())}",
             missing.empty,
-        ))
+        )
 
     # A flow with units but no profile generator is a known modelling gap, not a
     # defect in the build: nobody running a build can act on it, so it is
-    # reported and not counted against the run. It stays in the table because it
-    # is the kind of thing that otherwise goes unnoticed for a year.
+    # watched rather than acted on. It stays in the table because it is the kind
+    # of thing that otherwise goes unnoticed for a year.
     flows = set(str(f) for f in workbook.flow_unit.get("flow", pd.Series(dtype=str)).unique())
     without = sorted(flows - set(VRE_FAMILIES))
-    checks.append((
+    checks.append(Check(
         "Flow with units but no capacity-factor timeseries",
         "none" if not without
         else f"{', '.join(without)} -- units exist, no profile is built for them. "
              f"A known gap, not a data error",
-        True,
+        CHECK_WATCH if without else CHECK_OK,
     ))
     return checks
+
+
+def hydro_check_rows(result: "HydroChecks") -> List[Check]:
+    """The two hydro checks as rows of the Checks table."""
+    rows = []
+    minimum = result.minimum
+    skipped = ""
+    if result.not_simulated:
+        skipped = (f"; {len(result.not_simulated)} not simulated: "
+                   f"{summarise([name for name, _ in result.not_simulated])}")
+
+    name = "Hydro minimum generation against inflow"
+    if not result.groups:
+        rows.append(Check(name, "no hydro minimum generation is written", CHECK_OK))
+    elif result.skipped:
+        beyond = (sorted(minimum.loc[minimum["beyond_turbines"], "node"])
+                  if len(minimum) and "beyond_turbines" in minimum.columns else [])
+        if beyond:
+            rows.append(Check(name, f"{len(beyond)} store(s) ask more than their turbines can "
+                                    f"give: {summarise(beyond)}", CHECK_ACT))
+        else:
+            rows.append(Check(name, f"inflow was not read: {result.skipped}", CHECK_NOT_RUN))
+    elif not len(minimum):
+        rows.append(Check(name, f"none of {result.groups} group(s) could be simulated{skipped}",
+                          CHECK_NOT_RUN))
+    else:
+        act = sorted(minimum.loc[minimum["state"] == CHECK_ACT, "node"])
+        watch = sorted(minimum.loc[minimum["state"] == CHECK_WATCH, "node"])
+        if act:
+            text, state = f"{len(act)} store(s) cannot carry their minimum: {summarise(act)}", CHECK_ACT
+            if watch:
+                text += f"; {len(watch)} to watch: {summarise(watch)}"
+        elif watch:
+            text = (f"all {len(minimum)} carry their minimum in {result.windows} window(s); "
+                    f"{len(watch)} come close: {summarise(watch)}")
+            state = CHECK_WATCH
+        else:
+            text = (f"all {len(minimum)} store(s) carry their minimum in {result.windows} "
+                    f"window(s), never within {MIN_GEN_MARGIN_HOURS:g} h of draw of the floor")
+            state = CHECK_OK
+        rows.append(Check(name, text + skipped, state))
+
+    name = "Hydro inflow a store cannot pass with turbines and spill at full"
+    overflow = result.overflow
+    if result.skipped:
+        rows.append(Check(name, f"inflow was not read: {result.skipped}", CHECK_NOT_RUN))
+    elif not len(overflow):
+        rows.append(Check(name, "no store with a ceiling receives inflow", CHECK_OK))
+    else:
+        over = list(overflow.loc[overflow["state"] == CHECK_ACT, "node"])
+        if over:
+            rows.append(Check(name, f"{len(over)} store(s) overflow: {summarise(over)}", CHECK_ACT))
+        else:
+            rows.append(Check(name, f"none of {len(overflow)} store(s) overflows in "
+                                    f"{result.windows} window(s)", CHECK_OK))
+    return rows
 
 
 # ============================================================================
@@ -3271,6 +4121,12 @@ def build_report(
     checks = run_checks(workbook, classification, transfer_facts,
                         [c for c in DEMAND_FAMILY if not annual_range(
                             timeseries, f"demand_{c}").empty])
+    hydro_set = hydro_grids(workbook, classification.inflow_grids)
+    hydro_table = hydro_characteristics(workbook, inventory, timeseries, zones, hydro_set)
+    # Per bidding-zone store whatever the level: the series are node-keyed and
+    # pass through the country roll-up untouched.
+    hydro_result = hydro_checks(workbook, zone_timeseries, hydro_set)
+    checks += hydro_check_rows(hydro_result)
     peak = _peak_demand(timeseries)
 
     capacity_factors = capacity_weighted_cf(timeseries, workbook, zones)
@@ -3289,7 +4145,9 @@ def build_report(
     elec_total = _total_gw(carrier_data["elec"]["capacity"])
     elec_demand = carrier_data["elec"]["demand"]
     demand_total = float(elec_demand["mean"].sum()) if not elec_demand.empty else 0.0
-    failing = [name for name, _, ok in checks if not ok]
+    to_act = [c.name for c in checks if c.state == CHECK_ACT]
+    to_watch = [c.name for c in checks if c.state == CHECK_WATCH]
+    not_run = [c.name for c in checks if c.state == CHECK_NOT_RUN]
 
     # ---- lead -------------------------------------------------------------
     report.add(f"# Input data summary -- {workbook.scenario}, {workbook.year}")
@@ -3303,9 +4161,11 @@ def build_report(
     if demand_total:
         lead += (f", against {_num(demand_total, 0)} TWh/yr of electricity demand averaged over "
                  f"{len(timeseries.years)} climate year(s)")
-    lead += (". " + ("Every structural check passed."
-                    if not failing else
-                    f"{len(failing)} structural check(s) need a look: {summarise(failing)}."))
+    lead += (". " + ("No check asks for action."
+                    if not to_act else
+                    f"{len(to_act)} check(s) ask for action: {summarise(to_act)}."))
+    if to_watch:
+        lead += f" {len(to_watch)} worth watching: {summarise(to_watch)}."
     report.add(lead)
     report.add()
 
@@ -3316,6 +4176,10 @@ def build_report(
                f"`{workbook.path.name}` in `{workbook.path.parent.name}/`.")
     report.add(f"- **Reported by {level}**: {len(presence)} {level}(s)"
                + ("." if zones else "; pass `--zones` to split them into bidding zones."))
+    if timeseries.available and timeseries.window_hours:
+        report.add(f"- **Climate windows**: {len(timeseries.years)} of "
+                   f"{timeseries.window_hours / 24:,.4g} days each, as the build wrote them; "
+                   f"figures per year are annualised from each window.")
     for carrier, data in carrier_data.items():
         total = _total_gw(data["capacity"])
         consumed = float(data["consumption"]["capacity"].sum() * MW_TO_GW) if not data["consumption"].empty else 0.0
@@ -3343,7 +4207,9 @@ def build_report(
     if transfer_facts:
         report.add(f"- **Interconnection**: {_num(transfer_facts['total_GW'])} GW over "
                    f"{transfer_facts['pairs']} zone pair(s).")
-    report.add(f"- **Checks**: {len(checks) - len(failing)} of {len(checks)} passed.")
+    report.add(f"- **Checks**: {len(checks) - len(to_act) - len(to_watch) - len(not_run)} ok, "
+               f"{len(to_watch)} to watch, {len(to_act)} to act on"
+               + (f", {len(not_run)} not run" if not_run else "") + ", see Checks.")
     report.add()
 
     summary_rows = [
@@ -3377,6 +4243,7 @@ def build_report(
     for carrier, data in carrier_data.items():
         report.add(f"1. [{data['title']}](#{data['slug']})")
     report.add("1. [Storage](#storage)")
+    report.add("1. [Hydro](#hydro)")
     report.add("1. [Interconnection](#interconnection)")
     report.add("1. [Net load](#net-load)")
     report.add("1. [On what timescale](#on-what-timescale)")
@@ -3431,6 +4298,13 @@ def build_report(
         "countries carry the system's seasonal energy in hydro, the rest hold hours rather than "
         "months, and the ceiling is roughly twice what is usable.",
     )
+
+    # ---- hydro ------------------------------------------------------------
+    report.add('<a id="hydro"></a>')
+    report.add()
+    report.add("## Hydro")
+    report.add()
+    _hydro_section(report, hydro_table, hydro_result, timeseries, zones)
 
     # ---- interconnection --------------------------------------------------
     report.add('<a id="interconnection"></a>')
@@ -3525,12 +4399,17 @@ def build_report(
     report.add()
     report.add("## Checks")
     report.add()
-    report.add("Structurally impossible values only. None of these should fire on correctly "
-               "built data, so one that does is worth following up; a number merely being "
-               "surprising is not checked here, it is shown in the tables above.")
+    report.add("Values that cannot be what was meant, known gaps, and the hydro stores that "
+               "cannot do what the data asks of them. A number that is merely surprising is not "
+               "checked here; it is shown in the tables above. Each check is in one of four "
+               "states, and only one of them asks for anything:")
     report.add()
-    report.table(["Check", "Result"],
-                 [[name, result if ok else f"**{result}**"] for name, result, ok in checks])
+    for state in (CHECK_OK, CHECK_WATCH, CHECK_ACT, CHECK_NOT_RUN):
+        report.add(f"- **{state}**: {CHECK_MEANING[state]}.")
+    report.add()
+    report.table(["Check", "State", "Result"],
+                 [[c.name, f"**{c.state}**" if c.state == CHECK_ACT else c.state,
+                   f"**{c.result}**" if c.state == CHECK_ACT else c.result] for c in checks])
 
     # ---- not summarized ---------------------------------------------------
     report.add('<a id="not-summarized"></a>')
@@ -3570,6 +4449,26 @@ def _peak_demand(timeseries: Timeseries) -> Optional[pd.Series]:
     if demand is None or not timeseries.areas:
         return None
     return pd.Series(demand.max(axis=0), index=timeseries.areas, dtype="float64")
+
+
+def window_caveat(timeseries: Timeseries, suffix: str = "") -> Optional[str]:
+    """One sentence for a section whose reading changes when a window is not a year.
+
+    Nothing is cut or refused: a 200-day or a five-year window is what the
+    model will run, so the analyses run on it as it is and say what that means.
+    """
+    hours = timeseries.window_hours
+    if not timeseries.available or not hours or hours == HOURS_PER_YEAR:
+        return None
+    days = f"{hours / 24:,.4g}"
+    if hours > HOURS_PER_YEAR:
+        text = (f"Each climate window in this build is {days} days, longer than a year, so "
+                f"neighbouring windows overlap and the climate years are not independent of "
+                f"one another")
+    else:
+        text = (f"Each climate window in this build is {days} days, shorter than a year, so "
+                f"each covers only part of the seasons")
+    return f"*{text}{suffix}.*"
 
 
 def _material_hydro_areas(timeseries: Timeseries) -> List[str]:
@@ -3972,6 +4871,166 @@ def _storage_section(report, inventory: "StorageInventory", timeseries, zones) -
         report.table([level_header(zones)] + list(power.columns), rows)
 
 
+def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeseries, zones) -> None:
+    """Hydro by area and type, then the two checks per bidding-zone store."""
+    if table.empty:
+        report.add("No hydro is built in this scenario.")
+        report.add()
+        return
+
+    report.add(f"Every hydro type by {level_header(zones)}, as the build states it: how much it "
+               f"stores, how hard it can draw and pump, and the water it receives.")
+    report.add()
+    read = timeseries.hydro is not None
+    rows = []
+    for r in table.itertuples():
+        rows.append([
+            display_name(r.area, zones), f"`{r.grid}`",
+            _num(r.storage_MWh / 1e3, 0) if np.isfinite(r.storage_MWh) else "-",
+            _num(r.turbine_MW, 0), _num(r.pump_MW, 0),
+            _num(r.inflow_MWh_yr * MWH_TO_TWH, 2) if read else "-",
+            _num(r.flh, 0) if np.isfinite(r.flh) else "-",
+            (_num(r.storage_weeks, 1 if r.storage_weeks >= 1 else 2)
+             if np.isfinite(r.storage_weeks) else "-"),
+            _num(r.wettest_week, 2) if np.isfinite(r.wettest_week) else "-",
+            _num(r.driest_week, 2) if np.isfinite(r.driest_week) else "-",
+        ])
+    report.table([level_header(zones), "type", "storage GWh", "turbine MW", "pump MW",
+                  "inflow TWh/yr", "full-load h", "storage weeks", "wettest week",
+                  "driest week"], rows)
+    report.add("- **storage GWh**: the usable volume, the mean of `upwardLimit` minus "
+               "`downwardLimit` over the year -- the same measure as in Storage.")
+    report.add("- **turbine MW** and **pump MW**: what the turbines can draw out of the store and "
+               "what the pumps can put into it, both read on the store's own row, so no "
+               "efficiency sits between them and the water.")
+    report.add("- **full-load h**: mean annual inflow over turbine MW -- the hours the turbines "
+               "would run at full draw to pass one average year's water. Zero means no inflow.")
+    report.add("- **storage weeks**: the usable volume over a mean week of inflow -- how many "
+               "average weeks of water the store can hold. Below 1 the store is a pond that "
+               "passes its water on as it arrives; tens of weeks is a store that can carry water "
+               "from one season into the next. '-' when no water arrives.")
+    report.add("- **wettest week**: the largest week of inflow in any climate window, as a "
+               "multiple of the mean week. 5 means one week brings five average weeks of water, "
+               "which the store has to hold, generate or spill; read it against storage weeks.")
+    report.add("- **driest week**: the smallest week of inflow in any climate window, as a "
+               "multiple of the mean week. 0.05 means one week brings a twentieth of an average "
+               "week, and anything the store must give that week -- a minimum generation above "
+               "all -- comes out of what it holds.")
+    report.add()
+    report.add("A week is 168 hours cut from each window's first hour; a remainder shorter than a "
+               "week is left out, and the weeks of every climate window are pooled, so the "
+               "extremes are the most extreme of any year. A country's weeks are cut from its "
+               "zones' inflow added hour by hour.")
+    report.add()
+    if not read:
+        report.add(f"The inflow columns need the hydro timeseries, which were not read"
+                   + (f": {timeseries.skipped}" if timeseries.skipped else "") + ".")
+        report.add()
+
+    report.add("### Minimum generation and overflow")
+    report.add()
+    report.add("Both checks run on every bidding-zone store separately, whatever level the table "
+               "above is at, because a minimum binds one store and two stores added together can "
+               "hold water neither of them has. Each climate window is run on its own, hour by "
+               "hour, as the model will run it, starting from the middle of its first hour's "
+               "range between `downwardLimit` and `upwardLimit`.")
+    report.add()
+    report.add("- **Minimum generation**: the store gives exactly its minimum from "
+               "`p_userconstraint`, turned into water at its turbines' efficiency, and spills "
+               "whatever rises above its ceiling. No store can keep more water for its minimum "
+               "than that, so an hour below the floor is an hour Backbone can meet only through "
+               "the group's penalty (`vq_userconstraintDec_t`). A store that runs short without "
+               "its pumps but not with them at full availability is watched, not acted on: "
+               "whether it pumps is the market's decision.")
+    report.add(f"- **Overflow**: the store releases everything its turbines, at their "
+               f"availability, and `maxSpill` can pass. An hour above the ceiling even so is water "
+               f"that cannot leave, which the model answers with a dummy variable or not at all.")
+    report.add()
+    report.add("*The start level is a placeholder. Backbone starts a store from `reference`, "
+               "which `changes.inc` overrides per hydro type at run time; the correct start "
+               "levels by type and region are still to be added here.*")
+    report.add()
+
+    if checks.skipped:
+        report.add(f"Neither check could run on water: {checks.skipped}.")
+        report.add()
+
+    minimum = checks.minimum
+    if checks.groups == 0:
+        report.add("No hydro minimum generation is written in this scenario.")
+        report.add()
+    elif len(minimum) and "state" in minimum.columns:
+        severity = {CHECK_ACT: 0, CHECK_WATCH: 1, CHECK_OK: 2}
+        ordered = minimum.assign(_s=minimum["state"].map(severity)).sort_values(
+            ["_s", "closest_hours"])
+        rows = []
+        for r in ordered.itertuples():
+            short = r.short_hours > 0
+            state = f"**{r.state}**" if r.state == CHECK_ACT else r.state
+            rows.append([
+                f"`{r.node}`", _num(r.minimum_MW, 0), _num(r.draw_MWh, 0),
+                f"**{_num(r.deliverable_MW, 0)}**" if r.beyond_turbines else _num(r.deliverable_MW, 0),
+                f"{r.windows_short} of {r.windows_run}",
+                _num(r.short_hours, 0), _num(r.short_GWh, 1),
+                "below the floor" if short else
+                (f"{_num(r.closest_hours, 0)} h ({_num(r.closest_MWh / 1e3, 1)} GWh)"
+                 if np.isfinite(r.closest_hours) else "-"),
+                str(r.closest_year) if np.isfinite(r.closest_MWh) else "-",
+                _num(r.near_hours_worst, 0),
+                (_num(r.pump_MW, 0) if r.pump_MW else "-")
+                + (f", {'still short' if r.short_with_pumps else 'enough'}" if short and r.pump_MW else ""),
+                state,
+            ])
+        report.table(["store", "minimum MW", "draw MWh/h", "turbines give MW", "windows short",
+                      "short h", "short GWh", "closest to floor", "in",
+                      f"h within {MIN_GEN_MARGIN_HOURS:g} h of floor", "pumps MW", "state"], rows)
+        report.add(f"**Closest to floor** is the least water left above the floor in any hour, as "
+                   f"hours of the minimum's own draw. A store is watched when some window keeps "
+                   f"it within {MIN_GEN_MARGIN_HOURS:g} h of draw of its floor for "
+                   f"{MIN_GEN_WATCH_HOURS} hours or more; both thresholds are starting values to "
+                   f"iterate on. **Turbines give** is capacity times availability, and a minimum "
+                   f"above it is acted on whatever the water does.")
+        report.add()
+    if checks.not_simulated:
+        report.add(f"{len(checks.not_simulated)} hydro group(s) or store(s) are not simulated, "
+                   f"because this check cannot model them and will not guess: "
+                   + summarise([f"`{name}` ({why})" for name, why in checks.not_simulated]) + ".")
+        report.add()
+
+    overflow = checks.overflow
+    if len(overflow):
+        over = overflow[overflow["state"] == CHECK_ACT]
+        fine = overflow[overflow["state"] != CHECK_ACT]
+        shown = pd.concat([over, fine.head(OVERFLOW_NAMED)])
+        rows = []
+        for r in shown.itertuples():
+            state = f"**{r.state}**" if r.state == CHECK_ACT else r.state
+            rows.append([
+                f"`{r.node}`", _num(r.turbine_MW, 0), _num(r.spill_MW, 0),
+                _num(r.peak_inflow_MW, 0), f"{r.windows_over} of {r.windows_run}",
+                _num(r.over_hours, 0), _num(r.over_GWh, 1),
+                (f"{_num(r.spare_MW, 0)} ({_num(100 * r.spare_share, 0)}%)"
+                 if r.over_hours == 0 and np.isfinite(r.spare_share) else "-"),
+                str(r.tightest_year), state,
+            ])
+        report.add(("Every store that overflows, then the " if len(over) else "The ")
+                   + f"{min(OVERFLOW_NAMED, len(fine))} tightest of the "
+                   f"{len(fine)} that do not:")
+        report.add()
+        report.table(["store", "turbines MW", "maxSpill MW", "peak inflow MW", "windows over",
+                      "over h", "over GWh", "spare at tightest hour MW", "in", "state"], rows)
+        rest = fine.iloc[OVERFLOW_NAMED:]
+        if len(rest) and np.isfinite(rest["spare_share"]).any():
+            report.add(f"The other {len(rest)} store(s) keep at least "
+                       f"{_num(100 * float(rest['spare_share'].min()), 0)}% of what they can "
+                       f"release to spare in their tightest hour.")
+            report.add()
+        report.add("**Spare at tightest hour** is how much more inflow the store could have taken "
+                   "in its closest hour without overflowing, with turbines and spill at full, and "
+                   "as a share of that release -- the margin to look at before raising `maxSpill`.")
+        report.add()
+
+
 def _transfer_section(report, per_area, facts, peak, zones) -> None:
     if per_area is None or per_area.empty:
         report.add("No electricity transfer capacity is written in this scenario.")
@@ -4074,6 +5133,10 @@ def _duration_section(report, decomposition: Dict, inventory, timeseries: Timese
                "in TWh -- the same unit the fleet is measured in, which is what makes the two "
                "comparable. Blocks are fixed, not sliding, so no surplus hour is spent twice.")
     report.add()
+    caveat = window_caveat(timeseries, "; \"within the year\" below means within one whole window")
+    if caveat:
+        report.add(caveat)
+        report.add()
 
     def held(area: str, group: str, measure: str) -> float:
         if installed is None or not len(installed) or (area, group) not in installed.index:
@@ -4251,6 +5314,10 @@ def _weather_section(report, timeseries, material, zones) -> None:
                f"{max(timeseries.years)}), as a percentage of each area's own mean:")
     report.add()
     report.table(["quantity", "typical range", "widest area"], rows)
+    caveat = window_caveat(timeseries, ", which matters most for the correlations below")
+    if caveat:
+        report.add(caveat)
+        report.add()
 
     elec = annual_range(timeseries, "demand_elec")
     if not elec.empty:
@@ -4416,7 +5483,7 @@ def _price_section(report, workbook) -> None:
 
 def _not_summarized(report, workbook) -> None:
     items = []
-    uc = read_bb_sheet(pd.ExcelFile(workbook.path), "p_userconstraint")
+    uc = workbook.userconstraint
     if not uc.empty:
         groups = uc["group"].nunique() if "group" in uc.columns else 0
         items.append(f"{groups} user constraint group(s) over {len(uc)} row(s) "
@@ -4439,8 +5506,9 @@ def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
     caveat quarantined at the end of a document is read by nobody who is
     looking at the picture it applies to.
     """
-    report.add("There is no figure or table below zone level, at any flag setting, and no "
-               "\"Nordics\" or \"CWE\" grouping, because nothing in the tracked source data "
+    report.add("There is no figure or table below zone level, at any flag setting, other than "
+               "the hydro checks, which are per store because a minimum binds one store. There "
+               "is no \"Nordics\" or \"CWE\" grouping, because nothing in the tracked source data "
                "defines one. The maps inherit that: a zone's whole fleet sits at one point. "
                "They are always drawn per bidding zone whatever level the tables use, with "
                "country borders over them.")
@@ -4457,6 +5525,15 @@ def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
                "and dispatch; VRE output assumes no curtailment and no outages; and capacity times "
                "hours is never converted into energy for dispatchable plant, because the input "
                "data cannot support that claim.")
+    report.add()
+    report.add("The hydro checks see the realised climate years only. Backbone also solves "
+               "forecast branches -- a dry quantile of inflow, with storage limits that "
+               "`changes.inc` narrows at run time -- and those are where minimum generation has "
+               "actually run short in past runs, so a store this report finds sufficient can "
+               "still pay a penalty there. They also start each window from the middle of its "
+               "range rather than the model's start level, run hour by hour where the model may "
+               "aggregate hours and take the tightest bound within each step, and ignore ramp "
+               "limits.")
     report.add()
 
 
@@ -4521,10 +5598,7 @@ def main(argv=None) -> int:
     if timeseries.skipped:
         print(f"Timeseries sections skipped: {timeseries.skipped}")
 
-    inflow_grids = None
-    if not timeseries.annual.empty or not timeseries.storage_limit.empty:
-        inflow_grids = _inflow_grids_from_data(folder, workbook, timeseries)
-    classification = classify_capacity(workbook, inflow_grids)
+    classification = classify_capacity(workbook, _inflow_grids_from_data(timeseries))
 
     shapes = load_zone_shapes(ZONE_ASSET)
     countries = load_zone_shapes(COUNTRY_ASSET)
@@ -4546,22 +5620,15 @@ def main(argv=None) -> int:
     return 0
 
 
-def _inflow_grids_from_data(folder: Path, workbook: Workbook, timeseries: Timeseries) -> set:
+def _inflow_grids_from_data(timeseries: Timeseries) -> set:
     """Which storage grids actually receive inflow, read from the build.
 
     Taken from the data rather than from a list of grid names: the scenario
     families do not agree on those names, and a literal set written against one
-    of them drops the other's capacity into "no technology group".
+    of them drops the other's capacity into "no technology group". The inflow
+    sweep already saw every grid it carries, so nothing is read twice.
     """
-    grids = set()
-    backend, _ = open_gdx_backend()
-    if backend is not None:
-        _, container = backend
-        files = year_files(folder, "ts_influx_hydro")
-        if files:
-            records = _records(container, files[min(files)], "ts_influx")
-            if records is not None and "grid" in records.columns:
-                grids = {str(g) for g in records["grid"].unique()}
+    grids = set(timeseries.hydro.grid_of.values()) if timeseries.hydro is not None else set()
     return grids or set(HYDRO_INFLOW_GRIDS_FALLBACK)
 
 

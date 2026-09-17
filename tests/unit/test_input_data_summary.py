@@ -1,9 +1,9 @@
 """tools/input_data_summary.py -- the arithmetic a reader could never check.
 
 Tools are not normally in this suite (see tests/README.md): they print a report
-a person reads, and a wrong number there is usually visible. Five of this
-tool's conventions are not, and each of them was wrong in at least one draft of
-the design:
+a person reads, and a wrong number there is usually visible. These conventions
+of this tool are not, and each of them was wrong in at least one draft of the
+design:
 
 - a transfer corridor is written twice, once per direction, and 15 of the 44 in
   the shipped scenarios differ between the two. Summing them double-counts;
@@ -20,6 +20,10 @@ the design:
 - the depth a store needs is not monotone in the window it is measured over,
   though on every real 8760-hour series it has been. The figure stacks the
   differences, so a rare inversion would draw a negative bar.
+- a hydro store is run hour by hour, each climate window on its own, and a short
+  hour is made good before the next. Charging every later hour for one early
+  deficit, or carrying one window's level into the next, both print hours that
+  look like findings.
 
 The reader-visible parts -- which figures exist, what the prose says -- are not
 tested here. They are checked by running the tool, which is what the tool is
@@ -837,3 +841,386 @@ class TestTheSummaryHasATopLevelEntryPoint:
         description = summary.build_arg_parser().description
         assert ".py" not in description
         assert description.startswith("what is in one built input-data folder")
+
+
+# ============================================================================
+# Hydro
+# ============================================================================
+
+def _hydro_workbook(turbine_availability=1.0, spill=None, pump=True, groups=None, extra_io=()):
+    """AT00_ror with a turbine, NOS0_psOpen with a turbine and a pump, as the builder writes them.
+
+    Turbine efficiency 0.95 and pump 0.8, with an eff01 of 0 that must not count.
+    Each store is 0-100 MWh with a constant bound. ``groups`` is a list of
+    p_userconstraint rows; the default is one 9.5 MW minimum on AT00_rorTurbine,
+    whose draw is therefore 10 MWh/h.
+    """
+    io = [
+        ("ror", "AT00_ror", "AT00_rorTurbine", "input", 100.0),
+        ("elec", "AT00_elec", "AT00_rorTurbine", "output", 95.0),
+        ("psOpen", "NOS0_psOpen", "NOS0_psOpenTurbine", "input", 100.0),
+        ("elec", "NOS0_elec", "NOS0_psOpenTurbine", "output", 95.0),
+        ("elec", "DE00_elec", "DE00_gasTurbine", "output", 500.0),
+        ("gas", "DE00_gas", "DE00_gasTurbine", "input", 1000.0),
+    ]
+    units = [("AT00_rorTurbine", turbine_availability, 0.95),
+             ("NOS0_psOpenTurbine", 1.0, 0.95), ("DE00_gasTurbine", 1.0, 0.5)]
+    if pump:
+        io += [("psOpen", "NOS0_psOpen", "NOS0_psOpenPump", "output", 20.0),
+               ("elec", "NOS0_elec", "NOS0_psOpenPump", "input", 25.0)]
+        units.append(("NOS0_psOpenPump", 1.0, 0.8))
+    io += list(extra_io)
+    boundary = []
+    for grid, node in (("ror", "AT00_ror"), ("psOpen", "NOS0_psOpen")):
+        boundary += [(grid, node, "upwardLimit", 1, 100.0, 0),
+                     (grid, node, "downwardLimit", 1, 0.0, 0)]
+        if spill is not None:
+            boundary.append((grid, node, "maxSpill", 1, spill, 0))
+    if groups is None:
+        groups = _minimum("UC_AT00_rorTurbine", "AT00", "rorTurbine", 9.5)
+    return make_workbook(
+        p_gnu_io=pd.DataFrame(io, columns=["grid", "node", "unit", "input_output", "capacity"])
+        .assign(isActive=1, conversionCoeff=1.0),
+        p_unit=pd.DataFrame([(u, 1, a, e, 0.0) for u, a, e in units],
+                            columns=["unit", "isActive", "availability", "eff00", "eff01"]),
+        p_gn=pd.DataFrame({"grid": ["ror", "psOpen"], "node": ["AT00_ror", "NOS0_psOpen"],
+                           "energyStoredPerUnitOfState": [1, 1]}),
+        boundary=pd.DataFrame(boundary, columns=["grid", "node", "param_gnBoundaryTypes",
+                                                 "useConstant", "constant", "useTimeseries"]),
+        userconstraint=pd.DataFrame(groups, columns=[
+            "group", "1st dimension", "2nd dimension", "3rd dimension", "4th dimension",
+            "parameter", "value"]),
+    )
+
+
+def _minimum(group, zone, unittype, constant, extra=()):
+    """The four rows the hydro compilation writes for one minimum, plus any extra."""
+    return [
+        (group, "elec", f"{zone}_elec", f"{zone}_{unittype}", "-", "v_gen", 1),
+        (group, "-", "-", "-", "-", "gt", -1),
+        (group, "-", "-", "-", "-", "constant", constant),
+        (group, "-", "-", "-", "-", "penalty", 300),
+        *extra,
+    ]
+
+
+def _series(inflow):
+    """A Timeseries carrying only hydro series, one window per row of each inflow array."""
+    import numpy as np
+
+    arrays = {node: np.atleast_2d(np.asarray(v, dtype="float32")) for node, v in inflow.items()}
+    windows, length = next(iter(arrays.values())).shape
+    years = list(range(2000, 2000 + windows))
+    grid_of = {node: node.split("_", 1)[1] for node in arrays}
+    return summary.Timeseries(
+        years=years,
+        hydro=summary.HydroSeries(years=years, hours=length, grid_of=grid_of, inflow=arrays),
+    )
+
+
+class TestAStoreStartsAtTheMiddleOfItsFirstHour:
+    """The model's own start level is still to be added; until then, the middle of the range."""
+
+    def test_the_first_hour_range_decides_the_start(self):
+        import numpy as np
+
+        up = np.array([100.0, 1000.0])[None, :, None]
+        down = np.array([20.0, 0.0])[None, :, None]
+        run = summary.run_store(np.zeros((1, 2, 1)), up, down, [0.0])
+        # Started at 60 and never moved: 40 above the first hour's floor of 20.
+        assert run["floor_gap"][0, 0] == pytest.approx(40.0)
+
+
+class TestAStoreThatCannotCarryItsMinimumIsShort:
+    """The best a store can do for its minimum is give exactly the minimum and keep the rest."""
+
+    def test_inflow_that_covers_the_draw_is_never_short(self):
+        import numpy as np
+
+        run = summary.run_store(np.full((1, 50, 1), 10.0), 100.0, 0.0, [10.0])
+        assert run["below_hours"][0, 0] == 0
+
+    def test_an_empty_store_is_short_by_the_draw_not_by_everything_it_missed(self):
+        """Started at 50 and drawn 10 an hour, it reaches the floor at hour 5 and is
+        short from hour 6. Each short hour is made good, so the next is short by 10 again."""
+        import numpy as np
+
+        run = summary.run_store(np.zeros((1, 8, 1)), 100.0, 0.0, [10.0])
+        assert run["below_hours"][0, 0] == 3
+        assert run["below_MWh"][0, 0] == pytest.approx(30.0)
+
+    def test_a_flood_above_the_ceiling_is_spilled_not_banked(self):
+        import numpy as np
+
+        inflow = np.zeros((1, 12, 1))
+        inflow[0, 0, 0] = 1000.0
+        run = summary.run_store(inflow, 100.0, 0.0, [10.0])
+        assert run["above_hours"][0, 0] == 1
+        # Full at 100 after the flood; ten hours of 10 empty it and the twelfth is short.
+        assert run["below_hours"][0, 0] == 1
+
+    def test_each_window_is_its_own_run(self):
+        import numpy as np
+
+        inflow = np.zeros((2, 8, 1))
+        inflow[1] = 10.0
+        run = summary.run_store(inflow, 100.0, 0.0, [10.0])
+        assert run["below_hours"][:, 0].tolist() == [3, 0]
+        assert run["floor_gap"][1, 0] == pytest.approx(50.0)
+
+    def test_a_window_without_data_is_not_run(self):
+        import numpy as np
+
+        inflow = np.zeros((2, 8, 1))
+        inflow[1] = np.nan
+        run = summary.run_store(inflow, 100.0, 0.0, [10.0])
+        assert run["hours_run"][:, 0].tolist() == [8, 0]
+        assert np.isnan(run["floor_gap"][1, 0])
+
+    def test_hours_near_the_floor_exclude_the_short_ones(self):
+        import numpy as np
+
+        run = summary.run_store(np.zeros((1, 8, 1)), 100.0, 0.0, [10.0], margin=[25.0])
+        # Levels 40, 30, 20, 10, 0, then short three times: 20, 10 and 0 are near.
+        assert run["near_floor_hours"][0, 0] == 3
+
+    def test_the_vectorised_run_is_the_hour_by_hour_loop(self):
+        import numpy as np
+
+        rng = np.random.default_rng(7)
+        inflow = rng.uniform(0, 20, size=(3, 200, 4))
+        down = rng.uniform(0, 30, size=(3, 200, 4))
+        up = down + rng.uniform(5, 80, size=(3, 200, 4))
+        draw = np.array([5.0, 10.0, 15.0, 25.0])
+        run = summary.run_store(inflow, up, down, draw)
+        for w in range(3):
+            for n in range(4):
+                level = (up[w, 0, n] + down[w, 0, n]) / 2
+                short = over = 0
+                for t in range(200):
+                    moved = level + inflow[w, t, n] - draw[n]
+                    short += moved < down[w, t, n]
+                    over += moved > up[w, t, n]
+                    level = min(max(moved, down[w, t, n]), up[w, t, n])
+                assert run["below_hours"][w, n] == short
+                assert run["above_hours"][w, n] == over
+
+
+class TestOnlyAMinimumTheSimpleModelCanAttributeIsSimulated:
+    """A minimum the check misread would be a verdict about data it never understood."""
+
+    def test_the_compilation_form_draws_its_minimum_through_the_turbine(self):
+        groups, skipped = summary.min_generation_groups(_hydro_workbook(), {"ror", "psOpen"})
+        assert skipped == []
+        row = groups.iloc[0]
+        assert row["node"] == "AT00_ror"
+        assert row["draw_MWh"] == pytest.approx(9.5 / 0.95)
+        assert row["deliverable_MW"] == pytest.approx(95.0)
+
+    @pytest.mark.parametrize("parameter", ["lt", "eq", "sumOfTimesteps"])
+    def test_anything_beyond_the_simple_form_is_named_with_its_reason(self, parameter):
+        extra = [("UC_AT00_rorTurbine", "-", "-", "-", "-", parameter, -1)]
+        workbook = _hydro_workbook(groups=_minimum("UC_AT00_rorTurbine", "AT00", "rorTurbine",
+                                                   9.5, extra))
+        groups, skipped = summary.min_generation_groups(workbook, {"ror", "psOpen"})
+        assert groups.empty
+        assert skipped[0][0] == "UC_AT00_rorTurbine"
+        assert f"`{parameter}`" in skipped[0][1]
+
+    def test_units_on_two_stores_are_not_one_minimum(self):
+        rows = _minimum("UC_both", "AT00", "rorTurbine", 9.5)
+        rows.insert(1, ("UC_both", "elec", "NOS0_elec", "NOS0_psOpenTurbine", "-", "v_gen", 1))
+        groups, skipped = summary.min_generation_groups(_hydro_workbook(groups=rows),
+                                                        {"ror", "psOpen"})
+        assert groups.empty
+        assert "2 different stores" in skipped[0][1]
+
+    def test_a_group_about_other_plant_is_not_a_hydro_group(self):
+        workbook = _hydro_workbook(groups=_minimum("UC_gas", "DE00", "gasTurbine", 100.0))
+        groups, skipped = summary.min_generation_groups(workbook, {"ror", "psOpen"})
+        assert groups.empty and skipped == []
+
+    def test_a_minimum_above_what_the_turbines_give_is_acted_on_whatever_the_water(self):
+        result = summary.hydro_checks(_hydro_workbook(turbine_availability=0.05),
+                                      _series({"AT00_ror": [[100.0] * 24]}), {"ror", "psOpen"})
+        row = result.minimum.set_index("node").loc["AT00_ror"]
+        assert row["short_hours"] == 0
+        assert row["state"] == summary.CHECK_ACT
+
+
+class TestAPumpedStoreIsOnlyShortIfPumpingCannotSaveIt:
+    """Whether a store pumps is the market's decision, so pumping that saves it is watched."""
+
+    def _row(self, pump):
+        groups = _minimum("UC_NOS0_psOpenTurbine", "NOS0", "psOpenTurbine", 9.5)
+        workbook = _hydro_workbook(pump=pump, groups=groups)
+        series = _series({"NOS0_psOpen": [[5.0] * 48]})
+        return summary.hydro_checks(workbook, series, {"ror", "psOpen"}).minimum.iloc[0]
+
+    def test_short_without_pumps_and_fine_with_them_is_watched(self):
+        row = self._row(pump=True)
+        assert row["short_hours"] > 0 and row["short_with_pumps"] == 0
+        assert row["state"] == summary.CHECK_WATCH
+
+    def test_short_with_no_pump_to_save_it_is_acted_on(self):
+        assert self._row(pump=False)["state"] == summary.CHECK_ACT
+
+
+class TestAFullStoreThatCannotReleaseOverflows:
+    """The check that would have saved the reruns spent raising maxSpill."""
+
+    def test_release_above_inflow_never_overflows(self):
+        import numpy as np
+
+        run = summary.run_store(np.full((1, 24, 1), 50.0), 100.0, 0.0, [60.0])
+        assert run["above_hours"][0, 0] == 0
+
+    def test_a_peak_beyond_room_and_release_overflows_by_the_excess(self):
+        import numpy as np
+
+        inflow = np.zeros((1, 3, 1))
+        inflow[0, 0, 0] = 200.0
+        run = summary.run_store(inflow, 100.0, 0.0, [100.0])
+        # 50 at the start, 200 in, 100 out: 150 against a ceiling of 100.
+        assert run["above_hours"][0, 0] == 1
+        assert run["above_MWh"][0, 0] == pytest.approx(50.0)
+
+    def test_spill_is_only_what_the_build_writes(self):
+        """No maxSpill row means the store releases through its turbine alone."""
+        peak = [[300.0] + [0.0] * 23]
+        without = summary.hydro_checks(_hydro_workbook(), _series({"AT00_ror": peak}),
+                                       {"ror", "psOpen"})
+        with_spill = summary.hydro_checks(_hydro_workbook(spill=1000.0),
+                                          _series({"AT00_ror": peak}), {"ror", "psOpen"})
+        assert without.overflow.set_index("node").loc["AT00_ror", "state"] == summary.CHECK_ACT
+        assert with_spill.overflow.set_index("node").loc["AT00_ror", "state"] == summary.CHECK_OK
+
+
+class TestWeeksAreCutInsideEachWindow:
+    """A week is 168 hours from the window's first hour, whatever length the window is."""
+
+    def test_a_remainder_shorter_than_a_week_is_left_out(self):
+        import numpy as np
+
+        series = np.ones((1, 8760))
+        series[0, -24:] = 100.0           # the 24 hours after week 52
+        mean, wettest, driest = summary.weekly_shape(series)
+        assert mean == pytest.approx(168.0)
+        assert wettest == pytest.approx(1.0) and driest == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("days", [200, 365, 400])
+    def test_any_window_length_is_cut_the_same_way(self, days):
+        import numpy as np
+
+        series = np.ones((2, days * 24))
+        series[1, :168] = 3.0
+        mean, wettest, _ = summary.weekly_shape(series)
+        weeks = 2 * (days * 24 // 168)
+        assert mean == pytest.approx(168.0 * (weeks + 2) / weeks)
+        assert wettest == pytest.approx(3.0 * 168.0 / mean)
+
+    def test_a_country_adds_its_zones_before_it_cuts_weeks(self):
+        """Two zones wet in alternate weeks make a country that is wet every week."""
+        import numpy as np
+
+        wet_odd = np.tile(np.r_[np.full(168, 2.0), np.zeros(168)], 26)[None, :]
+        wet_even = np.tile(np.r_[np.zeros(168), np.full(168, 2.0)], 26)[None, :]
+        workbook = make_workbook(p_gnu_io=pd.DataFrame({
+            "grid": ["reservoir", "reservoir"], "node": ["SE01_reservoir", "SE02_reservoir"],
+            "unit": ["SE01_t", "SE02_t"], "input_output": ["input", "input"],
+            "capacity": [10.0, 10.0], "isActive": [1, 1]}))
+        series = _series({"SE01_reservoir": wet_odd, "SE02_reservoir": wet_even})
+        zones = summary.hydro_characteristics(workbook, None, series, True, {"reservoir"})
+        country = summary.hydro_characteristics(workbook, None, series, False, {"reservoir"})
+        assert zones["wettest_week"].tolist() == pytest.approx([2.0, 2.0])
+        assert country.iloc[0]["wettest_week"] == pytest.approx(1.0)
+
+
+class TestTheHydroTableReadsTheBuild:
+    """Every number in the table is read from the built folder, never a source workbook."""
+
+    def _table(self, zones=True):
+        from types import SimpleNamespace
+
+        extra = [("psClosed", "BE00_psClosed", "BE00_psClosedTurbine", "input", 50.0)]
+        workbook = _hydro_workbook(extra_io=extra)
+        inventory = SimpleNamespace(by_node=pd.DataFrame({
+            "grid": ["psOpen"], "node": ["NOS0_psOpen"], "usable_mean_MWh": [700.0]}))
+        series = _series({"AT00_ror": [[1.0] * 4800], "NOS0_psOpen": [[2.0] * 4800]})
+        return summary.hydro_characteristics(workbook, inventory, series, zones,
+                                             {"ror", "psOpen", "psClosed"}).set_index("grid")
+
+    def test_turbine_is_the_draw_and_pump_is_the_delivery(self):
+        row = self._table().loc["psOpen"]
+        assert row["turbine_MW"] == pytest.approx(100.0)
+        assert row["pump_MW"] == pytest.approx(20.0)
+
+    def test_full_load_hours_are_annualised_inflow_over_turbine(self):
+        """1 MWh/h over a 200-day window is 8760 MWh a year, whatever the window."""
+        row = self._table().loc["ror"]
+        assert row["inflow_MWh_yr"] == pytest.approx(8760.0)
+        assert row["flh"] == pytest.approx(87.6)
+
+    def test_storage_weeks_are_volume_over_a_mean_week(self):
+        assert self._table().loc["psOpen", "storage_weeks"] == pytest.approx(700.0 / (2.0 * 168))
+
+    def test_a_store_with_no_stated_volume_shows_none(self):
+        import numpy as np
+
+        assert np.isnan(self._table().loc["ror", "storage_MWh"])
+
+    def test_no_inflow_is_zero_hours_and_no_weeks(self):
+        import numpy as np
+
+        row = self._table().loc["psClosed"]
+        assert row["flh"] == 0.0
+        assert np.isnan(row["storage_weeks"])
+
+    def test_an_area_without_hydro_has_no_row(self):
+        table = self._table(zones=True).reset_index()
+        assert set(table["area"]) == {"AT00", "BE00", "NOS0"}
+
+
+class TestPerYearFiguresAreAnnualised:
+    """A 400-day window summed is 110% of a year, and a 200-day one 55%."""
+
+    @pytest.mark.parametrize("hours", [4800, 8760, 9600])
+    def test_one_megawatt_is_8760_megawatt_hours_a_year(self, hours):
+        assert hours * summary.annualise(hours) == pytest.approx(8760.0)
+
+
+class TestACheckSaysWhatItsStateMeans:
+    """A row that is not ok must not read as a failure unless it asks for action."""
+
+    def test_an_impossible_value_asks_for_action_and_a_known_gap_is_watched(self):
+        workbook = make_workbook(
+            p_gnu_io=pd.DataFrame({"grid": ["elec"], "node": ["DE00_elec"], "unit": ["DE00_st"],
+                                   "input_output": ["output"], "capacity": [-1.0],
+                                   "isActive": [1]}),
+            flow_unit=pd.DataFrame({"flow": ["solar thermal"], "unit": ["DE00_st"]}))
+        checks = {c.name: c.state for c in summary.run_checks(
+            workbook, summary.classify_capacity(workbook), {})}
+        assert checks["Negative capacity, transferCap or emission factor"] == summary.CHECK_ACT
+        assert checks["Flow with units but no capacity-factor timeseries"] == summary.CHECK_WATCH
+
+    def _states(self, result):
+        return [c.state for c in summary.hydro_check_rows(result)]
+
+    def test_hydro_states_follow_the_worst_store(self):
+        minimum = pd.DataFrame({"node": ["A_ror", "B_ror"], "state": ["ok", "watch"],
+                                "beyond_turbines": [False, False]})
+        overflow = pd.DataFrame({"node": ["A_ror"], "state": ["act"]})
+        result = summary.HydroChecks(minimum=minimum, overflow=overflow, groups=2, windows=35)
+        assert self._states(result) == [summary.CHECK_WATCH, summary.CHECK_ACT]
+
+    def test_nothing_read_is_not_run_rather_than_ok(self):
+        result = summary.HydroChecks(groups=1, skipped="gamsapi is not importable",
+                                     minimum=pd.DataFrame({"node": ["A_ror"],
+                                                           "beyond_turbines": [False]}))
+        assert self._states(result) == [summary.CHECK_NOT_RUN, summary.CHECK_NOT_RUN]
+
+    def test_a_group_the_check_cannot_model_does_not_raise_the_state(self):
+        minimum = pd.DataFrame({"node": ["A_ror"], "state": ["ok"], "beyond_turbines": [False]})
+        result = summary.HydroChecks(minimum=minimum, groups=2, windows=35,
+                                     not_simulated=[("UC_x", "uses `lt`")])
+        assert self._states(result)[0] == summary.CHECK_OK

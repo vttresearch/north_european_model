@@ -59,8 +59,9 @@ not build and why, and has a documentation page of its own.
   statement of hydro. External capacity vintages are cross-checks, not sources.
   It now carries Kiehle et al. (2026) as ratios against its own capacities —
   run-of-river storage from measured pondage volume, ramp limits, a practical
-  maximum as `availability`, and revised minimum generation. `FR00_ror` capacity
-  falls 20 500 -> 13 614 MW, the one fleet its inflow could not support.
+  maximum as `availability`, and revised minimum generation, dropped for the
+  `AT00` and `SE04` reservoirs (7 and 5 MW). `FR00_ror` capacity falls
+  20 500 -> 13 614 MW, the one fleet its inflow could not support.
   [docs/hydro.md](docs/hydro.md)
 - Ramp costs reach thermal, CHP and heat-only units, not only hydro: `unittypedata`
   supplies `rampUpCost` and `rampDownCost`, taking the units that carry one from 53
@@ -153,13 +154,12 @@ not build and why, and has a documentation page of its own.
 
 ### Tools
 
-- `tools/check_hydro_consistency.py` checks a build's hydro fleet against the water
-  it receives: full load hours by zone and type over water-driven capacity, forced
-  spill, and any hydro unit or node the compilation did not write.
 - `tools/input_data_summary.py` describes one built folder as a `report.md` with
-  embedded figures: capacity, demand, storage, interconnection and prices by country
-  and carrier, a net-load duration curve, and what the climate years do. Replaces the
-  untracked `analyze_ts.py` draft and its ~874 per-node figures.
+  embedded figures: capacity, demand, storage, hydro, interconnection and prices by
+  country and carrier, a net-load duration curve, and what the climate years do.
+  Hydro is checked per store for minimum generation against inflow and for overflow
+  at full release. Climate windows of any length, annualised. Replaces the untracked
+  `analyze_ts.py` draft and its ~874 per-node figures.
 - The report said battery and heat storage carry no energy capacity anywhere. They
   carry 1.06 TWh, as `upperLimitCapacityRatio` in `p_gnu_io` -- a duration per grid,
   now reported as one and shown in the storage figure's legend.
