@@ -215,9 +215,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         )
     if not (1 <= bb_timeseries_length <= 365*35+9):
         raise ValueError(
-            f"bb_timeseries_length must be between 1 and 365*35+9 = 12784"
-             "(1982-2016 has 26 regular years, 9 leap years); "
-             "got {bb_timeseries_length}."
+            f"bb_timeseries_length must be between 1 and 365*35+9 = 12784 "
+            f"(1982-2016 has 26 regular years, 9 leap years); "
+            f"got {bb_timeseries_length}."
         )
 
     # Validate that at least one climate year fits within the data range

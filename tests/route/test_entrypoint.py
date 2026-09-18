@@ -104,6 +104,17 @@ class TestASingleScenario:
         )
         assert "'dataLength') =  48;" in schedule     # 2 days * 24 h
 
+    def test_a_window_that_is_not_whole_years_is_warned_in_the_summary_log(
+        self, project, tmp_path
+    ):
+        # The wiring half of TestWindowLengthWarning: the warning has to reach the
+        # log a user reads, not only the function that composes it.
+        input_folder, config_file = project(bb_timeseries_length=2)
+        build_input_data.main(input_folder, config_file, output_root=tmp_path / "out")
+
+        summary = next((tmp_path / "out").iterdir()) / "summary.log"
+        assert "is not a whole number of years" in summary.read_text(encoding="utf-8")
+
 
 class TestTheScenarioLoop:
     def test_every_combination_gets_its_own_folder(self, project, tmp_path):

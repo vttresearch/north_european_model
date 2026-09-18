@@ -255,9 +255,10 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         The pattern is climatological and the same every year, so replicating it
         per calendar year wraps week 52 back onto week 1 -- and the profile is not
         cyclic. With ``bb_timeseries_start`` at 01-01 that seam lands on the
-        window edge where nobody meets it; a summer start or a length past 365
-        days puts it mid-sample, where the solver has to absorb it. See the fill
-        limits part of the year change section in docs/hydro.md.
+        window edge, where Backbone's circulation joins the window's end back to
+        its start unsmoothed; a summer start or a length past 365 days puts it
+        mid-sample, where the solver has to absorb it. See the fill limits part
+        of the year change section in docs/hydro.md.
 
         Week 1 is trusted and never moved: the model's year begins there. The
         blend walks backwards from week 52 only as far as it has to, so that the

@@ -4,7 +4,7 @@ import math
 import shutil
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import product
 
 import src.infrastructure.config_reader as config_reader
@@ -112,6 +112,10 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         output_folder = output_root / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
         logger.log_status(f"Using output folder: {output_folder}", level="info")
+
+        # Every iteration, not once per config: the log is written per output
+        # folder, and each one has to say it.
+        _warn_about_window_length(logger, config)
 
 
         # --- 2.2. Cache manager ---
@@ -408,6 +412,101 @@ def _check_dependencies():
 #: Mirrors mSettings('schedule', 't_horizon') = 24*7*65 in scheduleInit.gms.
 #: Used to size the t-index upper bound in timeAndSamples.inc.
 _DEF_T_HORIZON = 24 * 7 * 65  # 10920
+
+#: How far a climate window may be from a whole number of calendar years before
+#: the build warns. Leap days make a whole-year window 365*n plus 0..ceil(n/4)
+#: days, so the tolerance is counted against the real calendar, not against 365.
+_WINDOW_TOLERANCE_DAYS = 3
+
+
+def _window_year_offsets(config: dict) -> tuple[int, dict[int, int]]:
+    """The whole number of years nearest the window, and each climate year's miss.
+
+    Returns ``(n, {climate_year: days - calendar days in n years})`` for every
+    climate year that can start a complete window -- the same years the
+    timeseries phase builds. Positive means the window runs past the anniversary
+    of its start, negative that it stops short of it.
+
+    Per climate year because the answer differs by one day between them:
+    ``365*5`` from 01-01 is one day short of five years that contain one leap
+    day, and two short of five that contain two.
+    """
+    days = config["bb_timeseries_length"]
+    mm, dd = (int(part) for part in config["bb_timeseries_start"].split("-"))
+    data_end = datetime(config["end_year"], 12, 31)
+    n = max(1, round(days / 365.2425))
+
+    offsets = {}
+    for year in range(config["start_year"], config["end_year"] + 1):
+        try:
+            start = datetime(year, mm, dd)
+        except ValueError:
+            continue  # 02-29 in a common year starts no window, as in config_reader
+        if start + timedelta(days=days - 1) > data_end:
+            continue
+        try:
+            anniversary = datetime(year + n, mm, dd)
+        except ValueError:
+            anniversary = datetime(year + n, 3, 1)
+        offsets[year] = days - (anniversary - start).days
+    return n, offsets
+
+
+def _warn_about_window_length(logger, config: dict) -> None:
+    """Warn when the climate window is not a whole number of years.
+
+    Backbone circulates the data: once the look-ahead passes dataLength it
+    continues from t000001 of the same window. A whole number of years puts that
+    join on the date the window started, so the season carries on across it.
+    Anything else joins two different seasons -- an 800-day window from 01-01
+    goes from 10 March straight back to 1 January -- and nothing in the model
+    can notice.
+
+    Whether a run meets the join depends on its length, which the build cannot
+    see (%modelledDays% is set per run), so the warning says where the limit is
+    instead: the window minus the horizon.
+    """
+    n, offsets = _window_year_offsets(config)
+    if not offsets or all(abs(o) <= _WINDOW_TOLERANCE_DAYS for o in offsets.values()):
+        return
+
+    days = config["bb_timeseries_length"]
+    first_year = min(offsets)
+    mm, dd = (int(part) for part in config["bb_timeseries_start"].split("-"))
+    start = datetime(first_year, mm, dd)
+    last = start + timedelta(days=days - 1)
+
+    whole = [days - o for o in offsets.values()]
+    span = (f"{min(whole)}" if min(whole) == max(whole)
+            else f"{min(whole)}-{max(whole)}")
+    # The length most climate years call a whole number of years; any of them is
+    # within the tolerance of the others, so one suggestion is enough.
+    typical = max(sorted(set(whole)), key=whole.count)
+    extra = typical - 365 * n
+    suggestion = ("365" if n == 1 else f"365*{n}") + (f"+{extra}" if extra else "")
+
+    horizon_days = _DEF_T_HORIZON // 24
+    reach = days - horizon_days
+    if reach > 0:
+        consequence = (
+            f"Runs of up to {reach} modelled days never reach it ({days} days minus "
+            f"the {horizon_days}-day horizon); every longer run does. Use {suggestion}, "
+            f"or keep every run inside that limit."
+        )
+    else:
+        consequence = (
+            f"The {horizon_days}-day horizon is longer than the window, so every solve "
+            f"reaches it. Use {suggestion}."
+        )
+
+    logger.log_status(
+        f"bb_timeseries_length = {days} days is not a whole number of years: "
+        f"{n} year(s) from {config['bb_timeseries_start']} is {span} "
+        f"days. Backbone circulates the data, so after the window's last day "
+        f"({last:%d %b}) the look-ahead carries on from its first ({start:%d %b}) and "
+        f"joins two different seasons. {consequence}",
+        level="warn",
+    )
 
 
 def _derive_gams_settings(config: dict) -> dict:

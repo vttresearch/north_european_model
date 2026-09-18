@@ -327,8 +327,9 @@ A climate window does not have to start on 1 January. `bb_timeseries_start` take
 any `MM-DD` and `bb_timeseries_length` any number of days, so a summer-to-summer
 or three-year window puts the calendar-year seam **in the middle of a sample**,
 where the solver has to absorb whatever is there. With the default `01-01` it sits
-at the window edge, where nobody meets it. Both hydro processors used to ship a
-step there.
+at the window edge, where Backbone's circulation carries the look-ahead from the
+window's last hour back to its first — unsmoothed, so a step there is met too.
+Both hydro processors used to ship a step there.
 
 **Inflow: week 53 is not read.** The year is 52 whole weeks and a remainder of one
 or two days, and PECD says different things about that remainder depending on the

@@ -97,6 +97,12 @@ class elec_demand_TYNDP2024(BaseProcessor):
     #: country.
     INDEX_COLUMNS = ('year', 'month', 'day', 'hour')
 
+    #: Countries whose sheet repeats Dec 31 22:00 as 23:00 in every climate year,
+    #: and at no other hour. The copy says nothing about 23:00, so it is treated
+    #: as one missing hour and interpolated -- see `_interpolate_padded_last_hour`
+    #: and "The last hour of the year" in docs/elec-demand-timeseries.md.
+    PADDED_LAST_HOUR = ('ES00', 'PL00')
+
     #: Countries the cache is built for -- a hard gate, not a preference. The
     #: workbook holds many more zones, and this is the set that has been checked
     #: by hand. Widening the tuple is a deliberate act that invalidates the cache.
@@ -174,6 +180,10 @@ class elec_demand_TYNDP2024(BaseProcessor):
         #: node -> its constant_share, so the zero-hour alarm can name the cause
         #: it most often has.
         self.node_shares = {}
+
+        #: cache column -> requested climate years whose padded Dec 31 23:00 was
+        #: interpolated. Filled by `_interpolate_padded_last_hour`.
+        self.padded_last_hours = {}
 
         #: configured country code -> the cache column that serves it. Filled by
         #: `_country_problems`, which is the one place that resolves spelling.
@@ -650,12 +660,52 @@ class elec_demand_TYNDP2024(BaseProcessor):
             return None
 
         wanted = self.requested_years()
+        # Before the year filter: the last requested year needs the next one's
+        # Jan 1 00:00.
+        df_wide = self._interpolate_padded_last_hour(df_wide, wanted)
         df_wide = df_wide[df_wide['year'].isin(wanted)].copy()
         self.logger.log_status(
             f"Filtered to climate years {self.start_year}-{self.end_year}: "
             f"{len(df_wide)} rows.",
             level="info",
         )
+        return df_wide
+
+    def _interpolate_padded_last_hour(self, df_wide, wanted):
+        """Replace the copied Dec 31 23:00 of PADDED_LAST_HOUR by its neighbours' midpoint.
+
+        ES00 and PL00 repeat 22:00 as 23:00 on Dec 31 of every climate year. Left
+        as it is, the whole evening decline lands on the year change -- ES00
+        falls by 14% of its mean demand in that one hour -- and a window that
+        does not start on 1 January meets it mid-sample. The neighbours are
+        22:00 and the next climate year's Jan 1 00:00, which is why this runs on
+        the whole cache rather than on the requested years.
+
+        Only a copy is replaced, so a workbook that fills the hour properly is
+        left alone. Where the next year has no value the copy stays: the nearest
+        value carried outward, as at any other end of the data.
+        """
+        month, day, hour = df_wide['month'], df_wide['day'], df_wide['hour']
+        last = ((month == 12) & (day == 31) & (hour == 23)).to_numpy()
+        before = df_wide.loc[(month == 12) & (day == 31) & (hour == 22)].set_index('year')
+        after = df_wide.loc[(month == 1) & (day == 1) & (hour == 0)].set_index('year')
+        years = df_wide.loc[last, 'year'].to_numpy()
+        rows = df_wide.index[last]
+
+        columns = {
+            str(c).strip().upper(): c
+            for c in df_wide.columns if c not in self.INDEX_COLUMNS
+        }
+        for code in self.PADDED_LAST_HOUR:
+            column = columns.get(code)
+            if column is None:
+                continue
+            copy = df_wide.loc[last, column].to_numpy(dtype=float)
+            prev = before[column].reindex(years).to_numpy(dtype=float)
+            nxt = after[column].reindex(years + 1).to_numpy(dtype=float)
+            fix = np.isclose(copy, prev, rtol=1e-9, atol=0.0) & np.isfinite(nxt)
+            df_wide.loc[rows[fix], column] = (prev[fix] + nxt[fix]) / 2
+            self.padded_last_hours[column] = sorted(set(years[fix]) & set(wanted))
         return df_wide
 
     # ------------------------------------------------------------------
@@ -771,6 +821,15 @@ class elec_demand_TYNDP2024(BaseProcessor):
 
         if not buildable:
             return df_profiles
+
+        interpolated = sum(
+            len(self.padded_last_hours.get(self.country_columns[c], ())) for c in buildable
+        )
+        if interpolated:
+            self.logger.log_status(
+                f"Last hour of the year interpolated in {interpolated} country-year(s).",
+                level="info",
+            )
 
         self.logger.log_status("Dating the profiles and inserting leap days...")
         # dict.fromkeys rather than a list: two configured codes can resolve to

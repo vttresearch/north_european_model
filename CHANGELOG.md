@@ -51,6 +51,10 @@ not build and why, and has a documentation page of its own.
 - The annual summary CSVs are removed; the `annual_summary` spec field is
   retired and a config still setting it is ignored.
 - A cold build is about a third faster.
+- electricity demand: ES00 and PL00 no longer step at the year change; the
+  workbook's copied last hour is interpolated. [docs/elec-demand-timeseries.md](docs/elec-demand-timeseries.md#the-last-hour-of-the-year)
+- A climate window that is not a whole number of years warns.
+  [docs/timeseries.md](docs/timeseries.md#climate-years-and-the-window)
 
 ### Source workbooks
 
@@ -235,6 +239,7 @@ not build and why, and has a documentation page of its own.
 
 - `%init_file%` command line parameter, for switching between schedule and invest.
 - changes_loop.inc: tighter `vq_userconstraint.up` limits, to speed up the solver.
+- scheduleInit.gms: the `interpolateStepChange` circulation rules are removed.
 - `config_OT2030-continuous5y.ini`, an example of `bb_timeseries_length`
   expressions (365*5).
 - environment.yml: added matplotlib.

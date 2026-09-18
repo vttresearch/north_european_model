@@ -287,6 +287,57 @@ class TestGamsSettingsSummary:
         assert all(level == "none" for level, _ in logger.records)
 
 
+class TestWindowLengthWarning:
+    """A window that is not a whole number of years circulates into another season.
+
+    Backbone carries on from t000001 once the look-ahead passes dataLength, so the
+    window's length decides which date follows its last day. Counted against the
+    real calendar rather than multiples of 365: the documented whole-range
+    window, ``365*35+9``, is exact.
+    """
+
+    @staticmethod
+    def _warnings(**overrides):
+        logger = FakeLogger()
+        config = make_config(start_year=1982, end_year=2016, **overrides)
+        build_input_data._warn_about_window_length(logger, config)
+        return logger.warnings
+
+    @pytest.mark.parametrize(
+        "length", [365, 365 * 5, 365 * 10, 365 * 35 + 9], ids=["1y", "5y", "10y", "35y"]
+    )
+    def test_whole_years_are_silent(self, length):
+        assert self._warnings(bb_timeseries_length=length) == []
+
+    def test_a_summer_start_is_a_whole_year_too(self):
+        assert self._warnings(bb_timeseries_start="07-01", bb_timeseries_length=365) == []
+
+    def test_three_days_past_a_year_is_tolerated_and_four_is_not(self):
+        # 368 is 3 days past a common year and 2 past a leap one; 369 is 4 past a
+        # common one. Above the year rather than below, where a leap year would
+        # add a day to the miss and blur the edge.
+        assert self._warnings(bb_timeseries_length=368) == []
+        assert len(self._warnings(bb_timeseries_length=369)) == 1
+
+    def test_800_days_says_where_the_join_lands_and_which_runs_meet_it(self):
+        (message,) = self._warnings(bb_timeseries_length=800)
+        assert "800" in message
+        assert "10 Mar" in message and "01 Jan" in message
+        assert "345" in message            # 800 days minus the 455-day horizon
+        assert "365*2" in message
+
+    def test_a_window_shorter_than_the_horizon_is_met_by_every_solve(self):
+        (message,) = self._warnings(bb_timeseries_length=200)
+        assert "every solve" in message
+        # No run is short enough to avoid the join, so offering that is wrong.
+        assert "keep every run" not in message
+
+    def test_the_suggestion_counts_leap_days(self):
+        # Any 20 years from 01-01 inside 1982-2016 hold exactly five Feb 29ths.
+        (message,) = self._warnings(bb_timeseries_length=365 * 20)
+        assert "365*20+5" in message
+
+
 class TestCheckDependencies:
     def test_reports_a_missing_gams_executable(self, monkeypatch):
         monkeypatch.setattr(build_input_data.shutil, "which", lambda name: None)

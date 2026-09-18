@@ -649,6 +649,88 @@ class TestDemandRows:
         assert result.empty
 
 
+def hourly(scale: float = 1.0) -> np.ndarray:
+    """`swinging` plus a daily cycle, so no hour equals the one before it."""
+    hour = np.tile(np.arange(24), 365)
+    return swinging(scale) + 10.0 * np.sin(2 * np.pi * (hour + 0.5) / 24)
+
+
+def padded(values: np.ndarray) -> np.ndarray:
+    """The ES00/PL00 shape: Dec 31 23:00 a copy of 22:00."""
+    values = values.copy()
+    values[-1] = values[-2]
+    return values
+
+
+class TestThePaddedLastHour:
+    """ES00 and PL00 repeat Dec 31 22:00 as 23:00 in every climate year.
+
+    Left alone, the whole evening decline lands on the year change in one step,
+    and a window that does not start on 1 January meets it mid-sample. The copy
+    is a missing hour, and a missing hour is interpolated between its neighbours.
+    Common years only, so the leap-day mapping plays no part.
+    """
+
+    SCALES = {2013: 1.1, 2014: 0.9, 2015: 1.0}
+
+    @pytest.fixture(scope="class")
+    def folder(self, tmp_path_factory):
+        sheets = {
+            name: {year: padded(hourly(scale)) for year, scale in self.SCALES.items()}
+            for name in ("ES00", "FI00")
+        }
+        return write_workbook(tmp_path_factory.mktemp("padded"), sheets)
+
+    @staticmethod
+    def _run(folder, country, start, end):
+        wide, logger = build(
+            folder, demands(row(country, f"{country}_elec", share=0.0)),
+            countries=[country], start_year=start, end_year=end,
+        )
+        return wide[f"{country}_elec"], logger
+
+    @staticmethod
+    def _at(series, stamp):
+        return series[pd.Timestamp(stamp)]
+
+    def test_the_copy_becomes_the_midpoint_of_its_neighbours(self, folder):
+        demand, _ = self._run(folder, "ES00", 2013, 2014)
+
+        before = self._at(demand, "2013-12-31 22:00")
+        after = self._at(demand, "2014-01-01 00:00")
+        assert self._at(demand, "2013-12-31 23:00") == pytest.approx((before + after) / 2)
+
+    def test_the_last_requested_year_reaches_into_the_next_one(self, folder):
+        # 2015 is in the workbook but not in the run. The repair needs its Jan 1
+        # 00:00 all the same, so it has to happen before the year filter.
+        demand, _ = self._run(folder, "ES00", 2013, 2014)
+        assert self._at(demand, "2014-12-31 23:00") != self._at(demand, "2014-12-31 22:00")
+
+    def test_the_last_year_of_the_workbook_keeps_its_copy(self, folder):
+        # Nothing after it to interpolate towards: the nearest value is carried
+        # outward, as at any other end of the data.
+        demand, _ = self._run(folder, "ES00", 2014, 2015)
+        assert self._at(demand, "2015-12-31 23:00") == self._at(demand, "2015-12-31 22:00")
+
+    def test_a_country_outside_the_register_is_left_as_the_workbook_has_it(self, folder):
+        demand, _ = self._run(folder, "FI00", 2013, 2014)
+        assert self._at(demand, "2013-12-31 23:00") == self._at(demand, "2013-12-31 22:00")
+
+    def test_a_real_value_at_23_is_not_touched(self, tmp_path):
+        # A workbook that fills the hour properly: only a copy is replaced.
+        values = {year: hourly(scale) for year, scale in self.SCALES.items()}
+        folder = write_workbook(tmp_path, {"ES00": values})
+
+        demand, _ = self._run(folder, "ES00", 2013, 2014)
+
+        ratio = self._at(demand, "2013-12-31 23:00") / self._at(demand, "2013-12-31 22:00")
+        assert ratio == pytest.approx(values[2013][-1] / values[2013][-2])
+
+    def test_the_run_counts_what_it_interpolated(self, folder):
+        _, logger = self._run(folder, "ES00", 2013, 2014)
+        logger.assert_logged("interpolated in 2 country-year(s)", level="info")
+
+
 class TestZeroHours:
     """Electricity demand does not stop. Every zero here is a symptom."""
 

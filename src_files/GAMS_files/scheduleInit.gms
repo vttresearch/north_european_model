@@ -196,29 +196,6 @@ if (mType('schedule'),
     mSettings('schedule', 'savePoint') = 0;  // 0 = no basis, 1 = latest solve, 2 = all solves, 3 = first solve
 
 
-* --- additional data circulation rules ---------------------------------------
-
-    option clear = ff;
-    option ff < p_mfProbability;
-
-    option flowNode_tmp < ts_cf;
-    gn_tsCirculation('ts_cf', flowNode_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
-    gn_tsCirculation('ts_cf', flowNode_tmp, ff, 'interpolateStepChange', 'length') = 12;
-
-    // not needed for PV as year changes overnight
-    gn_tsCirculation('ts_cf', flowNode_tmp('PV', node), ff, 'interpolateStepChange', 'isActive') = 0;
-    gn_tsCirculation('ts_cf', flowNode_tmp('PV', node), ff, 'interpolateStepChange', 'length') = 0;
-
-    option gn_tmp < ts_influx;
-    gn_tsCirculation('ts_influx', gn_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
-    gn_tsCirculation('ts_influx', gn_tmp, ff, 'interpolateStepChange', 'length') = 24;
-
-    option gn_tmp < ts_node;
-    gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'isActive') = 1;
-    gn_tsCirculation('ts_node', gn_tmp, ff, 'interpolateStepChange', 'length') = 48;
-
-
-
 * --- Solver speed improvements -------------------------------
     //available from v3.9 onwards
 

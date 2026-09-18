@@ -135,13 +135,21 @@ A window need not be a calendar year:
   expressions, so `365*5` is a five-year window and `365*35+9` is the whole
   climate range as one continuous series.
 
-Two consequences worth knowing. A window that does not start on 1 January puts
+Three consequences worth knowing. A window that does not start on 1 January puts
 the **calendar year change inside the sample**, where the solver has to absorb
 whatever discontinuity is there — sources whose data is naturally annual care
-about this, and their pages say so. And a window longer than the data left after
+about this, and their pages say so. A window longer than the data left after
 its start year simply cannot be built for the last few years: those years are
 dropped, and the build says which and why rather than writing a short one
 silently.
+
+And a window that is **not a whole number of years joins two seasons**.
+Backbone's look-ahead runs past the end of the data and carries on from the
+window's first hour, unsmoothed — so an 800-day window from `01-01` goes from
+10 March straight back to 1 January. The build warns when the length is more
+than three days from a whole number of calendar years, leap days counted —
+`365`, `365*5` and `365*35+9` are all whole — and says how long a run can be
+before it meets the join: the window minus the 455-day horizon.
 
 ## Forecast branches
 

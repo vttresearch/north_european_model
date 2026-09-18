@@ -45,6 +45,7 @@ Output is `ts_influx` on grid `elec`, negative, in MWh/h.
 - [Zero hours](#zero-hours)
 - [Only the 2030 workbook is used](#only-the-2030-workbook-is-used)
 - [The source has no leap years](#the-source-has-no-leap-years)
+- [The last hour of the year](#the-last-hour-of-the-year)
 - [The parquet cache](#the-parquet-cache)
 - [What this does not model](#what-this-does-not-model)
 - [Where the electricity demand timeseries is defined](#where-the-electricity-demand-timeseries-is-defined)
@@ -204,6 +205,26 @@ The flat term divides by a nominal 8760 for the same reason. Left alone
 deliberately: both effects are far inside the precision of the demand projections
 themselves. `DH_demand_fromTemperature` uses the identical divisor, so the two
 would have to change together.
+
+## The last hour of the year
+
+**ES00 and PL00 repeat Dec 31 22:00 as 23:00** in every climate year of the
+workbook — PL00 exactly, ES00 to within 10⁻¹⁴ — and at no other hour. On any
+other day that hour falls, by 10% for ES00 and 6% for PL00. Left alone, the whole
+evening decline lands on the year change: ES00 drops 4.1 GW there at the
+median, 14% of its mean demand, in one hour — twice the largest step it takes
+at any ordinary midnight.
+
+The copy is a missing hour, so it is interpolated between its neighbours: 22:00
+and the next climate year's Jan 1 00:00. The one step becomes two, each about
+the size of an ordinary late-evening hour.
+Nothing on the Backbone side smooths a year change, and a window that does not
+start on 1 January meets it mid-sample, so the repair is here.
+
+`PADDED_LAST_HOUR` on the processor names the two countries. Only a copy is
+replaced, so a workbook that fills the hour properly is left alone. The last
+year a country has in the workbook keeps its copy, since there is nothing after
+it to interpolate towards.
 
 ## The parquet cache
 
