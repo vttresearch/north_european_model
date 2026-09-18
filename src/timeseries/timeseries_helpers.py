@@ -475,16 +475,54 @@ def split_timeseries_to_climate_windows(
     # identifies the group boundaries in it.
     if group_ids is None:
         df, group_ids = order_timeseries_for_labelling(df, group_dims=group_dims)
-    time_np = df["time"].to_numpy()
 
+    for yr, mask, row_nums in climate_window_rows(
+        df["time"].to_numpy(), group_ids,
+        bb_ts_start=bb_ts_start,
+        bb_ts_length=bb_ts_length,
+        valid_climate_years=valid_climate_years,
+    ):
+        df_yr = df[mask].copy()
+        df_yr['t'] = pd.Categorical(t_labels[row_nums], categories=t_labels)
+
+        # Insert f00 as the realized-weather branch when f is a spec dimension.
+        if "f" in dims:
+            df_yr['f'] = 'f00'
+
+        out[yr] = df_yr[final_cols].reset_index(drop=True)
+
+    return out
+
+
+def climate_window_rows(
+    time_np: np.ndarray,
+    group_ids: np.ndarray,
+    *,
+    bb_ts_start: str,
+    bb_ts_length: int,
+    valid_climate_years: Sequence[int],
+    ):
+    """Yield ``(year, mask, row_nums)`` for every climate window the data has rows in.
+
+    The one definition of a climate window, shared by the realized branch and the
+    forecast branches so that the two cannot disagree about which hour a t-label
+    names: year Y's window starts at {Y}-{bb_ts_start} 00:00 and spans
+    bb_ts_length * 24 consecutive hours, and t-label n is the n-th row of a series
+    inside it.
+
+    ``time_np`` and ``group_ids`` come from :func:`order_timeseries_for_labelling`
+    -- ordered by group then time, aligned positionally. ``mask`` selects the
+    window's rows, and ``row_nums`` is each selected row's position within its own
+    series, which is the t-label minus one. A year with no rows at all yields
+    nothing: it cannot start a window.
+    """
+    max_hours = bb_ts_length * 24
     for yr in valid_climate_years:
         window_start = pd.Timestamp(f"{yr}-{bb_ts_start}")
         window_end   = window_start + pd.Timedelta(max_hours - 1, unit="h")
         mask = (time_np >= window_start.to_datetime64()) & (time_np <= window_end.to_datetime64())
-        df_yr = df[mask].copy()
-
-        # A year with no data at all cannot start a window.
-        if len(df_yr) == 0:
+        n_rows = int(mask.sum())
+        if n_rows == 0:
             continue
 
         # With no grouping dimensions the ids are all zero, which marks a single
@@ -493,146 +531,157 @@ def split_timeseries_to_climate_windows(
         group_changes = np.diff(group_ids[mask], prepend=-1) != 0
 
         # Row number within each group, which is the t-label minus one.
-        row_nums = np.arange(len(df_yr))
+        row_nums = np.arange(n_rows)
         row_nums -= np.repeat(
             row_nums[group_changes],
-            np.diff(np.append(np.where(group_changes)[0], len(df_yr))),
+            np.diff(np.append(np.where(group_changes)[0], n_rows)),
         )
-        df_yr['_row_num'] = row_nums
-
-        row_nums_filtered = df_yr['_row_num'].values
-        t_cat = pd.Categorical(t_labels[row_nums_filtered], categories=t_labels)
-        df_yr['t'] = t_cat
-
-        # Insert f00 as the realized-weather branch when f is a spec dimension.
-        if "f" in dims:
-            df_yr['f'] = 'f00'
-
-        frame = df_yr[final_cols].reset_index(drop=True)
-        out[int(yr)] = frame
-
-    return out
+        yield int(yr), mask, row_nums
 
 
 def calculate_climatological_forecasts(
-    input_df: pd.DataFrame,
+    df: pd.DataFrame,
     *,
     bb_parameter_dimensions,
     forecast_quantiles,
     bb_ts_start: str,
     bb_ts_length: int,
-    round_precision: int = 0,
+    valid_climate_years: Sequence[int],
+    round_precision: Optional[int] = 0,
+    group_ids: Optional[np.ndarray] = None,
     ) -> pd.DataFrame:
     """
-    Build Backbone forecast branches from long-term climatological statistics.
+    Build Backbone forecast branches as quantiles across the climate windows.
 
-    Each f-branch is a quantile of the input timeseries taken across all climate
-    years, so it reflects a different statistical outcome rather than a different
-    forecast run. ``forecast_quantiles`` decides how many and which: keys are
-    f-labels, values are probabilities, so ``{'f01': 0.5, 'f02': 0.1}`` gives a
-    median branch and a lowest-10% one.
+    At every t, each branch is a quantile of the realized values at that same t
+    across all climate windows -- the windows that
+    ``split_timeseries_to_climate_windows`` writes as f00, cut by the same
+    :func:`climate_window_rows` from the same rows. ``forecast_quantiles`` decides
+    how many and which: keys are f-labels, values are probabilities, so
+    ``{'f01': 0.5, 'f02': 0.1}`` gives a median branch and a lowest-10% one.
+
+    So a forecast t and a realized t always name the same hour of the window,
+    whatever the start date, the length or the leap years inside it. Every sample
+    is continuous wherever its realized window is, which leaves one join: the wrap
+    from the window's last hour back to its first, where f00 has one too.
+    Statistics built on a nominal Jan-1 calendar year instead put a step at every
+    New Year inside the window, because a leap year's samples lose a day there.
 
     Computed once, because the result is the same for every climate window.
 
-    Algorithm
-    ---------
-    Per combination of the non-f/t dimension columns:
+    Weak spot: long windows
+    -----------------------
+    The windows are the samples, and they overlap once a window is longer than a
+    year: in 1982-2016 a window of N years leaves 36 - N of them. That is 31 for
+    five years and 16 for twenty. At 365*35+9 it is one, and every branch is the
+    realized year itself -- perfect foresight labelled as a forecast. The build
+    warns about any window longer than five years
+    (``build_input_data._warn_about_long_window``); a limit raised past that needs
+    another source of statistics here first.
 
-    1. Quantiles across all years at each hour-of-year position (1..8760).
-       Leap-day hours are excluded so the statistics align on one calendar.
-    2. Map those onto the output window by hour-of-year, tiling correctly when
-       the window is longer than a calendar year.
-    3. Assign t-labels from the first hour of the window and f-labels from
-       ``forecast_quantiles``.
+    Missing values
+    --------------
+    NaN is skipped: an hour a window has no value for is left out of that hour's
+    sample, and an hour no window has a value for comes out NaN. Filling it with 0
+    would turn "no climatology" into "a forecast of exactly zero", which the
+    optimiser acts on; ``GDX_exchange.prepare_values_for_gdx`` converts it and
+    counts it instead.
 
-    Input is the same long format the processors return, plus the guarantee --
-    checked by the caller -- that it covers more than one climate year.
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-format processor output: the dimensions of bb_parameter_dimensions
+        other than 'f' and 't', plus 'time' and 'value'. Not modified.
+    valid_climate_years : sequence of int
+        The same years ``split_timeseries_to_climate_windows`` is given.
+    group_ids : np.ndarray, optional
+        From :func:`order_timeseries_for_labelling`; supplying it asserts that
+        `df` is already ordered by it, as in ``split_timeseries_to_climate_windows``.
 
     Returns
     -------
     pd.DataFrame
-        Single-year long format ``bb_parameter_dimensions + ['value']``, carrying
-        the same t-labels as ``split_timeseries_to_climate_windows`` produces.
+        Long format ``bb_parameter_dimensions + ['value']``, one row per series,
+        t-label and branch, with the t-labels the realized windows carry.
     """
+    dims = list(bb_parameter_dimensions)
+    group_dims = [c for c in dims if c not in ("f", "t")]
+    if group_ids is None:
+        df, group_ids = order_timeseries_for_labelling(df, group_dims=group_dims)
 
-    dim_cols = [col for col in bb_parameter_dimensions if col not in ("f", "t")]
+    max_hours = bb_ts_length * 24
+    n_series = int(group_ids.max()) + 1 if len(group_ids) else 0
+    values = df["value"].to_numpy(dtype=np.float64)
 
-    # hour_of_year from dayofyear + hour, avoiding datetime arithmetic.
-    time = input_df["time"]
-    day_of_year = time.dt.dayofyear.to_numpy()
-    hour = time.dt.hour.to_numpy()
-    hour_of_year = (day_of_year - 1) * 24 + hour + 1
+    # windows x series x hours. NaN wherever a window has no row, so a window
+    # that stops short, or a gap, drops out of the sample instead of counting as
+    # a zero.
+    windows = list(climate_window_rows(
+        df["time"].to_numpy(), group_ids,
+        bb_ts_start=bb_ts_start,
+        bb_ts_length=bb_ts_length,
+        valid_climate_years=valid_climate_years,
+    ))
+    samples = np.full((len(windows), n_series, max_hours), np.nan)
+    for k, (_, mask, row_nums) in enumerate(windows):
+        samples[k, group_ids[mask], row_nums] = values[mask]
 
-    # copy() first: writing 'hour_of_year' into the caller's frame would leave
-    # main_result with an extra column that ProcessorRunner goes on to use for
-    # domain collection and the annual summary.
-    input_df = input_df.copy()
-    input_df["hour_of_year"] = hour_of_year.astype(np.int32)
+    labels = list(forecast_quantiles.keys())
+    stats = _nan_quantiles(samples, list(forecast_quantiles.values()))
+    n_branches = len(labels)
 
-    # Leap-day hours dropped, so every year contributes the same 8760 positions.
-    input_df = input_df[input_df["hour_of_year"] <= 8760]
+    # One row per series, t and branch, in that order.
+    series_idx = np.repeat(np.arange(n_series), max_hours * n_branches)
+    t_idx = np.tile(np.repeat(np.arange(max_hours), n_branches), n_series)
+    f_idx = np.tile(np.arange(n_branches), n_series * max_hours)
 
-    # Over the full calendar year regardless of bb_ts_length: the window is cut
-    # from these statistics afterwards, not built into them.
-    q_values = list(forecast_quantiles.values())
+    first_rows = np.flatnonzero(np.diff(group_ids, prepend=-1) != 0)
+    t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
+    out = {
+        col: df[col].iloc[first_rows].to_numpy()[series_idx] for col in group_dims
+    }
+    out["t"] = pd.Categorical.from_codes(t_idx, categories=t_labels)
+    out["f"] = pd.Categorical.from_codes(f_idx, categories=labels)
 
-    df_quant = (
-        input_df
-        .groupby(dim_cols + ["hour_of_year"], observed=True)["value"]
-        .quantile(q_values)
-        # A sequence of quantiles gives a MultiIndex with a 'quantile' level.
-        .rename_axis(index=dim_cols + ["hour_of_year", "quantile"])
-        .reset_index()
-    )
-
-    # Which hour_of_year each position in the output window corresponds to. The
-    # reference year is a fixed non-leap one, so the sequence wraps correctly
-    # across a calendar year boundary.
-    ref_start = pd.Timestamp(f"2001-{bb_ts_start}")
-    ref_times = pd.date_range(ref_start, periods=bb_ts_length * 24, freq='h')
-    ref_hoy = ((ref_times.dayofyear - 1) * 24 + ref_times.hour + 1).astype(np.int32)
-    ref_hoy = np.clip(ref_hoy, 1, 8760)
-
-    t_labels_arr = np.array(['t' + str(i + 1).zfill(6) for i in range(bb_ts_length * 24)])
-
-    # One row per window position.
-    window_df = pd.DataFrame({
-        "hour_of_year": ref_hoy,
-        "t": t_labels_arr,
-    })
-
-    unique_dims = input_df[dim_cols].drop_duplicates()
-    quantiles_df = pd.DataFrame({"quantile": q_values})
-
-    # Every dimension combination x window position x quantile.
-    full_grid = (
-        unique_dims
-        .merge(window_df, how="cross")
-        .merge(quantiles_df, how="cross")
-    )
-
-    # hour_of_year is the lookup key, and several window positions can share one
-    # when bb_ts_length > 365 tiles the average year.
-    df_full = full_grid.merge(
-        df_quant,
-        on=dim_cols + ["hour_of_year", "quantile"],
-        how="left",
-    )
-
-    df_full["t"] = df_full["t"].astype("category")
-    df_full["f"] = df_full["quantile"].map({v: k for k, v in forecast_quantiles.items()})
-    df_full["f"] = df_full["f"].astype("category")
-
-    # Missing quantile values are deliberately left as NaN. The merge above is a
-    # LEFT join onto the full grid, so a window hour with no climatology behind
-    # it lands here empty -- and filling it with 0 would turn "no climatology"
-    # into "a forecast of exactly zero", which the optimiser acts on.
-    # GDX_exchange.prepare_values_for_gdx does the conversion instead, and counts
-    # it: GAMS still receives 0, but the run says so.
+    value = stats.transpose(1, 2, 0).reshape(-1)
     if round_precision is not None:
-        df_full["value"] = df_full["value"].round(round_precision)
+        value = np.round(value, round_precision)
+    out["value"] = value
 
-    return df_full[bb_parameter_dimensions + ["value"]]
+    return pd.DataFrame(out)[dims + ["value"]]
+
+
+def _nan_quantiles(samples: np.ndarray, quantiles: Sequence[float]) -> np.ndarray:
+    """Quantiles along the first axis, skipping NaN, by linear interpolation.
+
+    The same numbers as ``np.nanquantile(samples, quantiles, axis=0)`` -- and as
+    pandas' default -- to floating-point precision, without its Python loop over
+    every other axis position, which takes minutes on a multi-year parameter. One
+    sort puts each column's NaN last, so its valid values are its first n and each
+    quantile is two lookups and one interpolation. A column with no valid value at
+    all comes out NaN.
+
+    Returns an array of shape ``(len(quantiles),) + samples.shape[1:]``.
+    """
+    out = np.full((len(quantiles),) + samples.shape[1:], np.nan)
+    if samples.shape[0] == 0:
+        return out
+    ordered = np.sort(samples, axis=0)
+    n_valid = np.sum(~np.isnan(samples), axis=0)
+    has_data = n_valid > 0
+
+    for i, q in enumerate(quantiles):
+        position = q * np.maximum(n_valid - 1, 0)
+        below = np.floor(position).astype(np.int64)
+        above = np.ceil(position).astype(np.int64)
+        low = np.take_along_axis(ordered, below[None], axis=0)[0]
+        high = np.take_along_axis(ordered, above[None], axis=0)[0]
+        fraction = position - below
+        step = high - low
+        # As numpy's _lerp: interpolate from whichever end is nearer.
+        value = np.where(fraction >= 0.5, high - step * (1 - fraction), low + step * fraction)
+        out[i] = np.where(has_data, value, np.nan)
+    return out
 
 
 @dataclass(frozen=True)

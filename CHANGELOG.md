@@ -53,8 +53,11 @@ not build and why, and has a documentation page of its own.
 - A cold build is about a third faster.
 - electricity demand: ES00 and PL00 no longer step at the year change; the
   workbook's copied last hour is interpolated. [docs/elec-demand-timeseries.md](docs/elec-demand-timeseries.md#the-last-hour-of-the-year)
-- A climate window that is not a whole number of years warns.
-  [docs/timeseries.md](docs/timeseries.md#climate-years-and-the-window)
+- A climate window that is not a whole number of years, or is longer than five,
+  warns. [docs/timeseries.md](docs/timeseries.md#climate-years-and-the-window)
+- Forecast branches are quantiles across the climate windows, so a forecast and
+  a realized `t` name the same hour and no New Year step sits inside a window.
+  [docs/timeseries.md](docs/timeseries.md#forecast-branches)
 
 ### Source workbooks
 

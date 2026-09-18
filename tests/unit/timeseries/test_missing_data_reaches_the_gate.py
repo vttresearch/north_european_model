@@ -56,6 +56,7 @@ def _forecasts(df, *, length):
         forecast_quantiles={"f01": 0.5},
         bb_ts_start="01-01",
         bb_ts_length=length,
+        valid_climate_years=[2014, 2015],
     )
 
 
@@ -110,10 +111,9 @@ class TestForecastGapsStayMissing:
         logger.assert_logged("216 of", level="warn")
 
     def test_the_input_frame_is_not_mutated(self):
-        """Regression: 'hour_of_year' used to be written into the caller's frame.
+        """Regression: a helper column used to be written into the caller's frame.
 
-        ProcessorRunner passes main_result here and keeps using it afterwards
-        for domain collection.
+        ProcessorRunner keeps using its frames afterwards for domain collection.
         """
         df = _january_only()
         before = list(df.columns)

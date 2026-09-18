@@ -338,6 +338,36 @@ class TestWindowLengthWarning:
         assert "365*20+5" in message
 
 
+class TestLongWindowWarning:
+    """Beyond five years a multi-year run does not finish, and nothing else says so.
+
+    It is also what keeps the forecast branches honest: they are quantiles across
+    the climate windows, and long windows leave few of them.
+    """
+
+    @staticmethod
+    def _warnings(length):
+        logger = FakeLogger()
+        config = make_config(start_year=1982, end_year=2016, bb_timeseries_length=length)
+        build_input_data._warn_about_long_window(logger, config)
+        return logger.warnings
+
+    @pytest.mark.parametrize(
+        "length", [365, 365 * 5, 365 * 5 + 2], ids=["1y", "5y", "5y-with-leap-days"]
+    )
+    def test_five_years_or_less_is_silent(self, length):
+        assert self._warnings(length) == []
+
+    @pytest.mark.parametrize("length", [365 * 5 + 3, 365 * 6, 365 * 35 + 9])
+    def test_anything_longer_warns(self, length):
+        assert len(self._warnings(length)) == 1
+
+    def test_it_says_how_many_windows_the_forecasts_are_built_from(self):
+        # Twenty years inside 1982-2016 leaves 36 - 20 = 16 windows.
+        (message,) = self._warnings(365 * 20 + 5)
+        assert "leaves 16 of them" in message
+
+
 class TestCheckDependencies:
     def test_reports_a_missing_gams_executable(self, monkeypatch):
         monkeypatch.setattr(build_input_data.shutil, "which", lambda name: None)

@@ -116,6 +116,7 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         # Every iteration, not once per config: the log is written per output
         # folder, and each one has to say it.
         _warn_about_window_length(logger, config)
+        _warn_about_long_window(logger, config)
 
 
         # --- 2.2. Cache manager ---
@@ -505,6 +506,47 @@ def _warn_about_window_length(logger, config: dict) -> None:
         f"days. Backbone circulates the data, so after the window's last day "
         f"({last:%d %b}) the look-ahead carries on from its first ({start:%d %b}) and "
         f"joins two different seasons. {consequence}",
+        level="warn",
+    )
+
+
+#: The longest climate window the build takes without warning: five calendar
+#: years, including both leap days five years can hold.
+_LONGEST_QUIET_WINDOW_DAYS = 365 * 5 + 2
+
+
+def _warn_about_long_window(logger, config: dict) -> None:
+    """Warn when the climate window is longer than five years.
+
+    A window that long exists to be run as one multi-year run, and Backbone does
+    not manage that today: multi-year runs slow sharply between three and five
+    years, and beyond five they do not finish. Nothing else in the build or in
+    Backbone says so, and the first symptom would be a run that never ends.
+    """
+    # ---------------------------------------------------------------------
+    # DEVELOPERS: this limit also keeps the forecast branches honest, and it
+    # must not be raised or removed on solve time alone.
+    #
+    # calculate_climatological_forecasts takes its quantiles across the climate
+    # windows themselves, and windows longer than a year overlap: in 1982-2016
+    # a window of N years leaves 36 - N of them. Twenty years leaves 16, and
+    # 365*35+9 leaves one -- every forecast branch is then the realized series
+    # itself, perfect foresight labelled as a forecast, and nothing fails.
+    #
+    # Before lifting this warning, give long windows another source of
+    # statistics there. See "Weak spot: long windows" in that docstring.
+    # ---------------------------------------------------------------------
+    days = config["bb_timeseries_length"]
+    if days <= _LONGEST_QUIET_WINDOW_DAYS:
+        return
+
+    _, offsets = _window_year_offsets(config)
+    logger.log_status(
+        f"bb_timeseries_length = {days} days is longer than five years, which Backbone "
+        f"cannot run today: multi-year runs slow sharply between three and five years, "
+        f"and beyond five they do not finish. The forecast branches thin out as well -- "
+        f"they are quantiles across the climate windows, and this length leaves "
+        f"{len(offsets)} of them. Use 365*5 or less.",
         level="warn",
     )
 

@@ -18,7 +18,7 @@ So ``['grid', 'node', 'f', 't']`` means the processor returns
 datetime in ``time``. The runner supplies ``t`` and ``f``:
 ``split_timeseries_to_climate_windows`` labels ``t`` and inserts ``f00`` as the
 realized-weather branch, and ``calculate_climatological_forecasts`` computes
-f01, f02, ... from climatological quantiles.
+f01, f02, ... as quantiles across those same climate windows.
 
 Processors cover the full range from the start of ``start_year`` to
 ``{end_year}-12-31 23:00``, and must not filter to a particular window or
@@ -35,9 +35,9 @@ fails the time-axis check.
 A missing value in ``value`` is **not** a rejection: it means "no data" and
 keeps that meaning to the GDX gate, where ``prepare_values_for_gdx`` is the
 single place NaN becomes 0 and counts what it converted. The distinction matters
-beyond tidiness -- ``calculate_climatological_forecasts`` takes quantiles and
-pandas skips NaN, so filling a gap early makes it count as a genuine zero and
-biases the whole climatology downward.
+beyond tidiness -- ``calculate_climatological_forecasts`` takes quantiles that
+skip NaN, so filling a gap early makes it count as a genuine zero and biases the
+whole climatology downward.
 
 Post-processing applied by ProcessorRunner
 ------------------------------------------
@@ -668,10 +668,9 @@ class ProcessorRunner:
         )
 
         # --- Slice and write climate windows' data ---
-        # main_result stays unsorted on purpose: the climatological forecasts
-        # and the domain caches both read it below, and reordering it would
-        # change the row order of the forecast GDX and the element order of the
-        # domain JSON -- same content, different bytes.
+        # main_result stays unsorted on purpose: the domain caches read it below,
+        # and reordering it would change the element order of the domain JSON --
+        # same content, different bytes.
         self.logger.log_status("Preparing annual GDX files...")
         annual_dfs = split_timeseries_to_climate_windows(
             ordered_result,
@@ -720,26 +719,30 @@ class ProcessorRunner:
         if calculate_forecasts and not self.config["forecast_quantiles"]:
             calculate_forecasts = False
 
-        # A quantile across climate years needs more than one of them.
-        if calculate_forecasts:
-            unique_years = main_result["time"].dt.year.unique()
-            if len(unique_years) <= 1:
-                self.logger.log_status(
-                    f"Processor '{processor_name}': data covers only {len(unique_years)} year(s); "
-                    "cannot calculate climatological forecasts.",
-                    level="warn",
-                )
-                calculate_forecasts = False
+        # The branches are quantiles across the climate windows, so they need
+        # more than one window -- which is a question about the window length as
+        # much as about the climate range.
+        if calculate_forecasts and len(annual_dfs) <= 1:
+            self.logger.log_status(
+                f"Processor '{processor_name}': the data holds {len(annual_dfs)} "
+                f"climate window(s) of {bb_ts_length} days, and forecast branches are "
+                f"quantiles across windows, so they need two or more. No forecast "
+                f"file is written.",
+                level="warn",
+            )
+            calculate_forecasts = False
 
         if calculate_forecasts:
             self.logger.log_status("Calculating climatological forecasts...")
             forecast_df = calculate_climatological_forecasts(
-                main_result,
+                ordered_result,
                 bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
                 forecast_quantiles=self.config["forecast_quantiles"],
                 bb_ts_start=bb_ts_start,
                 bb_ts_length=bb_ts_length,
+                valid_climate_years=valid_climate_years,
                 round_precision=rounding_precision,
+                group_ids=group_ids,
             )
 
             forecast_gdx_path = os.path.join(

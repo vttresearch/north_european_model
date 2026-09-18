@@ -99,7 +99,7 @@ config: timeseries_specs
         ├── check           columns, dimensions, values, time axis
         ├── round, cut off  rounding_precision, cutoff_below
         ├── label + slice   t-labels, one climate window per year
-        ├── forecasts       quantile branches across climate years
+        ├── forecasts       quantile branches across the climate windows
         └── write           GDX + a line in import_timeseries.inc
                             and whatever the processor contributed to the
                             source data tables, for the input Excel
@@ -135,6 +135,12 @@ A window need not be a calendar year:
   expressions, so `365*5` is a five-year window and `365*35+9` is the whole
   climate range as one continuous series.
 
+**Five years is the practical ceiling.** A window that long exists to be run as
+one multi-year run, and Backbone slows sharply between three and five years;
+beyond five a run does not finish today. The build warns about any window longer
+than five years, and the forecast branches below are a second reason: they thin
+out as windows grow.
+
 Three consequences worth knowing. A window that does not start on 1 January puts
 the **calendar year change inside the sample**, where the solver has to absorb
 whatever discontinuity is there — sources whose data is naturally annual care
@@ -156,17 +162,31 @@ before it meets the join: the window minus the 455-day horizon.
 Backbone can carry uncertainty as several forecast branches on the `f` index.
 The pipeline fills them from the climate record itself:
 
-- **`f00` is the realized weather** — the climate year being run, exactly as the
-  processor produced it.
-- **`f01`, `f02`, … are quantiles** taken across all climate years at each hour
-  of the year, so `f01: 0.5` is the median year at that hour and `f02: 0.1` the
-  low decile. The branches are written once into a `_forecasts.gdx`, because they
-  are the same for every window.
+- **`f00` is the realized weather** — the climate window being run, exactly as
+  the processor produced it.
+- **`f01`, `f02`, … are quantiles across the climate windows** at each `t`, so
+  `f01: 0.5` is the median of every window's value at that hour and `f02: 0.1`
+  the low decile. The branches are written once into a `_forecasts.gdx`, because
+  they are the same for every window.
+
+Taking them across the windows — not across calendar years — means a forecast
+`t` and a realized `t` always name the same hour, whatever the start date, the
+length or the leap years inside. Each window is continuous wherever the realized
+data is, so the branches have no step the realized windows do not: the one join
+in either is the wrap at the window's end. Statistics of a nominal 1 January
+calendar year would instead step at every New Year inside a window, where a leap
+year loses a day, and would repeat the first winter of a window longer than a
+year.
+
+The cost is in long windows. Windows longer than a year overlap, so a window of
+N years leaves 36 − N of them in 1982–2016: 31 for five years, 16 for twenty,
+and one for `365*35+9` — where every branch would be the realized window itself.
+That is the other reason the build warns above five years.
 
 `forecast_quantiles` names them, in the same global config block as the window
 settings above — `{'f01': 0.5, 'f02': 0.1, 'f03': 0.9}` by default. Leaving it
 empty is the deterministic mode: no branches, no forecast file. A source with
-fewer than two climate years cannot have branches either, and is told so.
+fewer than two climate windows cannot have branches either, and is told so.
 
 `forecast_weights` beside it is the probability of each branch. It is written
 into the **GAMS files** at the end of the build, alongside the branch count, and
