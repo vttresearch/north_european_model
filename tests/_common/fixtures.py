@@ -34,6 +34,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # timeseries test 365x slower for no extra coverage.
     "bb_timeseries_start": "01-01",
     "bb_timeseries_length": 2,
+    # Backbone schedule horizon -- the shipped default; it only sizes GAMS text
+    "bb_horizon_weeks": 70,
     # Topology
     "country_codes": ["FI", "SE"],
     "exclude_grids": [],

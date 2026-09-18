@@ -903,12 +903,14 @@ class CacheManager:
                 full_rerun_reason = ("Config file topology, e.g. included countries, have changed. "
                                      "Starting a full rerun.")
 
-        # Climate years or timeseries window changed
+        # Climate years, timeseries window or horizon changed. The horizon sizes the
+        # t set and is patched into scheduleInit.gms, which only a full rerun recopies.
         if not full_rerun_reason:
-            climate_keys = ("climate_data", "bb_timeseries_start", "bb_timeseries_length")
+            climate_keys = ("climate_data", "bb_timeseries_start", "bb_timeseries_length",
+                            "bb_horizon_weeks")
             changed = [k for k in climate_keys if prev_config.get(k) != self.config.get(k)]
             if changed:
-                full_rerun_reason = f"Climate/timeseries config changed ({', '.join(changed)}), starting a full rerun."
+                full_rerun_reason = f"Climate/timeseries/horizon config changed ({', '.join(changed)}), starting a full rerun."
 
         # Forecast structure changed (requires full rerun to recopy patched GAMS files and rerun timeseries)
         if not full_rerun_reason:
@@ -1064,6 +1066,7 @@ class CacheManager:
         relevant_keys = [
             "country_codes", "exclude_grids", "exclude_nodes",
             "climate_data", "bb_timeseries_start", "bb_timeseries_length",
+            "bb_horizon_weeks",
             "forecast_quantiles", "forecast_weights", "timeseries_specs"
         ]
         data = {k: self.config[k] for k in relevant_keys if k in self.config}

@@ -31,8 +31,19 @@ if (mType('schedule'),
     mSettings('schedule', 't_end') =  mSettings('schedule', 't_start') + 24*%modelledDays% - 1; // Last time step to be included in the solve (may solve and output more time steps in case t_jump does not match)
 
     // Define simulation horizon and moving horizon optimization "speed"
-    mSettings('schedule', 't_horizon') = 24*7*65;    // How many active time steps the solve contains (aggregation of time steps does not impact this, unless the aggregation does not match)
+    // NOTE: do not edit the line below in the git version
+    // unless updating also _patch_gams_file_content() in build_input_data.py
+    // No restrictions for local versions.
+    mSettings('schedule', 't_horizon') = 24*7*70;    // How many active time steps the solve contains (aggregation of time steps does not impact this, unless the aggregation does not match)
     mSettings('schedule', 't_jump') = 24;          // How many time steps the model rolls forward between each solve
+
+    // Forecast discount: weight 1 for the realized day and 3 more days, then a linear
+    // fall to 0.95 at the horizon end. It orders otherwise equal-cost hours for the solver
+    // rather than valuing the far horizon less. See docs/running-the-model.md
+    mSettings('schedule', 'forecastDiscountFlatLevel') = 1;
+    mSettings('schedule', 't_forecastDiscountFlat') = 24*3;
+    mSettings('schedule', 't_forecastDiscountRamp') = mSettings('schedule', 't_horizon') - mSettings('schedule', 't_jump') - mSettings('schedule', 't_forecastDiscountFlat');
+    mSettings('schedule', 'forecastDiscountFloorLevel') = 0.95;
 
     // Define length of data for proper circulation
     // NOTE: do not edit the line below in the git version 

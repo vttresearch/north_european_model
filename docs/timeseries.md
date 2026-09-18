@@ -155,7 +155,13 @@ window's first hour, unsmoothed — so an 800-day window from `01-01` goes from
 10 March straight back to 1 January. The build warns when the length is more
 than three days from a whole number of calendar years, leap days counted —
 `365`, `365*5` and `365*35+9` are all whole — and says how long a run can be
-before it meets the join: the window minus the 455-day horizon.
+before it meets the join: the window minus the horizon.
+
+The horizon is `bb_horizon_weeks` in the same block, 70 weeks (490 days) by
+default. It is not a timeseries setting, but it decides how far each solve's
+look-ahead reaches past the window, and the build sizes the model's `t` set to
+the window plus one horizon. [Running the model](running-the-model.md#horizon-and-forecast-discount)
+covers what it does to a solve.
 
 ## Forecast branches
 

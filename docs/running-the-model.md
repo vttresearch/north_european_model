@@ -66,6 +66,32 @@ The switches this model declares live in `src_files/GAMS_files/changes.inc`
 rather than from any prose, including this page. For Backbone's own parameters
 see `../docs/running-backbone/command-line-parameters.md`.
 
+## Horizon and forecast discount
+
+Each daily solve looks `bb_horizon_weeks` ahead: 70 weeks by default, set in
+`src_files/config_*.ini` and written into `scheduleInit.gms` when the input
+folder is built, so a change needs a rebuild. Horizons shorter than a year have
+worked poorly in year runs, and each extra week costs about half a percent more
+solver iterations.
+
+Inside the horizon the objective weighs every hour 1 on the realized day and the
+three days after it, then less, falling linearly to 0.95 at the horizon end. That
+is Backbone's forecast discount (`../docs/features/forecast-discount.md`), shaped
+in `scheduleInit.gms`. It is a solver control, not a valuation:
+
+- **A falling weight orders hours that would otherwise cost the same**, and an LP
+  with fewer ties needs fewer iterations. In four-week OT2030 runs from 1 January
+  and 1 September the ramp took 4.6–7.7% fewer CPLEX iterations, in every one of
+  the 28 solves.
+- **Five percent leaves the decisions nearly unchanged.** Over those four weeks
+  storage stayed within 40 GWh of the undiscounted run, and prices within
+  0.3 EUR/MWh.
+- **The three days at 1** keep the daily cycling of pumped hydro, batteries and
+  heat storage at full weight.
+
+It needs a Backbone `master` whose CHANGELOG lists the forecast discount; an older
+checkout stops with a domain error on `t_forecastDiscountFlat`.
+
 ## Where the output goes
 
 `results/<tag>/`, holding `results.gdx`, `debug.gdx`, `info.txt`, `warnings.log`,

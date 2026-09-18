@@ -38,6 +38,7 @@ def _write_ini(path: Path, config: dict) -> Path:
         "climate_data": str(config["climate_data"]),
         "country_codes": repr(config["country_codes"]),
         "bb_timeseries_length": str(config["bb_timeseries_length"]),
+        "bb_horizon_weeks": str(config["bb_horizon_weeks"]),
         "unitdata_files": repr(config["unitdata_files"]),
         "unittypedata_files": repr(config["unittypedata_files"]),
         "nodedata_files": repr(config["nodedata_files"]),
@@ -96,13 +97,14 @@ class TestASingleScenario:
     def test_the_gams_templates_are_copied_and_patched(self, project, tmp_path):
         # The finalize step: templates are copied out of the input folder with
         # config-derived substitutions applied.
-        input_folder, config_file = project(bb_timeseries_length=2)
+        input_folder, config_file = project(bb_timeseries_length=2, bb_horizon_weeks=52)
         build_input_data.main(input_folder, config_file, output_root=tmp_path / "out")
 
         schedule = (next((tmp_path / "out").iterdir()) / "scheduleInit.gms").read_text(
             encoding="utf-8"
         )
         assert "'dataLength') =  48;" in schedule     # 2 days * 24 h
+        assert "'t_horizon') = 24*7*52;" in schedule  # the config's horizon, not the template's 70
 
     def test_a_window_that_is_not_whole_years_is_warned_in_the_summary_log(
         self, project, tmp_path

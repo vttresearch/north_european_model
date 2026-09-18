@@ -246,7 +246,8 @@ logged message, but never crash and never silently coerce. That property is swep
 1. **Pure string transforms with a fixed contract** — `_patch_gams_file_content`. Pin the
    substituted substring, not the document.
 2. **Arithmetic that is the contract** — `_safe_eval_int("365*5") == 1825`,
-   `t_max = ceil((L*24 + 10920) / 1000) * 1000`, TWh/yr → MWh/h.
+   `t_max = ceil((L*24 + W*168) / 1000) * 1000` for window `L` days and horizon `W`
+   weeks, TWh/yr → MWh/h.
 3. **Documented truth tables** — `merge_row_by_row`'s six methods, whose docstring at
    `merge_row_by_row`'s own docstring *is* the specification. Name it in a comment.
 4. **Format contracts** — the fake-MultiIndex first row, the `_output1` strip,

@@ -45,6 +45,7 @@ DH_SPEC = dict(SPEC, processor_name="DH_demand_fromTemperature", demand_grid="dh
 _STRUCTURAL_KEYS = [
     "country_codes", "exclude_grids", "exclude_nodes",
     "climate_data", "bb_timeseries_start", "bb_timeseries_length",
+    "bb_horizon_weeks",
     "forecast_quantiles", "forecast_weights", "timeseries_specs",
 ]
 
@@ -289,6 +290,33 @@ class TestARebuildAlwaysGetsItsSourceData:
         assert not manager.any_timeseries_changed
         assert not manager.rebuild_bb_excel
         assert not manager.reimport_source_excels
+
+
+class TestAHorizonChangeRecopiesTheGamsFiles:
+    """bb_horizon_weeks is patched into scheduleInit.gms and sizes the t set.
+
+    The GAMS files are copied and patched only on a full rerun, so a horizon
+    change that did not force one would leave the old horizon in the built
+    folder, and nothing in the build would say so.
+    """
+
+    def test_a_changed_horizon_forces_a_full_rerun(self, tmp_path):
+        settle_cache(make_manager(tmp_path, bb_horizon_weeks=65))
+
+        manager = make_manager(tmp_path, bb_horizon_weeks=70)
+        manager.run()
+
+        assert manager.full_rerun
+        manager.logger.assert_logged("bb_horizon_weeks")
+
+    def test_an_unchanged_horizon_does_not(self, tmp_path):
+        """The control -- otherwise the assertion above passes on any full rerun."""
+        settle_cache(make_manager(tmp_path, bb_horizon_weeks=65))
+
+        manager = make_manager(tmp_path, bb_horizon_weeks=65)
+        manager.run()
+
+        assert not manager.full_rerun
 
 
 class TestTheBuildSaysWhatItWillRerun:

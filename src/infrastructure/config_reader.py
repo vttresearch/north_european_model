@@ -220,6 +220,23 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             f"got {bb_timeseries_length}."
         )
 
+    # Parse optional bb_horizon_weeks (default: 70). Whole weeks, because the last
+    # interval block in scheduleInit.gms steps a week at a time from week 2.
+    bb_horizon_raw = inputdata.get('bb_horizon_weeks', '70')
+    try:
+        bb_horizon_weeks = _safe_eval_int(bb_horizon_raw)
+    except (ValueError, SyntaxError):
+        raise ValueError(
+            f"bb_horizon_weeks must be a whole number of weeks or a simple "
+            f"arithmetic expression (e.g. 52+18); got '{bb_horizon_raw}'."
+        )
+    if not (3 <= bb_horizon_weeks <= 156):
+        raise ValueError(
+            f"bb_horizon_weeks must be between 3 and 156 weeks: below 3 the weekly "
+            f"steps have no room after the first two weeks, and 156 is three years; "
+            f"got {bb_horizon_weeks}."
+        )
+
     # Validate that at least one climate year fits within the data range
     mm, dd = int(bb_timeseries_start[:2]), int(bb_timeseries_start[3:])
     data_end = datetime(end_year, 12, 31, 23)
@@ -315,6 +332,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         # Timeseries window
         'bb_timeseries_start': bb_timeseries_start,
         'bb_timeseries_length': bb_timeseries_length,
+
+        # Backbone schedule horizon
+        'bb_horizon_weeks': bb_horizon_weeks,
 
         # Topology
         'country_codes': ast.literal_eval(inputdata.get('country_codes')),

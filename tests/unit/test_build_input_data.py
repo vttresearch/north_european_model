@@ -3,8 +3,9 @@
 ``_patch_gams_file_content`` is a pure string transform with a fixed contract,
 so exact values are pinned here -- one of the five cases where pinning is
 correct (see tests/README.md).  The arithmetic it performs *is* the contract:
-``dataLength = bb_timeseries_length * 24``, ``t_max`` rounded up to the next
-thousand, ``forecastNumber = len(quantiles)``.
+``t_horizon = 24*7*bb_horizon_weeks``, ``dataLength = bb_timeseries_length * 24``,
+``t_max`` = window plus horizon rounded up to the next thousand,
+``forecastNumber = len(quantiles)``.
 
 The three GAMS templates carry in-file warnings reading "do not edit ... unless
 updating also _patch_gams_file_content() in build_input_data.py".  The
@@ -21,12 +22,29 @@ import build_input_data
 from build_input_data import _patch_gams_file_content
 from tests._common.fixtures import FakeLogger, make_config
 
-#: 24 * 7 * 65, mirroring mSettings('schedule', 't_horizon') in scheduleInit.gms.
-DEF_T_HORIZON = 10920
+#: The fixture's default horizon in hours, 24*7*bb_horizon_weeks.
+DEF_T_HORIZON = make_config()["bb_horizon_weeks"] * 7 * 24
 
 
 class TestScheduleInit:
     ANCHOR = "    mSettings('schedule', 'dataLength') =  8760;\n"
+    HORIZON = ("    mSettings('schedule', 't_horizon') = 24*7*70;"
+               "    // How many active time steps\n")
+
+    @pytest.mark.parametrize("weeks", [3, 52, 65, 104])
+    def test_t_horizon_is_the_configured_weeks(self, weeks):
+        out = _patch_gams_file_content(
+            "scheduleInit.gms", self.HORIZON, make_config(bb_horizon_weeks=weeks)
+        )
+        assert f"'t_horizon') = 24*7*{weeks};" in out
+        assert "24*7*70" not in out
+        # Only the week count is replaced; the line's own comment stays.
+        assert "// How many active time steps" in out
+
+    def test_t_horizon_patch_is_idempotent(self):
+        config = make_config(bb_horizon_weeks=52)
+        once = _patch_gams_file_content("scheduleInit.gms", self.HORIZON, config)
+        assert _patch_gams_file_content("scheduleInit.gms", once, config) == once
 
     @pytest.mark.parametrize(
         "length, expected",
@@ -96,6 +114,18 @@ class TestTimeAndSamples:
         # Six digits, zero padded: GAMS set elements are compared as text, so
         # t11000 and t011000 are different symbols.
         assert len(f"{expected:06d}") == 6
+
+    @pytest.mark.parametrize(
+        "weeks, expected", [(52, 18000), (70, 21000), (104, 27000)],
+        ids=["52wk", "70wk", "104wk"],
+    )
+    def test_t_max_follows_the_configured_horizon(self, weeks, expected):
+        # One-year window: 8760 h plus 24*7*weeks, rounded up to the next thousand.
+        out = _patch_gams_file_content(
+            "timeAndSamples.inc", self.ANCHOR,
+            make_config(bb_timeseries_length=365, bb_horizon_weeks=weeks),
+        )
+        assert f"t000000 * t{expected:06d}" in out
 
     def test_t_max_leaves_room_for_the_horizon_beyond_the_data(self):
         # Property rather than a pinned number: the t index must extend past the
@@ -184,6 +214,15 @@ class TestRealTemplatesStillMatch:
         assert out != content, "dataLength anchor no longer matches scheduleInit.gms"
         assert "'dataLength') =  48;" in out
 
+    def test_schedule_init_horizon_anchor_is_present(self, templates):
+        # 52 weeks, so a patch that no longer matches cannot pass by leaving the
+        # template's own 70 in place.
+        content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
+        out = _patch_gams_file_content(
+            "scheduleInit.gms", content, make_config(bb_horizon_weeks=52)
+        )
+        assert "'t_horizon') = 24*7*52;" in out, "t_horizon anchor no longer matches scheduleInit.gms"
+
     def test_schedule_init_probability_block_anchor_is_present(self, templates):
         content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
         config = make_config(
@@ -239,6 +278,7 @@ class TestGamsSettingsSummary:
         # substitution that stopped happening cannot pass by accident.
         config = make_config(
             bb_timeseries_length=40,
+            bb_horizon_weeks=52,
             forecast_quantiles={"f01": 0.5, "f02": 0.9},
             forecast_weights={"f01": 0.7, "f02": 0.3},
         )
@@ -253,6 +293,9 @@ class TestGamsSettingsSummary:
         schedule = patched("scheduleInit.gms")
         times = patched("timeAndSamples.inc")
         changes = patched("changes.inc")
+
+        assert f"'t_horizon') = 24*7*{settings['horizon_weeks']};" in schedule
+        assert f"{settings['t_horizon']} h ({settings['horizon_weeks']} weeks)" in reported
 
         assert f"'dataLength') =  {settings['data_length']};" in schedule
         assert str(settings["data_length"]) in reported
@@ -280,10 +323,11 @@ class TestGamsSettingsSummary:
         assert "deterministic" in reported
 
     def test_the_block_stays_short_and_carries_no_warnings(self):
-        # A lead-in and one row per patched symbol.  The block is a reassurance
-        # on a normal build, so growing it is a decision, not an accident.
+        # A lead-in and one row per patched symbol: t_horizon, dataLength, t, f
+        # and p_mfProbability.  The block is a reassurance on a normal build, so
+        # growing it is a decision, not an accident.
         _, logger = self._report(make_config())
-        assert len(logger.records) == 5
+        assert len(logger.records) == 6
         assert all(level == "none" for level, _ in logger.records)
 
 
@@ -323,7 +367,7 @@ class TestWindowLengthWarning:
         (message,) = self._warnings(bb_timeseries_length=800)
         assert "800" in message
         assert "10 Mar" in message and "01 Jan" in message
-        assert "345" in message            # 800 days minus the 455-day horizon
+        assert "310" in message            # 800 days minus the 490-day (70-week) horizon
         assert "365*2" in message
 
     def test_a_window_shorter_than_the_horizon_is_met_by_every_solve(self):

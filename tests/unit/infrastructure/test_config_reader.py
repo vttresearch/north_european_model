@@ -198,6 +198,7 @@ class TestLoadConfig:
         assert config["force_full_rerun"] is False
         assert config["bb_timeseries_start"] == "01-01"
         assert config["bb_timeseries_length"] == 365
+        assert config["bb_horizon_weeks"] == 70
         assert config["timeseries_specs"] == {}
         assert config["exclude_grids"] == []
 
@@ -220,6 +221,17 @@ class TestLoadConfig:
         body = MINIMAL_INI.replace("climate_data = 2014-2015", "climate_data = 2005-2016")
         config = load_config(_write_ini(tmp_path, body + "bb_timeseries_length = 365*5\n"))
         assert config["bb_timeseries_length"] == 1825
+
+    def test_bb_horizon_weeks_accepts_an_expression(self, tmp_path):
+        config = load_config(_write_ini(tmp_path, MINIMAL_INI + "bb_horizon_weeks = 52+18\n"))
+        assert config["bb_horizon_weeks"] == 70
+
+    @pytest.mark.parametrize("value", ["2", "157", "70.5", "seventy"])
+    def test_rejects_a_horizon_outside_whole_weeks_3_to_156(self, tmp_path, value):
+        # Below 3 the weekly interval block has no room after the first two weeks;
+        # a fraction would leave a partial week the block cannot step through.
+        with pytest.raises(ValueError, match="bb_horizon_weeks"):
+            load_config(_write_ini(tmp_path, MINIMAL_INI + f"bb_horizon_weeks = {value}\n"))
 
     def test_rejects_a_window_longer_than_the_available_climate_data(self, tmp_path):
         """Cross-validation at config_reader.py:226-241.

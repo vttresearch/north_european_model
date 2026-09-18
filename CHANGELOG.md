@@ -260,3 +260,9 @@ not build and why, and has a documentation page of its own.
 - README: `--forecasts` takes 1 or 3, not 1/2/4, and defaults to 3. The old list
   counted the realized branch; `changes.inc` counts only the forecasts beside it.
   The Spine Toolbox Backbone item passed 4 and now passes 3.
+- `bb_horizon_weeks` config key sets the schedule horizon, default 70 weeks (was a
+  fixed 65); it also sizes the `t` set.
+  [docs/running-the-model.md](docs/running-the-model.md#horizon-and-forecast-discount)
+- scheduleInit.gms: forecast discount, weight 1 for four days then a linear fall to
+  0.95 at the horizon end. A solver control: 5-8% fewer iterations. Needs a
+  Backbone `master` with the forecast discount.

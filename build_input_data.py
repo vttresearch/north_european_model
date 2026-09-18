@@ -410,10 +410,6 @@ def _check_dependencies():
 
 
 
-#: Mirrors mSettings('schedule', 't_horizon') = 24*7*65 in scheduleInit.gms.
-#: Used to size the t-index upper bound in timeAndSamples.inc.
-_DEF_T_HORIZON = 24 * 7 * 65  # 10920
-
 #: How far a climate window may be from a whole number of calendar years before
 #: the build warns. Leap days make a whole-year window 365*n plus 0..ceil(n/4)
 #: days, so the tolerance is counted against the real calendar, not against 365.
@@ -486,7 +482,7 @@ def _warn_about_window_length(logger, config: dict) -> None:
     extra = typical - 365 * n
     suggestion = ("365" if n == 1 else f"365*{n}") + (f"+{extra}" if extra else "")
 
-    horizon_days = _DEF_T_HORIZON // 24
+    horizon_days = config["bb_horizon_weeks"] * 7
     reach = days - horizon_days
     if reach > 0:
         consequence = (
@@ -563,12 +559,17 @@ def _derive_gams_settings(config: dict) -> dict:
     deterministic run using f00 alone.
     """
     days = config.get("bb_timeseries_length", 365)
+    weeks = config["bb_horizon_weeks"]
     quantiles = config["forecast_quantiles"]
 
     return {
         "days": days,
         "data_length": days * 24,
-        "t_max": math.ceil((days * 24 + _DEF_T_HORIZON) / 1000) * 1000,
+        "horizon_weeks": weeks,
+        "t_horizon": weeks * 7 * 24,
+        # The t set must reach the end of the last solve's horizon: the window
+        # plus one horizon, rounded up to the next thousand.
+        "t_max": math.ceil((days * 24 + weeks * 7 * 24) / 1000) * 1000,
         # Floor at f01 so the declared range is never the invalid GAMS "f00 * f00".
         # Backbone filters active f at runtime, so an unused f01 here is harmless.
         "last_f": f"f{max(len(quantiles), 1):02d}",
@@ -585,6 +586,12 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
     settings = _derive_gams_settings(config)
 
     if filename == "scheduleInit.gms":
+        content = re.sub(
+            r"(mSettings\('schedule', 't_horizon'\) = 24\*7\*)\d+",
+            rf"\g<1>{settings['horizon_weeks']}",
+            content,
+        )
+
         content = content.replace(
             "mSettings('schedule', 'dataLength') =  8760;",
             f"mSettings('schedule', 'dataLength') =  {settings['data_length']};",
@@ -641,6 +648,7 @@ def _log_gams_settings(logger, settings: dict) -> None:
 
     logger.log_status("GAMS settings written:", level="none")
     for symbol, value in (
+        ("t_horizon", f"{settings['t_horizon']} h ({settings['horizon_weeks']} weeks)"),
         ("dataLength", f"{settings['data_length']} h ({settings['days']} days)"),
         ("t", f"t000000 * t{settings['t_max']:06d}"),
         ("f", f"f00 * {settings['last_f']} "
