@@ -6,7 +6,7 @@ This readme has the following main sections
 - [Documentation](#documentation)
 - [Installing Backbone and the North European Model](#installing-backbone-and-the-north-european-model)
 - [Updating Backbone North European Model](#updating-backbone-and-the-north-european-model)
-- [Installing MiniConda and setting up the environments](#installing-miniconda-and-setting-up-the-environment)
+- [Installing Miniforge and setting up the environment](#installing-miniforge-and-setting-up-the-environment)
 - [Updating the conda environment](#Updating-the-conda-environment)
 - [Downloading required time series files](#downloading-required-time-series-files)
 - [Building input files for Backbone and running the model](#Building-input-files-for-Backbone-and-running-the-model)
@@ -220,16 +220,16 @@ For the moment, the North European Model works only with the Backbone `master` b
  * Revert all changes.
 
 
-## Installing Miniconda and setting up the environment
+## Installing Miniforge and setting up the environment
 
 [Back to top](#North-European-energy-system-model)
 
-**CHECKPOINT**: Install [miniConda](https://www.anaconda.com/docs/getting-started/miniconda/install) if not yet installed. 
+**CHECKPOINT**: Install [Miniforge](https://github.com/conda-forge/miniforge) if not yet installed. 
 
-These instructions are written for Miniconda, but users can of course choose other conda versions as well.
-  * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to windows search bar), 
-  * In Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
-  * In Miniconda, set up the environment by running the following commands:
+Miniforge is a conda installer configured for the conda-forge channel alone, which is the channel `environment.yml` asks for. Miniconda and Anaconda can create the same environment, but a fresh install stops `conda env create` at a Terms of Service prompt for Anaconda's own channels, and those terms can require a paid licence in larger organisations. Miniforge never asks.
+  * Open the installed Miniforge Prompt (e.g. type `miniforge` to windows search bar), 
+  * In Miniforge Prompt, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
+  * In Miniforge Prompt, set up the environment by running the following commands:
 	
     ```
 	conda env create -f environment.yml
@@ -237,7 +237,7 @@ These instructions are written for Miniconda, but users can of course choose oth
 	```
 	
 
-The installed environment needs one additional package as Miniconda does not automatically find it. After creating and activating the `northEuropeanModel` environment, install the following additional package in Miniconda by typing:
+The environment needs one more package, which is not on conda-forge. With the `northEuropeanModel` environment active, install it with pip:
 
 ```
 pip install gamsapi[transfer]==xx.y.z
@@ -245,7 +245,11 @@ pip install gamsapi[transfer]==xx.y.z
 
 where xx.y.z is your GAMS version. You can find the correct version by opening GAMS Studio, clicking **Help** -> **GAMS Licensing** -> check GAMS Distribution xx.y.z.
 
+`gamsapi` exists for GAMS 45 and newer. With an older GAMS, install a GAMS 45 or newer alongside it purely for reading and writing gdx files, which needs no licence, and use that version here. The build picks the GAMS install whose major version matches the `gamsapi` you installed.
+
 After these steps, you should have the required software and environment ready.
+
+`environment.yml` pins the OpenBLAS maths library rather than MKL. With MKL, a `python.exe` started by its full path, as IDEs, Spine Toolbox and scripts do, crashes in numpy or matplotlib without an error message.
 
 `environment.yml` covers both building the input data and the figures
 `tools/input_data_summary.py` draws. If you already have a `northEuropeanModel`
@@ -258,15 +262,24 @@ up packages added since.
 [Back to top](#North-European-energy-system-model)
 
 Some updates might require updating the conda environment. This is relatively easy process when following these steps:
-  * Open the installed Miniconda Prompt (e.g. type `miniconda` or `anaconda` to windows search bar), 
-  * In Miniconda, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
-  * In Miniconda, update the environment by running following:
+  * Open the installed Miniforge Prompt (e.g. type `miniforge` to windows search bar), 
+  * In Miniforge Prompt, go to folder **backbone/north_european_model/** by typing two commands: `c:` and then `cd c:\backbone\north_european_model`.
+  * In Miniforge Prompt, update the environment by running following:
 	
   ```
 	conda env update -n=northEuropeanModel --file=environment.yml
   ```
 	
 Follow the instructions in the dialogue and install the required updates, if there are any. No further actions are needed.
+
+**Check first whether the environment came from Anaconda's channels.** Run `conda list -n northEuropeanModel numpy`: if the channel column does not say `conda-forge`, recreate the environment instead of updating it, because an update would mix packages from two channels. Recreating it takes a few minutes:
+
+```
+conda env remove -n northEuropeanModel
+conda env create -f environment.yml
+conda activate northEuropeanModel
+pip install gamsapi[transfer]==xx.y.z
+```
 
 
 
@@ -347,9 +360,9 @@ spinetoolbox
 Go to:
 File -> Open project -> choose the north_european_model folder. You can see a Spine Toolbox logo next to it. If your North European Model is installed under Backbone, it is not enough to just choose the Backbone folder as it is a separate Spine Toolbox project.
 
-To get the Miniconda environment 'northEuropeanModel' running in Spine Toolbox, it needs to be set as the Python kernel:
+To get the conda environment 'northEuropeanModel' running in Spine Toolbox, it needs to be set as the Python kernel:
 
-1. Open Miniconda Prompt.
+1. Open Miniforge Prompt.
 
 2. Activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
    
@@ -370,11 +383,11 @@ Go to the Spine Toolbox Design View and click the Input_data project item. Choos
 
 ### Building input files
 
-Inputs are build with a python script which is easiest to run with Miniconda handling the packages and environments.
- * Open the installed Miniconda Prompt (e.g. type `miniconda` to Windows search bar), 
- * In Miniconda, go to the model folder e.g. `c:\backbone\north_european_model\` by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
- * In Miniconda, activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
- * In Miniconda, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2030.ini`).
+Inputs are build with a python script which is easiest to run with Miniforge handling the packages and environments.
+ * Open the installed Miniforge Prompt (e.g. type `miniforge` to Windows search bar), 
+ * In Miniforge Prompt, go to the model folder e.g. `c:\backbone\north_european_model\` by typing two commands: `c:` and then `cd c:\backbone\north_european_model`
+ * In Miniforge Prompt, activate the `northEuropeanModel` environment by typing `conda activate northEuropeanModel`.
+ * In Miniforge Prompt, run `build_input_data.py` by typing (`python build_input_data.py src_files config_NT2030.ini`).
 
 
 Once it finishes, read what you built by typing
@@ -497,7 +510,7 @@ The sections above are what a modeller needs to run the model by hand. This one 
 anyone wanting to automate the runs, drive them from a script or an AI assistant, or
 change the pipeline rather than the data.
 
-**Call the interpreter by its full path.** Automation has no Miniconda Prompt to open and
+**Call the interpreter by its full path.** Automation has no Miniforge Prompt to open and
 no `conda activate` step, so name the `northEuropeanModel` environment's `python.exe`
 directly, or go through `conda run -n northEuropeanModel python ...`. Both the build and
 the tests work that way:

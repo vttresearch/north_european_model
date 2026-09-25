@@ -251,6 +251,11 @@ not build and why, and has a documentation page of its own.
 - `config_OT2030-continuous5y.ini`, an example of `bb_timeseries_length`
   expressions (365*5).
 - environment.yml: added matplotlib.
+- environment.yml: conda-forge instead of Anaconda's `defaults`, and OpenBLAS pinned
+  (`libblas=*=*openblas`). With MKL, an interpreter started by path died in numpy or
+  matplotlib with 0xC06D007F and no traceback.
+- README: installs with Miniforge; an environment from Anaconda's channels is
+  recreated rather than updated.
 - Toolbox wrapper import fixed by moving the CLI arg parser to `src/utils.py`.
 - README: a "Tool assisted running" section for automating builds and runs. The
   environment and GAMS setup are not repeated from the parent Backbone checkout,

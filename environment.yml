@@ -14,12 +14,23 @@
 # BB_GAMS_API=C:\GAMS\47 -- the same variable the parent Backbone repo uses.
 # Without a deliberate binding, gams.transfer attaches to whichever GAMS was
 # installed last and warns on every container.
+#
+# Miniconda or Anaconda? A fresh install stops `conda env create` at a Terms of
+# Service prompt for Anaconda's own channels, even though this file asks only for
+# conda-forge. Those terms can require a paid licence in larger organisations;
+# Miniforge (github.com/conda-forge/miniforge) is configured for conda-forge alone
+# and never asks.
 name: northEuropeanModel
 channels:
-  - defaults
+  - conda-forge
 dependencies:
   - python=3.12
   - pandas=2.2
+  # OpenBLAS, not MKL: MKL loads its kernels by name at first use and finds them only
+  # when the env is activated, so an interpreter started by path (a Jupyter kernel,
+  # a .cmd wrapper, an IDE) dies on np.dot or np.linalg with 0xC06D007F and no
+  # traceback. OpenBLAS is one DLL and works however the interpreter is started.
+  - libblas=*=*openblas
   - pyarrow
   - tqdm
   - openpyxl
