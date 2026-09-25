@@ -35,4 +35,7 @@ dependencies:
   - tqdm
   - openpyxl
   - matplotlib
-  - pytest
+  # Below 9.1: pytest 9.1.1 errors 16 tests in setup with `assert not
+  # self._finalizers` -- every one a scope="class" fixture defined as a method
+  # inside its test class. 9.0.3 passes the whole suite.
+  - pytest<9.1

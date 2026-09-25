@@ -256,6 +256,8 @@ not build and why, and has a documentation page of its own.
   matplotlib with 0xC06D007F and no traceback.
 - README: installs with Miniforge; an environment from Anaconda's channels is
   recreated rather than updated.
+- environment.yml: pytest below 9.1. pytest 9.1.1 errors 16 tests in setup, every
+  one a class-scoped fixture defined inside its test class.
 - Toolbox wrapper import fixed by moving the CLI arg parser to `src/utils.py`.
 - README: a "Tool assisted running" section for automating builds and runs. The
   environment and GAMS setup are not repeated from the parent Backbone checkout,
