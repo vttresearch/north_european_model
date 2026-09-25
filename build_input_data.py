@@ -263,8 +263,8 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
 
         logger.log_status("Finalizing", level="run", section_start_length=55, add_empty_line_before=True)
 
-        # Copying GAMS files for a new run or changed topology
-        if cache_manager.full_rerun:
+        # Copying GAMS files on a full rerun, or when a template in GAMS_files changed
+        if cache_manager.recopy_gams_files:
             gams_src_folder = input_folder / "GAMS_files"
             if not gams_src_folder.exists():
                 logger.log_status(f"GAMS source folder not found: {gams_src_folder}", level="warn")

@@ -271,3 +271,8 @@ not build and why, and has a documentation page of its own.
 - scheduleInit.gms: forecast discount, weight 1 for four days then a linear fall to
   0.95 at the horizon end. A solver control: 5-8% fewer iterations. Needs a
   Backbone `master` with the forecast discount.
+- scheduleInit.gms: 27 hourly steps, then 3-hourly to step 54 and 6-hourly to 168.
+  Ending the 3-hourly block at 51 left 117 steps for the 6-hourly one, and Backbone
+  aborted every run.
+- A changed file in `src_files/GAMS_files` is copied into the built folder by the
+  next build, without a full rerun. Before, only a full rerun copied them.

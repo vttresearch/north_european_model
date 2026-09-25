@@ -79,6 +79,7 @@ def settle_cache(manager: CacheManager, stale_processors: tuple[str, ...] = ()) 
         CacheManager._BB_PIPELINE_FILES, "bb_excel_pipeline_hashes.json"
     )
     manager._detect_input_file_changes(manager.config, manager.input_file_folder)
+    manager._check_gams_file_changes()
     json_exchange.save_json(
         manager.cache_folder / "config_structural.json",
         {k: manager.config[k] for k in _STRUCTURAL_KEYS if k in manager.config},
@@ -295,9 +296,10 @@ class TestARebuildAlwaysGetsItsSourceData:
 class TestAHorizonChangeRecopiesTheGamsFiles:
     """bb_horizon_weeks is patched into scheduleInit.gms and sizes the t set.
 
-    The GAMS files are copied and patched only on a full rerun, so a horizon
-    change that did not force one would leave the old horizon in the built
-    folder, and nothing in the build would say so.
+    The horizon reaches the GAMS files through the patch, not through a template
+    edit, so the template check cannot see it. A horizon change that did not
+    force a full rerun would leave the old horizon in the built folder, and
+    nothing in the build would say so.
     """
 
     def test_a_changed_horizon_forces_a_full_rerun(self, tmp_path):
@@ -317,6 +319,57 @@ class TestAHorizonChangeRecopiesTheGamsFiles:
         manager.run()
 
         assert not manager.full_rerun
+
+
+class TestAnEditedGamsTemplateIsCopiedAgain:
+    """A template edit on its own used to reach no build.
+
+    The copy ran only on a full rerun and nothing hashed ``GAMS_files``, so an
+    edited scheduleInit.gms stayed out of the built folder while the build said
+    nothing had changed. No phase reads the templates, so an edit recopies them
+    and reruns nothing else.
+    """
+
+    def _templates(self, tmp_path, files):
+        folder = tmp_path / "input" / "GAMS_files"
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, text in files.items():
+            (folder / name).write_text(text, encoding="utf-8")
+        return folder
+
+    def test_an_edited_template_is_copied_and_nothing_reruns(self, tmp_path):
+        folder = self._templates(tmp_path, {"scheduleInit.gms": "c001 = 2*24+3;"})
+        settle_cache(make_manager(tmp_path))
+        (folder / "scheduleInit.gms").write_text("c001 = 2*24+6;", encoding="utf-8")
+
+        manager = make_manager(tmp_path)
+        manager.run()
+
+        assert manager.recopy_gams_files and not manager.full_rerun
+        assert not manager.rebuild_bb_excel and not manager.any_timeseries_changed
+        manager.logger.assert_logged("copy the GAMS files")
+        manager.logger.assert_not_logged("Nothing changed")
+
+    def test_a_removed_template_counts_as_a_change(self, tmp_path):
+        folder = self._templates(tmp_path, {"scheduleInit.gms": "x", "changes.inc": "y"})
+        settle_cache(make_manager(tmp_path))
+        (folder / "changes.inc").unlink()
+
+        manager = make_manager(tmp_path)
+        manager.run()
+
+        assert manager.recopy_gams_files
+
+    def test_untouched_templates_are_not_copied(self, tmp_path):
+        """The control -- otherwise the assertions above pass on every build."""
+        self._templates(tmp_path, {"scheduleInit.gms": "c001 = 2*24+6;"})
+        settle_cache(make_manager(tmp_path))
+
+        manager = make_manager(tmp_path)
+        manager.run()
+
+        assert not manager.recopy_gams_files
+        manager.logger.assert_logged("Nothing changed since the last run")
 
 
 class TestTheBuildSaysWhatItWillRerun:

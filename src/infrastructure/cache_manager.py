@@ -112,6 +112,11 @@ class CacheManager:
     ]
 
     @property
+    def recopy_gams_files(self) -> bool:
+        """Copy the GAMS templates into the output folder: on a full rerun, or when one changed."""
+        return self.full_rerun or self.gams_files_changed
+
+    @property
     def any_timeseries_changed(self) -> bool:
         """Check if any timeseries processor needs to be rerun."""
         return any(self.timeseries_changed.values())
@@ -150,6 +155,7 @@ class CacheManager:
         self.processor_inputs_folder = self.cache_folder / "processor_inputs"
 
         self.input_file_folder = Path(input_folder) / "data_files"
+        self.gams_file_folder = Path(input_folder) / "GAMS_files"
         self.config = config
         self.logger = logger
 
@@ -158,6 +164,9 @@ class CacheManager:
         self.source_data_pipeline_code_updated = False
         self.timeseries_pipeline_code_updated = False
         self.bb_excel_pipeline_code_updated = False
+
+        # GAMS template related switch: recopy the templates, rerun nothing
+        self.gams_files_changed = False
 
         # config file related rerun switches
         self.demand_files_changed = False
@@ -215,6 +224,29 @@ class CacheManager:
 
         json_exchange.save_json(hash_store_path, current_hashes)
 
+        return changed
+
+
+    def _check_gams_file_changes(self) -> bool:
+        """Whether the GAMS templates differ from the ones the last build copied.
+
+        build_input_data copies every file in ``<input_folder>/GAMS_files`` into
+        the output folder, patching a few lines from the config. Without this
+        check a template edited on its own reached no build: the copy ran only
+        on a full rerun, and nothing else here looked at the templates.
+
+        The folder is compared whole, so a file added or removed counts as a
+        change too. A missing record reads as an empty folder, which makes the
+        first build after a cache clear copy once.
+        """
+        current = {}
+        if self.gams_file_folder.is_dir():
+            current = {f.name: hash_utils.compute_file_hash(f)
+                       for f in sorted(self.gams_file_folder.glob("*.*")) if f.is_file()}
+
+        hash_store_path = self.cache_folder / "gams_files_hashes.json"
+        changed = json_exchange.load_json(hash_store_path) != current
+        json_exchange.save_json(hash_store_path, current)
         return changed
 
 
@@ -839,6 +871,8 @@ class CacheManager:
             )
         if self.rebuild_bb_excel:
             clauses.append("rebuild the Backbone input excel")
+        if self.recopy_gams_files:
+            clauses.append("copy the GAMS files")
 
         if not clauses:
             self.logger.log_status(
@@ -1006,6 +1040,10 @@ class CacheManager:
         if self.bb_excel_pipeline_code_updated and not self.full_rerun:
             self.logger.log_status("BB input excel pipeline code updated, generating new input excel for Backbone.",
                                    level="none")
+
+        # GAMS templates -- a change recopies them and reruns nothing else, since
+        # no phase reads them. Checked after Phase 2 so a cleared cache records them.
+        self.gams_files_changed = self._check_gams_file_changes()
 
         # Determine if BB input excel needs to be rebuilt.
         #

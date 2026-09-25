@@ -417,7 +417,7 @@ The keys each spec accepts are documented in the comment block above `timeseries
 
 ### Checking run specification files
 
-The script automatically copies the following required run specification files from `src_files\GAMS_files` to `<output_folder>`, and the user is free to edit them afterwards. In most cases, users do not need to edit these at all.
+The script automatically copies the following required run specification files from `src_files\GAMS_files` to `<output_folder>`, and the user is free to edit them afterwards. In most cases, users do not need to edit these at all. A build copies them again, over any edits made in `<output_folder>`, when it is a full rerun or when a file in `src_files\GAMS_files` has changed.
 * `1_options.gms` - some solver settings documented inside the file
 * `timeAndSamples.inc` - sets defining timestep and forecast domains in Backbone 
 * `modelsInit_example.gms` - a default modelsInit file calling scheduleInit.gms
