@@ -847,13 +847,13 @@ class TestTheSummaryHasATopLevelEntryPoint:
 # Hydro
 # ============================================================================
 
-def _hydro_workbook(turbine_availability=1.0, spill=None, pump=True, groups=None, extra_io=()):
+def _hydro_workbook(turbine_availability=1.0, spill=None, pump=True, min_gen=None, extra_io=()):
     """AT00_ror with a turbine, NOS0_psOpen with a turbine and a pump, as the builder writes them.
 
     Turbine efficiency 0.95 and pump 0.8, with an eff01 of 0 that must not count.
-    Each store is 0-100 MWh with a constant bound. ``groups`` is a list of
-    p_userconstraint rows; the default is one 9.5 MW minimum on AT00_rorTurbine,
-    whose draw is therefore 10 MWh/h.
+    Each store is 0-100 MWh with a constant bound. ``min_gen`` maps
+    ``(unit, input_output)`` to the ``minGen`` of that p_gnu_io row; the default
+    is 9.5 MW on AT00_rorTurbine's output, whose draw is therefore 10 MWh/h.
     """
     io = [
         ("ror", "AT00_ror", "AT00_rorTurbine", "input", 100.0),
@@ -876,32 +876,20 @@ def _hydro_workbook(turbine_availability=1.0, spill=None, pump=True, groups=None
                      (grid, node, "downwardLimit", 1, 0.0, 0)]
         if spill is not None:
             boundary.append((grid, node, "maxSpill", 1, spill, 0))
-    if groups is None:
-        groups = _minimum("UC_AT00_rorTurbine", "AT00", "rorTurbine", 9.5)
+    if min_gen is None:
+        min_gen = {("AT00_rorTurbine", "output"): 9.5}
+    p_gnu_io = pd.DataFrame(io, columns=["grid", "node", "unit", "input_output", "capacity"])
+    p_gnu_io["minGen"] = [min_gen.get((u, side), 0.0)
+                          for u, side in zip(p_gnu_io["unit"], p_gnu_io["input_output"])]
     return make_workbook(
-        p_gnu_io=pd.DataFrame(io, columns=["grid", "node", "unit", "input_output", "capacity"])
-        .assign(isActive=1, conversionCoeff=1.0),
+        p_gnu_io=p_gnu_io.assign(isActive=1, conversionCoeff=1.0),
         p_unit=pd.DataFrame([(u, 1, a, e, 0.0) for u, a, e in units],
                             columns=["unit", "isActive", "availability", "eff00", "eff01"]),
         p_gn=pd.DataFrame({"grid": ["ror", "psOpen"], "node": ["AT00_ror", "NOS0_psOpen"],
                            "energyStoredPerUnitOfState": [1, 1]}),
         boundary=pd.DataFrame(boundary, columns=["grid", "node", "param_gnBoundaryTypes",
                                                  "useConstant", "constant", "useTimeseries"]),
-        userconstraint=pd.DataFrame(groups, columns=[
-            "group", "1st dimension", "2nd dimension", "3rd dimension", "4th dimension",
-            "parameter", "value"]),
     )
-
-
-def _minimum(group, zone, unittype, constant, extra=()):
-    """The four rows the hydro compilation writes for one minimum, plus any extra."""
-    return [
-        (group, "elec", f"{zone}_elec", f"{zone}_{unittype}", "-", "v_gen", 1),
-        (group, "-", "-", "-", "-", "gt", -1),
-        (group, "-", "-", "-", "-", "constant", constant),
-        (group, "-", "-", "-", "-", "penalty", 300),
-        *extra,
-    ]
 
 
 def _series(inflow):
@@ -1009,36 +997,39 @@ class TestAStoreThatCannotCarryItsMinimumIsShort:
 class TestOnlyAMinimumTheSimpleModelCanAttributeIsSimulated:
     """A minimum the check misread would be a verdict about data it never understood."""
 
-    def test_the_compilation_form_draws_its_minimum_through_the_turbine(self):
-        groups, skipped = summary.min_generation_groups(_hydro_workbook(), {"ror", "psOpen"})
+    def test_a_minimum_on_the_turbine_output_is_drawn_through_its_efficiency(self):
+        minimums, skipped = summary.hydro_minimums(_hydro_workbook(), {"ror", "psOpen"})
         assert skipped == []
-        row = groups.iloc[0]
+        row = minimums.iloc[0]
         assert row["node"] == "AT00_ror"
         assert row["draw_MWh"] == pytest.approx(9.5 / 0.95)
         assert row["deliverable_MW"] == pytest.approx(95.0)
 
-    @pytest.mark.parametrize("parameter", ["lt", "eq", "sumOfTimesteps"])
-    def test_anything_beyond_the_simple_form_is_named_with_its_reason(self, parameter):
-        extra = [("UC_AT00_rorTurbine", "-", "-", "-", "-", parameter, -1)]
-        workbook = _hydro_workbook(groups=_minimum("UC_AT00_rorTurbine", "AT00", "rorTurbine",
-                                                   9.5, extra))
-        groups, skipped = summary.min_generation_groups(workbook, {"ror", "psOpen"})
-        assert groups.empty
-        assert skipped[0][0] == "UC_AT00_rorTurbine"
-        assert f"`{parameter}`" in skipped[0][1]
+    def test_availability_caps_what_the_turbine_gives_but_not_the_minimum(self):
+        """Backbone holds the whole minGen whenever availability is above zero."""
+        workbook = _hydro_workbook(turbine_availability=0.5)
+        row = summary.hydro_minimums(workbook, {"ror", "psOpen"})[0].iloc[0]
+        assert row["minimum_MW"] == pytest.approx(9.5)
+        assert row["draw_MWh"] == pytest.approx(10.0)
+        assert row["deliverable_MW"] == pytest.approx(47.5)
 
-    def test_units_on_two_stores_are_not_one_minimum(self):
-        rows = _minimum("UC_both", "AT00", "rorTurbine", 9.5)
-        rows.insert(1, ("UC_both", "elec", "NOS0_elec", "NOS0_psOpenTurbine", "-", "v_gen", 1))
-        groups, skipped = summary.min_generation_groups(_hydro_workbook(groups=rows),
-                                                        {"ror", "psOpen"})
-        assert groups.empty
+    def test_a_minimum_on_the_storage_side_is_named_with_its_reason(self):
+        workbook = _hydro_workbook(min_gen={("AT00_rorTurbine", "input"): 10.0})
+        minimums, skipped = summary.hydro_minimums(workbook, {"ror", "psOpen"})
+        assert minimums.empty
+        assert skipped == [("AT00_rorTurbine", "on its storage side")]
+
+    def test_a_unit_on_two_stores_is_not_one_minimum(self):
+        workbook = _hydro_workbook(
+            extra_io=[("psOpen", "NOS0_psOpen", "AT00_rorTurbine", "input", 100.0)])
+        minimums, skipped = summary.hydro_minimums(workbook, {"ror", "psOpen"})
+        assert minimums.empty
         assert "2 different stores" in skipped[0][1]
 
-    def test_a_group_about_other_plant_is_not_a_hydro_group(self):
-        workbook = _hydro_workbook(groups=_minimum("UC_gas", "DE00", "gasTurbine", 100.0))
-        groups, skipped = summary.min_generation_groups(workbook, {"ror", "psOpen"})
-        assert groups.empty and skipped == []
+    def test_a_minimum_on_other_plant_is_not_a_hydro_minimum(self):
+        workbook = _hydro_workbook(min_gen={("DE00_gasTurbine", "output"): 100.0})
+        minimums, skipped = summary.hydro_minimums(workbook, {"ror", "psOpen"})
+        assert minimums.empty and skipped == []
 
     def test_a_minimum_above_what_the_turbines_give_is_acted_on_whatever_the_water(self):
         result = summary.hydro_checks(_hydro_workbook(turbine_availability=0.05),
@@ -1052,8 +1043,7 @@ class TestAPumpedStoreIsOnlyShortIfPumpingCannotSaveIt:
     """Whether a store pumps is the market's decision, so pumping that saves it is watched."""
 
     def _row(self, pump):
-        groups = _minimum("UC_NOS0_psOpenTurbine", "NOS0", "psOpenTurbine", 9.5)
-        workbook = _hydro_workbook(pump=pump, groups=groups)
+        workbook = _hydro_workbook(pump=pump, min_gen={("NOS0_psOpenTurbine", "output"): 9.5})
         series = _series({"NOS0_psOpen": [[5.0] * 48]})
         return summary.hydro_checks(workbook, series, {"ror", "psOpen"}).minimum.iloc[0]
 
@@ -1210,17 +1200,17 @@ class TestACheckSaysWhatItsStateMeans:
         minimum = pd.DataFrame({"node": ["A_ror", "B_ror"], "state": ["ok", "watch"],
                                 "beyond_turbines": [False, False]})
         overflow = pd.DataFrame({"node": ["A_ror"], "state": ["act"]})
-        result = summary.HydroChecks(minimum=minimum, overflow=overflow, groups=2, windows=35)
+        result = summary.HydroChecks(minimum=minimum, overflow=overflow, minimums=2, windows=35)
         assert self._states(result) == [summary.CHECK_WATCH, summary.CHECK_ACT]
 
     def test_nothing_read_is_not_run_rather_than_ok(self):
-        result = summary.HydroChecks(groups=1, skipped="gamsapi is not importable",
+        result = summary.HydroChecks(minimums=1, skipped="gamsapi is not importable",
                                      minimum=pd.DataFrame({"node": ["A_ror"],
                                                            "beyond_turbines": [False]}))
         assert self._states(result) == [summary.CHECK_NOT_RUN, summary.CHECK_NOT_RUN]
 
-    def test_a_group_the_check_cannot_model_does_not_raise_the_state(self):
+    def test_a_minimum_the_check_cannot_model_does_not_raise_the_state(self):
         minimum = pd.DataFrame({"node": ["A_ror"], "state": ["ok"], "beyond_turbines": [False]})
-        result = summary.HydroChecks(minimum=minimum, groups=2, windows=35,
-                                     not_simulated=[("UC_x", "uses `lt`")])
+        result = summary.HydroChecks(minimum=minimum, minimums=2, windows=35,
+                                     not_simulated=[("A_rorTurbine", "on its storage side")])
         assert self._states(result)[0] == summary.CHECK_OK

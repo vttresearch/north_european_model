@@ -70,6 +70,11 @@ not build and why, and has a documentation page of its own.
   `AT00` and `SE04` reservoirs (7 and 5 MW). `FR00_ror` capacity falls
   20 500 -> 13 614 MW, the one fleet its inflow could not support.
   [docs/hydro.md](docs/hydro.md)
+- Hydro minimum generation is Backbone's `minGen` and `minGenPenalty` on the
+  turbines in `hydropower-compilation.xlsx` `unitdata`, no longer user constraints;
+  same values, and `userconstraintdata_files` is empty in the shipped configs. The
+  300 EUR penalty is now per MWh; the user constraint charged it per MW per step,
+  1.8 EUR/MWh in the 168 h steps.
 - Ramp costs reach thermal, CHP and heat-only units, not only hydro: `unittypedata`
   supplies `rampUpCost` and `rampDownCost`, taking the units that carry one from 53
   to 280.

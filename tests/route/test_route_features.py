@@ -9,6 +9,7 @@ connections), provenance where a value is carried, and pinned values only for
 the documented format contracts.
 """
 
+import pandas as pd
 import pytest
 
 from tests._common.asserts import (
@@ -259,3 +260,50 @@ class TestUserConstraints:
         assert "elecLimit".casefold() in {
             str(g).casefold() for g in userconstraint.sheets["group"]["group"]
         }
+
+
+# A must-run unit with a minimum on each side. The bare `minGen` goes where a
+# bare `capacity` goes, the output; `minGen_input1` names the input explicitly.
+MIN_GEN = """
+[unittypedata]
+scenario | year | unittype | grid_input1 | grid_output1 | eff00
+all      | 1    | mustRun  | biomass     | elec         | 0.4
+
+[nodedata]
+Country | Grid    | Scenario | Year | nodeBalance | price
+FI      | elec    | all      | 1    | 1           |
+FI      | biomass | all      | 1    |             | 30
+
+[unitdata]
+Country | unittype | unit_name_prefix | Scenario | Year | capacity_output1 | minGen | minGenPenalty | minGen_input1
+FI      | mustRun  |                  | all      | 1    | 100              | 20     | 300           | 60
+
+[demanddata]
+Country | Grid | Scenario | Year | TWh/year
+FI      | elec | all      | 1    | 1
+"""
+
+
+@pytest.fixture(scope="module")
+def min_gen(tmp_path_factory):
+    return run_route(tmp_path_factory.mktemp("mingen"), workbooks={"data.xlsx": MIN_GEN})
+
+
+class TestMinimumGeneration:
+    def test_the_route_runs_cleanly(self, min_gen):
+        min_gen.logger.assert_no_errors()
+        assert_workbook_consistent(min_gen.sheets)
+
+    def test_no_column_is_reported_unread(self, min_gen):
+        min_gen.logger.assert_not_logged("read by nothing")
+
+    def test_a_bare_min_gen_and_its_penalty_land_on_the_output(self, min_gen):
+        output = rows_for(min_gen.sheets["p_gnu_io"], unit="FI_mustRun", input_output="output")
+        assert output["minGen"].tolist() == [20]
+        assert output["minGenPenalty"].tolist() == [300]
+
+    def test_a_suffixed_min_gen_lands_on_its_input_alone(self, min_gen):
+        """The penalty was written without a suffix, so it belongs to the output only."""
+        inputs = rows_for(min_gen.sheets["p_gnu_io"], unit="FI_mustRun", input_output="input")
+        assert inputs["minGen"].tolist() == [60]
+        assert not (pd.to_numeric(inputs["minGenPenalty"], errors="coerce") > 0).any()

@@ -141,7 +141,7 @@ number here", once the sweep has been done.
 ## Backbone parameters this build does not write
 
 Re-derive rather than trusting this table: Backbone's own vocabulary moves. Last
-derived **2026-09-07**, against the `param_*` set declarations in
+derived **2026-09-07**, the `p_gnu_io` row **2026-09-25**, against the `param_*` set declarations in
 `../inc/1a_definitions.gms` rather than by hand — see
 [How to re-derive it](#how-to-re-derive-it) below.
 
@@ -149,7 +149,7 @@ derived **2026-09-07**, against the `param_*` set declarations in
 |---|---|---|
 | `p_gn` | 17 of 20 | `maxInvest`, `invCost`, `annuityFactor` — node-level investment |
 | `p_gnn` | 12 of 18 | `transferCapBidirectional`, `boundStateMaxDiff`, `unitSize`, `portion_of_transfer_to_reserve`, `useTimeseriesAvailability`, `useTimeseriesLoss` |
-| `p_gnu_io` | 32 of 34 | `profitMargin`, `maxTsDelay` |
+| `p_gnu_io` | 34 of 36 | `profitMargin`, `maxTsDelay` |
 | `p_unit` | 26 of 79 | `eff02`–`eff12` and `op02`–`op12`, the whole `hr*` / `hrop*` heat-rate family, `section`, `hrsection`, `outputCapacityTotal`, `unitOutputCapacityTotal`, `lastStepNotAggregated` |
 | `param_gnBoundaryTypes` | 6 of 46 | `minSpill`, `upwardSlack01`–`upwardSlack20`, `downwardSlack02`–`downwardSlack20` |
 | `param_gnBoundaryProperties` | 4 of 5 | `multiplier` — deliberate, see above |

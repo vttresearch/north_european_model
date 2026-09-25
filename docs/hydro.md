@@ -38,7 +38,8 @@ available, and this page will change with them. See
 | turbining / pumping power | `unitdata` `capacity_output1` | MW |
 | ramp rate | `unitdata` `maxRampUp` / `maxRampDown` | p.u. of capacity per minute |
 | practical maximum output | `unitdata` `availability` | fraction of capacity |
-| minimum generation | `userconstraintdata` `constant` | MW |
+| minimum generation | `unitdata` `minGen` | MW |
+| its shortfall penalty | `unitdata` `minGenPenalty` | EUR/MWh |
 | weekly inflow | `PECD-hydro-weekly-inflows.csv` | GWh/week → MWh/h |
 | daily run-of-river | `PECD-hydro-daily-ror-generation.csv` | GWh/day → MWh/h |
 | seasonal fill limits | `PECD-hydro-weekly-reservoir-levels.csv` | ratio 0–1, scaled to MWh |
@@ -153,8 +154,8 @@ reservoir. SE04 additionally carries the level data described in
 better data exists.
 
 Two checks run on every bidding-zone store, whatever the level. **Minimum generation**
-runs each climate window hour by hour, giving exactly the minimum from
-`userconstraintdata` and spilling above the ceiling, and asks whether the store ever
+runs each climate window hour by hour, giving exactly the turbines' `minGen` and
+spilling above the ceiling, and asks whether the store ever
 falls below its floor. **Overflow** releases everything the turbines and `maxSpill` can
 pass, and asks whether the store ever rises above its ceiling. In the OT2030 build no
 store runs short and none overflows in 35 windows; `DE00_ror`, `AT00_ror` and
@@ -422,8 +423,13 @@ removes is a discontinuity the solver has no reason to be handed.
 
 ## Minimum generation
 
-Hydro minimum generation comes from hand-written rows in
-`hydropower-compilation.xlsx :: userconstraintdata`, **not** from PECD.
+Hydro minimum generation is a hand-written `minGen` on each turbine in
+`hydropower-compilation.xlsx :: unitdata`, **not** from PECD. Backbone holds it on
+the turbine's electricity output in every step, in full whatever the unit's
+`availability` -- an availability of 0 is the only thing that lifts it. It is
+soft: a shortfall costs `minGenPenalty`, 300 EUR/MWh on every turbine that has a
+minimum, and is reported in `r_qMinGen_gnu`. See the parent's
+`docs/features/minimum-generation.md`.
 
 PECD's `min-max-generation` file was tried and abandoned, and it is worth saying
 why so that nobody tries again. Its required minimum generation exceeds the
@@ -442,15 +448,16 @@ see [reading the article as ratios](#reading-the-article-as-ratios).
 A minimum is written only where it is large enough to matter at the scale of this
 model. The reservoirs of `AT00` and `SE04` would carry 7 and 5 MW, and carry none.
 
-One number there is a judgement rather than a measurement. The constant for each
-group is the **weakest of the 52 weeks**, and two French weeks are reporting
-dropouts rather than operation: week 21 publishes a minimum of 0 MW and week 40
-of 16 MW, against a median week of 2038 MW, while `Max` for those weeks is entirely
-normal and the ramp record shows a matching 5806 MW/h spike. An 11.6 GW
-run-of-river fleet does not stop. Both weeks are excluded, which puts
-`UC_FR00_rorTurbine` at 1629 MW — within 2% of the hand-written 1593 it replaced,
-so the earlier number was kept. Fourteen other columns carry a collapsed week; in
-every one the column's median is small enough that it changes nothing.
+The minimum for each turbine is the **weakest of the 52 weeks**, and two French
+weeks are reporting dropouts rather than operation: week 21 publishes a minimum of
+0 MW and week 40 of 16 MW, against a median week of 2038 MW, while `Max` for those
+weeks is entirely normal and the ramp record shows a matching 5806 MW/h spike. An
+11.6 GW run-of-river fleet does not stop. Both weeks are excluded, which leaves a
+weakest credible week of 1629 MW. Fourteen other columns carry a collapsed week;
+in every one the column's median is small enough that it changes nothing.
+
+**`FR00_rorTurbine` is set by hand below that**: it carries 980 MW, 7.2% of its
+13 614 MW.
 
 ## Reading the article as ratios
 
@@ -467,7 +474,7 @@ So four quantities are carried across, each against the compilation's own capaci
 | Quantity | Written as | Source |
 |---|---|---|
 | run-of-river storage | `nodedata` `upwardLimit`, MWh | pondage hours at the 48 h window x capacity |
-| minimum generation | `p_userconstraint` `constant`, MW | weakest credible week as a fraction of capacity |
+| minimum generation | `unitdata` `minGen`, MW | weakest credible week as a fraction of capacity |
 | ramp rate | `unitdata` `maxRampUp` / `maxRampDown`, p.u./min | weekly maximum ramp / reference / 60 |
 | practical maximum | `unitdata` `availability` | 99th-percentile output / capacity |
 
@@ -542,8 +549,8 @@ obviously flat one.
 ## Where hydro is defined
 
 - `src_files/data_files/hydropower-compilation.xlsx` — `nodedata` (reservoir sizes,
-  spill, balance penalties), `unitdata` (turbining and pumping power), and
-  `userconstraintdata` (minimum-generation constraints). The only source of hydro
+  spill, balance penalties) and `unitdata` (turbining and pumping power, ramps,
+  availability, and minimum generation). The only source of hydro
   under `config_OT2030`; listed after `TYNDP-2024_National_Trends.xlsx` under the NT
   configs, so its rows win there.
 - `build_input_summary.py`, section Hydro — whether the fleet matches the water, and

@@ -37,7 +37,7 @@ its own, because each is its own model run.
 Hydro is reported per type: storage, turbine draw, pump delivery, full-load
 hours, weeks of storage, and the wettest and driest week. Its two checks run per
 bidding-zone store whatever the level: whether inflow can carry the minimum
-generation in ``p_userconstraint`` without the store falling below its floor,
+generation in ``p_gnu_io`` (``minGen``) without the store falling below its floor,
 and whether a full store can pass its inflow with turbines and ``maxSpill`` at
 full. Every number is read from the built folder, never from a source workbook.
 
@@ -2341,10 +2341,6 @@ MIN_GEN_MARGIN_HOURS = 12.0
 #: Hours inside that margin, in any one window, before a store is worth watching.
 MIN_GEN_WATCH_HOURS = 2
 
-#: The userconstraint parameters the minimum-generation check can model. A group
-#: using anything else is named and left unsimulated, never guessed at.
-MIN_GEN_PARAMETERS = frozenset({"v_gen", "gt", "constant", "penalty", "eachTimestep"})
-
 #: How many of the stores that did not overflow the report names, tightest first.
 OVERFLOW_NAMED = 3
 
@@ -2590,97 +2586,63 @@ def _boundary_sources(workbook: Workbook) -> Dict[str, Dict[str, Tuple[str, floa
     return out
 
 
-def min_generation_groups(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[Tuple[str, str]]]:
-    """``(groups the check can simulate, [(group, why not)])`` for hydro minimums.
+def hydro_minimums(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[Tuple[str, str]]]:
+    """``(minimums the check can simulate, [(unit, why not)])`` for hydro ``minGen``.
 
-    A group is about hydro when any of its dimensions names a unit drawing on a
-    hydro store, or a hydro node. The simple form -- ``v_gen`` on each unit's
-    output with a positive coefficient, ``gt``, a positive ``constant`` -- is
-    simulated. Anything else is named with the reason, because a minimum the
-    check misread would be a verdict about data it never understood.
+    A ``minGen`` row in ``p_gnu_io`` is about hydro when its unit draws on a
+    hydro store, or when the row itself sits on a hydro grid. A minimum on the
+    output of a unit drawing on one store is simulated. Anything else is named
+    with the reason, because a minimum the check misread would be a verdict
+    about data it never understood.
 
-    ``draw_MWh`` is the least water that meets the minimum: the constant through
-    the most efficient of the group's units. ``deliverable_MW`` is the most
-    those units can give together, capacity times availability.
+    ``draw_MWh`` is the least water that meets the minimum: ``minGen`` through
+    the unit's efficiency. ``deliverable_MW`` is the most the row can give,
+    capacity times availability. ``minGen`` itself is not scaled by
+    availability: Backbone holds the whole value in every step where
+    availability is above zero.
     """
-    columns = ["group", "node", "grid", "units", "minimum_MW", "draw_MWh", "deliverable_MW"]
-    uc = workbook.userconstraint
+    columns = ["unit", "node", "grid", "minimum_MW", "draw_MWh", "deliverable_MW"]
     io = workbook.p_gnu_io
-    if uc.empty or io.empty or not {"group", "parameter", "value"} <= set(uc.columns):
+    if io.empty or "minGen" not in io.columns:
         return pd.DataFrame(columns=columns), []
 
     io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1].copy()
     for c in ("grid", "node", "unit", "input_output"):
         io[c] = io[c].astype(str)
     io["capacity"] = pd.to_numeric(io["capacity"], errors="coerce").fillna(0.0)
+    io["minGen"] = pd.to_numeric(io["minGen"], errors="coerce").fillna(0.0)
     coeff = pd.to_numeric(col_or(io, "conversionCoeff", 1.0), errors="coerce").fillna(1.0)
     io["conversionCoeff"] = coeff.replace(0.0, 1.0)
     stores = io[(io["input_output"] == "input") & io["grid"].isin(grids)]
     draws_from = stores.groupby("unit")["node"].agg(lambda s: sorted(set(s))).to_dict()
-    hydro_nodes = set(stores["node"]) | set(io.loc[io["grid"].isin(grids), "node"])
     availability, efficiency = _unit_numbers(workbook)
 
-    dims = [c for c in uc.columns if str(c).endswith("dimension")]
-    work = uc.copy()
-    work["parameter"] = work["parameter"].astype(str)
     rows, skipped = [], []
-    for group, part in work.groupby(work["group"].astype(str), sort=True):
-        named = {str(v) for c in dims for v in part[c].dropna()}
-        if not named & (set(draws_from) | hydro_nodes):
+    for row in io[io["minGen"] > 0].itertuples(index=False):
+        unit = row.unit
+        if unit not in draws_from and row.grid not in grids:
             continue
-        params = set(part["parameter"])
-        unknown = sorted(params - MIN_GEN_PARAMETERS)
-        gens = part[part["parameter"] == "v_gen"]
-        constant = pd.to_numeric(part.loc[part["parameter"] == "constant", "value"],
-                                 errors="coerce").dropna()
-        if unknown:
-            skipped.append((group, "uses " + ", ".join(f"`{p}`" for p in unknown)
-                            + ", which this check does not model"))
-            continue
-        if "gt" not in params:
-            skipped.append((group, "has no `gt`, so it is not a minimum"))
-            continue
-        if gens.empty:
-            skipped.append((group, "names no `v_gen`"))
-            continue
-        if constant.empty or float(constant.sum()) <= 0:
-            skipped.append((group, "has no positive `constant`"))
-            continue
-
-        reason, nodes, units, best, deliverable = None, set(), [], 0.0, 0.0
-        for _, gen in gens.iterrows():
-            grid, node, unit = (str(gen[c]) for c in dims[:3])
-            weight = float(pd.to_numeric(gen["value"], errors="coerce"))
-            unit_rows = io[io["unit"] == unit]
-            if not np.isfinite(weight) or weight <= 0:
-                reason = f"gives `{unit}` a coefficient at or below zero"
-            elif grid in grids:
-                reason = f"constrains the storage side of `{unit}`"
-            elif unit not in draws_from:
-                reason = f"`{unit}` draws on no hydro store"
-            elif (unit_rows["conversionCoeff"] != 1.0).any():
-                reason = f"`{unit}` has a conversionCoeff other than 1"
-            elif not np.isfinite(efficiency.get(unit, np.nan)):
-                reason = f"`{unit}` has no efficiency in `p_unit`"
-            if reason:
-                break
-            nodes.update(draws_from[unit])
-            units.append(unit)
-            best = max(best, weight * efficiency[unit])
-            out_rows = unit_rows[(unit_rows["input_output"] == "output")
-                                 & (unit_rows["grid"] == grid) & (unit_rows["node"] == node)]
-            deliverable += weight * float(out_rows["capacity"].sum()) * availability.get(unit, 0.0)
-        if reason is None and len(nodes) > 1:
-            reason = f"its units draw on {len(nodes)} different stores ({summarise(sorted(nodes))})"
+        if row.grid in grids:
+            reason = "on its storage side"
+        elif row.input_output != "output":
+            reason = "on an input"
+        elif len(draws_from[unit]) > 1:
+            reason = (f"draws on {len(draws_from[unit])} different stores "
+                      f"({summarise(draws_from[unit])})")
+        elif (io.loc[io["unit"] == unit, "conversionCoeff"] != 1.0).any():
+            reason = "a conversionCoeff other than 1"
+        elif not np.isfinite(efficiency.get(unit, np.nan)):
+            reason = "no efficiency in `p_unit`"
+        else:
+            reason = None
         if reason:
-            skipped.append((group, reason))
+            skipped.append((unit, reason))
             continue
-        store = next(iter(nodes))
-        minimum = float(constant.sum())
-        rows.append(dict(group=group, node=store,
+        store = draws_from[unit][0]
+        rows.append(dict(unit=unit, node=store,
                          grid=str(stores.loc[stores["node"] == store, "grid"].iloc[0]),
-                         units=", ".join(units), minimum_MW=minimum,
-                         draw_MWh=minimum / best, deliverable_MW=deliverable))
+                         minimum_MW=row.minGen, draw_MWh=row.minGen / efficiency[unit],
+                         deliverable_MW=row.capacity * availability.get(unit, 0.0)))
     return pd.DataFrame(rows, columns=columns), skipped
 
 
@@ -2701,7 +2663,7 @@ class HydroChecks:
     minimum: pd.DataFrame = field(default_factory=pd.DataFrame)
     overflow: pd.DataFrame = field(default_factory=pd.DataFrame)
     not_simulated: List[Tuple[str, str]] = field(default_factory=list)
-    groups: int = 0
+    minimums: int = 0
     windows: int = 0
     window_hours: int = 0
     skipped: Optional[str] = None
@@ -2715,16 +2677,16 @@ def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> Hydr
     neither of them has.
     """
     grids = set(grids)
-    groups, not_simulated = min_generation_groups(workbook, grids)
+    minimums, not_simulated = hydro_minimums(workbook, grids)
     result = HydroChecks(not_simulated=list(not_simulated),
-                         groups=len(groups) + len(not_simulated))
+                         minimums=len(minimums) + len(not_simulated))
     availability, _ = _unit_numbers(workbook)
 
-    minimum = groups.copy()
+    minimum = minimums.copy()
     if len(minimum):
         minimum["beyond_turbines"] = minimum["minimum_MW"] > minimum["deliverable_MW"] + 1e-6
         minimum = (minimum.groupby("node", sort=True)
-                   .agg(group=("group", lambda s: ", ".join(s)), grid=("grid", "first"),
+                   .agg(units=("unit", lambda s: ", ".join(s)), grid=("grid", "first"),
                         minimum_MW=("minimum_MW", "sum"), draw_MWh=("draw_MWh", "sum"),
                         deliverable_MW=("deliverable_MW", "sum"),
                         beyond_turbines=("beyond_turbines", "any"))
@@ -3995,7 +3957,7 @@ def hydro_check_rows(result: "HydroChecks") -> List[Check]:
                    f"{summarise([name for name, _ in result.not_simulated])}")
 
     name = "Hydro minimum generation against inflow"
-    if not result.groups:
+    if not result.minimums:
         rows.append(Check(name, "no hydro minimum generation is written", CHECK_OK))
     elif result.skipped:
         beyond = (sorted(minimum.loc[minimum["beyond_turbines"], "node"])
@@ -4006,7 +3968,7 @@ def hydro_check_rows(result: "HydroChecks") -> List[Check]:
         else:
             rows.append(Check(name, f"inflow was not read: {result.skipped}", CHECK_NOT_RUN))
     elif not len(minimum):
-        rows.append(Check(name, f"none of {result.groups} group(s) could be simulated{skipped}",
+        rows.append(Check(name, f"none of {result.minimums} minimum(s) could be simulated{skipped}",
                           CHECK_NOT_RUN))
     else:
         act = sorted(minimum.loc[minimum["state"] == CHECK_ACT, "node"])
@@ -4935,11 +4897,11 @@ def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeserie
                "hour, as the model will run it, starting from the middle of its first hour's "
                "range between `downwardLimit` and `upwardLimit`.")
     report.add()
-    report.add("- **Minimum generation**: the store gives exactly its minimum from "
-               "`p_userconstraint`, turned into water at its turbines' efficiency, and spills "
-               "whatever rises above its ceiling. No store can keep more water for its minimum "
-               "than that, so an hour below the floor is an hour Backbone can meet only through "
-               "the group's penalty (`vq_userconstraintDec_t`). A store that runs short without "
+    report.add("- **Minimum generation**: the store gives exactly the `minGen` of its turbines "
+               "in `p_gnu_io`, turned into water at their efficiency, and spills whatever rises "
+               "above its ceiling. No store can keep more water for its minimum than that, so an "
+               "hour below the floor is an hour Backbone can meet only by paying `minGenPenalty` "
+               "(`vq_minGen`, reported as `r_qMinGen_gnu`). A store that runs short without "
                "its pumps but not with them at full availability is watched, not acted on: "
                "whether it pumps is the market's decision.")
     report.add(f"- **Overflow**: the store releases everything its turbines, at their "
@@ -4956,7 +4918,7 @@ def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeserie
         report.add()
 
     minimum = checks.minimum
-    if checks.groups == 0:
+    if checks.minimums == 0:
         report.add("No hydro minimum generation is written in this scenario.")
         report.add()
     elif len(minimum) and "state" in minimum.columns:
@@ -4992,7 +4954,7 @@ def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeserie
                    f"above it is acted on whatever the water does.")
         report.add()
     if checks.not_simulated:
-        report.add(f"{len(checks.not_simulated)} hydro group(s) or store(s) are not simulated, "
+        report.add(f"{len(checks.not_simulated)} hydro minimum(s) or store(s) are not simulated, "
                    f"because this check cannot model them and will not guess: "
                    + summarise([f"`{name}` ({why})" for name, why in checks.not_simulated]) + ".")
         report.add()

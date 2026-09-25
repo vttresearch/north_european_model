@@ -42,6 +42,8 @@ PARAM_GNU = [
     'rampDownPenalty',
     'rampUpCost',
     'rampDownCost',
+    'minGen',
+    'minGenPenalty',
     'upperLimitCapacityRatio',
     'unitSize',
     'invCosts',

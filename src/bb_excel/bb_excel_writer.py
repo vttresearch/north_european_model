@@ -172,7 +172,7 @@ def adjust_excel(output_file) -> None:
         * Adjust each column's width.
         * Skip remaining processing if sheet has only 1 row.
         * If A2 is empty, iterate non-empty cells in row 2:
-            - Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+            - Rotate matching cell in row 1 if the length of the cell is more than 5 letters.
             - Centre align columns
             - set the column width to 6
         * Freeze top row
@@ -220,10 +220,10 @@ def adjust_excel(output_file) -> None:
                 col_idx = cell.col_idx
                 col_letter = get_column_letter(col_idx)
 
-                # Rotate matching cell in row 1 if the length of the cell is more than 6 letters.
+                # Rotate matching cell in row 1 if the length of the cell is more than 5 letters.
                 header_cell = ws.cell(row=1, column=col_idx)
                 header_text = str(header_cell.value) if header_cell.value is not None else ""
-                if len(header_text) > 6:
+                if len(header_text) > 5:
                     header_cell.alignment = rotated_header_align
 
                 # Centre align column values from row 2 downwards
