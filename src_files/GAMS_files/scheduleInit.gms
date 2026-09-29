@@ -169,20 +169,27 @@ if (mType('schedule'),
     mSettings('schedule', 't_improveForecastNew') = 24*10;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
     mSettings('schedule', 'boundForecastEnds') = 0;                // 0/1 parameter if last v_state and v_online in f02,f03,... are bound to f01
 
-    // Shorter forecast improvement for cf nodes
+    // Shorter forecast improvement for cf nodes. ts_cf is keyed on flow, and
+    // p_gn_improveForecastNew is where Backbone reads its per-node improvement.
     option flowNode_tmp < ts_cf;
     p_gn_improveForecastNew(flowNode_tmp, 'ts_cf_') = 24*4;
 
+    // Node time series set their improvement per forecast branch in p_node_timeseries,
+    // for every branch of the run: the realized f00 and the forecasts beside it.
+
     // shorter improvement for upward and downward ts
     option gn_tmp < ts_node;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_node_') $ {SameAs(grid, 'psOpen')}= 24*4;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_node_') $ {SameAs(grid, 'reservoir')}= 24*4;
+    loop(gn_tmp(grid, node) $ {SameAs(grid, 'psOpen') or SameAs(grid, 'reservoir')},
+        p_node_timeseries(node, f, 'ts_node', 't_improveForecastNew')
+            $ {ord(f) <= 1 + mSettings('schedule', 'forecasts')} = 24*4;
+    );
 
     // longer improvement for hydro influx
     option gn_tmp < ts_influx;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'psOpen')}= 168*4;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'reservoir')}= 168*4;
-    p_gn_improveForecastNew(gn_tmp(grid, node), 'ts_influx_') $ {SameAs(grid, 'ror')}= 168*4;
+    loop(gn_tmp(grid, node) $ {SameAs(grid, 'psOpen') or SameAs(grid, 'reservoir') or SameAs(grid, 'ror')},
+        p_node_timeseries(node, f, 'ts_influx', 't_improveForecastNew')
+            $ {ord(f) <= 1 + mSettings('schedule', 'forecasts')} = 168*4;
+    );
 
 
 * =============================================================================

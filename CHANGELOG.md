@@ -284,3 +284,6 @@ not build and why, and has a documentation page of its own.
   aborted every run.
 - A changed file in `src_files/GAMS_files` is copied into the built folder by the
   next build, without a full rerun. Before, only a full rerun copied them.
+- scheduleInit.gms: hydro inflow and storage-limit forecast improvement is set in
+  `p_node_timeseries`, so `warnings.log` no longer carries Backbone's
+  `p_gn_improveForecastNew` deprecation note. Results unchanged.
