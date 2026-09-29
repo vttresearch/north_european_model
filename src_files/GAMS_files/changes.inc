@@ -297,25 +297,6 @@ if(card(f)>3,
 );
 
 
-// Set storage start levels for psOpen and reservoir hydro
-option clear = gn_tmp;
-option tt < ts_node;
-gn_tmp(grid, node) 
-    $ {[sameAs(grid, 'psOpen') or sameAs(grid, 'reservoir')]
-       and p_gn(grid, node, 'boundStart') = 1
-       and p_gnBoundaryPropertiesForStates(grid, node, 'reference', 'constant') > 0
-       }
-    = yes;
-p_gnBoundaryPropertiesForStates(gn_tmp, 'reference', 'constant')
-    = max(0.7 * p_gnBoundaryPropertiesForStates(gn_tmp, 'upwardLimit', 'constant'),
-          0.7 * smax(tt, ts_node(gn_tmp, 'upwardLimit', 'f00', tt))
-          );
-p_gnBoundaryPropertiesForStates('reservoir', 'ES00_reservoir', 'reference', 'constant')
-    = max(0.5 * p_gnBoundaryPropertiesForStates('reservoir', 'ES00_reservoir', 'upwardLimit', 'constant'),
-          0.5 * smax(tt, ts_node('reservoir', 'ES00_reservoir', 'upwardLimit', 'f00', tt))
-          );
-
-
 * --------------------------------------------------------------------------------
 * project specific modifications
 * --------------------------------------------------------------------------------

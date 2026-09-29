@@ -907,7 +907,7 @@ def _series(inflow):
 
 
 class TestAStoreStartsAtTheMiddleOfItsFirstHour:
-    """The model's own start level is still to be added; until then, the middle of the range."""
+    """The checks start at the middle of the range, not at the model's own start share."""
 
     def test_the_first_hour_range_decides_the_start(self):
         import numpy as np

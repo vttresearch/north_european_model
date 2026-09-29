@@ -535,7 +535,7 @@ class hydro_storage_limits_MAF2019(BaseProcessor):
         which nodes those are.
 
         The build's own check that a node ends up bounded by *neither* route is
-        in ``add_storage_start_values``, which sees the constants as well.
+        in ``add_storage_starts``, which sees the constants as well.
         """
         self.logger.log_status(
             f"Storage limits built for {len(built_nodes)} node(s).",

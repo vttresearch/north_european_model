@@ -120,3 +120,65 @@ class TestExcelStageTreatsThemAlike:
         wind = rows_for(route.sheets["p_gnu_io"], unit=unit_name)
         assert len(wind) == 1
         assert float(wind.iloc[0]["vomCosts"]) == float(expected)
+
+
+# A storage node with a start share. The share is the one number where a 0 is a
+# value on the GAMS side too: Backbone reads it by its useConstant flag, and 0 is
+# the floor of the band.
+SHARE_BASE = """\
+[unittypedata]
+unittype | grid_output1 | eff00 | isSource
+WindOnFI | elec         | 1     | 1
+
+[unitdata]
+Country | unittype | Scenario | Year | capacity_output1
+FI      | WindOnFI | all      | 1    | 100
+
+[nodedata]
+Country | Grid | Scenario | Year | nodeBalance | upwardLimit | relative
+FI      | elec | all      | 1    | 1           | 500         | 0.5
+
+[demanddata]
+Country | Grid | Scenario | Year | TWh/year
+FI      | elec | all      | 1    | 5
+"""
+
+
+def _share(value):
+    return workbook_text_with(SHARE_BASE, sheet="nodedata", header="relative",
+                              value=value, where={"Country": "FI"})
+
+
+class TestAStartShareOfZeroIsNotAbsent:
+    """The documented exception to ``0 = NA`` past the boundary.
+
+    An empty ``relative`` means "no share", and the node starts at a level. A 0
+    means "start at the floor", and has to reach the workbook with its flag, or
+    Backbone's ``boundStartRelative`` would bind nothing.
+    """
+
+    def test_zero_and_empty_produce_different_workbooks(self, tmp_path):
+        zero = run_route(tmp_path / "zero", workbooks={"data.xlsx": _share(0)})
+        empty = run_route(tmp_path / "empty", workbooks={"data.xlsx": _share(None)})
+
+        zero.logger.assert_no_errors()
+        empty.logger.assert_no_errors()
+        assert_workbook_consistent(zero.sheets)
+
+        assert not workbook_delta(zero.sheets, empty.sheets).is_empty()
+
+    def test_zero_starts_the_node_at_the_floor_of_its_band(self, tmp_path):
+        zero = run_route(tmp_path / "zero", workbooks={"data.xlsx": _share(0)})
+
+        assert cell(zero.sheets["p_gn"], "boundStartRelative", node="FI_elec") == 1
+        relative = rows_for(zero.sheets["p_gnBoundaryPropertiesForStates"],
+                            node="FI_elec", param_gnBoundaryTypes="relative")
+        assert len(relative) == 1
+        assert relative["useConstant"].iloc[0] == 1
+
+    def test_empty_starts_the_node_at_a_level(self, tmp_path):
+        empty = run_route(tmp_path / "empty", workbooks={"data.xlsx": _share(None)})
+
+        assert cell(empty.sheets["p_gn"], "boundStart", node="FI_elec") == 1
+        assert rows_for(empty.sheets["p_gnBoundaryPropertiesForStates"],
+                        node="FI_elec", param_gnBoundaryTypes="relative").empty

@@ -26,6 +26,9 @@ available, and this page will change with them. See
 - **Seasonal storage limits exist for two of the four types**, and the rest run on a
   flat `upwardLimit` deliberately rather than by mistake. The build names them
   every run.
+- **Stores start at a share of their band** (`nodedata` `relative`), read on the
+  date the run starts, so a run can start in any month and still start inside
+  its limits.
 - **The PECD files have holes, and the builder repairs or refuses them by rule:**
   one missing week or day is interpolated, anything longer needs a person, and
   the decisions already taken are listed in the code with their magnitudes.
@@ -35,6 +38,7 @@ available, and this page will change with them. See
 | Quantity | Comes from | Unit |
 |---|---|---|
 | reservoir size | `nodedata` `upwardLimit` in `hydropower-compilation.xlsx` | MWh |
+| start level | `nodedata` `relative` in `hydropower-compilation.xlsx` | share 0–1 of the band |
 | turbining / pumping power | `unitdata` `capacity_output1` | MW |
 | ramp rate | `unitdata` `maxRampUp` / `maxRampDown` | p.u. of capacity per minute |
 | practical maximum output | `unitdata` `availability` | fraction of capacity |
@@ -53,6 +57,7 @@ available, and this page will change with them. See
   - [Does the fleet match its water](#does-the-fleet-match-its-water)
 - [Which nodes get built](#which-nodes-get-built)
 - [What is not built, and why](#what-is-not-built-and-why)
+- [Start levels](#start-levels)
 - [Where the PECD files come from](#where-the-pecd-files-come-from)
 - [Gaps in the source data, and what the builder does](#gaps-in-the-source-data-and-what-the-builder-does)
 - [Minimum generation](#minimum-generation)
@@ -160,10 +165,10 @@ falls below its floor. **Overflow** releases everything the turbines and `maxSpi
 pass, and asks whether the store ever rises above its ceiling. In the OT2030 build no
 store runs short and none overflows in 35 windows; `DE00_ror`, `AT00_ror` and
 `FR00_ror` come within 6, 10 and 12 hours of their own draw of the floor, and are the
-ones to watch. Both checks start each window from the middle of its range until the
-model's start levels, partly set in `changes.inc`, are added, and both see the realised
-years only: the forecast branches, where minimum generation has actually run short,
-are beyond them.
+ones to watch. Both checks start each window from the middle of its range rather than
+from the model's [start share](#start-levels), and both see the realised years only:
+the forecast branches, where minimum generation has actually run short, are beyond
+them.
 
 ## Which nodes get built
 
@@ -211,23 +216,6 @@ flat — `changes.inc` converts it back to a constant, because a constant is muc
 faster to carry — but nothing reverses it the other way, so the processor's claim
 is what makes the seasonal profiles reachable at all.
 
-The **starting level** of each reservoir is not decided here. The input Excel
-writes a provisional one, and `changes.inc` then recomputes it for every `psOpen`
-and `reservoir` node from the maximum of that node's own upwardLimit series. That
-rule needs a rewrite of its own — as written it cannot express a run starting and
-ending in summer — so nothing in the build depends on the provisional number
-beyond it being above zero.
-
-One consequence looks like a false positive and is not. A node whose `upwardLimit`
-comes only from a series, with no `nodedata` constant behind it, gets no
-provisional level and the builder warns that it could not determine one. That
-warning is correct — the data really is partial, and partial data warns — even
-though `changes.inc` will go on to bound the node anyway. The build cannot see
-past the workbook it is writing, and should not be taught to pretend it can. Both
-this and the `changes.inc` patch itself come out when the hydro rules are redone;
-until then they are listed in
-[Identified gaps](identified-gaps.md#the-hydro-storage-start-level).
-
 Whether that is the right treatment is discussed in
 [the caveats](#some-caveats-from-cross-checking-the-data), which is also where the
 evidence against conjuring a profile for them sits.
@@ -240,6 +228,40 @@ number a reader would quote as reservoir size is space the floor never releases.
 `tools/input_data_summary.py` reports both, and the widest swing a year permits
 as a third figure; a comparison that uses the ceiling alone is overstating the
 fleet by about a factor of two.
+
+## Start levels
+
+**Every `psOpen` and `reservoir` store starts at a share of its band**, given in
+the `relative` column of `nodedata`: `downwardLimit + relative × (upwardLimit −
+downwardLimit)` on the step before the run's first hour. The builder writes it
+with `boundStartRelative` — see [Input Excel builder](input-excel.md#storage-start-levels)
+— and Backbone reads the band on whatever date the run starts, so a run from June
+starts inside June's band and one from January inside January's.
+
+The seven stores with a constant band, floored at `Eps`, have a share of 0.70:
+70% of the store. The twelve with seasonal limits have shares that put their
+1 January start at 70% of the store's annual maximum — 50% for `ES00_reservoir` —
+as the median over the 35 climate years of Observed Trends 2030:
+
+| Store | share | Store | share |
+|---|---|---|---|
+| `NOS0_psOpen` | 0.46 | `FR00_reservoir` | 0.66 |
+| `NOM1_psOpen` | 0.44 | `SE03_reservoir` | 0.67 |
+| `NON1_psOpen` | 0.56 | `CH00_reservoir` | 0.68 |
+| `ES00_reservoir` | 0.26 | `SE01_reservoir` | 0.72 |
+| `AT00_reservoir` | 0.90 | `SE04_reservoir` | 0.70 |
+| `FI00_reservoir` | 0.61 | `SE02_reservoir` | 0.61 |
+
+Summed over those twelve, the start is 102.7 TWh on 1 January, 80.1 TWh on 1 June
+and 113.4 TWh on 1 September, each inside that date's band of 61.7–137.2,
+37.9–116.4 and 76.2–144.9 TWh (medians over the climate years). **A fixed level
+cannot do that:** 102.7 TWh held for every date lies above the 1 June ceiling of
+`AT00_reservoir`, `NON1_psOpen` and `SE01_reservoir`, and below the 1 September
+floor of `SE02_reservoir` and `AT00_reservoir`.
+
+The shares are data, not a rule: changing a store's start is a one-cell edit.
+`scheduleInit.gms` starts every run on 1 January, so a run from another date
+moves `t_start` itself, and the shares follow it there.
 
 ## Where the PECD files come from
 
@@ -549,7 +571,7 @@ obviously flat one.
 ## Where hydro is defined
 
 - `src_files/data_files/hydropower-compilation.xlsx` — `nodedata` (reservoir sizes,
-  spill, balance penalties) and `unitdata` (turbining and pumping power, ramps,
+  start shares, spill, balance penalties) and `unitdata` (turbining and pumping power, ramps,
   availability, and minimum generation). The only source of hydro
   under `config_OT2030`; listed after `TYNDP-2024_National_Trends.xlsx` under the NT
   configs, so its rows win there.

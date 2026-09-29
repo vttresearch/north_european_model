@@ -28,9 +28,9 @@ phase that runs before it.
 - **Five sheets carry a second header row.** Blank in the dimension columns,
   repeating the parameter name elsewhere. It is a GDXXRW requirement, applied
   only on the way out.
-- **Some values are derived.** A missing capacity on one side of a unit, and a
-  storage node's starting level. Both are conservative and both are documented
-  below.
+- **Some values are derived.** A missing capacity on one side of a unit, and the
+  starting level of a storage node the workbook gives no start share. Both are
+  conservative and both are documented below.
 
 | Sheet group | Sheets | Second header row |
 |---|---|---|
@@ -136,12 +136,17 @@ before the sheet is written. Measured on two builds:
 |---|---|---|---|
 | `p_gnu_io` | 9 | 17 | 32 `param_gnu` |
 | `p_unit` | 7 | 11 | 26 `param_unit` |
-| `p_gn` | 7 | 7 | 17 `param_gn` |
+| `p_gn` | 8 | 8 | 18 `param_gn` |
 | `p_gnn` | 5 | 5 | 12 `param_gnn` |
 
 One parameter per sheet is kept even when empty — `capacity`, `isActive` or
 `useConstant` — because a sheet with no parameter column at all is a GDXXRW
 dimension error rather than an empty sheet.
+
+**One zero is written**: a `relative` start share of `0`. It is the floor of the
+band, and Backbone reads a share by its `useConstant` flag rather than its value,
+so the row goes out flag and all. An empty `relative` means no share, and the node
+starts at a level instead — see [Storage start levels](#storage-start-levels).
 
 If you are writing code that reads one of these frames, **guard the column**:
 
@@ -156,31 +161,48 @@ of `upperLimitCapacityRatio` were guarded; the third crashed a build.
 ## Storage start levels
 
 A node with a state variable needs a level to start from, or the solver may start
-it full and generate energy the model never bought. For each storage node the
-builder looks for a maximum, in order:
+it full and generate energy the model never bought. The builder gives each
+storage node one of two starts, never both — Backbone aborts on a node with both
+flags.
+
+**A share of the band**, where the node's `nodedata` row gives a `relative`
+value. The builder writes `boundStartRelative = 1` and a `relative` row, and
+Backbone starts the state at `downwardLimit + relative × (upwardLimit −
+downwardLimit)` on the step before the run's first hour. The band is read on
+that date, so a store whose limits follow the season starts inside them whenever
+the run starts. Every `psOpen` and `reservoir` node starts this way; [Hydro
+data](hydro.md#start-levels) says how their shares are set.
+
+**A level**, for every other storage node. The builder looks for a maximum, in
+order:
 
 1. the node's **`upwardLimit` constant** in the boundary data, if above zero;
 2. otherwise `capacity * upperLimitCapacityRatio` of the first unit on the node
    that sets a ratio.
 
 Given one, it writes `boundStart = 1` and a `reference` constant of **70% of that
-maximum**, rounded to a whole unit. Given neither, it writes nothing and names
-the node — which is the case to act on, because the fix is in the data: give the
-node an `upwardLimit`, or give one of its units an `upperLimitCapacityRatio`.
+maximum**, rounded to a whole unit. For a band that is the same all year —
+batteries, closed pumped hydro, run-of-river, heat stores — that is the same
+start as a share of 0.7.
 
-Two things worth knowing about that number. **For hydro it is provisional**:
-`changes.inc` recomputes the reference of every `psOpen` and `reservoir` node from
-the maximum of its `upwardLimit` *series*, gated on `boundStart = 1` and a
-reference above zero — so what matters for those nodes is that both gates are
-passed, not what the value is. The 70% is what the other storages actually get:
-batteries, closed pumped hydro, gas tanks. And **it cannot express a run that
-starts and ends in summer**; a start level that follows the modelled period is
-work still to do.
+**A share is used only where Backbone can use it.** Each of these starts at a
+level instead, with a warning naming the node:
 
-Writing nothing rather than a zero is deliberate. Backbone gates the bound on the
-reference constant's own value, where `0` is indistinguishable from absent, so a
-`boundStart = 1` beside a zero reference bound nothing while looking in the
-workbook as though it did.
+- a share outside 0–1 — a share is a fraction, so 0.7, not 70;
+- a share beside `boundStartToEnd`, which reads the first solve's end from
+  `reference`, and only under `boundStart`;
+- a share on a node with no ceiling — no `upwardLimit` and no unit with an
+  `upperLimitCapacityRatio`. Such a node usually has no maximum for a level
+  either, and is then named as below.
+
+A share on a node without state is not written, and is named: nothing would
+read it.
+
+**Given neither a share nor a maximum**, the builder writes nothing and names the
+node — which is the case to act on, because the fix is in the data: give the node
+an `upwardLimit`, or give one of its units an `upperLimitCapacityRatio`. Writing
+nothing rather than a zero reference is deliberate: Backbone binds a flagged
+`reference` of 0, so the store would start empty on a claim nobody made.
 
 ## How a node is classified
 
@@ -202,8 +224,9 @@ Explicit values in `nodedata` are taken first, then:
 A deduced storage node gets `energyStoredPerUnitOfState = 1`; price nodes and
 non-storage balance nodes get 0.
 
-`maxSpill` and `balancePenalty` deliberately do **not** imply state. They say what
-may leave a node and what an imbalance costs, not how much it holds.
+`maxSpill`, `balancePenalty` and `relative` deliberately do **not** imply state.
+The first two say what may leave a node and what an imbalance costs, not how much
+it holds; a start share needs a band to be a share of, not the other way round.
 
 Two combinations are reported as contradictions rather than resolved: `usePrice`
 with `nodeBalance`, and `usePrice` with `energyStoredPerUnitOfState`. A node that
@@ -231,6 +254,9 @@ happened.
 | `N node(s) set 'usePrice' together with 'energyStoredPerUnitOfState'` | a price node cannot hold a state; pick one |
 | `N node(s) are neither price nor balance nodes` | give the node a price, a demand, or an explicit flag |
 | `No storage start level could be determined for N node(s)` | see [Storage start levels](#storage-start-levels) |
+| `N storage start share(s) in 'relative' lie outside 0-1` | a share is a fraction of the band: write 0.7, not 70 |
+| `N node(s) set both a 'relative' start share and 'boundStartToEnd'` | drop one of the two |
+| `N node(s) have a 'relative' start share but no state` | give the node a storage boundary such as `upwardLimit`, or remove the share |
 | `df_unitdata has no emission_group* columns` | no unit will produce emissions; check the unittype files |
 | `N unit data column(s) name a unit-level parameter with a connection suffix` | e.g. `availability_output1`; `param_unit` columns are per unit, drop the suffix |
 | `p_userconstraint has N row(s) with an empty 'group'/'parameter'` | Backbone cannot resolve either; fill them in |
@@ -238,9 +264,6 @@ happened.
 
 ## Known open items
 
-- **The storage start rule cannot follow the modelled period.** 70% of the
-  maximum is a whole-year assumption; a run starting and ending in summer wants a
-  different level. See [Storage start levels](#storage-start-levels).
 - **`restype` is written empty every build.** Nothing produces reserve types yet,
   so the sheet exists only so the symbol is defined.
 - **Nothing checks the values against anything.** Whether a capacity or a
@@ -269,8 +292,8 @@ happened.
   phase reads, and what a row in them is allowed to say
 - [Timeseries](timeseries.md) — the phase before this one, what a processor may
   contribute to the source data tables, and the full build-log rule
-- [Hydro data](hydro.md) — where the storage nodes and their boundaries come from,
-  and why the reservoir reference is recomputed in `changes.inc`
+- [Hydro data](hydro.md) — where the storage nodes, their boundaries and their
+  start shares come from
 - [Identified gaps](identified-gaps.md) — which Backbone parameters and sheets this
   phase does not write, and which of its rules are known to be provisional. The
   place to look when a parameter you expected is not on any sheet

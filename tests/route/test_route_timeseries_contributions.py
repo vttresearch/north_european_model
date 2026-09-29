@@ -189,8 +189,9 @@ FI      | elec | all      | 1    | 5
 
         ``add_storage_starts`` reads the upwardLimit from ``df_boundarydata``
         rather than from the sheet it just wrote, so a node whose limit comes
-        from a series still has a level to start at -- 70% of 500 here, and for
-        hydro a number ``changes.inc`` will replace.
+        from a series still has a level to start at -- 70% of 500 here. A node
+        whose limit follows the season is better given a share; see the class
+        below.
         """
         result = run_route(
             tmp_path,
@@ -203,6 +204,67 @@ FI      | elec | all      | 1    | 5
             result.sheets["p_gnBoundaryPropertiesForStates"], "constant",
             grid="elec", node="FI_elec", param_gnBoundaryTypes="reference",
         ) == 350
+
+
+class TestAStartShareOnASeasonalLimit:
+    """A ``relative`` column in nodedata beside a limit a processor gives as a series.
+
+    The shape of every hydro reservoir: the workbook states the store's size and
+    the share it starts at, and the storage-limits processor says the limit
+    follows the season. The start is then a share of the band on whatever date
+    the run starts, which is what Backbone needs to see two things for: a floor
+    and a ceiling, each with a flag, or it aborts.
+    """
+
+    SHARE = 0.6
+
+    WORKBOOK = TestAWorkbookConstantAndAProcessorSeries.WORKBOOK.replace(
+        "nodeBalance | upwardLimit\nFI      | elec | all      | 1    | 1           | 500",
+        f"nodeBalance | upwardLimit | relative\n"
+        f"FI      | elec | all      | 1    | 1           | 500         | {SHARE}",
+    )
+
+    @pytest.fixture(scope="class")
+    def result(self, tmp_path_factory):
+        return run_route(
+            tmp_path_factory.mktemp("share"),
+            workbooks={"data.xlsx": self.WORKBOOK},
+            contributions={"boundarydata": boundarydata(usetimeseries=1)},
+        )
+
+    def _row(self, result, boundary_type):
+        return rows_for(
+            result.sheets["p_gnBoundaryPropertiesForStates"],
+            grid="elec", node="FI_elec", param_gnBoundaryTypes=boundary_type,
+        )
+
+    def test_the_fixture_carries_the_share(self):
+        # Guards the replace above: if it matched nothing, every test below
+        # would be testing the level form under the wrong name.
+        assert "relative" in self.WORKBOOK
+
+    def test_the_workbook_is_consistent(self, result):
+        result.logger.assert_no_errors()
+        assert_workbook_consistent(result.sheets)
+
+    def test_the_node_starts_on_its_band(self, result):
+        p_gn = result.sheets["p_gn"]
+        assert cell(p_gn, "boundStartRelative", grid="elec", node="FI_elec") == 1
+        if "boundStart" in p_gn.columns:
+            assert not cell(p_gn, "boundStart", grid="elec", node="FI_elec")
+
+    def test_the_share_is_written_as_given_and_no_level_beside_it(self, result):
+        relative = self._row(result, "relative")
+        assert len(relative) == 1
+        assert relative["useConstant"].iloc[0] == 1
+        assert float(relative["constant"].iloc[0]) == self.SHARE
+        assert self._row(result, "reference").empty
+
+    def test_the_band_has_a_flagged_floor_and_ceiling(self, result):
+        # Backbone aborts a relative start without either.
+        floor, ceiling = self._row(result, "downwardLimit"), self._row(result, "upwardLimit")
+        assert len(floor) == 1 and floor["useConstant"].iloc[0] == 1
+        assert len(ceiling) == 1 and ceiling["useTimeseries"].iloc[0] == 1
 
 
 class TestAConstantInfluxForAGridWithNoProfile:

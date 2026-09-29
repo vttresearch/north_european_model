@@ -77,8 +77,8 @@ What hydro does in the forecast branches. The checks see the realised climate
 years; Backbone also solves a dry inflow quantile with storage limits that
 ``changes.inc`` narrows at run time, and that is where minimum generation has
 actually run short. They also start each window from the middle of its range,
-because the model's own start level is partly set in ``changes.inc`` and is
-still to be added here.
+where the model starts a psOpen or reservoir store at its ``relative`` share of
+the band on the starting date and any other store at its ``reference``.
 
 How the model behaves. Every number here comes from the input data, never from a
 solved run, so the net-load curve ignores storage, trade and dispatch, and the
@@ -1350,9 +1350,12 @@ def model_permissions(workbook: Workbook) -> Dict:
         facts["units"] = int(len(unit))
         facts["derated_units"] = 0
 
-    if not gn.empty and "boundStart" in gn.columns:
-        facts["bound_start_nodes"] = int(
-            pd.to_numeric(gn["boundStart"], errors="coerce").fillna(0).eq(1).sum())
+    # A store starts at a level (boundStart) or at a share of its band
+    # (boundStartRelative), never both; either column is absent when no node set it.
+    flags = [c for c in ("boundStart", "boundStartRelative") if c in gn.columns]
+    if not gn.empty and flags:
+        bound = gn[flags].apply(pd.to_numeric, errors="coerce").fillna(0).eq(1).any(axis=1)
+        facts["bound_start_nodes"] = int(bound.sum())
         facts["nodes"] = int(len(gn))
     else:
         facts["bound_start_nodes"] = 0
@@ -2483,8 +2486,8 @@ def run_store(inflow, upward, downward, outflow, margin=None) -> Dict[str, np.nd
     spill can pass as the outflow, an overflow is water that cannot leave.
 
     The start is the middle of the first hour's range. The model starts
-    elsewhere -- from ``reference``, which ``changes.inc`` overrides per hydro
-    type at run time -- and the correct start levels are still to be added.
+    elsewhere: a psOpen or reservoir store at its ``relative`` share of the band
+    on the starting date, any other store at its ``reference``.
 
     An hour with a NaN in any input is not run, which keeps a missing climate
     year, or the hours past the end of a shorter window, out of the counts.
@@ -4599,7 +4602,8 @@ def _permissions_section(report, facts: Dict) -> None:
          "-" if facts["commitment_rows"] is None else str(facts["commitment_rows"]),
          "`effLevelGroupUnit`"],
         ["Nodes starting from a bound state",
-         f"{facts['bound_start_nodes']} of {facts['nodes']}", "`p_gn` `boundStart`"],
+         f"{facts['bound_start_nodes']} of {facts['nodes']}",
+         "`p_gn` `boundStart`, `boundStartRelative`"],
     ]
     report.table(["What", "Count", "Where it is read from"], rows)
     report.add("These are counts, not findings. A zero ramp-limit count means any unit in this "
@@ -4908,9 +4912,9 @@ def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeserie
                f"availability, and `maxSpill` can pass. An hour above the ceiling even so is water "
                f"that cannot leave, which the model answers with a dummy variable or not at all.")
     report.add()
-    report.add("*The start level is a placeholder. Backbone starts a store from `reference`, "
-               "which `changes.inc` overrides per hydro type at run time; the correct start "
-               "levels by type and region are still to be added here.*")
+    report.add("*Each window starts from the middle of its first hour's range. Backbone "
+               "starts a psOpen or reservoir store at its `relative` share of the band on the "
+               "starting date, and any other store at its `reference`.*")
     report.add()
 
     if checks.skipped:

@@ -121,6 +121,7 @@ PARAM_GN = [
     'energyStoredPerUnitOfState',
     'selfDischargeLoss',
     'boundStart',
+    'boundStartRelative',
     'boundStartOfSamples',
     'boundStartAndEnd',
     'boundStartToEnd',
@@ -138,10 +139,15 @@ PARAM_GN = [
 #: dimension of p_gnBoundaryPropertiesForStates, not columns of it -- Backbone
 #: declares upwardSlack01*20 and downwardSlack01*20 as well, and a mod may add
 #: more, so nothing here is a closed set.
+#:
+#: 'relative' is not a limit but a start share, 0-1 of the band from
+#: downwardLimit to upwardLimit, and only p_gn('boundStartRelative') reads it.
+#: BBExcelPipeline.add_storage_starts is its only writer.
 PARAM_GN_BOUNDARY_TYPES = [
     'upwardLimit',
     'downwardLimit',
     'reference',
+    'relative',
     'balancePenalty',
     'maxSpill',
     'downwardSlack01',

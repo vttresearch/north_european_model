@@ -355,6 +355,12 @@ boundary: a timeseries processor can say a node's limit follows a seasonal
 profile instead, and then the profile is used and the column is not. Your value
 wins wherever you wrote one — a processor can only fill a gap, never overwrite.
 
+`relative` is in the same family but is not a limit: it is the share, 0 to 1, of
+the band between `downwardLimit` and `upwardLimit` that a storage node starts at.
+A `0` there is a value — start at the floor — and an empty cell means the node
+starts at a level instead. See
+[Input Excel builder](input-excel.md#storage-start-levels).
+
 ### Excluding a grid or a node
 
 `exclude_grids` and `exclude_nodes` in the config remove a grid or a node from the

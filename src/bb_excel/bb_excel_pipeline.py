@@ -35,6 +35,11 @@ class BBExcelPipeline:
     Backbone treats an absent parameter and an explicit 0 identically for all
     parameters whose Backbone default is 0.
 
+    One exception: a ``relative`` start share of 0 is the floor of the band, and
+    Backbone reads it by its ``useConstant`` flag rather than by its value. So
+    add_storage_starts writes that row, flag and all, where a 0 anywhere else
+    writes nothing.
+
     Frames are flat; sheets are not
     -------------------------------
     Every frame a create_*() returns is an ordinary DataFrame, and stays one for
@@ -712,6 +717,12 @@ class BBExcelPipeline:
     #: it and what an imbalance costs, not how much it holds.
     STATE_BOUNDARY_TYPES = ('upwardLimit', 'downwardLimit', 'reference')
 
+    #: The boundary types that say where a storage starts rather than what
+    #: bounds it. A share needs a band, not the other way round, so these imply
+    #: no state; and add_storage_starts is their only writer, because a share
+    #: means something only beside the flag that reads it.
+    START_BOUNDARY_TYPES = ('relative',)
+
     def _nodes_with_a_state_boundary(self, df_boundarydata: pd.DataFrame) -> set:
         """Nodes whose state is bounded, however the bound is given.
 
@@ -1021,6 +1032,11 @@ class BBExcelPipeline:
         A constant of zero writes nothing: ``0`` is "not set" by the time a value
         reaches this class, and Backbone reads it the same way.
 
+        START_BOUNDARY_TYPES are skipped here and written by add_storage_starts.
+        This loop would put a share on every balance node whether or not
+        anything reads it, drop a share of 0 -- which Backbone reads by its flag
+        as the floor -- and pass a share outside 0-1 on to a Backbone abort.
+
         Parameters:
         -----------
         p_gn : DataFrame containing node configurations.
@@ -1062,6 +1078,8 @@ class BBExcelPipeline:
 
                 # Process each boundary type for this node
                 for p_type in self.PARAM_GN_BOUNDARY_TYPES:
+                    if p_type in self.START_BOUNDARY_TYPES:
+                        continue
                     boundary = boundaries.get((grid, node, p_type))
                     if boundary is None:
                         continue
@@ -1113,32 +1131,38 @@ class BBExcelPipeline:
 
 
     def add_storage_starts(
-        self, p_gn: pd.DataFrame, 
-        p_gnBoundaryPropertiesForStates: pd.DataFrame, 
+        self, p_gn: pd.DataFrame,
+        p_gnBoundaryPropertiesForStates: pd.DataFrame,
         p_gnu_io: pd.DataFrame,
         df_boundarydata: pd.DataFrame
         ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Adds p_gn('boundStart') and p_gnBoundaryPropertiesForStates('reference')
-        for storage nodes.
+        Adds each storage node's starting state to p_gn and
+        p_gnBoundaryPropertiesForStates.
 
-        "Storage start levels" in docs/input-excel.md carries the rule and the
-        two sources it reads, in order.
+        "Storage start levels" in docs/input-excel.md carries the rule, the
+        sources it reads in order, and when a share is not used.
 
-        The number this writes is provisional for hydro
-        ----------------------------------------------
-        ``changes.inc`` recomputes the reference of every ``psOpen`` and
-        ``reservoir`` node from the *maximum* of its upwardLimit series, gated on
-        ``boundStart = 1`` and a reference above zero. So for those nodes what
-        matters here is that both gates are passed, not what the value is. The
-        rule below is what the other storages -- batteries, closed pumped hydro,
-        gas tanks -- actually get, and it is due a rewrite of its own: as written
-        it cannot express a run that starts and ends in summer.
+        Two forms
+        ---------
+        A node whose data gives a ``relative`` share starts at that share of its
+        band from downwardLimit to upwardLimit at the starting step:
+        ``boundStartRelative = 1`` and a ``relative`` row. The band follows the
+        date the run starts on, so this is the form for a store whose limits
+        follow the season.
+
+        Every other storage node starts at a level: ``boundStart = 1`` and a
+        ``reference`` of 70% of its maximum. For a band that is the same all
+        year that is the same number as a share of 0.7.
+
+        Both flags belong to this function, and a node gets at most one of
+        them: Backbone aborts on a node with both.
 
         Parameters:
             p_gn: DataFrame with columns ['grid', 'node'] and possibly 'energyStoredPerUnitOfState'
             p_gnBoundaryPropertiesForStates: DataFrame with columns ['grid', 'node', 'param_gnBoundaryTypes', 'param_gnBoundaryProperties']
-            df_boundarydata: long-format boundary table, for the node's upwardLimit
+            p_gnu_io: for the capacity of units with an upperLimitCapacityRatio
+            df_boundarydata: long-format boundary table, for the node's upwardLimit and its share
 
         Returns:
             tuple: (p_gn, p_gnBoundaryPropertiesForStates) with updated values
@@ -1159,58 +1183,57 @@ class BBExcelPipeline:
                 if isStorage and isStorage > 0:
                     storage_gn.append((row['grid'], row['node']))
 
-        # Add 'boundStart' column to p_gn, initializing with 0
+        # Both flags start at 0 on every row. A flag read from node data would
+        # otherwise sit beside the one written here.
         p_gn['boundStart'] = 0
+        p_gn['boundStartRelative'] = 0
+        new_rows = []
         unbounded_starts = []
+        shares_out_of_range = []
+        shares_with_start_to_end = []
 
         # Process each storage node
         for grid, node in storage_gn:
+            gn_mask = (p_gn['grid'] == grid) & (p_gn['node'] == node)
 
-            # 1) the node's own upwardLimit, as df_boundarydata has it.
-            # Read from the table rather than from the sheet built above,
-            # because the sheet carries no constant on a row that resolved to
-            # useTimeseries -- and a node whose limit comes from a series is
-            # exactly the case that needs a start level.
-            start_value = 0
-            upward_limit = boundaries.get((grid, node, 'upwardLimit'))
-            if upward_limit is not None:
-                constant = upward_limit['constant']
-                if is_positive(constant):
-                    start_value = constant
+            # A share, where the node data gives one and Backbone can read it.
+            # Anything else falls back to the level below, and the reader is
+            # told why.
+            share = self._start_share(boundaries, grid, node)
+            if share is not None:
+                if not 0 <= share <= 1:
+                    shares_out_of_range.append(f"{node} ({share:g})")
+                elif 'boundStartToEnd' in p_gn.columns and is_positive(
+                        p_gn.loc[gn_mask, 'boundStartToEnd'].iloc[0]):
+                    shares_with_start_to_end.append(node)
+                elif self._has_state_ceiling(p_gnBoundaryPropertiesForStates, p_gnu_io, grid, node):
+                    p_gn.loc[gn_mask, 'boundStartRelative'] = 1
+                    # Written with its flag even when the share is 0: Backbone
+                    # reads the share by useConstant, so 0 is the floor here,
+                    # not "not set".
+                    new_rows.append({
+                        'grid': grid,
+                        'node': node,
+                        'param_gnBoundaryTypes': 'relative',
+                        'useConstant': 1,
+                        'constant': share,
+                    })
+                    continue
+                # A share with no ceiling has no band to be a share of. The
+                # level below usually finds no maximum either, and then the
+                # node is named in the warning after the loop.
 
-            # 2) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
-            # The column is absent whenever no unit in the whole model sets it:
-            # drop_empty_parameter_columns removes an all-empty PARAM_GNU column
-            # from p_gnu_io, and this is reached exactly when source 1 found
-            # nothing, so a storage node declared any other way used to reach it
-            # and die on a bare KeyError.
-            if (start_value == 0
-                    and not p_gnu_io.empty
-                    and 'upperLimitCapacityRatio' in p_gnu_io.columns):
-                subset_p_gnu_io = p_gnu_io[(p_gnu_io['grid'] == grid) &
-                                                (p_gnu_io['node'] == node) &
-                                                (p_gnu_io['upperLimitCapacityRatio'] > 0)
-                                                ]
-                if not subset_p_gnu_io.empty:
-                        # Use the subset dataframe and get the first row if there are multiple matches
-                        capacity = subset_p_gnu_io['capacity'].iloc[0]
-                        upper_limit = subset_p_gnu_io['upperLimitCapacityRatio'].iloc[0]
-                        if pd.notna(capacity):
-                            start_value = capacity * upper_limit                      
+            start_value = self._start_level(boundaries, p_gnu_io, grid, node)
 
-            # A start value of 0 is not a start value. Backbone gates the bound on
-            # the reference constant's own value (3d_setVariableLimits.gms), and 0
-            # is indistinguishable from absent there, so writing boundStart=1 with
-            # a 0 reference bound nothing while looking in the workbook as though
-            # it did -- and the storage was free to initialise full.
-            #
-            # Skipping leaves exactly the same unconstrained model, so nothing
-            # changes for the solve; what changes is that the user is told. The
-            # node is named because the fix is in their data: give the node an
-            # upwardLimit, or give one of its units an upperLimitCapacityRatio.
-            if pd.notna(start_value) and start_value > 0:
+            # A start value of 0 is not a start value. Writing nothing leaves the
+            # start free and names the node, because the fix is in the data: give
+            # the node an upwardLimit, or give one of its units an
+            # upperLimitCapacityRatio. A reference of 0 would say something else
+            # -- Backbone binds a flagged reference of 0, so the store would start
+            # empty on a claim nobody made.
+            if start_value > 0:
                 # Set boundStart to 1 for storage nodes
-                p_gn.loc[(p_gn['grid'] == grid) & (p_gn['node'] == node), 'boundStart'] = 1
+                p_gn.loc[gn_mask, 'boundStart'] = 1
 
                 new_constant = round(start_value * 0.7, 0)
                 # Create a mask to find the 'reference' row for this grid and node
@@ -1225,22 +1248,54 @@ class BBExcelPipeline:
                     p_gnBoundaryPropertiesForStates.loc[ref_mask, 'constant'] = new_constant
                     p_gnBoundaryPropertiesForStates.loc[ref_mask, 'useConstant'] = 1
                 else:
-                    # Create new row since one does not exist yet.
-                    new_row = {
+                    new_rows.append({
                         'grid': grid,
                         'node': node,
                         'param_gnBoundaryTypes': 'reference',
                         'useConstant': 1,
                         'constant': new_constant
-                    }
-                    new_row_df = pd.DataFrame([new_row])
-                    # Use pandas concat instead of append (which is deprecated in newer pandas versions)
-                    p_gnBoundaryPropertiesForStates = pd.concat(
-                        [p_gnBoundaryPropertiesForStates, new_row_df],
-                        ignore_index=True
-                    )
+                    })
             else:
                 unbounded_starts.append(node)
+
+        if new_rows:
+            p_gnBoundaryPropertiesForStates = pd.concat(
+                [p_gnBoundaryPropertiesForStates, pd.DataFrame(new_rows)],
+                ignore_index=True
+            )
+
+        if shares_out_of_range:
+            self.logger.log_status(
+                f"{len(shares_out_of_range)} storage start share(s) in 'relative' lie outside "
+                f"0-1: {summarise(shares_out_of_range)}. Those nodes start at 70% of their "
+                "maximum instead. A share is a fraction of the band: write 0.7, not 70.",
+                level="warn"
+            )
+
+        if shares_with_start_to_end:
+            self.logger.log_status(
+                f"{len(shares_with_start_to_end)} node(s) set both a 'relative' start share and "
+                f"'boundStartToEnd': {summarise(shares_with_start_to_end)}. Backbone reads the "
+                "first solve's end from 'reference' only under boundStart, so these start at 70% "
+                "of their maximum instead. Drop one of the two.",
+                level="warn"
+            )
+
+        # A share on a node without state is read by nothing.
+        storage_set = set(storage_gn)
+        stateless_shares = [
+            node for (grid, node, boundary_type) in boundaries
+            if boundary_type in self.START_BOUNDARY_TYPES
+            and (grid, node) not in storage_set
+            and self._start_share(boundaries, grid, node) is not None
+        ]
+        if stateless_shares:
+            self.logger.log_status(
+                f"{len(stateless_shares)} node(s) have a 'relative' start share but no state, "
+                f"so nothing reads it: {summarise(stateless_shares)}. Give the node a storage "
+                "boundary such as 'upwardLimit', or remove the share.",
+                level="warn"
+            )
 
         if unbounded_starts:
             self.logger.log_status(
@@ -1263,10 +1318,11 @@ class BBExcelPipeline:
         # Drop parameter columns nothing set. 'useConstant' and 'isActive' are kept
         # even when empty so each sheet's Cdim=1 column dimension has a member.
         #
-        # p_gn is dropped again here, not only in create_p_gn: 'boundStart' is
-        # added above after that drop has already run, so a model with no storage
-        # node wrote a column of zeros -- exactly what "any parameter column may be
-        # absent" in the class docstring says must not happen.
+        # p_gn is dropped again here, not only in create_p_gn: 'boundStart' and
+        # 'boundStartRelative' are added above after that drop has already run, so
+        # a model with no node on one of the two forms would write a column of
+        # zeros -- exactly what "any parameter column may be absent" in the class
+        # docstring says must not happen.
         p_gnBoundaryPropertiesForStates = utils.drop_empty_parameter_columns(
             p_gnBoundaryPropertiesForStates, self.PARAM_GN_BOUNDARY_PROPERTIES, 'useConstant'
         )
@@ -1275,11 +1331,89 @@ class BBExcelPipeline:
 
         # Sort p_gnBoundaryPropertiesForStates alphabetically by [grid, node] in a case-insensitive manner
         p_gnBoundaryPropertiesForStates = p_gnBoundaryPropertiesForStates.sort_values(
-                                                    by=['grid', 'node', 'param_gnBoundaryTypes'], 
+                                                    by=['grid', 'node', 'param_gnBoundaryTypes'],
                                                     key=lambda x: x.str.lower()
                                                     ).reset_index(drop=True)
 
         return (p_gn, p_gnBoundaryPropertiesForStates)
+
+
+    @staticmethod
+    def _start_share(boundaries: dict, grid, node):
+        """The node's ``relative`` share as a float, or None where it gives none.
+
+        0 is a share -- the floor -- and not "not set": ``df_boundarydata`` is a
+        source-side table, where ``pd.NA`` and ``0`` are still distinct.
+        """
+        boundary = boundaries.get((grid, node, 'relative'))
+        if boundary is None:
+            return None
+        share = pd.to_numeric(boundary['constant'], errors='coerce')
+        return None if pd.isna(share) else float(share)
+
+
+    @staticmethod
+    def _has_state_ceiling(p_gnBoundaryPropertiesForStates: pd.DataFrame,
+                           p_gnu_io: pd.DataFrame, grid, node) -> bool:
+        """Does Backbone see a ceiling on this node's state?
+
+        The same question Backbone asks before it accepts ``boundStartRelative``:
+        an ``upwardLimit`` row on the sheet with either flag set, or a unit on the
+        node with an ``upperLimitCapacityRatio``. Read from the sheet rather than
+        from ``df_boundarydata`` because the sheet is what Backbone reads, and a
+        limit given only as a series is a ceiling too.
+        """
+        sheet = p_gnBoundaryPropertiesForStates
+        upward = sheet[
+            (sheet['grid'] == grid)
+            & (sheet['node'] == node)
+            & (sheet['param_gnBoundaryTypes'] == 'upwardLimit')
+        ]
+        for flag in ('useConstant', 'useTimeseries'):
+            if flag in upward.columns and any(is_positive(v) for v in upward[flag]):
+                return True
+
+        if p_gnu_io.empty or 'upperLimitCapacityRatio' not in p_gnu_io.columns:
+            return False
+        ratios = p_gnu_io.loc[
+            (p_gnu_io['grid'] == grid) & (p_gnu_io['node'] == node),
+            'upperLimitCapacityRatio'
+        ]
+        return any(is_positive(v) for v in ratios)
+
+
+    @staticmethod
+    def _start_level(boundaries: dict, p_gnu_io: pd.DataFrame, grid, node) -> float:
+        """The maximum a level start is 70% of, or 0 where the data gives none."""
+        # 1) the node's own upwardLimit, as df_boundarydata has it.
+        # Read from the table rather than from the sheet built above,
+        # because the sheet carries no constant on a row that resolved to
+        # useTimeseries -- and a node whose limit comes from a series is
+        # exactly the case that needs a start level.
+        upward_limit = boundaries.get((grid, node, 'upwardLimit'))
+        if upward_limit is not None and is_positive(upward_limit['constant']):
+            return float(upward_limit['constant'])
+
+        # 2) calculate maximum storage based on p_gnu_io('upperLimitCapacityRatio')
+        # The column is absent whenever no unit in the whole model sets it:
+        # drop_empty_parameter_columns removes an all-empty PARAM_GNU column
+        # from p_gnu_io, and this is reached exactly when source 1 found
+        # nothing, so a storage node declared any other way used to reach it
+        # and die on a bare KeyError.
+        if p_gnu_io.empty or 'upperLimitCapacityRatio' not in p_gnu_io.columns:
+            return 0
+        subset_p_gnu_io = p_gnu_io[(p_gnu_io['grid'] == grid) &
+                                   (p_gnu_io['node'] == node) &
+                                   (p_gnu_io['upperLimitCapacityRatio'] > 0)
+                                   ]
+        if subset_p_gnu_io.empty:
+            return 0
+        # Use the first row if there are multiple matches
+        capacity = subset_p_gnu_io['capacity'].iloc[0]
+        upper_limit = subset_p_gnu_io['upperLimitCapacityRatio'].iloc[0]
+        if pd.isna(capacity):
+            return 0
+        return float(capacity * upper_limit)
 
 
     def create_p_nEmission(

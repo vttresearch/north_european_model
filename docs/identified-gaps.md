@@ -104,29 +104,6 @@ before it writes", as each becomes answerable.
 
 ## Rules known to be provisional
 
-### The hydro storage start level
-
-`add_storage_starts` writes a provisional starting level, and `changes.inc` then
-recomputes the reference of every `psOpen` and `reservoir` node from the maximum
-of that node's own `upwardLimit` series. So for those nodes the workbook value
-only has to be above zero; what it actually is never reaches the solved model.
-
-Two things follow, and both are wanted rather than tolerated:
-
-- A node whose `upwardLimit` comes only from a series, with no `nodedata`
-  constant, gets **no** start level and a warning naming it. That is correct: the
-  data really is partial, and partial data warns. `changes.inc` will bound the
-  node anyway, but the build cannot see that far and should not pretend to.
-- The rule `add_storage_starts` applies — 0.7 of the node's own upward limit —
-  cannot express a run that starts and ends in summer, which its own docstring
-  says.
-
-Redoing the hydro rules properly is what closes this, and taking the `changes.inc`
-patch back out is part of that work.
-
-*Where it would live:* [Hydro data](hydro.md), which already carries the
-`changes.inc` paragraph.
-
 ### A zero written where Backbone reads it as not-set
 
 A `$`-gated parameter treats a written `0` as absent, so writing one does nothing
@@ -141,23 +118,24 @@ number here", once the sweep has been done.
 ## Backbone parameters this build does not write
 
 Re-derive rather than trusting this table: Backbone's own vocabulary moves. Last
-derived **2026-09-07**, the `p_gnu_io` row **2026-09-25**, against the `param_*` set declarations in
+derived **2026-09-07**, the `p_gnu_io` row **2026-09-25** and the `p_gn` and
+`param_gnBoundaryTypes` rows **2026-09-28**, against the `param_*` set declarations in
 `../inc/1a_definitions.gms` rather than by hand — see
 [How to re-derive it](#how-to-re-derive-it) below.
 
 | Sheet | Written here | In Backbone, not written |
 |---|---|---|
-| `p_gn` | 17 of 20 | `maxInvest`, `invCost`, `annuityFactor` — node-level investment |
+| `p_gn` | 18 of 21 | `maxInvest`, `invCost`, `annuityFactor` — node-level investment |
 | `p_gnn` | 12 of 18 | `transferCapBidirectional`, `boundStateMaxDiff`, `unitSize`, `portion_of_transfer_to_reserve`, `useTimeseriesAvailability`, `useTimeseriesLoss` |
 | `p_gnu_io` | 34 of 36 | `profitMargin`, `maxTsDelay` |
 | `p_unit` | 26 of 79 | `eff02`–`eff12` and `op02`–`op12`, the whole `hr*` / `hrop*` heat-rate family, `section`, `hrsection`, `outputCapacityTotal`, `unitOutputCapacityTotal`, `lastStepNotAggregated` |
-| `param_gnBoundaryTypes` | 6 of 46 | `minSpill`, `upwardSlack01`–`upwardSlack20`, `downwardSlack02`–`downwardSlack20` |
+| `param_gnBoundaryTypes` | 7 of 47 | `minSpill`, `upwardSlack01`–`upwardSlack20`, `downwardSlack02`–`downwardSlack20` |
 | `param_gnBoundaryProperties` | 4 of 5 | `multiplier` — deliberate, see above |
 
 Two denominators moved when this was derived rather than counted by hand, both
 for the same reason: GAMS declares `eff02*12` and `upwardSlack01*20` as ranges,
 so counting the written lines undercounts the members. `p_unit` has 79 members,
-not 32, and `param_gnBoundaryTypes` 46, not 8. The lists of missing names were
+not 32, and `param_gnBoundaryTypes` 47, not 9. The lists of missing names were
 right; only the totals were wrong, which flattered the coverage considerably.
 
 The check also runs the other way, and that direction is clean: **every name in
@@ -397,7 +375,6 @@ ever dropped instead of reported.
   parameter column is missing whenever nothing set it
 - [Source workbook conventions](source-workbook-conventions.md) — the sheets and
   columns that exist today
-- [Hydro data](hydro.md) — the storage start level and the `changes.inc` patch in
-  their own context
+- [Hydro data](hydro.md) — the hydro storage start shares in their own context
 - `docs/dictionary.md` in the Backbone repository — the authority for every
   parameter named here

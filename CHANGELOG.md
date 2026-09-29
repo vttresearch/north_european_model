@@ -150,8 +150,9 @@ not build and why, and has a documentation page of its own.
 - Node state boundaries are read from one table, and it states whether each one
   is a constant or a timeseries instead of that following from where it came
   from. [docs/source-workbook-conventions.md](docs/source-workbook-conventions.md)
-- The hydro reservoir start level is written by `changes.inc` alone; the input
-  excel's provisional value is no longer meant to be the one used.
+- hydro storage starts: a share of the band, from `nodedata` `relative`, written
+  as `boundStartRelative`; the `changes.inc` override is removed. Needs Backbone
+  with `boundStartRelative`. [docs/hydro.md](docs/hydro.md#start-levels)
 - `useTimeSeries` and `storageValueUseTimeSeries` spelled `useTimeseries` and
   `storageValueUseTimeseries`, following Backbone.
 - `boundStart` is dropped when no node has a storage start level, rather than
