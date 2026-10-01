@@ -73,8 +73,12 @@ class TestNoBareContainers:
         repo_root = Path(__file__).resolve().parents[2]
         offenders = []
         for path in repo_root.rglob("*.py"):
-            parts = set(path.parts)
-            if parts & {"tests", ".git", "__pycache__", "dev", "scratch"}:
+            parts = path.relative_to(repo_root).parts
+            if set(parts) & {"tests", ".git", "__pycache__", "dev", "scratch"}:
+                continue
+            # results/ holds run output and handover material, scratch scripts
+            # included, that stays until its folder is removed; it is not code.
+            if parts[0] == "results":
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for match in re.finditer(r"\bgt\.Container\(", text):
