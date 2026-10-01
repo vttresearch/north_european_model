@@ -14,13 +14,16 @@ import textwrap
 import pytest
 
 from src.infrastructure.config_reader import (
+    FORECAST_BRANCH_ENDS,
     _parse_bb_timeseries_start,
     _parse_climate_data,
+    _parse_forecast_branches,
     _safe_eval_int,
     _validate_timeseries_specs,
     config_output_folder_names,
     load_config,
     output_folder_name,
+    spec_forecast_quantiles,
 )
 
 MINIMAL_INI = """\
@@ -198,7 +201,7 @@ class TestLoadConfig:
         assert config["force_full_rerun"] is False
         assert config["bb_timeseries_start"] == "01-01"
         assert config["bb_timeseries_length"] == 365
-        assert config["bb_horizon_weeks"] == 70
+        assert config["bb_horizon_weeks"] == 52
         assert config["timeseries_specs"] == {}
         assert config["exclude_grids"] == []
 
@@ -282,10 +285,146 @@ class TestLoadConfig:
         with pytest.raises(ValueError):
             load_config(_write_ini(tmp_path, body))
 
+    def test_a_spec_quantile_replaces_the_global_one_for_that_series_only(self, tmp_path):
+        body = MINIMAL_INI + textwrap.dedent("""\
+            forecast_quantiles = {'f01': 0.5, 'f02': 0.1}
+            timeseries_specs = {
+                'wind': {'processor_name': 'VRE_PECD', 'bb_parameter': 'ts_cf',
+                         'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+                         'forecast_quantiles': {'f02': 0.45}},
+                'hydro': {'processor_name': 'hydro_inflow_MAF2019', 'bb_parameter': 'ts_influx',
+                          'bb_parameter_dimensions': ['grid', 'node', 'f', 't']},
+                }
+            """)
+        config = load_config(_write_ini(tmp_path, body))
+        specs = config["timeseries_specs"]
+        assert spec_forecast_quantiles(config, specs["wind"]) == {"f01": 0.5, "f02": 0.45}
+        assert spec_forecast_quantiles(config, specs["hydro"]) == {"f01": 0.5, "f02": 0.1}
+        # The global map is the default, not a copy the override writes into.
+        assert config["forecast_quantiles"] == {"f01": 0.5, "f02": 0.1}
+
+    @pytest.mark.parametrize(
+        "override, reason",
+        [
+            ("{'f09': 0.5}", "does not have"),
+            ("{'f02': 1.5}", "between 0 and 1"),
+            ("{'f02': 'low'}", "between 0 and 1"),
+            ("[0.45]", "must be a dict"),
+        ],
+    )
+    def test_rejects_a_spec_quantile_the_branches_cannot_take(self, tmp_path, override, reason):
+        body = MINIMAL_INI + textwrap.dedent(f"""\
+            forecast_quantiles = {{'f01': 0.5, 'f02': 0.1}}
+            timeseries_specs = {{
+                'wind': {{'processor_name': 'VRE_PECD', 'bb_parameter': 'ts_cf',
+                         'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+                         'forecast_quantiles': {override}}},
+                }}
+            """)
+        with pytest.raises(ValueError, match=reason):
+            load_config(_write_ini(tmp_path, body))
+
     def test_returns_a_plain_dict(self, tmp_path):
         # The main DI seam: because this is a plain dict, tests everywhere else
         # can synthesise configs without touching configparser.
         assert type(load_config(_write_ini(tmp_path, MINIMAL_INI))) is dict
+
+
+class TestForecastBranches:
+    """``forecast_branches`` says how long each branch is its own and how it ends.
+
+    The parser returns every branch beside the central one, filled in, because
+    ``scheduleInit.gms`` is written from it: a branch the config says nothing
+    about still needs its length stated.
+    """
+
+    QUANTILES = {"f01": 0.5, "f02": 0.1, "f03": 0.9, "f04": 0.05}
+
+    def _parse(self, raw, quantiles=None, weeks=70):
+        return _parse_forecast_branches(raw, self.QUANTILES if quantiles is None else quantiles, weeks)
+
+    def test_a_branch_the_config_does_not_name_is_149_days_and_cut(self):
+        out = self._parse(None)
+        assert list(out) == ["f02", "f03", "f04"]
+        assert all(b == {"length_days": 149, "end": "cut", "blend_days": 0} for b in out.values())
+
+    def test_stated_settings_are_kept_and_the_rest_filled_in(self):
+        out = self._parse({
+            "f01": "central",
+            "f02": {"length_days": 252, "end": "continue", "blend_days": 28},
+            "f04": {"length_days": 5},
+        })
+        assert out["f02"] == {"length_days": 252, "end": "continue", "blend_days": 28}
+        assert out["f03"] == {"length_days": 149, "end": "cut", "blend_days": 0}
+        assert out["f04"] == {"length_days": 5, "end": "cut", "blend_days": 0}
+        # The central branch takes no settings, so it is not among the results.
+        assert "f01" not in out
+
+    def test_every_end_has_a_backbone_value(self):
+        # 'end' is written into scheduleInit.gms as boundForecastEnds.
+        assert FORECAST_BRANCH_ENDS == {"cut": 0, "bound": 1, "continue": 2}
+
+    def test_only_f01_can_be_central(self):
+        # scheduleInit.gms names f01 in mf_central and changes.inc reads its data by
+        # label, so another central branch would be central in the config alone.
+        with pytest.raises(ValueError, match="cannot be 'central'"):
+            self._parse({"f01": "central", "f02": "central"})
+
+    def test_f01_takes_nothing_but_central(self):
+        with pytest.raises(ValueError, match="must be 'central'"):
+            self._parse({"f01": {"length_days": 100}})
+
+    def test_branches_need_f01_among_the_quantiles(self):
+        with pytest.raises(ValueError, match="must include 'f01'"):
+            self._parse(None, quantiles={"f02": 0.1})
+
+    @pytest.mark.parametrize(
+        "raw, reason",
+        [
+            ({"f09": {"length_days": 5}}, "does not have"),
+            ({"f02": {"length": 5}}, "unknown setting"),
+            ({"f02": {"end": "stop"}}, "must be one of"),
+            ({"f02": {"length_days": 1}}, "between 2 and"),
+            ({"f02": {"length_days": 491}}, "between 2 and"),
+            ({"f02": {"length_days": 5.5}}, "whole number"),
+            ({"f02": {"length_days": True}}, "whole number"),
+            ({"f02": {"blend_days": -1, "end": "continue"}}, "must not be negative"),
+            ({"f02": {"blend_days": 7, "end": "cut"}}, "belongs to"),
+            ({"f02": 252}, "must be a dict"),
+            (["f02"], "must be a dict"),
+        ],
+    )
+    def test_rejects_what_the_templates_could_not_honour(self, raw, reason):
+        with pytest.raises(ValueError, match=reason):
+            self._parse(raw)
+
+    def test_the_longest_length_is_the_horizon(self):
+        assert self._parse({"f02": {"length_days": 490}})["f02"]["length_days"] == 490
+        assert self._parse({"f02": {"length_days": 21}}, weeks=3)["f02"]["length_days"] == 21
+        with pytest.raises(ValueError, match="between 2 and"):
+            self._parse({"f02": {"length_days": 22}}, weeks=3)
+
+    def test_the_default_length_gives_way_to_a_shorter_horizon(self):
+        # A config that says nothing about its branches must still load with a
+        # horizon under 149 days.
+        out = self._parse(None, weeks=3)
+        assert [b["length_days"] for b in out.values()] == [21, 21, 21]
+
+    def test_a_deterministic_config_has_no_branches(self):
+        assert self._parse(None, quantiles={}) == {}
+        with pytest.raises(ValueError, match="deterministic"):
+            self._parse({"f02": {"length_days": 5}}, quantiles={})
+
+    def test_load_config_reads_the_key(self, tmp_path):
+        body = MINIMAL_INI + textwrap.dedent("""\
+            forecast_branches = {
+                'f01': 'central',
+                'f03': {'length_days': 5, 'end': 'bound'},
+                }
+            """)
+        config = load_config(_write_ini(tmp_path, body))
+        assert config["forecast_branches"]["f03"] == {"length_days": 5, "end": "bound", "blend_days": 0}
+        assert config["forecast_branches"]["f02"]["length_days"] == 149
 
 
 class TestOutputFolderName:

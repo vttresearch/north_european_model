@@ -157,7 +157,7 @@ than three days from a whole number of calendar years, leap days counted —
 `365`, `365*5` and `365*35+9` are all whole — and says how long a run can be
 before it meets the join: the window minus the horizon.
 
-The horizon is `bb_horizon_weeks` in the same block, 70 weeks (490 days) by
+The horizon is `bb_horizon_weeks` in the same block, 52 weeks (364 days) by
 default. It is not a timeseries setting, but it decides how far each solve's
 look-ahead reaches past the window, and the build sizes the model's `t` set to
 the window plus one horizon. [Running the model](running-the-model.md#horizon-and-forecast-discount)
@@ -197,6 +197,85 @@ fewer than two climate windows cannot have branches either, and is told so.
 `forecast_weights` beside it is the probability of each branch. It is written
 into the **GAMS files** at the end of the build, alongside the branch count, and
 never into a timeseries GDX.
+
+A timeseries spec may carry a `forecast_quantiles` of its own. It replaces the
+global value for the branches it names and for that series alone, so one branch
+can be a dry decile of inflow and a slightly calm one of wind.
+
+### A quantile per hour is not a quantile of energy
+
+Every hour of a p0.45 wind branch is a slightly-below-median hour, and a run of
+them adds up to far less wind than any real period of that length has: the
+years trade good hours for bad ones, and a branch never does. How far off it is
+depends on how skewed the series is, so it differs by series and by country.
+
+In the OT2030 build, over the 35 climate years:
+
+| series | energy of a p0.5 branch, of the mean year | per-hour quantile that carries the mean | … a one-in-ten low and high 252 days |
+|---|---|---|---|
+| onshore wind | 72 % | 0.60 | 0.57, 0.63 |
+| offshore wind | 108 % | 0.46 | 0.43, 0.49 |
+| solar | 101 % | 0.49 | 0.45, 0.53 |
+| hydro inflow | 94 % | 0.57 | 0.48, 0.65 |
+| electricity demand | 99 % | 0.45 | 0.56, 0.34 |
+| district heating demand | 98 % | 0.45 | 0.60, 0.31 |
+
+Demand is a negative `ts_influx`, so its low quantile is the high-demand one:
+a low quantile is the hard direction for every series.
+
+So a quantile is chosen by what it amounts to, not by its name.
+`python tools/forecast_branch_energy.py <built_folder>` prints the energy of
+every branch over its own length against the climate years, and with
+`--targets` the quantile that gives a stated energy; `--by-node` repeats both
+per country.
+
+### How long a branch lasts, and how it ends
+
+`forecast_branches` states, for each branch beside the central one, how many
+days it carries its own data and what happens after that:
+
+```
+forecast_branches = {
+    'f01': 'central',
+    'f02': {'length_days': 252, 'end': 'continue', 'blend_days': 28},
+    'f03': {'length_days': 252, 'end': 'continue', 'blend_days': 28},    
+    'f04': {'length_days': 5, 'end': 'cut'},
+    }
+```
+
+| `end` | after its length the branch | suits |
+|---|---|---|
+| `cut` | stops, and the remaining branches share its probability | a short event the model has to get through |
+| `bound` | ends at the central branch's storage levels | a short-term forecast that converges back |
+| `continue` | runs on to the horizon on the central branch's data, keeping its own storage levels and its probability | a long deviation such as a dry year |
+
+A branch the key does not name is 149 days long and cut. `'f01': 'central'` is
+there for the reader: f01 always reaches the horizon and takes no settings, and
+no other branch can be central, because `scheduleInit.gms` and `changes.inc`
+name f01.
+
+Three things follow from how Backbone reads these:
+
+- **A cut branch values nothing past its cut.** What its storages hold at the
+  end is worth nothing to it, so it spends what the storage limits let it.
+- **A length counts to the start of a model time step.** From day 15 of a solve
+  the steps are a week long, so a length inside a week holds until that week
+  ends: 250 days acts as 252. `blend_days` is sampled the same way, at each
+  step's first hour — a 28-day blend is a week still on the branch's own data,
+  then a quarter, a half and three quarters central.
+- **A branch costs what its length costs.** Two branches continuing to a
+  52-week horizon and a third cut at five days make each daily OT2030 solve
+  589 000 variables against 432 000 for two 149-day branches, and 1.4 times
+  the solver iterations.
+
+The build writes these into `scheduleInit.gms` as `p_forecast`. A changed
+`forecast_branches` recopies the GAMS files and reruns nothing; a changed
+quantile in a spec reruns that series, and a changed global one reruns them all.
+
+How far ahead a branch is pulled towards the realized weather is set in
+`scheduleInit.gms`, not in the config: five days for wind, solar and anything
+else, seven for demand and fourteen for hydro inflow. A branch shorter than
+seven or fourteen days keeps the five.
 
 ## Why zero is the hard case
 

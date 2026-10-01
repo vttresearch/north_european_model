@@ -119,31 +119,13 @@ $endif
 * --------------------------------------------------------------------------------
 
 
-* drop unnecessary forecast data
-if(%forecastNumber%<3,
-    option gn_tmp<ts_node;
-    ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)>3} = 0;
-    option gn_tmp<ts_influx;
-    ts_influx(gn_tmp(grid,node),f,t) $ {ord(f)>3} = 0;
-    option node_tmp<ts_cf;
-    ts_cf(flow,node_tmp(node),f,t) $ {ord(f)>3} = 0;
-);
-if(%forecastNumber%<2,
-    option gn_tmp<ts_node;
-    ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)=3} = 0;
-    option gn_tmp<ts_influx;
-    ts_influx(gn_tmp(grid,node),f,t) $ {ord(f)=3} = 0;
-    option node_tmp<ts_cf;
-    ts_cf(flow,node_tmp(node),f,t) $ {ord(f)=3} = 0;
-);
-if(%forecastNumber%<1,
-    option gn_tmp<ts_node;
-    ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f)=2} = 0;
-    option gn_tmp<ts_influx;
-    ts_influx(gn_tmp(grid,node),f,t) $ {ord(f)=2} = 0;
-    option node_tmp<ts_cf;
-    ts_cf(flow,node_tmp(node),f,t) $ {ord(f)=2} = 0;
-);
+* drop the data of the forecast branches this run does not use
+option gn_tmp<ts_node;
+ts_node(gn_tmp(grid,node),param_gnBoundaryTypes,f,t) $ {ord(f) > %forecastNumber% + 1} = 0;
+option gn_tmp<ts_influx;
+ts_influx(gn_tmp(grid,node),f,t) $ {ord(f) > %forecastNumber% + 1} = 0;
+option node_tmp<ts_cf;
+ts_cf(flow,node_tmp(node),f,t) $ {ord(f) > %forecastNumber% + 1} = 0;
 
 
 
@@ -260,41 +242,27 @@ ts_node(gn_tmp_, 'downwardLimit', ff, tt) = 0;
 * --------------------------------------------------------------------------------
 
 
-// setting cautious forecasts for hydro power nodes with timeseries downward limit
+// every forecast branch reads the realized storage limits of hydro power nodes
 option gn_tmp < ts_node;
 option tt < ts_node;
 
-ts_node(gn_tmp, 'upwardLimit', 'f01', tt) $ ts_node(gn_tmp, 'upwardLimit', 'f00', tt) = ts_node(gn_tmp, 'upwardLimit', 'f00', tt);
-if(card(f)>2, 
-    ts_node(gn_tmp, 'upwardLimit', f, tt) 
-       $ { ts_node(gn_tmp, 'upwardLimit', 'f00', tt) 
-           and ord(f)=3 // f02
-           } 
-       = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 0.9;
-);
-if(card(f)>3,
-    ts_node(gn_tmp, 'upwardLimit', f, tt) 
-        $ { ts_node(gn_tmp, 'upwardLimit', 'f00', tt) 
-            and ord(f) = 4 // f03
-            }
-        = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 1.1;
-);
+ts_node(gn_tmp, 'upwardLimit', f, tt)
+    $ {ord(f) > 1 and ord(f) <= %forecastNumber% + 1}
+    = ts_node(gn_tmp, 'upwardLimit', 'f00', tt);
 
-ts_node(gn_tmp, 'downwardLimit', 'f01', tt) $ ts_node(gn_tmp, 'downwardLimit', 'f00', tt) = ts_node(gn_tmp, 'downwardLimit', 'f00', tt);
-if(card(f)>2, 
-    ts_node(gn_tmp, 'downwardLimit', f, tt) 
-    $ { ts_node(gn_tmp, 'downwardLimit', 'f00', tt)
-        and ord(f)=3 // f02 
-        }
+ts_node(gn_tmp, 'downwardLimit', f, tt)
+    $ {ord(f) > 1 and ord(f) <= %forecastNumber% + 1}
+    = ts_node(gn_tmp, 'downwardLimit', 'f00', tt);
+
+// except two, each against its own branch's risk: the dry f02 keeps a floor 10 % higher,
+// and the wet f03 a ceiling 10 % lower
+ts_node(gn_tmp, 'downwardLimit', f, tt)
+    $ {ord(f) = 3 and ord(f) <= %forecastNumber% + 1}
     = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 1.1;
-);
-if(card(f)>3,
-    ts_node(gn_tmp, 'downwardLimit', f, tt) 
-    $ { ts_node(gn_tmp, 'downwardLimit', 'f00', tt) 
-        and ord(f) = 4 // f03
-        }  
-    = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 0.9;
-);
+
+ts_node(gn_tmp, 'upwardLimit', f, tt)
+    $ {ord(f) = 4 and ord(f) <= %forecastNumber% + 1}
+    = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 0.9;
 
 
 * --------------------------------------------------------------------------------

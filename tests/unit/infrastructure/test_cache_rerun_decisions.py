@@ -46,7 +46,8 @@ _STRUCTURAL_KEYS = [
     "country_codes", "exclude_grids", "exclude_nodes",
     "climate_data", "bb_timeseries_start", "bb_timeseries_length",
     "bb_horizon_weeks",
-    "forecast_quantiles", "forecast_weights", "timeseries_specs",
+    "forecast_quantiles", "forecast_weights", "forecast_branches",
+    "timeseries_specs",
 ]
 
 
@@ -319,6 +320,39 @@ class TestAHorizonChangeRecopiesTheGamsFiles:
         manager.run()
 
         assert not manager.full_rerun
+
+
+class TestAChangedBranchShapeRecopiesTheGamsFiles:
+    """forecast_branches is patched into scheduleInit.gms and read by nothing else.
+
+    So a change to it recopies the GAMS files and reruns no phase. Left out of
+    the cache it would stay out of the built folder, as the horizon once did;
+    treated like the quantiles it would cost a full rerun for one changed line.
+    """
+
+    LONG = {"f02": {"length_days": 252, "end": "continue", "blend_days": 28},
+            "f03": {"length_days": 149, "end": "cut", "blend_days": 0}}
+
+    def test_a_changed_branch_recopies_and_reruns_nothing(self, tmp_path):
+        settle_cache(make_manager(tmp_path))
+
+        manager = make_manager(tmp_path, forecast_branches=self.LONG)
+        manager.run()
+
+        assert not manager.full_rerun
+        assert manager.recopy_gams_files
+        assert not manager.any_timeseries_changed
+        assert not manager.rebuild_bb_excel
+
+    def test_an_unchanged_branch_does_not(self, tmp_path):
+        """The control, and the JSON round trip: the cached copy must compare equal."""
+        settle_cache(make_manager(tmp_path, forecast_branches=self.LONG))
+
+        manager = make_manager(tmp_path, forecast_branches=self.LONG)
+        manager.run()
+
+        assert not manager.full_rerun
+        assert not manager.recopy_gams_files
 
 
 class TestAnEditedGamsTemplateIsCopiedAgain:

@@ -578,7 +578,26 @@ def _derive_gams_settings(config: dict) -> dict:
         # forecasts + 1 elements. See mSettings in ../docs/dictionary.md.
         "forecast_number": len(quantiles),
         "weights": config["forecast_weights"],
+        # One (symbol, label, value) per p_forecast line: every branch beside the
+        # central one states its length, and its end and blend only where they
+        # differ from the mSettings defaults scheduleInit.gms sets (cut, no blend).
+        "branches": [
+            row
+            for label, branch in config.get("forecast_branches", {}).items()
+            for row in _branch_rows(label, branch)
+        ],
     }
+
+
+def _branch_rows(label: str, branch: dict) -> list:
+    """The p_forecast(label, symbol) = value lines one forecast branch needs."""
+    rows = [("forecastLength", label, branch["length_days"] * 24)]
+    end = config_reader.FORECAST_BRANCH_ENDS[branch["end"]]
+    if end:
+        rows.append(("boundForecastEnds", label, end))
+    if branch["blend_days"]:
+        rows.append(("centralBlendLength", label, branch["blend_days"] * 24))
+    return rows
 
 
 def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
@@ -607,6 +626,19 @@ def _patch_gams_file_content(filename: str, content: str, config: dict) -> str:
             r'    // No restrictions for local versions\.[^\n]*\n)'
             r'(?:    p_mfProbability\([^\n]*\n)+',
             rf'\1{prob_lines}',
+            content,
+        )
+
+        branch_lines = "".join(
+            f"    p_forecast('{label}', '{symbol}') = {value};\n"
+            for symbol, label, value in settings["branches"]
+        )
+        content = re.sub(
+            r'(    // NOTE: do not edit the lines below[^\n]*\n'
+            r'    // unless[^\n]*\n'
+            r'    // No restrictions for local versions\.[^\n]*\n)'
+            r'(?:    p_forecast\([^\n]*\n)+',
+            rf'\1{branch_lines}',
             content,
         )
 
@@ -646,6 +678,13 @@ def _log_gams_settings(logger, settings: dict) -> None:
     else:
         probabilities = "none (deterministic)"
 
+    by_label = {}
+    for symbol, label, value in settings["branches"]:
+        by_label.setdefault(label, []).append(f"{symbol} {value}")
+    branches = "; ".join(
+        f"{label} {', '.join(parts)}" for label, parts in by_label.items()
+    ) or "none beside the central one"
+
     logger.log_status("GAMS settings written:", level="none")
     for symbol, value in (
         ("t_horizon", f"{settings['t_horizon']} h ({settings['horizon_weeks']} weeks)"),
@@ -654,6 +693,7 @@ def _log_gams_settings(logger, settings: dict) -> None:
         ("f", f"f00 * {settings['last_f']} "
               f"(forecastNumber {settings['forecast_number']} = branches beside f00)"),
         ("p_mfProbability", probabilities),
+        ("p_forecast", branches),
     ):
         logger.log_status(f"   {symbol:<15} {value}", level="none")
 

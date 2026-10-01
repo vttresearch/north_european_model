@@ -58,6 +58,7 @@ import src.source_data.source_data_contributions as source_data_contributions
 import src.source_workbook_shape as source_workbook_shape
 import src.infrastructure.processor_input_record as processor_input_record
 from src.infrastructure.cache_manager import CacheManager
+from src.infrastructure.config_reader import spec_forecast_quantiles
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.processors.base_processor import declared_source_data
 from src.timeseries.timeseries_helpers import (
@@ -716,7 +717,9 @@ class ProcessorRunner:
         calculate_forecasts = "f" in dims and "t" in dims and any(d not in ("f", "t") for d in dims)
 
         # Empty forecast_quantiles is the deterministic mode: no branches at all.
-        if calculate_forecasts and not self.config["forecast_quantiles"]:
+        # A spec may give some branches a quantile of its own.
+        forecast_quantiles = spec_forecast_quantiles(self.config, spec)
+        if calculate_forecasts and not forecast_quantiles:
             calculate_forecasts = False
 
         # The branches are quantiles across the climate windows, so they need
@@ -737,7 +740,7 @@ class ProcessorRunner:
             forecast_df = calculate_climatological_forecasts(
                 ordered_result,
                 bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
-                forecast_quantiles=self.config["forecast_quantiles"],
+                forecast_quantiles=forecast_quantiles,
                 bb_ts_start=bb_ts_start,
                 bb_ts_length=bb_ts_length,
                 valid_climate_years=valid_climate_years,

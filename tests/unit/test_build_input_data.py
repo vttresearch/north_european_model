@@ -15,6 +15,7 @@ which would otherwise turn every patch into a silent no-op.
 """
 
 import math
+import re
 
 import pytest
 
@@ -95,6 +96,80 @@ class TestScheduleInit:
 
         twice = _patch_gams_file_content("scheduleInit.gms", out, make_config())
         assert twice == out  # idempotent
+
+
+class TestScheduleInitBranches:
+    """The p_forecast block: how long each branch is its own, and how it ends."""
+
+    NOTE = (
+        "    // NOTE: do not edit the lines below in the git version\n"
+        "    // unless updating also _patch_gams_file_content() in build_input_data.py\n"
+        "    // No restrictions for local versions.\n"
+    )
+    BLOCK = NOTE + (
+        "    p_forecast('f02', 'forecastLength') = 3576;\n"
+        "    p_forecast('f03', 'forecastLength') = 3576;\n"
+    )
+
+    @staticmethod
+    def _config(branches):
+        return make_config(
+            forecast_quantiles={"f01": 0.5, **{label: 0.1 for label in branches}},
+            forecast_weights={"f01": 1.0, **{label: 0.0 for label in branches}},
+            forecast_branches=branches,
+        )
+
+    def test_every_branch_states_its_length_in_hours(self):
+        out = _patch_gams_file_content("scheduleInit.gms", self.BLOCK, self._config({
+            "f02": {"length_days": 252, "end": "continue", "blend_days": 28},
+            "f04": {"length_days": 5, "end": "cut", "blend_days": 0},
+        }))
+        assert "p_forecast('f02', 'forecastLength') = 6048;" in out
+        assert "p_forecast('f04', 'forecastLength') = 120;" in out
+        # Replaced wholesale: a leftover f03 line would not compile against an f
+        # set that stops at f02, and would shape a branch the config never named.
+        assert "f03" not in out
+
+    def test_a_continuing_branch_states_its_end_and_its_blend(self):
+        out = _patch_gams_file_content("scheduleInit.gms", self.BLOCK, self._config({
+            "f02": {"length_days": 252, "end": "continue", "blend_days": 28},
+        }))
+        assert "p_forecast('f02', 'boundForecastEnds') = 2;" in out
+        assert "p_forecast('f02', 'centralBlendLength') = 672;" in out
+
+    def test_a_bound_branch_states_its_end(self):
+        out = _patch_gams_file_content("scheduleInit.gms", self.BLOCK, self._config({
+            "f02": {"length_days": 7, "end": "bound", "blend_days": 0},
+        }))
+        assert "p_forecast('f02', 'boundForecastEnds') = 1;" in out
+
+    def test_a_cut_branch_writes_no_end(self):
+        # Backbone reads a literal 0 in p_forecast as "not given" and takes the
+        # mSettings value, which scheduleInit.gms sets to 0. Writing the 0 would
+        # look like a statement and be none.
+        out = _patch_gams_file_content("scheduleInit.gms", self.BLOCK, self._config({
+            "f02": {"length_days": 5, "end": "cut", "blend_days": 0},
+        }))
+        assert "boundForecastEnds" not in out
+        assert "centralBlendLength" not in out
+
+    def test_no_branch_beside_the_central_one_leaves_no_line(self):
+        out = _patch_gams_file_content("scheduleInit.gms", self.BLOCK, self._config({}))
+        assert "p_forecast(" not in out
+        assert "// NOTE: do not edit the lines below" in out
+
+    def test_the_probability_block_is_not_mistaken_for_it(self):
+        # Both blocks sit under the same three comment lines.
+        probabilities = self.NOTE + (
+            "    p_mfProbability('schedule', 'f01') = 0.6;\n"
+            "    p_mfProbability('schedule', 'f02') = 0.4;\n"
+        )
+        out = _patch_gams_file_content(
+            "scheduleInit.gms", probabilities + self.BLOCK,
+            self._config({"f02": {"length_days": 5, "end": "cut", "blend_days": 0}}),
+        )
+        assert out.count("p_mfProbability(") == 2
+        assert out.count("p_forecast(") == 1
 
 
 class TestTimeAndSamples:
@@ -215,13 +290,13 @@ class TestRealTemplatesStillMatch:
         assert "'dataLength') =  48;" in out
 
     def test_schedule_init_horizon_anchor_is_present(self, templates):
-        # 52 weeks, so a patch that no longer matches cannot pass by leaving the
-        # template's own 70 in place.
+        # 65 weeks, so a patch that no longer matches cannot pass by leaving the
+        # template's own 52 in place.
         content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
         out = _patch_gams_file_content(
-            "scheduleInit.gms", content, make_config(bb_horizon_weeks=52)
+            "scheduleInit.gms", content, make_config(bb_horizon_weeks=65)
         )
-        assert "'t_horizon') = 24*7*52;" in out, "t_horizon anchor no longer matches scheduleInit.gms"
+        assert "'t_horizon') = 24*7*65;" in out, "t_horizon anchor no longer matches scheduleInit.gms"
 
     def test_schedule_init_probability_block_anchor_is_present(self, templates):
         content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
@@ -232,6 +307,29 @@ class TestRealTemplatesStillMatch:
         out = _patch_gams_file_content("scheduleInit.gms", content, config)
         assert "p_mfProbability('schedule', 'f01') = 1;" in out
         assert "p_mfProbability('schedule', 'f02')" not in out
+
+    def test_schedule_init_branch_block_anchor_is_present(self, templates):
+        content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
+        config = make_config(
+            forecast_quantiles={"f01": 0.5, "f02": 0.1},
+            forecast_weights={"f01": 0.5, "f02": 0.5},
+            forecast_branches={"f02": {"length_days": 7, "end": "bound", "blend_days": 0}},
+        )
+        out = _patch_gams_file_content("scheduleInit.gms", content, config)
+        assert "p_forecast('f02', 'forecastLength') = 168;" in out
+        assert "p_forecast('f02', 'boundForecastEnds') = 1;" in out
+        assert "p_forecast('f03'" not in out, "p_forecast anchor no longer matches scheduleInit.gms"
+
+    def test_schedule_init_names_no_branch_outside_the_patched_blocks(self, templates):
+        # A branch label anywhere else would not compile for a config with fewer
+        # branches, since timeAndSamples.inc ends the f set at the last one built.
+        content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
+        config = make_config(
+            forecast_quantiles={"f01": 0.5}, forecast_weights={"f01": 1.0}, forecast_branches={},
+        )
+        out = _patch_gams_file_content("scheduleInit.gms", content, config)
+        code = "\n".join(line.split("//")[0] for line in out.splitlines())
+        assert set(re.findall(r"'(f\d\d)'", code)) <= {"f00", "f01"}
 
     def test_time_and_samples_anchors_are_present(self, templates):
         content = (templates / "timeAndSamples.inc").read_text(encoding="utf-8")
@@ -281,6 +379,7 @@ class TestGamsSettingsSummary:
             bb_horizon_weeks=52,
             forecast_quantiles={"f01": 0.5, "f02": 0.9},
             forecast_weights={"f01": 0.7, "f02": 0.3},
+            forecast_branches={"f02": {"length_days": 30, "end": "continue", "blend_days": 7}},
         )
         settings, logger = self._report(config)
         reported = "\n".join(logger.messages)
@@ -316,18 +415,25 @@ class TestGamsSettingsSummary:
             assert f"p_mfProbability('schedule', '{label}') = {weight:g};" in schedule
             assert f"{label} {weight:g}" in reported
 
+        assert settings["branches"], "the config above shapes a branch"
+        for symbol, label, value in settings["branches"]:
+            assert f"p_forecast('{label}', '{symbol}') = {value};" in schedule
+            assert f"{symbol} {value}" in reported
+
     def test_a_deterministic_run_reports_no_probabilities(self):
-        _, logger = self._report(make_config(forecast_quantiles={}, forecast_weights={}))
+        _, logger = self._report(make_config(
+            forecast_quantiles={}, forecast_weights={}, forecast_branches={},
+        ))
         reported = "\n".join(logger.messages)
         assert "forecastNumber 0" in reported
         assert "deterministic" in reported
 
     def test_the_block_stays_short_and_carries_no_warnings(self):
-        # A lead-in and one row per patched symbol: t_horizon, dataLength, t, f
-        # and p_mfProbability.  The block is a reassurance on a normal build, so
-        # growing it is a decision, not an accident.
+        # A lead-in and one row per patched symbol: t_horizon, dataLength, t, f,
+        # p_mfProbability and p_forecast.  The block is a reassurance on a normal
+        # build, so growing it is a decision, not an accident.
         _, logger = self._report(make_config())
-        assert len(logger.records) == 6
+        assert len(logger.records) == 7
         assert all(level == "none" for level, _ in logger.records)
 
 
@@ -367,7 +473,7 @@ class TestWindowLengthWarning:
         (message,) = self._warnings(bb_timeseries_length=800)
         assert "800" in message
         assert "10 Mar" in message and "01 Jan" in message
-        assert "310" in message            # 800 days minus the 490-day (70-week) horizon
+        assert "436" in message            # 800 days minus the 364-day (52-week) horizon
         assert "365*2" in message
 
     def test_a_window_shorter_than_the_horizon_is_met_by_every_solve(self):

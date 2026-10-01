@@ -34,7 +34,7 @@ if (mType('schedule'),
     // NOTE: do not edit the line below in the git version
     // unless updating also _patch_gams_file_content() in build_input_data.py
     // No restrictions for local versions.
-    mSettings('schedule', 't_horizon') = 24*7*70;    // How many active time steps the solve contains (aggregation of time steps does not impact this, unless the aggregation does not match)
+    mSettings('schedule', 't_horizon') = 24*7*52;    // How many active time steps the solve contains (aggregation of time steps does not impact this, unless the aggregation does not match)
     mSettings('schedule', 't_jump') = 24;          // How many time steps the model rolls forward between each solve
 
     // Forecast discount: weight 1 for the realized day and 3 more days, then a linear
@@ -162,33 +162,48 @@ if (mType('schedule'),
 
     // Define forecast properties and features
     mSettings('schedule', 't_forecastStart') = 1;                  // At which time step the first forecast is available ( 1 = t000001 )
-    mSettings('schedule', 't_forecastLengthUnchanging') = 3576;       // Length of forecasts in time steps - this does not decrease when the solve moves forward 
+    mSettings('schedule', 'forecastLength') = min(3576, mSettings('schedule', 't_horizon')); // Length of a forecast branch in time steps, unless p_forecast below gives the branch its own. This does not decrease when the solve moves forward
     mSettings('schedule', 't_forecastLengthDecreasesFrom') = 0; // Length of forecasts in time steps - this decreases when the solve moves forward until the new forecast data is read
     mSettings('schedule', 't_perfectForesight') = 0;               // How many time steps after there is perfect foresight (including t_jump)
     mSettings('schedule', 't_forecastJump') = 24;                  // How many time steps before new forecast is available
-    mSettings('schedule', 't_improveForecastNew') = 24*10;           // Number of time steps ahead of time that the forecast is improved on each solve, new method.
-    mSettings('schedule', 'boundForecastEnds') = 0;                // 0/1 parameter if last v_state and v_online in f02,f03,... are bound to f01
+    mSettings('schedule', 't_improveForecastNew') = 24*5;          // Number of time steps ahead of time that the forecast is improved on each solve, new method.
+    mSettings('schedule', 'boundForecastEnds') = 0;                // How a branch ends unless p_forecast below says otherwise: 0 cut, 1 bound to f01, 2 continued on f01 data
 
-    // Shorter forecast improvement for cf nodes. ts_cf is keyed on flow, and
-    // p_gn_improveForecastNew is where Backbone reads its per-node improvement.
-    option flowNode_tmp < ts_cf;
-    p_gn_improveForecastNew(flowNode_tmp, 'ts_cf_') = 24*4;
+    // Length, end and blend of each branch beside the central f01, from forecast_branches
+    // in the config. A length counts to the start of a model time step, and from hour 337
+    // the steps are a week long: a length between two of them holds until the later one.
+    // NOTE: do not edit the lines below in the git version
+    // unless updating also _patch_gams_file_content() in build_input_data.py
+    // No restrictions for local versions.
+    p_forecast('f02', 'forecastLength') = 3576;
+    p_forecast('f03', 'forecastLength') = 3576;
 
-    // Node time series set their improvement per forecast branch in p_node_timeseries,
-    // for every branch of the run: the realized f00 and the forecasts beside it.
+    // Wind and solar are improved over the t_improveForecastNew above in every branch:
+    // ts_cf has no setting of its own per branch. Node time series set theirs per forecast
+    // branch in p_node_timeseries, for every branch of the run: the realized f00 and the
+    // forecasts beside it. A branch shorter than the improvement keeps t_improveForecastNew.
 
-    // shorter improvement for upward and downward ts
+    // storage limits of hydro nodes
     option gn_tmp < ts_node;
     loop(gn_tmp(grid, node) $ {SameAs(grid, 'psOpen') or SameAs(grid, 'reservoir')},
         p_node_timeseries(node, f, 'ts_node', 't_improveForecastNew')
             $ {ord(f) <= 1 + mSettings('schedule', 'forecasts')} = 24*4;
     );
 
-    // longer improvement for hydro influx
+    // longer improvement for hydro influx, and for demand between it and wind
     option gn_tmp < ts_influx;
-    loop(gn_tmp(grid, node) $ {SameAs(grid, 'psOpen') or SameAs(grid, 'reservoir') or SameAs(grid, 'ror')},
-        p_node_timeseries(node, f, 'ts_influx', 't_improveForecastNew')
-            $ {ord(f) <= 1 + mSettings('schedule', 'forecasts')} = 168*4;
+    loop(gn_tmp(grid, node),
+        if(SameAs(grid, 'psOpen') or SameAs(grid, 'reservoir') or SameAs(grid, 'ror'),
+            p_node_timeseries(node, f, 'ts_influx', 't_improveForecastNew')
+                $ {ord(f) <= 1 + mSettings('schedule', 'forecasts')
+                   and [not p_forecast(f, 'forecastLength') or p_forecast(f, 'forecastLength') >= 24*14]
+                   } = 24*14;
+        else
+            p_node_timeseries(node, f, 'ts_influx', 't_improveForecastNew')
+                $ {ord(f) <= 1 + mSettings('schedule', 'forecasts')
+                   and [not p_forecast(f, 'forecastLength') or p_forecast(f, 'forecastLength') >= 24*7]
+                   } = 24*7;
+        );
     );
 
 

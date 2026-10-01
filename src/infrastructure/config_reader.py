@@ -109,12 +109,181 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'attached_grid': '',
     'scaling_factor': 1,
     'cutoff_below': None,
+    'forecast_quantiles': None,
 }
 
 _FORECAST_QUANTILES_DEFAULT = {'f01': 0.5, 'f02': 0.1, 'f03': 0.9}
 _FORECAST_WEIGHTS_DEFAULT   = {'f01': 0.6, 'f02': 0.2, 'f03': 0.2}
 
+#: The branch the GAMS templates treat as the central forecast. scheduleInit.gms
+#: names it in mf_central and changes.inc reads and writes its data by label, so
+#: it is not a free choice of the config.
+CENTRAL_FORECAST = 'f01'
+
+#: How a branch beside the central one ends, as Backbone's boundForecastEnds.
+FORECAST_BRANCH_ENDS = {'cut': 0, 'bound': 1, 'continue': 2}
+
+#: A branch the config says nothing about: 149 days (3576 h), then cut.
+_FORECAST_BRANCH_DEFAULT = {'length_days': 149, 'end': 'cut', 'blend_days': 0}
+
 _TIMESERIES_SPEC_MANDATORY = ('processor_name', 'bb_parameter', 'bb_parameter_dimensions')
+
+
+def _parse_forecast_branches(raw, forecast_quantiles: dict, bb_horizon_weeks: int) -> Dict[str, Any]:
+    """
+    Validate forecast_branches and fill in every branch beside the central one.
+
+    The config states how long each branch carries its own data and how it ends:
+
+        {'f01': 'central',
+         'f02': {'length_days': 252, 'end': 'continue', 'blend_days': 28},
+         'f04': {'length_days': 5, 'end': 'cut'}}
+
+    ``'f01': 'central'`` is there for the reader of the config and is the only
+    value f01 takes. ``end`` is one of FORECAST_BRANCH_ENDS, and ``blend_days``
+    belongs to a continuing branch.
+
+    Returns:
+        {label: {'length_days', 'end', 'blend_days'}} for every label of
+        forecast_quantiles except the central one, in that order.
+
+    Raises:
+        ValueError: on anything the GAMS templates could not honour.
+    """
+    raw = {} if raw is None else raw
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"forecast_branches must be a dict mapping f-labels to branch settings; "
+            f"got {type(raw).__name__}."
+        )
+    if not forecast_quantiles:
+        if raw:
+            raise ValueError(
+                "forecast_branches must be empty (or omitted) when "
+                "forecast_quantiles is empty (deterministic mode)."
+            )
+        return {}
+    if CENTRAL_FORECAST not in forecast_quantiles:
+        raise ValueError(
+            f"forecast_quantiles must include '{CENTRAL_FORECAST}': it is the central "
+            f"forecast in scheduleInit.gms and changes.inc."
+        )
+    unknown = sorted(set(raw) - set(forecast_quantiles))
+    if unknown:
+        raise ValueError(
+            f"forecast_branches names {unknown}, which forecast_quantiles does not have."
+        )
+
+    horizon_days = bb_horizon_weeks * 7
+    branches = {}
+    for label in forecast_quantiles:
+        given = raw.get(label)
+        if label == CENTRAL_FORECAST:
+            if given not in (None, 'central'):
+                raise ValueError(
+                    f"forecast_branches['{CENTRAL_FORECAST}'] must be 'central': it always "
+                    f"reaches the horizon and takes no settings; got {given!r}."
+                )
+            continue
+        if given == 'central':
+            raise ValueError(
+                f"forecast_branches['{label}'] cannot be 'central': only "
+                f"'{CENTRAL_FORECAST}' can, because scheduleInit.gms and changes.inc "
+                f"treat '{CENTRAL_FORECAST}' as the central forecast."
+            )
+        if given is None:
+            given = {}
+        if not isinstance(given, dict):
+            raise ValueError(
+                f"forecast_branches['{label}'] must be a dict of branch settings; "
+                f"got {given!r}."
+            )
+        unknown = sorted(set(given) - set(_FORECAST_BRANCH_DEFAULT))
+        if unknown:
+            raise ValueError(
+                f"forecast_branches['{label}'] has unknown setting(s) {unknown}; "
+                f"known: {sorted(_FORECAST_BRANCH_DEFAULT)}."
+            )
+        # The default length gives way to a shorter horizon; a stated one does not.
+        default = {**_FORECAST_BRANCH_DEFAULT,
+                   'length_days': min(_FORECAST_BRANCH_DEFAULT['length_days'], horizon_days)}
+        branch = {**default, **given}
+
+        if branch['end'] not in FORECAST_BRANCH_ENDS:
+            raise ValueError(
+                f"forecast_branches['{label}']['end'] must be one of "
+                f"{sorted(FORECAST_BRANCH_ENDS)}; got {branch['end']!r}."
+            )
+        for key in ('length_days', 'blend_days'):
+            if isinstance(branch[key], bool) or not isinstance(branch[key], int):
+                raise ValueError(
+                    f"forecast_branches['{label}']['{key}'] must be a whole number "
+                    f"of days; got {branch[key]!r}."
+                )
+        # The first day of every solve is the realized one, so a branch needs a
+        # second day to hold anything of its own.
+        if not (2 <= branch['length_days'] <= horizon_days):
+            raise ValueError(
+                f"forecast_branches['{label}']['length_days'] must be between 2 and "
+                f"the horizon, {horizon_days} days (bb_horizon_weeks = "
+                f"{bb_horizon_weeks}); got {branch['length_days']}."
+            )
+        if branch['blend_days'] < 0:
+            raise ValueError(
+                f"forecast_branches['{label}']['blend_days'] must not be negative; "
+                f"got {branch['blend_days']}."
+            )
+        if branch['blend_days'] and branch['end'] != 'continue':
+            raise ValueError(
+                f"forecast_branches['{label}'] has blend_days but ends with "
+                f"'{branch['end']}': the blend into the central data belongs to "
+                f"'continue'."
+            )
+        branches[label] = branch
+    return branches
+
+
+def _validate_spec_forecast_quantiles(specs: Dict[str, Any], forecast_quantiles: dict) -> None:
+    """
+    Check every timeseries_specs entry's own forecast_quantiles.
+
+    A spec may give some branches a quantile of its own, which replaces the
+    global forecast_quantiles value for that series and no other.
+
+    Raises:
+        ValueError: if an override is not a dict, names a branch the global map
+                    does not have, or holds a value outside 0-1.
+    """
+    for name, entry in specs.items():
+        override = entry.get('forecast_quantiles')
+        if override is None:
+            continue
+        if not isinstance(override, dict):
+            raise ValueError(
+                f"timeseries_specs entry '{name}': forecast_quantiles must be a dict "
+                f"mapping f-labels to probability quantiles; got {type(override).__name__}."
+            )
+        unknown = sorted(set(override) - set(forecast_quantiles))
+        if unknown:
+            raise ValueError(
+                f"timeseries_specs entry '{name}': forecast_quantiles names {unknown}, "
+                f"which the global forecast_quantiles does not have."
+            )
+        for label, value in override.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise ValueError(
+                    f"timeseries_specs entry '{name}': forecast_quantiles['{label}'] "
+                    f"must be a probability between 0 and 1; got {value!r}."
+                )
+
+
+def spec_forecast_quantiles(config: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, float]:
+    """The quantile of every forecast branch for one timeseries spec.
+
+    The global forecast_quantiles, with the spec's own values in place of them
+    where it has any. Labels keep the global order.
+    """
+    return {**config["forecast_quantiles"], **(spec.get("forecast_quantiles") or {})}
 
 
 def _validate_timeseries_specs(specs: Any) -> Dict[str, Any]:
@@ -220,9 +389,9 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             f"got {bb_timeseries_length}."
         )
 
-    # Parse optional bb_horizon_weeks (default: 70). Whole weeks, because the last
+    # Parse optional bb_horizon_weeks (default: 52). Whole weeks, because the last
     # interval block in scheduleInit.gms steps a week at a time from week 2.
-    bb_horizon_raw = inputdata.get('bb_horizon_weeks', '70')
+    bb_horizon_raw = inputdata.get('bb_horizon_weeks', '52')
     try:
         bb_horizon_weeks = _safe_eval_int(bb_horizon_raw)
     except (ValueError, SyntaxError):
@@ -308,6 +477,19 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             n = len(forecast_quantiles)
             forecast_weights = {label: 1.0 / n for label in forecast_quantiles}
 
+    # Parse optional forecast_branches (default: every branch 149 days, then cut)
+    forecast_branches_raw = inputdata.get('forecast_branches')
+    forecast_branches = _parse_forecast_branches(
+        None if forecast_branches_raw is None else ast.literal_eval(forecast_branches_raw),
+        forecast_quantiles,
+        bb_horizon_weeks,
+    )
+
+    timeseries_specs = _validate_timeseries_specs(
+        ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
+    )
+    _validate_spec_forecast_quantiles(timeseries_specs, forecast_quantiles)
+
     # Build the config dictionary manually
     # Insert correctly shaped default values in case of missing keys
     config: Dict[str, Any] = {
@@ -350,12 +532,11 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
         'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
-        # Timeseries forecast quantiles, weights and specs
+        # Timeseries forecast quantiles, weights, branch shapes and specs
         'forecast_quantiles': forecast_quantiles,
         'forecast_weights': forecast_weights,
-        'timeseries_specs': _validate_timeseries_specs(
-            ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
-        )
+        'forecast_branches': forecast_branches,
+        'timeseries_specs': timeseries_specs,
     }
 
     # If user has given scenario_alternatives* = [], replace the value with [""]

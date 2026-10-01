@@ -35,7 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bb_timeseries_start": "01-01",
     "bb_timeseries_length": 2,
     # Backbone schedule horizon -- the shipped default; it only sizes GAMS text
-    "bb_horizon_weeks": 70,
+    "bb_horizon_weeks": 52,
     # Topology
     "country_codes": ["FI", "SE"],
     "exclude_grids": [],
@@ -51,6 +51,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Forecasts
     "forecast_quantiles": {"f01": 0.5, "f02": 0.1, "f03": 0.9},
     "forecast_weights": {"f01": 0.6, "f02": 0.2, "f03": 0.2},
+    # As load_config fills them in: every branch beside the central f01
+    "forecast_branches": {
+        "f02": {"length_days": 149, "end": "cut", "blend_days": 0},
+        "f03": {"length_days": 149, "end": "cut", "blend_days": 0},
+    },
     # No processors by default: the source-data and bb-excel tiers do not need
     # them, and running them would pull in the ~1 GB of real PECD/TYNDP inputs.
     "timeseries_specs": {},

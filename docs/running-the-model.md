@@ -68,7 +68,7 @@ see `../docs/running-backbone/command-line-parameters.md`.
 
 ## Horizon and forecast discount
 
-Each daily solve looks `bb_horizon_weeks` ahead: 70 weeks by default, set in
+Each daily solve looks `bb_horizon_weeks` ahead: 52 weeks by default, set in
 `src_files/config_*.ini` and written into `scheduleInit.gms` when the input
 folder is built, so a change needs a rebuild. Horizons shorter than a year have
 worked poorly in year runs, and each extra week costs about half a percent more
@@ -91,6 +91,19 @@ in `scheduleInit.gms`. It is a solver control, not a valuation:
 
 It needs a Backbone `master` whose CHANGELOG lists the forecast discount; an older
 checkout stops with a domain error on `t_forecastDiscountFlat`.
+
+## Forecast branches
+
+How many branches a run has, how long each lasts and how it ends come from the
+config and are written into the input folder when it is built:
+[Forecast branches](timeseries.md#forecast-branches) has the settings and what
+they cost. `--forecasts=<n>` runs the first `n` of the branches built, so
+`-- --forecasts=3` on a four-branch folder drops f04 and nothing else, and the
+remaining probabilities are rescaled to sum to one.
+
+Every built folder states its branch lengths as `forecastLength`, which needs a
+Backbone whose CHANGELOG lists per-branch end methods and lengths; an older
+checkout stops with a domain error on `forecastLength`.
 
 ## Where the output goes
 

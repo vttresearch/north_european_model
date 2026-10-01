@@ -175,6 +175,10 @@ taking part in one, each documenting itself in its module docstring:
 - `compare_input_excels.py` and `compare_workbook_parts.py` — two `inputData.xlsx` files
   compared on values, and as zip archives part by part.
 - `profile_build.py` — a build run under a profiler, reported by phase.
+- `forecast_branch_energy.py` — what each forecast branch of a built folder carries as
+  energy over its own length, against the climate years, and with `--targets` the
+  per-hour quantile that gives a stated energy. The way to choose `forecast_quantiles`,
+  since a quantile per hour is not a quantile of energy.
 - `prepare_zone_geometry.py` — the two map assets `input_data_summary.py` draws on, one
   per level, built once by hand from Natural Earth plus an ENTSO-E bidding-zone layer and
   committed to `tools/maps/`. Where they come from and what was changed is recorded by
@@ -479,7 +483,7 @@ The model supports the following command line options (use two hyphens in the be
 * `--input_file_excel` is a mandatory parameter for defining the used input Excel file name (e.g. inputData.xlsx)
 * `--climateYear` [0, 1982-2016]. Default 2015. This parameter allows a quick selection of which time series year the model uses for profiles and annual demands and water inflows. Giving this parameter greatly reduces the solve time as the model drops ts (time series) data from other years and loops the selected time series year. By giving value 0, user can run the model with multiyear time series, but the user is responsible for giving the correct starting time step and checking for error. This feature (tsYear=0) is untested.
 * `--modelledDays` [1-365]. Default 365. This option defines the amount of modelled days. If used with tsYear, the maximum value is 365. Otherwise user can give longer time periods, but must check that original timeseries length will not be exceeded.
-* `--forecasts` [1, 3]. Default 3. Sets how many forecast branches the model carries beside the realized time series, and requires the 10p, 50p, and 90p time series files in the input folder. Accepted values are 1 (realized values and 1 central forecast) or 3 (realized values, 1 central forecast, 1 difficult forecast, 1 easy forecast). It is recommended to use 3 forecasts due to improved hydro power modelling.
+* `--forecasts` [0 to the number of branches built]. Default: every branch the config's `forecast_quantiles` names. Sets how many forecast branches the model carries beside the realized time series, taking the first ones: 1 is the realized values and the central forecast f01, 3 adds f02 and f03. It is recommended to keep the difficult and the easy branch due to improved hydro power modelling. What the branches are is set in the config, see [Forecast branches](docs/timeseries.md#forecast-branches).
 * `--input_dir` allows setting a custom location for the input directory. The default value is 'input' pointing `backbone\input` by default. 
 * `--output_dir` allows setting a custom location for the output directory. The default value is 'output' pointing `backbone\output` by default.
 

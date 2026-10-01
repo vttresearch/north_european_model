@@ -58,6 +58,10 @@ not build and why, and has a documentation page of its own.
 - Forecast branches are quantiles across the climate windows, so a forecast and
   a realized `t` name the same hour and no New Year step sits inside a window.
   [docs/timeseries.md](docs/timeseries.md#forecast-branches)
+- A timeseries spec can set its own `forecast_quantiles`, and `forecast_branches`
+  sets each branch's length and end: cut, bound to the central branch, or continued
+  on its data. OT2030 has four branches; the other configs are as they were.
+  [docs/timeseries.md](docs/timeseries.md#how-long-a-branch-lasts-and-how-it-ends)
 
 ### Source workbooks
 
@@ -243,6 +247,9 @@ not build and why, and has a documentation page of its own.
 - The map assets moved to `tools/maps/`, and `ATTRIBUTION.md` moved to the repository
   root, where it now covers the repository's other data sources too.
   `prepare_zone_geometry.py` no longer writes it.
+- `tools/forecast_branch_energy.py`: each forecast branch's energy over its own
+  length against the climate years, and the per-hour quantile that gives a stated
+  energy.
 
 ### Running the model
 
@@ -273,7 +280,7 @@ not build and why, and has a documentation page of its own.
 - README: `--forecasts` takes 1 or 3, not 1/2/4, and defaults to 3. The old list
   counted the realized branch; `changes.inc` counts only the forecasts beside it.
   The Spine Toolbox Backbone item passed 4 and now passes 3.
-- `bb_horizon_weeks` config key sets the schedule horizon, default 70 weeks (was a
+- `bb_horizon_weeks` config key sets the schedule horizon, default 52 weeks (was a
   fixed 65); it also sizes the `t` set.
   [docs/running-the-model.md](docs/running-the-model.md#horizon-and-forecast-discount)
 - scheduleInit.gms: forecast discount, weight 1 for four days then a linear fall to
@@ -287,3 +294,9 @@ not build and why, and has a documentation page of its own.
 - scheduleInit.gms: hydro inflow and storage-limit forecast improvement is set in
   `p_node_timeseries`, so `warnings.log` no longer carries Backbone's
   `p_gn_improveForecastNew` deprecation note. Results unchanged.
+- scheduleInit.gms: forecast improvement is 5 days, 7 for demand and 14 for hydro
+  inflow (was 10, 4 for wind and solar, 28 for inflow). Branch lengths are written
+  as `forecastLength`, which needs a Backbone with per-branch end methods and lengths.
+- changes.inc: forecast branches read the realized hydro storage limits, except a
+  10 % higher floor in f02 and a 10 % lower ceiling in f03 (f02 was 10 % narrower
+  and f03 10 % wider). `--forecasts` takes any count up to the branches built.

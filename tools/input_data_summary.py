@@ -2049,8 +2049,8 @@ def _read_storage_limit(container, folder: Path) -> Tuple[pd.DataFrame, Optional
     version of the claim this docstring used to make; the hourly values do not,
     differing by up to 113 GWh, so the branches are never blended. The forecast
     file is tried first because it is one file rather than 35 -- it carries
-    f01/f02/f03 and no f00, while a per-year file carries f00 alone, so the
-    lowest label present is the branch either way.
+    the forecast branches and no f00, while a per-year file carries f00 alone,
+    so the lowest label present is the branch either way.
     """
     candidates = [folder / "ts_node_hydro_storage_limits_forecasts.gdx"]
     per_year = year_files(folder, "ts_node_hydro_storage_limits")
@@ -4339,8 +4339,8 @@ def build_report(
         "own mean, so a small country and a large one are comparable. Take-away: a bad weather "
         "year barely moves electricity demand but can change hydro inflow by tens of per cent.",
         caveat=(f"Read from the {len(timeseries.years)} real per-year files, never the "
-                f"`f01`/`f02`/`f03` forecast branches. Those are a per-hour quantile taken "
-                f"independently across the same years, not three coherent alternative years, so "
+                f"forecast branches. Those are a per-hour quantile taken "
+                f"independently across the same years, not coherent alternative years, so "
                 f"a claim about \"the driest year\" cannot be built from them."
                 if timeseries.available else None),
     )
@@ -5493,8 +5493,8 @@ def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
                "data cannot support that claim.")
     report.add()
     report.add("The hydro checks see the realised climate years only. Backbone also solves "
-               "forecast branches -- a dry quantile of inflow, with storage limits that "
-               "`changes.inc` narrows at run time -- and those are where minimum generation has "
+               "forecast branches -- per-hour quantiles of inflow, down to a dry one whose "
+               "floor `changes.inc` raises by 10 % -- and those are where minimum generation has "
                "actually run short in past runs, so a store this report finds sufficient can "
                "still pay a penalty there. They also start each window from the middle of its "
                "range rather than the model's start level, run hour by hour where the model may "

@@ -1045,6 +1045,13 @@ class CacheManager:
         # no phase reads them. Checked after Phase 2 so a cleared cache records them.
         self.gams_files_changed = self._check_gams_file_changes()
 
+        # forecast_branches reaches scheduleInit.gms and nothing else, so a change
+        # to it is a change to the GAMS files: recopy them, rerun nothing.
+        if prev_config and not self.full_rerun:
+            branches = json.loads(json.dumps(self.config.get("forecast_branches", {})))
+            if prev_config.get("forecast_branches", {}) != branches:
+                self.gams_files_changed = True
+
         # Determine if BB input excel needs to be rebuilt.
         #
         # any_timeseries_changed belongs here because processor output reaches the
@@ -1105,7 +1112,8 @@ class CacheManager:
             "country_codes", "exclude_grids", "exclude_nodes",
             "climate_data", "bb_timeseries_start", "bb_timeseries_length",
             "bb_horizon_weeks",
-            "forecast_quantiles", "forecast_weights", "timeseries_specs"
+            "forecast_quantiles", "forecast_weights", "forecast_branches",
+            "timeseries_specs"
         ]
         data = {k: self.config[k] for k in relevant_keys if k in self.config}
         json_exchange.save_json(self.cache_folder / "config_structural.json", data)
