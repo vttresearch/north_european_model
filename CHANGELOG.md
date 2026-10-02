@@ -288,10 +288,10 @@ not build and why, and has a documentation page of its own.
   The Spine Toolbox Backbone item passed 4 and now passes 3.
 - `bb_horizon_weeks` config key sets the schedule horizon, default 52 weeks (was a
   fixed 65); it also sizes the `t` set.
-  [docs/running-the-model.md](docs/running-the-model.md#horizon-and-forecast-discount)
-- scheduleInit.gms: forecast discount, weight 1 for four days then a linear fall to
+  [docs/running-the-model.md](docs/running-the-model.md#horizon-and-horizon-discount)
+- scheduleInit.gms: horizon discount, weight 1 for four days then a linear fall to
   0.95 at the horizon end. A solver control: 5-8% fewer iterations. Needs a
-  Backbone `master` with the forecast discount.
+  Backbone with the horizon discount (`horizonDiscount*` mSettings).
 - scheduleInit.gms: 27 hourly steps, then 3-hourly to step 54 and 6-hourly to 168.
   Ending the 3-hourly block at 51 left 117 steps for the 6-hourly one, and Backbone
   aborted every run.

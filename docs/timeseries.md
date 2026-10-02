@@ -163,7 +163,7 @@ before it meets the join: the window minus the horizon.
 The horizon is `bb_horizon_weeks` in the same block, 52 weeks (364 days) by
 default. It is not a timeseries setting, but it decides how far each solve's
 look-ahead reaches past the window, and the build sizes the model's `t` set to
-the window plus one horizon. [Running the model](running-the-model.md#horizon-and-forecast-discount)
+the window plus one horizon. [Running the model](running-the-model.md#horizon-and-horizon-discount)
 covers what it does to a solve.
 
 ## Forecast branches

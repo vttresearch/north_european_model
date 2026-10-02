@@ -66,7 +66,7 @@ The switches this model declares live in `src_files/GAMS_files/changes.inc`
 rather than from any prose, including this page. For Backbone's own parameters
 see `../docs/running-backbone/command-line-parameters.md`.
 
-## Horizon and forecast discount
+## Horizon and horizon discount
 
 Each daily solve looks `bb_horizon_weeks` ahead: 52 weeks by default, set in
 `src_files/config_*.ini` and written into `scheduleInit.gms` when the input
@@ -76,7 +76,7 @@ solver iterations.
 
 Inside the horizon the objective weighs every hour 1 on the realized day and the
 three days after it, then less, falling linearly to 0.95 at the horizon end. That
-is Backbone's forecast discount (`../docs/features/forecast-discount.md`), shaped
+is Backbone's horizon discount (`../docs/features/horizon-discount.md`), shaped
 in `scheduleInit.gms`. It is a solver control, not a valuation:
 
 - **A falling weight orders hours that would otherwise cost the same**, and an LP
@@ -89,8 +89,8 @@ in `scheduleInit.gms`. It is a solver control, not a valuation:
 - **The three days at 1** keep the daily cycling of pumped hydro, batteries and
   heat storage at full weight.
 
-It needs a Backbone `master` whose CHANGELOG lists the forecast discount; an older
-checkout stops with a domain error on `t_forecastDiscountFlat`.
+It needs a Backbone whose CHANGELOG lists the horizon discount; an older checkout
+stops with a domain error on `horizonDiscountFlatLength`.
 
 ## Forecast branches
 
