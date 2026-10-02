@@ -4,11 +4,12 @@ Utility functions used exclusively by the timeseries pipeline.
 
 import os
 import glob
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 
 def select_declared_columns(frame, patterns: Sequence[str]) -> list:
@@ -539,33 +540,76 @@ def climate_window_rows(
         yield int(yr), mask, row_nums
 
 
+class ClimatologicalForecasts(NamedTuple):
+    """What :func:`calculate_climatological_forecasts` returns."""
+
+    #: Long format ``bb_parameter_dimensions + ['value']``: the branches.
+    frame: pd.DataFrame
+    #: One row per series: its grouping dimensions and, for every branch, the
+    #: per-hour quantile its energy target came to.
+    per_hour_quantiles: pd.DataFrame
+    #: Per branch, the series whose energy target lies beyond what the lowest or
+    #: the highest per-hour quantile carries, and which got 0 or 1 instead.
+    unreachable: Dict[str, List[str]]
+
+
 def calculate_climatological_forecasts(
     df: pd.DataFrame,
     *,
     bb_parameter_dimensions,
-    forecast_quantiles,
+    energy_quantiles,
     bb_ts_start: str,
     bb_ts_length: int,
     valid_climate_years: Sequence[int],
+    branch_days: Optional[Dict[str, int]] = None,
     round_precision: Optional[int] = 0,
     group_ids: Optional[np.ndarray] = None,
-    ) -> pd.DataFrame:
+    ) -> ClimatologicalForecasts:
     """
-    Build Backbone forecast branches as quantiles across the climate windows.
+    Build Backbone forecast branches from the realized climate windows.
 
-    At every t, each branch is a quantile of the realized values at that same t
-    across all climate windows -- the windows that
-    ``split_timeseries_to_climate_windows`` writes as f00, cut by the same
-    :func:`climate_window_rows` from the same rows. ``forecast_quantiles`` decides
-    how many and which: keys are f-labels, values are probabilities, so
-    ``{'f01': 0.5, 'f02': 0.1}`` gives a median branch and a lowest-10% one.
+    Each branch has the shape of the climate years and the energy its energy
+    quantile asks for, series by series:
 
-    So a forecast t and a realized t always name the same hour of the window,
-    whatever the start date, the length or the leap years inside it. Every sample
-    is continuous wherever its realized window is, which leaves one join: the wrap
-    from the window's last hour back to its first, where f00 has one too.
-    Statistics built on a nominal Jan-1 calendar year instead put a step at every
-    New Year inside the window, because a leap year's samples lose a day there.
+    - **Shape.** At every t a branch is a quantile of the realized values at that
+      same t across the climate windows -- the windows that
+      ``split_timeseries_to_climate_windows`` writes as f00, cut by the same
+      :func:`climate_window_rows`. So a forecast t and a realized t always name
+      the same hour, whatever the start date, the length or the leap years
+      inside the window, and the only join is the wrap from the window's last
+      hour to its first, where f00 has one too.
+    - **Energy.** Which quantile is not given; it is solved for each series
+      separately. ``energy_quantiles`` maps a branch to an energy quantile p, and
+      the series' branch must carry, over the branch's own length,
+
+          Q_p + (mean - Q_0.5) * (1 - |1 - 2p|)
+
+      of the energies the climate windows carry over that length, where Q_p is
+      their p-quantile. At 0.5 that is the mean exactly. Towards 0 and 1 the
+      lift from the median to the mean fades out, so a low value is the years'
+      own low: 0.05 is close to their one-in-twenty, and 0 their lowest. Short
+      wind windows are where this matters -- a few very windy spells pull the
+      mean well above the median, and a lift that did not fade would keep even
+      0 far from the calmest spell on record. A series whose years are skewed
+      gets a different per-hour quantile than one whose years are not, which is
+      the point: a per-hour p0.5 of onshore wind carries about 70 % of its mean
+      energy, and how far off it is differs by country.
+
+    How the energy is measured
+    --------------------------
+    A branch of L days is used from every day of the window in turn, as the
+    rolling solves move on, so its energy is measured over every L-day window,
+    wrapping at the end as Backbone's circulation does, and summed. Every hour
+    lies in exactly L of those windows, so the condition comes down to the
+    branch's energy over the whole window:
+
+        sum over hours of branch = mean total + (sum over start days of the
+        L-day target minus the L-day mean) / L
+
+    ``branch_days`` gives L per label; a label it does not name -- the central
+    branch -- and a length of the window or more are measured over the whole
+    window. The per-hour quantile whose energy meets the target is found by
+    bisection: a branch's energy never falls as its quantile rises.
 
     Computed once, because the result is the same for every climate window.
 
@@ -585,24 +629,32 @@ def calculate_climatological_forecasts(
     sample, and an hour no window has a value for comes out NaN. Filling it with 0
     would turn "no climatology" into "a forecast of exactly zero", which the
     optimiser acts on; ``GDX_exchange.prepare_values_for_gdx`` converts it and
-    counts it instead.
+    counts it instead. For the energy targets alone, a window's missing hour
+    counts as the mean of the windows that have it, so a gap does not read as a
+    dry year.
 
     Parameters
     ----------
     df : pd.DataFrame
         Long-format processor output: the dimensions of bb_parameter_dimensions
         other than 'f' and 't', plus 'time' and 'value'. Not modified.
+    energy_quantiles : dict
+        f-label -> energy quantile between 0 and 1.
     valid_climate_years : sequence of int
         The same years ``split_timeseries_to_climate_windows`` is given.
+    branch_days : dict, optional
+        f-label -> the branch's length in days, over which its energy is measured.
     group_ids : np.ndarray, optional
         From :func:`order_timeseries_for_labelling`; supplying it asserts that
         `df` is already ordered by it, as in ``split_timeseries_to_climate_windows``.
 
     Returns
     -------
-    pd.DataFrame
-        Long format ``bb_parameter_dimensions + ['value']``, one row per series,
-        t-label and branch, with the t-labels the realized windows carry.
+    ClimatologicalForecasts
+        The branches in long format ``bb_parameter_dimensions + ['value']``, one
+        row per series, t-label and branch, with the t-labels the realized
+        windows carry; the per-hour quantile every series came to; and the
+        series whose target was out of reach.
     """
     dims = list(bb_parameter_dimensions)
     group_dims = [c for c in dims if c not in ("f", "t")]
@@ -626,20 +678,40 @@ def calculate_climatological_forecasts(
     for k, (_, mask, row_nums) in enumerate(windows):
         samples[k, group_ids[mask], row_nums] = values[mask]
 
-    labels = list(forecast_quantiles.keys())
-    stats = _nan_quantiles(samples, list(forecast_quantiles.values()))
+    first_rows = np.flatnonzero(np.diff(group_ids, prepend=-1) != 0)
+    series = {col: df[col].iloc[first_rows].to_numpy() for col in group_dims}
+    names = ["|".join(str(series[col][i]) for col in group_dims) for i in range(n_series)]
+
+    labels = list(energy_quantiles.keys())
     n_branches = len(labels)
+    branch_days = branch_days or {}
+    stats = np.full((n_branches, n_series, max_hours), np.nan)
+    per_hour_quantiles = pd.DataFrame(series)
+    unreachable: Dict[str, List[str]] = {}
+
+    if len(windows):
+        ordered = np.sort(samples, axis=0)
+        n_valid = np.sum(~np.isnan(samples), axis=0)
+        filled = _fill_with_hour_means(samples)
+        for i, label in enumerate(labels):
+            p = float(energy_quantiles[label])
+            targets = _energy_targets(filled, p, branch_days.get(label))
+            q, beyond = _solve_per_hour_quantiles(ordered, n_valid, targets, fallback=p)
+            stats[i] = _quantile_at(ordered, n_valid, q)
+            per_hour_quantiles[label] = q
+            unreachable[label] = [names[s] for s in np.flatnonzero(beyond)]
+    else:
+        for label in labels:
+            per_hour_quantiles[label] = np.nan
+            unreachable[label] = []
 
     # One row per series, t and branch, in that order.
     series_idx = np.repeat(np.arange(n_series), max_hours * n_branches)
     t_idx = np.tile(np.repeat(np.arange(max_hours), n_branches), n_series)
     f_idx = np.tile(np.arange(n_branches), n_series * max_hours)
 
-    first_rows = np.flatnonzero(np.diff(group_ids, prepend=-1) != 0)
     t_labels = np.array(['t' + str(i).zfill(6) for i in range(1, max_hours + 1)])
-    out = {
-        col: df[col].iloc[first_rows].to_numpy()[series_idx] for col in group_dims
-    }
+    out = {col: series[col][series_idx] for col in group_dims}
     out["t"] = pd.Categorical.from_codes(t_idx, categories=t_labels)
     out["f"] = pd.Categorical.from_codes(f_idx, categories=labels)
 
@@ -648,7 +720,118 @@ def calculate_climatological_forecasts(
         value = np.round(value, round_precision)
     out["value"] = value
 
-    return pd.DataFrame(out)[dims + ["value"]]
+    return ClimatologicalForecasts(
+        frame=pd.DataFrame(out)[dims + ["value"]],
+        per_hour_quantiles=per_hour_quantiles,
+        unreachable=unreachable,
+    )
+
+
+def _fill_with_hour_means(samples: np.ndarray) -> np.ndarray:
+    """samples with each missing value replaced by its hour's mean across windows.
+
+    An hour no window has a value for becomes 0, so it adds nothing to any energy.
+    Used for the energy targets only, never written.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN hours
+        hour_mean = np.nanmean(samples, axis=0)
+    hour_mean = np.nan_to_num(hour_mean, nan=0.0)
+    return np.where(np.isnan(samples), hour_mean[None], samples)
+
+
+def _energy_targets(filled: np.ndarray, energy_quantile: float, days: Optional[int]) -> np.ndarray:
+    """Per series, the energy a branch must carry over the whole window.
+
+    filled: (windows, series, hours) without NaN. ``days`` is the branch's length,
+    or None for the whole window. See calculate_climatological_forecasts for the
+    rule, and for why the L-day condition comes down to the whole window.
+    """
+    n_windows, n_series, n_hours = filled.shape
+    totals = filled.sum(-1)                                        # windows, series
+    mean_total = totals.mean(0)
+    n_days = n_hours // 24
+    if days is None or days >= n_days:
+        return _energy_target(totals, energy_quantile)
+    daily = filled.reshape(n_windows, n_series, n_days, 24).sum(-1)
+    wrapped = np.concatenate([daily, daily[..., :days]], axis=-1)
+    cumulative = np.concatenate(
+        [np.zeros((n_windows, n_series, 1)), np.cumsum(wrapped, axis=-1)], axis=-1
+    )
+    starts = np.arange(n_days)
+    sums = cumulative[..., starts + days] - cumulative[..., starts]  # windows, series, start day
+    offset = _energy_target(sums, energy_quantile) - sums.mean(0)
+    return mean_total + offset.sum(-1) / days
+
+
+def _energy_target(sums: np.ndarray, energy_quantile: float) -> np.ndarray:
+    """Q_p + (mean - Q_0.5) * (1 - |1 - 2p|) along the first axis, the climate windows.
+
+    The mean at 0.5; the windows' own quantile at 0 and 1, with the lift from the
+    median to the mean fading linearly between.
+    """
+    lift = (sums.mean(0) - np.quantile(sums, 0.5, axis=0)) * (1 - abs(1 - 2 * energy_quantile))
+    return np.quantile(sums, energy_quantile, axis=0) + lift
+
+
+def _solve_per_hour_quantiles(
+    ordered: np.ndarray,
+    n_valid: np.ndarray,
+    targets: np.ndarray,
+    *,
+    fallback: float,
+    iterations: int = 60,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Per series, the per-hour quantile whose branch carries targets[s] over the window.
+
+    A branch's energy never falls as its quantile rises, so bisection finds it.
+    A series whose windows are all alike carries the same energy at every
+    quantile and gets ``fallback``. Returns (q, beyond): beyond marks the series
+    whose target lies outside what quantiles 0 to 1 carry; they get 0 or 1.
+    """
+    n_series = ordered.shape[1]
+
+    def energy(q):
+        return np.nansum(_quantile_at(ordered, n_valid, q), axis=-1)
+
+    lowest = energy(np.zeros(n_series))
+    highest = energy(np.ones(n_series))
+    lo, hi = np.zeros(n_series), np.ones(n_series)
+    for _ in range(iterations):
+        mid = (lo + hi) / 2
+        short = energy(mid) < targets
+        lo = np.where(short, mid, lo)
+        hi = np.where(short, hi, mid)
+    q = (lo + hi) / 2
+
+    scale = np.maximum(np.maximum(np.abs(lowest), np.abs(highest)), 1.0)
+    alike = (highest - lowest) <= 1e-12 * scale
+    too_low = ~alike & (targets < lowest - 1e-9 * scale)
+    too_high = ~alike & (targets > highest + 1e-9 * scale)
+    q = np.where(alike, fallback, np.where(too_low, 0.0, np.where(too_high, 1.0, q)))
+    return q, too_low | too_high
+
+
+def _at_positions(ordered: np.ndarray, n_valid: np.ndarray, position: np.ndarray) -> np.ndarray:
+    """Values at fractional positions of the sorted samples, as numpy interpolates.
+
+    ordered is sorted along axis 0 with NaN last, so each column's valid values
+    are its first n_valid. As numpy's _lerp: interpolate from whichever end is
+    nearer. A column with no valid value comes out NaN.
+    """
+    below = np.floor(position).astype(np.int64)
+    above = np.ceil(position).astype(np.int64)
+    low = np.take_along_axis(ordered, below[None], axis=0)[0]
+    high = np.take_along_axis(ordered, above[None], axis=0)[0]
+    fraction = position - below
+    step = high - low
+    value = np.where(fraction >= 0.5, high - step * (1 - fraction), low + step * fraction)
+    return np.where(n_valid > 0, value, np.nan)
+
+
+def _quantile_at(ordered: np.ndarray, n_valid: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Per-hour quantile q[s] of every series s. ordered: (windows, series, hours)."""
+    return _at_positions(ordered, n_valid, q[:, None] * np.maximum(n_valid - 1, 0))
 
 
 def _nan_quantiles(samples: np.ndarray, quantiles: Sequence[float]) -> np.ndarray:
@@ -668,19 +851,8 @@ def _nan_quantiles(samples: np.ndarray, quantiles: Sequence[float]) -> np.ndarra
         return out
     ordered = np.sort(samples, axis=0)
     n_valid = np.sum(~np.isnan(samples), axis=0)
-    has_data = n_valid > 0
-
     for i, q in enumerate(quantiles):
-        position = q * np.maximum(n_valid - 1, 0)
-        below = np.floor(position).astype(np.int64)
-        above = np.ceil(position).astype(np.int64)
-        low = np.take_along_axis(ordered, below[None], axis=0)[0]
-        high = np.take_along_axis(ordered, above[None], axis=0)[0]
-        fraction = position - below
-        step = high - low
-        # As numpy's _lerp: interpolate from whichever end is nearer.
-        value = np.where(fraction >= 0.5, high - step * (1 - fraction), low + step * fraction)
-        out[i] = np.where(has_data, value, np.nan)
+        out[i] = _at_positions(ordered, n_valid, q * np.maximum(n_valid - 1, 0))
     return out
 
 

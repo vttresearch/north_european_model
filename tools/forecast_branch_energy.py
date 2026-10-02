@@ -10,15 +10,15 @@ Example:
 
 The question it answers
 -----------------------
-A forecast branch is a per-hour quantile across the climate windows
-(`calculate_climatological_forecasts`), and a per-hour quantile is **not** a
-quantile of the energy a branch carries over its length. Every hour of a p0.45
-wind branch is a slightly-below-median hour, and a run of those adds up to far
-less wind than any real period of that length has: the years trade good hours
-for bad ones, and the branch never does. How far off it is depends on how skewed
-the series is, so it differs between onshore and offshore wind, between series
-and between countries. A quantile chosen by its name is therefore a guess; this
-tool states what it amounts to.
+A forecast branch is built series by series (`calculate_climatological_forecasts`):
+each series gets the per-hour quantile whose energy over the branch's length is
+what the branch's energy quantile asks for. This tool reads a built folder and
+states what came out, as energy against the climate years.
+
+Per series, a branch at energy quantile 0.5 sits at the mean. A family's sum is
+another matter: summed over countries, one-in-ten series make a drier sum than
+the family's own one-in-ten, because the countries' low years are not the same
+years. `--by-node` shows the series, the default shows the sums.
 
 What it reports
 ---------------
@@ -28,10 +28,10 @@ What it reports
    and the highest year) and the share of years that fall below the branch.
    A branch outside the realized range describes a period no year in the record
    has had.
-2. **Targets**, with `--targets`. For every family and window length: the
+2. **Targets**, with `--targets`. For every family and window length: the one
    per-hour quantile whose window energy equals the realized p05, p10, mean, p90
-   and p95 of that window. These are the numbers to put in `forecast_quantiles`
-   for a branch meant as, say, a one-in-ten period of that length.
+   and p95 of that window. It shows how far a per-hour quantile is from the
+   energy it is named after -- the reason the build solves one per series.
 
 `--by-node` repeats both per series instead of per family.
 

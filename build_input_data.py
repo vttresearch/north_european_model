@@ -523,8 +523,8 @@ def _warn_about_long_window(logger, config: dict) -> None:
     # DEVELOPERS: this limit also keeps the forecast branches honest, and it
     # must not be raised or removed on solve time alone.
     #
-    # calculate_climatological_forecasts takes its quantiles across the climate
-    # windows themselves, and windows longer than a year overlap: in 1982-2016
+    # calculate_climatological_forecasts builds its branches from the spread
+    # across the climate windows themselves, and windows longer than a year overlap: in 1982-2016
     # a window of N years leaves 36 - N of them. Twenty years leaves 16, and
     # 365*35+9 leaves one -- every forecast branch is then the realized series
     # itself, perfect foresight labelled as a forecast, and nothing fails.
@@ -541,8 +541,8 @@ def _warn_about_long_window(logger, config: dict) -> None:
         f"bb_timeseries_length = {days} days is longer than five years, which Backbone "
         f"cannot run today: multi-year runs slow sharply between three and five years, "
         f"and beyond five they do not finish. The forecast branches thin out as well -- "
-        f"they are quantiles across the climate windows, and this length leaves "
-        f"{len(offsets)} of them. Use 365*5 or less.",
+        f"they are built from the spread across the climate windows, and this length "
+        f"leaves {len(offsets)} of them. Use 365*5 or less.",
         level="warn",
     )
 
@@ -555,12 +555,12 @@ def _derive_gams_settings(config: dict) -> dict:
     arithmetic would be free to drift away from what was actually written,
     which is worse than no summary at all.
 
-    forecast_quantiles and forecast_weights may both be empty: that is a
+    energy_quantiles and forecast_weights may both be empty: that is a
     deterministic run using f00 alone.
     """
     days = config.get("bb_timeseries_length", 365)
     weeks = config["bb_horizon_weeks"]
-    quantiles = config["forecast_quantiles"]
+    quantiles = config["energy_quantiles"]
 
     return {
         "days": days,

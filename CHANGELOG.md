@@ -58,10 +58,14 @@ not build and why, and has a documentation page of its own.
 - Forecast branches are quantiles across the climate windows, so a forecast and
   a realized `t` name the same hour and no New Year step sits inside a window.
   [docs/timeseries.md](docs/timeseries.md#forecast-branches)
-- A timeseries spec can set its own `forecast_quantiles`, and `forecast_branches`
+- A timeseries spec can set its own `energy_quantiles`, and `forecast_branches`
   sets each branch's length and end: cut, bound to the central branch, or continued
   on its data. OT2030 has four branches; the other configs are as they were.
   [docs/timeseries.md](docs/timeseries.md#how-long-a-branch-lasts-and-how-it-ends)
+- `energy_quantiles` replaces `forecast_quantiles`: a branch's value is an energy,
+  per series and over the branch's length. `0.5` is each series' mean (a per-hour
+  median carried 70 % of onshore wind's), `0.1` a one-in-ten low. A config with
+  the old key stops with the reason. [docs/timeseries.md](docs/timeseries.md#what-an-energy-quantile-means)
 
 ### Source workbooks
 

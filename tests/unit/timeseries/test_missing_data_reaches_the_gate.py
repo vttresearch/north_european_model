@@ -53,11 +53,11 @@ def _forecasts(df, *, length):
     return calculate_climatological_forecasts(
         df,
         bb_parameter_dimensions=DIMS,
-        forecast_quantiles={"f01": 0.5},
+        energy_quantiles={"f01": 0.5},
         bb_ts_start="01-01",
         bb_ts_length=length,
         valid_climate_years=[2014, 2015],
-    )
+    ).frame
 
 
 class TestForecastGapsStayMissing:

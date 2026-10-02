@@ -16,6 +16,9 @@ has its own page, and those pages come and go as the data sources do.
 - **A climate year is a weather year, not a scenario year.** The shipped configs
   build 1982–2016: thirty-five versions of the same scenario year, each with a
   different year's weather. A Backbone run uses one of them at a time.
+- **Forecast branches are the climate, counted in energy.** `f01` gives every
+  series its mean energy in a typical year's shape; `f02`, `f03`, … a stated low or
+  high over their own length, set by `energy_quantiles` in the config.
 - **A zero is not a value.** Backbone reads `0` as "not set", so the pipeline
   keeps "no data" and "zero" apart until the last possible moment, and counts
   what it converts.
@@ -99,7 +102,7 @@ config: timeseries_specs
         ├── check           columns, dimensions, values, time axis
         ├── round, cut off  rounding_precision, cutoff_below
         ├── label + slice   t-labels, one climate window per year
-        ├── forecasts       quantile branches across the climate windows
+        ├── forecasts       branches from the climate windows, energy per series
         └── write           GDX + a line in import_timeseries.inc
                             and whatever the processor contributed to the
                             source data tables, for the input Excel
@@ -165,80 +168,113 @@ covers what it does to a solve.
 
 ## Forecast branches
 
-Backbone can carry uncertainty as several forecast branches on the `f` index.
-The pipeline fills them from the climate record itself:
+Every daily solve has to plan beyond the day it realizes: how much water to keep,
+which plants to keep warm. An optimisation model knows nothing it is not given —
+not that Januaries are cold, not that spring brings the snowmelt — so the build
+gives it the climate, as **forecast branches** on Backbone's `f` index, all made
+from the climate record:
 
-- **`f00` is the realized weather** — the climate window being run, exactly as
-  the processor produced it.
-- **`f01`, `f02`, … are quantiles across the climate windows** at each `t`, so
-  `f01: 0.5` is the median of every window's value at that hour and `f02: 0.1`
-  the low decile. The branches are written once into a `_forecasts.gdx`, because
-  they are the same for every window.
+- **`f00` is the realized weather**: the climate window being run, exactly as the
+  processor produced it.
+- **`f01` is the central forecast**: the climate's average. Every series carries
+  its mean energy, in the shape of a typical year.
+- **`f02`, `f03`, … are side forecasts**: a dry or calm spell, a wet or windy one,
+  each carrying a stated low or high share of the climate's energy.
 
-Taking them across the windows — not across calendar years — means a forecast
-`t` and a realized `t` always name the same hour, whatever the start date, the
-length or the leap years inside. Each window is continuous wherever the realized
-data is, so the branches have no step the realized windows do not: the one join
-in either is the wrap at the window's end. Statistics of a nominal 1 January
-calendar year would instead step at every New Year inside a window, where a leap
-year loses a day, and would repeat the first winter of a window longer than a
-year.
+### What you set
 
-The cost is in long windows. Windows longer than a year overlap, so a window of
-N years leaves 36 − N of them in 1982–2016: 31 for five years, 16 for twenty,
-and one for `365*35+9` — where every branch would be the realized window itself.
-That is the other reason the build warns above five years.
+All three live in the global block of `src_files/config_*.ini`:
 
-`forecast_quantiles` names them, in the same global config block as the window
-settings above — `{'f01': 0.5, 'f02': 0.1, 'f03': 0.9}` by default. Leaving it
-empty is the deterministic mode: no branches, no forecast file. A source with
-fewer than two climate windows cannot have branches either, and is told so.
+| setting | says | default |
+|---|---|---|
+| `energy_quantiles` | how much energy each branch carries | `{'f01': 0.5, 'f02': 0.1, 'f03': 0.9}` |
+| `forecast_weights` | how likely each branch is | `{'f01': 0.6, 'f02': 0.2, 'f03': 0.2}` |
+| `forecast_branches` | how long each side branch lasts, and how it ends | 149 days, then cut |
 
-`forecast_weights` beside it is the probability of each branch. It is written
-into the **GAMS files** at the end of the build, alongside the branch count, and
-never into a timeseries GDX.
+An empty `energy_quantiles` is the deterministic mode: no branches, no forecast
+file. A timeseries spec may carry an `energy_quantiles` of its own, which replaces
+the global value for its series alone — a dry branch can be one-in-ten for hydro
+inflow and milder for wind.
 
-A timeseries spec may carry a `forecast_quantiles` of its own. It replaces the
-global value for the branches it names and for that series alone, so one branch
-can be a dry decile of inflow and a slightly calm one of wind.
+### What an energy quantile means
 
-### A quantile per hour is not a quantile of energy
+The number is a point in the climate years, counted in energy:
 
-Every hour of a p0.45 wind branch is a slightly-below-median hour, and a run of
-them adds up to far less wind than any real period of that length has: the
-years trade good hours for bad ones, and a branch never does. How far off it is
-depends on how skewed the series is, so it differs by series and by country.
+| value | the branch carries |
+|---|---|
+| `0.5` | the mean energy of the climate years |
+| `0.1` | a low: one climate year in ten has less. A dry branch for hydro, a calm one for wind |
+| `0.9` | a high: one climate year in ten has more |
+| `0` | the lowest of the climate years at that time of year: the calmest, the driest |
 
-In the OT2030 build, over the 35 climate years:
+Two things make it concrete:
 
-| series | energy of a p0.5 branch, of the mean year | per-hour quantile that carries the mean | … a one-in-ten low and high 252 days |
-|---|---|---|---|
-| onshore wind | 72 % | 0.60 | 0.57, 0.63 |
-| offshore wind | 108 % | 0.46 | 0.43, 0.49 |
-| solar | 101 % | 0.49 | 0.45, 0.53 |
-| hydro inflow | 94 % | 0.57 | 0.48, 0.65 |
-| electricity demand | 99 % | 0.45 | 0.56, 0.34 |
-| district heating demand | 98 % | 0.45 | 0.60, 0.31 |
+- **It is measured over the branch's own length.** A 252-day branch at `0.1` is a
+  dry 252 days; a 5-day branch at `0.1` is a calm 5 days. Those are different
+  things — short spells swing much further from the mean than long ones — so the
+  same number makes a deeper branch when the branch is short.
+- **It holds for every series on its own.** Every country's wind, every hydro
+  node, every demand node gets the energy its number asks for from its own
+  climate years. `0.5` is the mean for each of them, however different their
+  weather.
 
-Demand is a negative `ts_influx`, so its low quantile is the high-demand one:
-a low quantile is the hard direction for every series.
+An example. A hydro node whose inflow averages 20 TWh a year, and whose driest
+year in ten brings 17, gets a whole-year branch of 20 TWh at `0.5` and of about
+17 TWh at `0.1`.
 
-So a quantile is chosen by what it amounts to, not by its name.
-`python tools/forecast_branch_energy.py <built_folder>` prints the energy of
-every branch over its own length against the climate years, and with
-`--targets` the quantile that gives a stated energy; `--by-node` repeats both
-per country.
+Demand is a negative inflow in Backbone, so for demand `0.1` is the
+**high**-demand branch. A low value is the hard direction for every series.
+
+### How a branch is built
+
+Each branch has the **shape** of the climate years and the **energy** its number
+asks for:
+
+- **Shape.** At every hour, the branch takes a value from the spread of that same
+  hour across the climate years. Winter hours stay winter-like and nights
+  night-like, and a branch has no step the realized years do not have.
+- **Energy.** Which point of that spread it takes — low, middle or high — is
+  chosen for each series separately, so that the branch carries the energy asked
+  for. The point differs by country, because some weather is more lopsided than
+  other: most hours are calm and a few are very windy, so the middle hour of wind
+  is well below its average hour, and a wind branch at `0.5` takes points above
+  the middle.
+
+The build log says which points were used, one line per source: *Per-hour
+quantiles that carry the energy quantiles, over N series: f01 0.5 -> 0.47-0.70,
+…*. `python tools/forecast_branch_energy.py <built_folder>` reads a built folder
+and states what each branch carries against the climate years (`--by-node` per
+series).
+
+**The exact rule**, for whoever needs it: over every window of the branch's
+length, from every start day of the climate window, the branch carries
+`Q_p + (mean − Q_0.5) × (1 − |1 − 2p|)` of the climate years' energy in that
+window, where `Q_p` is their p-quantile. At `0.5` that is the mean exactly; towards
+`0` and `1` the step from the median up to the mean fades out, so a low value is
+the climate years' own low. That matters for short wind branches: a few very windy
+spells pull the mean well above the median, and without the fade even `0` would
+stay far from the calmest spell on record. `calculate_climatological_forecasts` in
+`src/timeseries/timeseries_helpers.py` has the derivation.
+
+### What a central branch cannot carry
+
+`f01` is the climate's average, day by day — and an average has no weather. In a
+real year the north can be windy while the south is calm, or a calm week can also
+be a cold one; across many years those cancel out, so in `f01` every region
+simply follows the seasons together. That is by design: no single forecast can
+hold the weather of every year. The realized branch carries the year's own
+weather, and the side branches carry how far from the average it can go.
 
 ### How long a branch lasts, and how it ends
 
-`forecast_branches` states, for each branch beside the central one, how many
-days it carries its own data and what happens after that:
+`forecast_branches` states, for each branch beside the central one, how many days
+it carries its own data and what happens after that:
 
 ```
 forecast_branches = {
     'f01': 'central',
     'f02': {'length_days': 252, 'end': 'continue', 'blend_days': 28},
-    'f03': {'length_days': 252, 'end': 'continue', 'blend_days': 28},    
+    'f03': {'length_days': 252, 'end': 'continue', 'blend_days': 28},
     'f04': {'length_days': 5, 'end': 'cut'},
     }
 ```
@@ -249,33 +285,48 @@ forecast_branches = {
 | `bound` | ends at the central branch's storage levels | a short-term forecast that converges back |
 | `continue` | runs on to the horizon on the central branch's data, keeping its own storage levels and its probability | a long deviation such as a dry year |
 
-A branch the key does not name is 149 days long and cut. `'f01': 'central'` is
-there for the reader: f01 always reaches the horizon and takes no settings, and
-no other branch can be central, because `scheduleInit.gms` and `changes.inc`
-name f01.
+`blend_days` eases a continuing branch from its own data into the central
+branch's. A branch the key does not name is 149 days long and cut. `'f01':
+'central'` is there for the reader: f01 always reaches the horizon and takes no
+settings, and no other branch can be central, because `scheduleInit.gms` and
+`changes.inc` name f01.
 
-Three things follow from how Backbone reads these:
+Four things follow from how Backbone reads these:
 
+- **The length is part of the branch's data.** Its energy quantile is measured
+  over it, so a branch made longer also changes what it carries.
 - **A cut branch values nothing past its cut.** What its storages hold at the
   end is worth nothing to it, so it spends what the storage limits let it.
 - **A length counts to the start of a model time step.** From day 15 of a solve
   the steps are a week long, so a length inside a week holds until that week
-  ends: 250 days acts as 252. `blend_days` is sampled the same way, at each
-  step's first hour — a 28-day blend is a week still on the branch's own data,
-  then a quarter, a half and three quarters central.
-- **A branch costs what its length costs.** Two branches continuing to a
-  52-week horizon and a third cut at five days make each daily OT2030 solve
-  589 000 variables against 432 000 for two 149-day branches, and 1.4 times
-  the solver iterations.
+  ends: 250 days acts as 252. `blend_days` is sampled the same way.
+- **A branch costs what its length costs.** Every branch adds its own variables
+  for every step it lasts; past day 15 a week is one step, so a long branch costs
+  less per day than its first two weeks do.
 
-The build writes these into `scheduleInit.gms` as `p_forecast`. A changed
-`forecast_branches` recopies the GAMS files and reruns nothing; a changed
-quantile in a spec reruns that series, and a changed global one reruns them all.
+Near the solve every branch is also pulled towards the realized weather, over
+five days for wind, solar and most series, seven for demand and fourteen for
+hydro inflow (`scheduleInit.gms`; a branch shorter than seven or fourteen days
+keeps the five). A branch is fully its own only after that, so one shorter than
+its pull carries only part of its deviation.
 
-How far ahead a branch is pulled towards the realized weather is set in
-`scheduleInit.gms`, not in the config: five days for wind, solar and anything
-else, seven for demand and fourteen for hydro inflow. A branch shorter than
-seven or fourteen days keeps the five.
+### What a change rebuilds
+
+| changed | rebuilt |
+|---|---|
+| `energy_quantiles`, `forecast_weights` | everything |
+| a branch's `length_days` | everything: the length is part of the branch's data |
+| a branch's `end` or `blend_days` | the GAMS files only |
+| a spec's own `energy_quantiles` | that source |
+
+### Long windows
+
+The branches are built from the spread across the climate windows, and windows
+longer than a year overlap: a window of N years leaves 36 − N of them in
+1982–2016 — 31 for five years, 16 for twenty, and one for `365*35+9`, where every
+branch would be the realized window itself. That is the other reason the build
+warns above five years. A source with fewer than two climate windows cannot have
+branches at all, and is told so.
 
 ## Why zero is the hard case
 
@@ -290,7 +341,7 @@ The pipeline's answer is to keep the two apart for as long as possible:
 2. `GDX_exchange.prepare_values_for_gdx` is the **single** place it becomes `0`,
    at the GDX boundary, and it counts what it converted.
 3. Nothing upstream may fill early. Filling makes a source gap indistinguishable
-   from a real zero — and because the forecast quantiles skip `NaN` but not `0`,
+   from a real zero — and because the forecast branches skip `NaN` but not `0`,
    an early fill also drags every branch downward.
 
 Two per-source settings make zeros of their own, after the processor has
@@ -513,7 +564,7 @@ its time series; the same cell reported costs one node and names it.
 |---|---|
 | `src/timeseries/timeseries_pipeline.py` | decides what runs, copies or is skipped; handles demand grids with no processor |
 | `src/timeseries/timeseries_processor.py` | runs one processor, checks its output, writes the GDX. Carries the processor contract |
-| `src/timeseries/timeseries_helpers.py` | labelling, the time-axis check, climate windows, forecast quantiles, gap filling |
+| `src/timeseries/timeseries_helpers.py` | labelling, the time-axis check, climate windows, forecast branches, gap filling |
 | `src/timeseries/processors/base_processor.py` | the base class, the declarations, and the file readers |
 | `src/timeseries/processors/*.py` | one file per source |
 | `src/GDX_exchange.py` | the GDX boundary, and the one NaN-to-zero conversion |

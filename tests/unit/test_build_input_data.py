@@ -70,7 +70,7 @@ class TestScheduleInit:
             "    p_mfProbability('schedule', 'f03') = 0.2;\n"
         )
         config = make_config(
-            forecast_quantiles={"f01": 0.5, "f02": 0.9},
+            energy_quantiles={"f01": 0.5, "f02": 0.9},
             forecast_weights={"f01": 0.75, "f02": 0.25},
         )
 
@@ -114,7 +114,7 @@ class TestScheduleInitBranches:
     @staticmethod
     def _config(branches):
         return make_config(
-            forecast_quantiles={"f01": 0.5, **{label: 0.1 for label in branches}},
+            energy_quantiles={"f01": 0.5, **{label: 0.1 for label in branches}},
             forecast_weights={"f01": 1.0, **{label: 0.0 for label in branches}},
             forecast_branches=branches,
         )
@@ -226,7 +226,7 @@ class TestTimeAndSamples:
         # still declare f01. Backbone filters active forecasts at runtime.
         content = '    f "Forecasts for the short term" / f00 * f03 /\n'
         out = _patch_gams_file_content(
-            "timeAndSamples.inc", content, make_config(forecast_quantiles=quantiles)
+            "timeAndSamples.inc", content, make_config(energy_quantiles=quantiles)
         )
         assert expected in out
 
@@ -245,7 +245,7 @@ class TestChangesInc:
         # match cannot leave the anchor's own number behind and still pass.
         content = "$if not set forecasts $evalglobal forecastNumber 9\n"
         out = _patch_gams_file_content(
-            "changes.inc", content, make_config(forecast_quantiles=quantiles)
+            "changes.inc", content, make_config(energy_quantiles=quantiles)
         )
         assert f"forecastNumber {expected}" in out
 
@@ -301,7 +301,7 @@ class TestRealTemplatesStillMatch:
     def test_schedule_init_probability_block_anchor_is_present(self, templates):
         content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
         config = make_config(
-            forecast_quantiles={"f01": 0.5},
+            energy_quantiles={"f01": 0.5},
             forecast_weights={"f01": 1.0},
         )
         out = _patch_gams_file_content("scheduleInit.gms", content, config)
@@ -311,7 +311,7 @@ class TestRealTemplatesStillMatch:
     def test_schedule_init_branch_block_anchor_is_present(self, templates):
         content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
         config = make_config(
-            forecast_quantiles={"f01": 0.5, "f02": 0.1},
+            energy_quantiles={"f01": 0.5, "f02": 0.1},
             forecast_weights={"f01": 0.5, "f02": 0.5},
             forecast_branches={"f02": {"length_days": 7, "end": "bound", "blend_days": 0}},
         )
@@ -325,7 +325,7 @@ class TestRealTemplatesStillMatch:
         # branches, since timeAndSamples.inc ends the f set at the last one built.
         content = (templates / "scheduleInit.gms").read_text(encoding="utf-8")
         config = make_config(
-            forecast_quantiles={"f01": 0.5}, forecast_weights={"f01": 1.0}, forecast_branches={},
+            energy_quantiles={"f01": 0.5}, forecast_weights={"f01": 1.0}, forecast_branches={},
         )
         out = _patch_gams_file_content("scheduleInit.gms", content, config)
         code = "\n".join(line.split("//")[0] for line in out.splitlines())
@@ -346,7 +346,7 @@ class TestRealTemplatesStillMatch:
         # template untouched.
         content = (templates / "changes.inc").read_text(encoding="utf-8")
         out = _patch_gams_file_content(
-            "changes.inc", content, make_config(forecast_quantiles={"f01": 0.5})
+            "changes.inc", content, make_config(energy_quantiles={"f01": 0.5})
         )
         assert out != content, "forecastNumber anchor no longer matches changes.inc"
         assert "$if not set forecasts $evalglobal forecastNumber 1" in out
@@ -377,7 +377,7 @@ class TestGamsSettingsSummary:
         config = make_config(
             bb_timeseries_length=40,
             bb_horizon_weeks=52,
-            forecast_quantiles={"f01": 0.5, "f02": 0.9},
+            energy_quantiles={"f01": 0.5, "f02": 0.9},
             forecast_weights={"f01": 0.7, "f02": 0.3},
             forecast_branches={"f02": {"length_days": 30, "end": "continue", "blend_days": 7}},
         )
@@ -422,7 +422,7 @@ class TestGamsSettingsSummary:
 
     def test_a_deterministic_run_reports_no_probabilities(self):
         _, logger = self._report(make_config(
-            forecast_quantiles={}, forecast_weights={}, forecast_branches={},
+            energy_quantiles={}, forecast_weights={}, forecast_branches={},
         ))
         reported = "\n".join(logger.messages)
         assert "forecastNumber 0" in reported

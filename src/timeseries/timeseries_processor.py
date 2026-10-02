@@ -18,7 +18,8 @@ So ``['grid', 'node', 'f', 't']`` means the processor returns
 datetime in ``time``. The runner supplies ``t`` and ``f``:
 ``split_timeseries_to_climate_windows`` labels ``t`` and inserts ``f00`` as the
 realized-weather branch, and ``calculate_climatological_forecasts`` computes
-f01, f02, ... as quantiles across those same climate windows.
+f01, f02, ... from those same climate windows: per series, a per-hour quantile
+chosen to carry the energy the branch's energy quantile asks for.
 
 Processors cover the full range from the start of ``start_year`` to
 ``{end_year}-12-31 23:00``, and must not filter to a particular window or
@@ -58,7 +59,7 @@ import src.source_data.source_data_contributions as source_data_contributions
 import src.source_workbook_shape as source_workbook_shape
 import src.infrastructure.processor_input_record as processor_input_record
 from src.infrastructure.cache_manager import CacheManager
-from src.infrastructure.config_reader import spec_forecast_quantiles
+from src.infrastructure.config_reader import branch_energy_days, spec_energy_quantiles
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.processors.base_processor import declared_source_data
 from src.timeseries.timeseries_helpers import (
@@ -272,6 +273,36 @@ class ProcessorRunner:
             f"window. {tail}"
         )
 
+
+    def _report_per_hour_quantiles(self, processor_name, energy_quantiles, forecasts) -> None:
+        """One line on what the energy quantiles came to, and any target out of reach.
+
+        The range of per-hour quantiles is the reader's check that the branches
+        did what the config asked: it shows how far each series had to move from
+        the energy quantile to carry its energy.
+        """
+        per_hour = forecasts.per_hour_quantiles
+        parts = []
+        for label, p in energy_quantiles.items():
+            q = per_hour[label].dropna()
+            if len(q):
+                parts.append(f"{label} {p:g} -> {q.min():.2f}-{q.max():.2f}")
+        if parts:
+            self.logger.log_status(
+                f"Per-hour quantiles that carry the energy quantiles, over "
+                f"{len(per_hour)} series: {'; '.join(parts)}",
+                level="info",
+            )
+        for label, names in forecasts.unreachable.items():
+            if names:
+                self.logger.log_status(
+                    f"Processor '{processor_name}': {len(names)} series cannot carry the "
+                    f"energy of {label} ({energy_quantiles[label]:g}) with any per-hour "
+                    f"quantile and take the nearest one, 0 or 1: {summarise(names)}. Their "
+                    f"{label} is as far from the mean as the climate years allow, but not "
+                    f"as far as asked.",
+                    level="warn",
+                )
 
     def _report_unknown_dimension_values(
         self, main_result: pd.DataFrame, group_dims: list, frames: dict, processor_name: str
@@ -716,37 +747,40 @@ class ProcessorRunner:
         dims = spec.get("bb_parameter_dimensions", [])
         calculate_forecasts = "f" in dims and "t" in dims and any(d not in ("f", "t") for d in dims)
 
-        # Empty forecast_quantiles is the deterministic mode: no branches at all.
-        # A spec may give some branches a quantile of its own.
-        forecast_quantiles = spec_forecast_quantiles(self.config, spec)
-        if calculate_forecasts and not forecast_quantiles:
+        # Empty energy_quantiles is the deterministic mode: no branches at all.
+        # A spec may give some branches an energy quantile of its own.
+        energy_quantiles = spec_energy_quantiles(self.config, spec)
+        if calculate_forecasts and not energy_quantiles:
             calculate_forecasts = False
 
-        # The branches are quantiles across the climate windows, so they need
-        # more than one window -- which is a question about the window length as
-        # much as about the climate range.
+        # The branches are built from the spread across the climate windows, so
+        # they need more than one window -- which is a question about the window
+        # length as much as about the climate range.
         if calculate_forecasts and len(annual_dfs) <= 1:
             self.logger.log_status(
                 f"Processor '{processor_name}': the data holds {len(annual_dfs)} "
                 f"climate window(s) of {bb_ts_length} days, and forecast branches are "
-                f"quantiles across windows, so they need two or more. No forecast "
-                f"file is written.",
+                f"built from the spread across windows, so they need two or more. No "
+                f"forecast file is written.",
                 level="warn",
             )
             calculate_forecasts = False
 
         if calculate_forecasts:
             self.logger.log_status("Calculating climatological forecasts...")
-            forecast_df = calculate_climatological_forecasts(
+            forecasts = calculate_climatological_forecasts(
                 ordered_result,
                 bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
-                forecast_quantiles=forecast_quantiles,
+                energy_quantiles=energy_quantiles,
                 bb_ts_start=bb_ts_start,
                 bb_ts_length=bb_ts_length,
                 valid_climate_years=valid_climate_years,
+                branch_days=branch_energy_days(self.config),
                 round_precision=rounding_precision,
                 group_ids=group_ids,
             )
+            forecast_df = forecasts.frame
+            self._report_per_hour_quantiles(processor_name, energy_quantiles, forecasts)
 
             forecast_gdx_path = os.path.join(
                 self.output_folder,

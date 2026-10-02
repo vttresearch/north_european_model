@@ -109,10 +109,10 @@ _TIMESERIES_SPEC_DEFAULTS = {
     'attached_grid': '',
     'scaling_factor': 1,
     'cutoff_below': None,
-    'forecast_quantiles': None,
+    'energy_quantiles': None,
 }
 
-_FORECAST_QUANTILES_DEFAULT = {'f01': 0.5, 'f02': 0.1, 'f03': 0.9}
+_ENERGY_QUANTILES_DEFAULT  = {'f01': 0.5, 'f02': 0.1, 'f03': 0.9}
 _FORECAST_WEIGHTS_DEFAULT   = {'f01': 0.6, 'f02': 0.2, 'f03': 0.2}
 
 #: The branch the GAMS templates treat as the central forecast. scheduleInit.gms
@@ -126,10 +126,18 @@ FORECAST_BRANCH_ENDS = {'cut': 0, 'bound': 1, 'continue': 2}
 #: A branch the config says nothing about: 149 days (3576 h), then cut.
 _FORECAST_BRANCH_DEFAULT = {'length_days': 149, 'end': 'cut', 'blend_days': 0}
 
+#: Said when a config still uses the key energy_quantiles replaced.
+_RENAMED_QUANTILES = (
+    "forecast_quantiles is now energy_quantiles, and its values mean energy: 0.5 is "
+    "each series' mean energy, 0.1 a one-in-ten low over the branch's length. The "
+    "old key took a quantile of every hour, which carries a different energy in "
+    "every country. Rename the key; see docs/timeseries.md, 'Forecast branches'."
+)
+
 _TIMESERIES_SPEC_MANDATORY = ('processor_name', 'bb_parameter', 'bb_parameter_dimensions')
 
 
-def _parse_forecast_branches(raw, forecast_quantiles: dict, bb_horizon_weeks: int) -> Dict[str, Any]:
+def _parse_forecast_branches(raw, energy_quantiles: dict, bb_horizon_weeks: int) -> Dict[str, Any]:
     """
     Validate forecast_branches and fill in every branch beside the central one.
 
@@ -145,7 +153,7 @@ def _parse_forecast_branches(raw, forecast_quantiles: dict, bb_horizon_weeks: in
 
     Returns:
         {label: {'length_days', 'end', 'blend_days'}} for every label of
-        forecast_quantiles except the central one, in that order.
+        energy_quantiles except the central one, in that order.
 
     Raises:
         ValueError: on anything the GAMS templates could not honour.
@@ -156,27 +164,27 @@ def _parse_forecast_branches(raw, forecast_quantiles: dict, bb_horizon_weeks: in
             f"forecast_branches must be a dict mapping f-labels to branch settings; "
             f"got {type(raw).__name__}."
         )
-    if not forecast_quantiles:
+    if not energy_quantiles:
         if raw:
             raise ValueError(
                 "forecast_branches must be empty (or omitted) when "
-                "forecast_quantiles is empty (deterministic mode)."
+                "energy_quantiles is empty (deterministic mode)."
             )
         return {}
-    if CENTRAL_FORECAST not in forecast_quantiles:
+    if CENTRAL_FORECAST not in energy_quantiles:
         raise ValueError(
-            f"forecast_quantiles must include '{CENTRAL_FORECAST}': it is the central "
+            f"energy_quantiles must include '{CENTRAL_FORECAST}': it is the central "
             f"forecast in scheduleInit.gms and changes.inc."
         )
-    unknown = sorted(set(raw) - set(forecast_quantiles))
+    unknown = sorted(set(raw) - set(energy_quantiles))
     if unknown:
         raise ValueError(
-            f"forecast_branches names {unknown}, which forecast_quantiles does not have."
+            f"forecast_branches names {unknown}, which energy_quantiles does not have."
         )
 
     horizon_days = bb_horizon_weeks * 7
     branches = {}
-    for label in forecast_quantiles:
+    for label in energy_quantiles:
         given = raw.get(label)
         if label == CENTRAL_FORECAST:
             if given not in (None, 'central'):
@@ -243,47 +251,61 @@ def _parse_forecast_branches(raw, forecast_quantiles: dict, bb_horizon_weeks: in
     return branches
 
 
-def _validate_spec_forecast_quantiles(specs: Dict[str, Any], forecast_quantiles: dict) -> None:
+def _validate_spec_energy_quantiles(specs: Dict[str, Any], energy_quantiles: dict) -> None:
     """
-    Check every timeseries_specs entry's own forecast_quantiles.
+    Check every timeseries_specs entry's own energy_quantiles.
 
-    A spec may give some branches a quantile of its own, which replaces the
-    global forecast_quantiles value for that series and no other.
+    A spec may give some branches an energy quantile of its own, which replaces
+    the global energy_quantiles value for that series and no other.
 
     Raises:
-        ValueError: if an override is not a dict, names a branch the global map
-                    does not have, or holds a value outside 0-1.
+        ValueError: if an entry still uses forecast_quantiles, or an override is
+                    not a dict, names a branch the global map does not have, or
+                    holds a value outside 0-1.
     """
     for name, entry in specs.items():
-        override = entry.get('forecast_quantiles')
+        if 'forecast_quantiles' in entry:
+            raise ValueError(f"timeseries_specs entry '{name}': {_RENAMED_QUANTILES}")
+        override = entry.get('energy_quantiles')
         if override is None:
             continue
         if not isinstance(override, dict):
             raise ValueError(
-                f"timeseries_specs entry '{name}': forecast_quantiles must be a dict "
-                f"mapping f-labels to probability quantiles; got {type(override).__name__}."
+                f"timeseries_specs entry '{name}': energy_quantiles must be a dict "
+                f"mapping f-labels to energy quantiles; got {type(override).__name__}."
             )
-        unknown = sorted(set(override) - set(forecast_quantiles))
+        unknown = sorted(set(override) - set(energy_quantiles))
         if unknown:
             raise ValueError(
-                f"timeseries_specs entry '{name}': forecast_quantiles names {unknown}, "
-                f"which the global forecast_quantiles does not have."
+                f"timeseries_specs entry '{name}': energy_quantiles names {unknown}, "
+                f"which the global energy_quantiles does not have."
             )
         for label, value in override.items():
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
                 raise ValueError(
-                    f"timeseries_specs entry '{name}': forecast_quantiles['{label}'] "
-                    f"must be a probability between 0 and 1; got {value!r}."
+                    f"timeseries_specs entry '{name}': energy_quantiles['{label}'] "
+                    f"must be between 0 and 1; got {value!r}."
                 )
 
 
-def spec_forecast_quantiles(config: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, float]:
-    """The quantile of every forecast branch for one timeseries spec.
+def spec_energy_quantiles(config: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, float]:
+    """The energy quantile of every forecast branch for one timeseries spec.
 
-    The global forecast_quantiles, with the spec's own values in place of them
+    The global energy_quantiles, with the spec's own values in place of them
     where it has any. Labels keep the global order.
     """
-    return {**config["forecast_quantiles"], **(spec.get("forecast_quantiles") or {})}
+    return {**config["energy_quantiles"], **(spec.get("energy_quantiles") or {})}
+
+
+def branch_energy_days(config: Dict[str, Any]) -> Dict[str, int]:
+    """Per branch beside the central one, the days its energy is measured over.
+
+    A branch's energy quantile describes the energy it carries over its own
+    length, so that is its forecast_branches length_days. The central branch is
+    not named: it reaches the horizon and is measured over the whole window.
+    """
+    return {label: branch["length_days"]
+            for label, branch in config.get("forecast_branches", {}).items()}
 
 
 def _validate_timeseries_specs(specs: Any) -> Dict[str, Any]:
@@ -424,33 +446,40 @@ def load_config(config_file: Path) -> Dict[str, Any]:
             f"Reduce bb_timeseries_length or extend the climate_data range."
         )
 
-    # Parse optional forecast_quantiles (default: {'f01': 0.5, 'f02': 0.1, 'f03': 0.9})
-    forecast_quantiles_raw = inputdata.get('forecast_quantiles')
-    if forecast_quantiles_raw is not None:
-        forecast_quantiles = ast.literal_eval(forecast_quantiles_raw)
-        if not isinstance(forecast_quantiles, dict):
+    # Parse optional energy_quantiles (default: {'f01': 0.5, 'f02': 0.1, 'f03': 0.9})
+    if inputdata.get('forecast_quantiles') is not None:
+        raise ValueError(_RENAMED_QUANTILES)
+    energy_quantiles_raw = inputdata.get('energy_quantiles')
+    if energy_quantiles_raw is not None:
+        energy_quantiles = ast.literal_eval(energy_quantiles_raw)
+        if not isinstance(energy_quantiles, dict):
             raise ValueError(
-                f"forecast_quantiles must be a dict mapping f-labels to probability quantiles; "
-                f"got {type(forecast_quantiles).__name__}."
+                f"energy_quantiles must be a dict mapping f-labels to energy quantiles; "
+                f"got {type(energy_quantiles).__name__}."
             )
-        if "f00" in forecast_quantiles:
+        if "f00" in energy_quantiles:
             raise ValueError(
-                "forecast_quantiles contains 'f00', which is reserved for realized weather. "
-                "Use f01, f02, … for forecast branches."
+                "energy_quantiles contains 'f00', which is reserved for realized weather. "
+                "Use f01, f02, ... for forecast branches."
             )
+        for label, value in energy_quantiles.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise ValueError(
+                    f"energy_quantiles['{label}'] must be between 0 and 1; got {value!r}."
+                )
     else:
-        forecast_quantiles = _FORECAST_QUANTILES_DEFAULT
+        energy_quantiles = _ENERGY_QUANTILES_DEFAULT
 
     # Parse optional forecast_weights (default: equal weights, or established defaults for the standard 3-forecast setup)
     forecast_weights_raw = inputdata.get('forecast_weights')
-    if not forecast_quantiles:
+    if not energy_quantiles:
         # Deterministic mode: realized weather (f00) only, no forecast branches.
         if forecast_weights_raw is not None:
             forecast_weights_parsed = ast.literal_eval(forecast_weights_raw)
             if forecast_weights_parsed:
                 raise ValueError(
                     "forecast_weights must be empty (or omitted) when "
-                    "forecast_quantiles is empty (deterministic mode)."
+                    "energy_quantiles is empty (deterministic mode)."
                 )
         forecast_weights = {}
     elif forecast_weights_raw is not None:
@@ -460,10 +489,10 @@ def load_config(config_file: Path) -> Dict[str, Any]:
                 f"forecast_weights must be a dict mapping f-labels to probability weights; "
                 f"got {type(forecast_weights).__name__}."
             )
-        if set(forecast_weights.keys()) != set(forecast_quantiles.keys()):
+        if set(forecast_weights.keys()) != set(energy_quantiles.keys()):
             raise ValueError(
                 f"forecast_weights keys {sorted(forecast_weights)} must match "
-                f"forecast_quantiles keys {sorted(forecast_quantiles)}."
+                f"energy_quantiles keys {sorted(energy_quantiles)}."
             )
         total = sum(forecast_weights.values())
         if abs(total - 1.0) > 1e-9:
@@ -471,24 +500,24 @@ def load_config(config_file: Path) -> Dict[str, Any]:
                 f"forecast_weights values must sum to 1.0; got {total}."
             )
     else:
-        if set(forecast_quantiles.keys()) == set(_FORECAST_WEIGHTS_DEFAULT.keys()):
+        if set(energy_quantiles.keys()) == set(_FORECAST_WEIGHTS_DEFAULT.keys()):
             forecast_weights = _FORECAST_WEIGHTS_DEFAULT
         else:
-            n = len(forecast_quantiles)
-            forecast_weights = {label: 1.0 / n for label in forecast_quantiles}
+            n = len(energy_quantiles)
+            forecast_weights = {label: 1.0 / n for label in energy_quantiles}
 
     # Parse optional forecast_branches (default: every branch 149 days, then cut)
     forecast_branches_raw = inputdata.get('forecast_branches')
     forecast_branches = _parse_forecast_branches(
         None if forecast_branches_raw is None else ast.literal_eval(forecast_branches_raw),
-        forecast_quantiles,
+        energy_quantiles,
         bb_horizon_weeks,
     )
 
     timeseries_specs = _validate_timeseries_specs(
         ast.literal_eval(inputdata.get('timeseries_specs', '{}'))
     )
-    _validate_spec_forecast_quantiles(timeseries_specs, forecast_quantiles)
+    _validate_spec_energy_quantiles(timeseries_specs, energy_quantiles)
 
     # Build the config dictionary manually
     # Insert correctly shaped default values in case of missing keys
@@ -532,8 +561,8 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'unitdata_files': ast.literal_eval(inputdata.get('unitdata_files', '[]')),
         'userconstraintdata_files': ast.literal_eval(inputdata.get('userconstraintdata_files', '[]')),
 
-        # Timeseries forecast quantiles, weights, branch shapes and specs
-        'forecast_quantiles': forecast_quantiles,
+        # Forecast branches: energy quantiles, weights, branch shapes; and specs
+        'energy_quantiles': energy_quantiles,
         'forecast_weights': forecast_weights,
         'forecast_branches': forecast_branches,
         'timeseries_specs': timeseries_specs,

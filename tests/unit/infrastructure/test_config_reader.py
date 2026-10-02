@@ -23,7 +23,8 @@ from src.infrastructure.config_reader import (
     config_output_folder_names,
     load_config,
     output_folder_name,
-    spec_forecast_quantiles,
+    branch_energy_days,
+    spec_energy_quantiles,
 )
 
 MINIMAL_INI = """\
@@ -265,7 +266,7 @@ class TestLoadConfig:
 
     def test_rejects_forecast_weights_that_do_not_sum_to_one(self, tmp_path):
         body = MINIMAL_INI + (
-            "forecast_quantiles = {'f01': 0.5, 'f02': 0.9}\n"
+            "energy_quantiles = {'f01': 0.5, 'f02': 0.9}\n"
             "forecast_weights = {'f01': 0.5, 'f02': 0.9}\n"
         )
         with pytest.raises(ValueError):
@@ -273,35 +274,70 @@ class TestLoadConfig:
 
     def test_rejects_forecast_weights_whose_keys_do_not_match_the_quantiles(self, tmp_path):
         body = MINIMAL_INI + (
-            "forecast_quantiles = {'f01': 0.5}\n"
+            "energy_quantiles = {'f01': 0.5}\n"
             "forecast_weights = {'f02': 1.0}\n"
         )
         with pytest.raises(ValueError):
             load_config(_write_ini(tmp_path, body))
 
-    def test_rejects_f00_as_a_forecast_quantile(self, tmp_path):
-        # f00 is the realized weather branch, not a quantile.
-        body = MINIMAL_INI + "forecast_quantiles = {'f00': 0.5}\n"
+    def test_rejects_f00_as_a_forecast_branch(self, tmp_path):
+        # f00 is the realized weather branch, not a forecast.
+        body = MINIMAL_INI + "energy_quantiles = {'f00': 0.5}\n"
         with pytest.raises(ValueError):
             load_config(_write_ini(tmp_path, body))
 
-    def test_a_spec_quantile_replaces_the_global_one_for_that_series_only(self, tmp_path):
+    @pytest.mark.parametrize("value", ["1.5", "-0.1", "'low'", "True"])
+    def test_rejects_an_energy_quantile_outside_zero_to_one(self, tmp_path, value):
+        body = MINIMAL_INI + f"energy_quantiles = {{'f01': {value}}}\n"
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            load_config(_write_ini(tmp_path, body))
+
+    def test_the_old_key_stops_the_build_rather_than_being_read_another_way(self, tmp_path):
+        # forecast_quantiles took a quantile of every hour; energy_quantiles takes
+        # one of energy. Reading an old config under the new meaning would change
+        # every branch without a word, so the old key is refused with the reason.
+        body = MINIMAL_INI + "forecast_quantiles = {'f01': 0.5, 'f02': 0.1}\n"
+        with pytest.raises(ValueError, match="now energy_quantiles"):
+            load_config(_write_ini(tmp_path, body))
+
+    def test_the_old_key_in_a_spec_stops_the_build_too(self, tmp_path):
         body = MINIMAL_INI + textwrap.dedent("""\
-            forecast_quantiles = {'f01': 0.5, 'f02': 0.1}
             timeseries_specs = {
                 'wind': {'processor_name': 'VRE_PECD', 'bb_parameter': 'ts_cf',
                          'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
                          'forecast_quantiles': {'f02': 0.45}},
+                }
+            """)
+        with pytest.raises(ValueError, match="'wind': forecast_quantiles is now energy_quantiles"):
+            load_config(_write_ini(tmp_path, body))
+
+    def test_a_branch_s_energy_is_measured_over_its_own_length(self, tmp_path):
+        body = MINIMAL_INI + textwrap.dedent("""\
+            energy_quantiles = {'f01': 0.5, 'f02': 0.1, 'f03': 0.9}
+            forecast_weights = {'f01': 0.6, 'f02': 0.2, 'f03': 0.2}
+            forecast_branches = {'f02': {'length_days': 252, 'end': 'continue'}}
+            """)
+        config = load_config(_write_ini(tmp_path, body))
+        # f01 is not named: it reaches the horizon and is measured over the window.
+        assert branch_energy_days(config) == {"f02": 252, "f03": 149}
+
+    def test_a_spec_quantile_replaces_the_global_one_for_that_series_only(self, tmp_path):
+        body = MINIMAL_INI + textwrap.dedent("""\
+            energy_quantiles = {'f01': 0.5, 'f02': 0.1}
+            timeseries_specs = {
+                'wind': {'processor_name': 'VRE_PECD', 'bb_parameter': 'ts_cf',
+                         'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
+                         'energy_quantiles': {'f02': 0.45}},
                 'hydro': {'processor_name': 'hydro_inflow_MAF2019', 'bb_parameter': 'ts_influx',
                           'bb_parameter_dimensions': ['grid', 'node', 'f', 't']},
                 }
             """)
         config = load_config(_write_ini(tmp_path, body))
         specs = config["timeseries_specs"]
-        assert spec_forecast_quantiles(config, specs["wind"]) == {"f01": 0.5, "f02": 0.45}
-        assert spec_forecast_quantiles(config, specs["hydro"]) == {"f01": 0.5, "f02": 0.1}
+        assert spec_energy_quantiles(config, specs["wind"]) == {"f01": 0.5, "f02": 0.45}
+        assert spec_energy_quantiles(config, specs["hydro"]) == {"f01": 0.5, "f02": 0.1}
         # The global map is the default, not a copy the override writes into.
-        assert config["forecast_quantiles"] == {"f01": 0.5, "f02": 0.1}
+        assert config["energy_quantiles"] == {"f01": 0.5, "f02": 0.1}
 
     @pytest.mark.parametrize(
         "override, reason",
@@ -314,11 +350,11 @@ class TestLoadConfig:
     )
     def test_rejects_a_spec_quantile_the_branches_cannot_take(self, tmp_path, override, reason):
         body = MINIMAL_INI + textwrap.dedent(f"""\
-            forecast_quantiles = {{'f01': 0.5, 'f02': 0.1}}
+            energy_quantiles = {{'f01': 0.5, 'f02': 0.1}}
             timeseries_specs = {{
                 'wind': {{'processor_name': 'VRE_PECD', 'bb_parameter': 'ts_cf',
                          'bb_parameter_dimensions': ['flow', 'node', 'f', 't'],
-                         'forecast_quantiles': {override}}},
+                         'energy_quantiles': {override}}},
                 }}
             """)
         with pytest.raises(ValueError, match=reason):

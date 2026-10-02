@@ -49,7 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "unitdata_files": [],
     "userconstraintdata_files": [],
     # Forecasts
-    "forecast_quantiles": {"f01": 0.5, "f02": 0.1, "f03": 0.9},
+    "energy_quantiles": {"f01": 0.5, "f02": 0.1, "f03": 0.9},
     "forecast_weights": {"f01": 0.6, "f02": 0.2, "f03": 0.2},
     # As load_config fills them in: every branch beside the central f01
     "forecast_branches": {
