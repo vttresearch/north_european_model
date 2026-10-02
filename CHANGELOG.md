@@ -60,7 +60,8 @@ not build and why, and has a documentation page of its own.
   [docs/timeseries.md](docs/timeseries.md#forecast-branches)
 - A timeseries spec can set its own `energy_quantiles`, and `forecast_branches`
   sets each branch's length and end: cut, bound to the central branch, or continued
-  on its data. OT2030 has four branches; the other configs are as they were.
+  on its data. OT2030 has four branches, with hydro inflow's f02 at energy quantile
+  0.01; the other configs are as they were.
   [docs/timeseries.md](docs/timeseries.md#how-long-a-branch-lasts-and-how-it-ends)
 - `energy_quantiles` replaces `forecast_quantiles`: a branch's value is an energy,
   per series and over the branch's length. `0.5` is each series' mean (a per-hour
@@ -302,5 +303,6 @@ not build and why, and has a documentation page of its own.
   inflow (was 10, 4 for wind and solar, 28 for inflow). Branch lengths are written
   as `forecastLength`, which needs a Backbone with per-branch end methods and lengths.
 - changes.inc: forecast branches read the realized hydro storage limits, except a
-  10 % higher floor in f02 and a 10 % lower ceiling in f03 (f02 was 10 % narrower
-  and f03 10 % wider). `--forecasts` takes any count up to the branches built.
+  10 % higher floor in f02 (15 % for FR00's reservoir) and a 10 % lower ceiling in
+  f03 (f02 was 10 % narrower and f03 10 % wider). `--forecasts` takes any count up
+  to the branches built.
