@@ -162,7 +162,7 @@ loop(gn_tmp(grid, node),
 p_gn(gn_tmp_(grid, node), 'influx') = ts_influx(grid, node, 'f00', 't000001');
 
 // clearing ts_influx of filtered gn 
-ts_influx(gn_tmp_, ff, tt) = 0;
+ts_influx(gn_tmp_(grid, node), ff, tt) = 0;
 
 
 * --- converting constant ts_node('upwardLimit') to actual constant in p_gnBoundaryProperties ---------
@@ -192,12 +192,12 @@ loop(gn_tmp(grid, node),
 ); // END loop(gn_tmp)
 
 // replacing values in p_gnBoundaryPropertiesForStates
-p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useTimeseries') = 0;
-p_gnBoundaryPropertiesForStates(gn_tmp_, 'upwardLimit', 'useConstant') = 1;
+p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'upwardLimit', 'useTimeseries') = 0;
+p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'upwardLimit', 'useConstant') = 1;
 p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'upwardLimit', 'constant') = ts_node(grid, node, 'upwardLimit', 'f00', 't000001');
 
 // clear timeseries from ts_node to speed up compilation
-ts_node(gn_tmp_, 'upwardLimit', ff, tt) = 0;
+ts_node(gn_tmp_(grid, node), 'upwardLimit', ff, tt) = 0;
 
 
 * --- converting constant ts_node('downwardLimit') to actual constant in p_gnBoundaryProperties ---------
@@ -227,12 +227,12 @@ loop(gn_tmp(grid, node),
 ); // END loop(gn_tmp)
 
 // replacing values in p_gnBoundaryPropertiesForStates
-p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useTimeseries') = 0;
-p_gnBoundaryPropertiesForStates(gn_tmp_, 'downwardLimit', 'useConstant') = 1;
+p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'downwardLimit', 'useTimeseries') = 0;
+p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'downwardLimit', 'useConstant') = 1;
 p_gnBoundaryPropertiesForStates(gn_tmp_(grid, node), 'downwardLimit', 'constant') = ts_node(grid, node, 'downwardLimit', 'f00', 't000001');
 
 // clear timeseries from ts_node to speed up compilation
-ts_node(gn_tmp_, 'downwardLimit', ff, tt) = 0;
+ts_node(gn_tmp_(grid, node), 'downwardLimit', ff, tt) = 0;
 
 
 
@@ -246,23 +246,23 @@ ts_node(gn_tmp_, 'downwardLimit', ff, tt) = 0;
 option gn_tmp < ts_node;
 option tt < ts_node;
 
-ts_node(gn_tmp, 'upwardLimit', f, tt)
+ts_node(gn_tmp(grid, node), 'upwardLimit', f, tt)
     $ {ord(f) > 1 and ord(f) <= %forecastNumber% + 1}
-    = ts_node(gn_tmp, 'upwardLimit', 'f00', tt);
+    = ts_node(grid, node, 'upwardLimit', 'f00', tt);
 
-ts_node(gn_tmp, 'downwardLimit', f, tt)
+ts_node(gn_tmp(grid, node), 'downwardLimit', f, tt)
     $ {ord(f) > 1 and ord(f) <= %forecastNumber% + 1}
-    = ts_node(gn_tmp, 'downwardLimit', 'f00', tt);
+    = ts_node(grid, node, 'downwardLimit', 'f00', tt);
 
 // except two, each against its own branch's risk: the dry f02 keeps a floor 10 % higher,
 // and the wet f03 a ceiling 10 % lower
-ts_node(gn_tmp, 'downwardLimit', f, tt)
+ts_node(gn_tmp(grid, node), 'downwardLimit', f, tt)
     $ {ord(f) = 3 and ord(f) <= %forecastNumber% + 1}
-    = ts_node(gn_tmp, 'downwardLimit', 'f00', tt) * 1.1;
+    = ts_node(grid, node, 'downwardLimit', 'f00', tt) * 1.1;
 
-ts_node(gn_tmp, 'upwardLimit', f, tt)
+ts_node(gn_tmp(grid, node), 'upwardLimit', f, tt)
     $ {ord(f) = 4 and ord(f) <= %forecastNumber% + 1}
-    = ts_node(gn_tmp, 'upwardLimit', 'f00', tt) * 0.9;
+    = ts_node(grid, node, 'upwardLimit', 'f00', tt) * 0.9;
 
 
 * --------------------------------------------------------------------------------
