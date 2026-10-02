@@ -261,7 +261,7 @@ class TestChangesInc:
 class TestUnknownFiles:
     @pytest.mark.parametrize(
         "filename",
-        ["1_options.gms", "modelsInit.gms", "changes_loop.inc", "remove_constraints.inc"],
+        ["1_options.gms", "modelsInit.gms", "remove_constraints.inc"],
     )
     def test_other_gams_files_are_copied_verbatim(self, filename):
         content = "mSettings('schedule', 'dataLength') =  8760;\nt000000 * t020000\n"

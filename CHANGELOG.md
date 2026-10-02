@@ -259,7 +259,8 @@ not build and why, and has a documentation page of its own.
 ### Running the model
 
 - `%init_file%` command line parameter, for switching between schedule and invest.
-- changes_loop.inc: tighter `vq_userconstraint.up` limits, to speed up the solver.
+- changes_loop.inc removed: it only limited the minimum-generation user constraints,
+  which are gone.
 - scheduleInit.gms: the `interpolateStepChange` circulation rules are removed.
 - `config_OT2030-continuous5y.ini`, an example of `bb_timeseries_length`
   expressions (365*5).
