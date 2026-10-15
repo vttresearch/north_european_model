@@ -338,6 +338,19 @@ class TestParseSysArgs:
             with pytest.raises(SystemExit):
                 parse_sys_args()
 
+    @pytest.mark.parametrize("tail, expected", [
+        ([], None),                          # every build
+        (["--variant", "sens1"], "sens1"),
+        (["--variant=sens1"], "sens1"),      # an option, not the legacy key=value form
+    ])
+    def test_variant_names_one_build(self, tail, expected):
+        # G6, G8: build_input_data.py asks for the build name too.
+        argv = ["build_input_data.py", "src_files", "config_test.ini", *tail]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(sys, "argv", argv)
+            _, _, variant = parse_sys_args(with_variant=True)
+        assert variant == expected
+
 
 class TestSummarise:
     """The naming rule for a warning: first few, then a count.

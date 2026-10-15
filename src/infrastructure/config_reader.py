@@ -4,7 +4,7 @@ import re
 from itertools import product
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Iterable, List, Tuple
+from typing import Dict, Any, List, Tuple
 
 
 def _parse_climate_data(value: str) -> Tuple[int, int]:
@@ -135,6 +135,195 @@ _RENAMED_QUANTILES = (
 )
 
 _TIMESERIES_SPEC_MANDATORY = ('processor_name', 'bb_parameter', 'bb_parameter_dimensions')
+
+#: Said when a config still carries one of the four keys `variants` replaced.
+_REPLACED_ALTERNATIVES = (
+    "scenario_alternatives ... scenario_alternatives4 are replaced by 'variants', a dict "
+    "of named builds that each choose options per country, e.g. "
+    "variants = {'': {}, 'sens1': {'bio-price': {'FI00': 'high'}}}. Remove the "
+    "scenario_alternatives* line(s), even an empty one; see docs/variants.md."
+)
+
+#: A variant, option or build name: letters, digits and '-'. No '_', which the
+#: source tables read as a node-name separator and drop, and which separates the
+#: parts of a folder name.
+_VARIANT_NAME = re.compile(r"[A-Za-z0-9-]+")
+
+#: In a data tag, 'all' means every option, so no variant or option may be named
+#: it. As a country key in the config it means every country, which is a
+#: different place in the dict.
+RESERVED_VARIANT_WORD = 'all'
+
+_VARIANTS_SHAPE = (
+    "variants = {'build': {'variant': 'option'}} or "
+    "{'build': {'variant': {'FI00' or 'FI' or 'all': 'option'}}}"
+)
+
+
+def _variant_name(value, what: str, where: str) -> str:
+    """`value` checked as a variant or option name, lower-cased for matching."""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"variants: {where}: the {what} must be a string; got {value!r}. "
+            f"Expected {_VARIANTS_SHAPE}."
+        )
+    if not _VARIANT_NAME.fullmatch(value):
+        raise ValueError(
+            f"variants: {where}: the {what} name {value!r} may hold only letters, digits "
+            f"and '-': no spaces, no ':' or ',', which separate a tag's parts, and no "
+            f"'_', which the source tables drop."
+        )
+    if value.lower() == RESERVED_VARIANT_WORD:
+        raise ValueError(
+            f"variants: {where}: '{value}' is reserved: in a data tag 'all' means "
+            f"every option, so no {what} can be called that."
+        )
+    return value.lower()
+
+
+def _expand_country_keys(choice: dict, country_codes: List[str], where: str) -> Dict[str, str]:
+    """{'all' or exact code: option} from a per-country map.
+
+    An exact code wins over a two-letter key, and a two-letter key over 'all';
+    position in the dict never decides. A two-letter key is shorthand for every
+    code it starts, so each of those codes is then judged as an exact code would be.
+    """
+    by_code = {code.lower(): code for code in country_codes}
+    every, by_prefix, exact = None, {}, {}
+    seen: Dict[str, str] = {}
+    for key, option in choice.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"variants: {where}: country key {key!r} must be a string. "
+                f"Expected {_VARIANTS_SHAPE}."
+            )
+        if isinstance(option, dict) or not isinstance(option, str):
+            raise ValueError(
+                f"variants: {where}: the value for {key!r} must be an option name; "
+                f"got {option!r}. Expected {_VARIANTS_SHAPE}."
+            )
+        option = _variant_name(option, "option", f"{where}, {key!r}")
+        folded = key.lower()
+        if folded in seen:
+            raise ValueError(
+                f"variants: {where}: the country key {key!r} is given twice "
+                f"(also as {seen[folded]!r})."
+            )
+        seen[folded] = key
+        if folded == 'all':
+            every = option
+        elif folded in by_code:
+            exact[by_code[folded]] = option
+        elif len(key) == 2 and key.isalpha():
+            codes = [code for code in country_codes if code.lower().startswith(folded)]
+            if not codes:
+                raise ValueError(
+                    f"variants: {where}: the key {key!r} matches no code in country_codes."
+                )
+            by_prefix[folded] = (codes, option)
+        else:
+            raise ValueError(
+                f"variants: {where}: the key {key!r} is neither 'all', a code in "
+                f"country_codes, nor a two-letter prefix of one."
+            )
+
+    expanded: Dict[str, str] = {}
+    if every is not None:
+        expanded['all'] = every
+    for codes, option in by_prefix.values():
+        for code in codes:
+            expanded[code] = option
+    expanded.update(exact)
+    return expanded
+
+
+def parse_variants(raw: Any, country_codes: List[str]) -> Dict[str, Dict[str, Dict[str, str]]]:
+    """
+    Validate the config's `variants` dict and normalise it.
+
+    Returns {build name as written: {variant, lower case: {'all' or an exact
+    country code: option, lower case}}}. A plain string choice becomes
+    {'all': option}, and a two-letter key becomes one entry per code it starts.
+
+    Build names become folder suffixes: letters, digits and '-', unique
+    case-insensitively, and '' for the build with no suffix.
+
+    Raises:
+        ValueError: on any mistake; config parsing runs before the logger exists.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"variants must be a dict of named builds; got {type(raw).__name__}. "
+            f"Expected {_VARIANTS_SHAPE}."
+        )
+    if not raw:
+        raise ValueError(
+            "variants names no build, so nothing would be built. Write "
+            "variants = {'': {}} for one build with every default, or leave the key out."
+        )
+
+    builds: Dict[str, Dict[str, Dict[str, str]]] = {}
+    seen_builds: Dict[str, str] = {}
+    for build, choices in raw.items():
+        if not isinstance(build, str):
+            raise ValueError(f"variants: build name {build!r} must be a string.")
+        if build and not _VARIANT_NAME.fullmatch(build):
+            raise ValueError(
+                f"variants: the build name {build!r} cannot be a folder segment: use "
+                f"letters, digits and '-' only. '_' separates the parts of a folder name."
+            )
+        if build.lower() in seen_builds:
+            raise ValueError(
+                f"variants: the build names {seen_builds[build.lower()]!r} and {build!r} "
+                f"differ only in case, and would share one folder on Windows."
+            )
+        seen_builds[build.lower()] = build
+        if not isinstance(choices, dict):
+            raise ValueError(
+                f"variants: build {build!r} must map variants to choices; got "
+                f"{choices!r}. Expected {_VARIANTS_SHAPE}."
+            )
+
+        normalised: Dict[str, Dict[str, str]] = {}
+        for variant, choice in choices.items():
+            where = f"build {build!r}"
+            name = _variant_name(variant, "variant", where)
+            if name in normalised:
+                raise ValueError(f"variants: {where}: the variant {variant!r} is given twice.")
+            where = f"build {build!r}, variant {variant!r}"
+            if isinstance(choice, str):
+                normalised[name] = {'all': _variant_name(choice, "option", where)}
+            elif isinstance(choice, dict):
+                normalised[name] = _expand_country_keys(choice, country_codes, where)
+            else:
+                raise ValueError(
+                    f"variants: {where}: the choice must be an option name or a "
+                    f"per-country dict; got {choice!r}. Expected {_VARIANTS_SHAPE}."
+                )
+        builds[build] = normalised
+    return builds
+
+
+def selected_builds(config: Dict[str, Any], selection: str | None = None) -> List[str]:
+    """
+    The build names to build or run: every build in config order, or the one named.
+
+    Matched case-insensitively, which is unambiguous because build names are
+    unique that way.
+
+    Raises:
+        ValueError: when `selection` names no build of this config.
+    """
+    builds = list(config.get('variants') or {'': {}})
+    if selection is None:
+        return builds
+    for build in builds:
+        if build.lower() == selection.lower():
+            return [build]
+    known = ", ".join("'' (no suffix)" if not b else repr(b) for b in builds)
+    raise ValueError(
+        f"--variant {selection!r} is not a build of this config. Its builds are: {known}."
+    )
 
 
 def _parse_forecast_branches(raw, energy_quantiles: dict, bb_horizon_weeks: int) -> Dict[str, Any]:
@@ -519,6 +708,20 @@ def load_config(config_file: Path) -> Dict[str, Any]:
     )
     _validate_spec_energy_quantiles(timeseries_specs, energy_quantiles)
 
+    # Named builds. Refused even when empty: every shipped config wrote
+    # scenario_alternatives = [], and a stale config is told where it went.
+    replaced = [k for k in ('scenario_alternatives', 'scenario_alternatives2',
+                            'scenario_alternatives3', 'scenario_alternatives4')
+                if inputdata.get(k) is not None]
+    if replaced:
+        raise ValueError(f"Config key(s) {replaced}: {_REPLACED_ALTERNATIVES}")
+    variants_raw = inputdata.get('variants')
+    variants = (
+        {'': {}} if variants_raw is None
+        else parse_variants(ast.literal_eval(variants_raw),
+                            ast.literal_eval(inputdata.get('country_codes')))
+    )
+
     # Build the config dictionary manually
     # Insert correctly shaped default values in case of missing keys
     config: Dict[str, Any] = {
@@ -530,10 +733,7 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         # Scenario settings
         'scenarios': ast.literal_eval(inputdata.get('scenarios')),
         'scenario_years': ast.literal_eval(inputdata.get('scenario_years')),
-        'scenario_alternatives': ast.literal_eval(inputdata.get('scenario_alternatives', '[""]')),
-        'scenario_alternatives2': ast.literal_eval(inputdata.get('scenario_alternatives2', '[""]')),
-        'scenario_alternatives3': ast.literal_eval(inputdata.get('scenario_alternatives3', '[""]')),
-        'scenario_alternatives4': ast.literal_eval(inputdata.get('scenario_alternatives4', '[""]')),
+        'variants': variants,
 
         # Climate years
         'climate_data': inputdata.get('climate_data').strip(),
@@ -568,11 +768,6 @@ def load_config(config_file: Path) -> Dict[str, Any]:
         'timeseries_specs': timeseries_specs,
     }
 
-    # If user has given scenario_alternatives* = [], replace the value with [""]
-    for key in ('scenario_alternatives', 'scenario_alternatives2', 'scenario_alternatives3', 'scenario_alternatives4'):
-        if not config[key]:
-            config[key] = [""]
-
     # Deprecation check: fueldata_files and storagedata_files were merged into nodedata_files.
     # Raise early so the user sees a clear message before any pipeline work begins.
     deprecated = [k for k in ('fueldata_files', 'storagedata_files') if inputdata.get(k) is not None]
@@ -587,43 +782,59 @@ def load_config(config_file: Path) -> Dict[str, Any]:
     return config
 
 
+def build_name(scenario: str, year: Any, variant: str = "") -> str:
+    """
+    One build's name: scenario, year and the build name, without the folder prefix.
+
+    Joined with underscores and with spaces removed from each part, so 'Observed
+    Trends' becomes ObservedTrends_2030, and the build 'sens1' adds _sens1. The
+    build '' adds nothing.
+    """
+    parts = [scenario, str(year)] + ([variant] if variant else [])
+    return "_".join(part.replace(" ", "") for part in parts)
+
+
 def output_folder_name(
     output_folder_prefix: str,
     scenario: str,
     year: Any,
-    alternatives: Iterable[str] = (),
+    variant: str = "",
 ) -> str:
     """
-    Name the folder one (scenario, year, alternatives) combination builds into.
+    Name the folder one (scenario, year, build) combination builds into.
 
-    The rule is prefix, scenario, year, then every non-empty alternative, joined
-    with underscores and with spaces removed from each part -- so 'Observed
-    Trends' in config_OT2030.ini becomes input_ObservedTrends_2030.
+    The rule is prefix, then build_name: input_ObservedTrends_2030 for the build
+    '' of config_OT2030.ini, input_ObservedTrends_2030_sens1 for the build 'sens1'.
 
     This is the single statement of that rule. `build_input_data.py` uses it to
-    decide where to write, and `run_model.py` uses it to decide what to pass as
-    Backbone's --input_dir, so a run cannot name a folder a build would not have
-    written.
+    decide where to write, and `run_model.py` uses it to say which config and build
+    wrote a folder, so the two cannot disagree about a name.
     """
-    active = [a for a in alternatives if a]
-    parts = [output_folder_prefix, scenario, str(year), *active]
-    return "_".join(part.replace(" ", "") for part in parts)
+    return "_".join([output_folder_prefix.replace(" ", ""),
+                     build_name(scenario, year, variant)])
+
+
+def scenario_tags(scenario: str, year: Any, variant: str = "") -> List[str]:
+    """
+    The add_scen_tags row: scenario, year, build name and the build's own name.
+
+    Spine Toolbox workflows read this row by cell position, so the order is an
+    interface: (0, 0) and (0, 1) stay scenario and year, (0, 2) is the build
+    name ('' for the unsuffixed build), and (0, 3) names this build uniquely.
+    """
+    return [scenario, str(year), variant, build_name(scenario, year, variant)]
 
 
 def config_output_folder_names(config: Dict[str, Any]) -> List[str]:
     """
     Every folder name a build of this config writes, in the order it writes them.
 
-    The combinations are the Cartesian product of scenarios, scenario_years and
-    the four alternative axes, which is the loop `build_input_data.py` runs.
+    Scenarios, then years, then the builds of `variants` in the order written,
+    which is the loop `build_input_data.py` runs.
     """
-    names: List[str] = []
-    for scenario, year, alt1, alt2, alt3, alt4 in product(
-        config['scenarios'], config['scenario_years'],
-        config['scenario_alternatives'], config['scenario_alternatives2'],
-        config['scenario_alternatives3'], config['scenario_alternatives4'],
-    ):
-        names.append(output_folder_name(
-            config['output_folder_prefix'], scenario, year, [alt1, alt2, alt3, alt4]
-        ))
-    return names
+    return [
+        output_folder_name(config['output_folder_prefix'], scenario, year, build)
+        for scenario, year, build in product(
+            config['scenarios'], config['scenario_years'], selected_builds(config)
+        )
+    ]

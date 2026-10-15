@@ -6,33 +6,35 @@ Purpose
 -------
 SourceDataPipeline is the first and only stage of the pipeline that is aware of
 the scenario context. It reads source Excel files, filters them to the current
-(scenario, year, scenario_alternative) combination, merges them row-by-row, and
-exposes one normalized DataFrame per data category. Downstream stages (time series
-processing, BBExcelPipeline) receive scenario-neutral data and do not need to repeat
-scenario filtering.
+(scenario, year, build) combination, merges them row-by-row, and exposes one
+normalized DataFrame per data category. Downstream stages (time series processing,
+BBExcelPipeline) receive scenario-neutral data and do not need to repeat scenario
+filtering.
 
-Scenario and alternative handling
-----------------------------------
-build_input_data.py drives execution by iterating over the Cartesian product of
-(scenarios x scenario_years x scenario_alternatives x scenario_alternatives2 x
-scenario_alternatives3 x scenario_alternatives4). For each combination a new
-pipeline instance is created and run(). Alternative axes that are unused in a config
-file default to [""], which contributes no filtering and no folder-name segment.
+Scenario, year and build
+------------------------
+build_input_data.py drives execution by iterating over scenarios x scenario_years x
+the builds of the config's `variants`. For each combination a new pipeline instance
+is created and run(). A config without `variants` has one build, '', which chooses
+every variant's default and adds no folder-name segment.
 
-Within each data category the scenario filtering works in two steps:
+Within each data category the filtering works in three steps:
 
-1. apply_whitelist() retains only rows whose 'scenario' column matches either the
-   current scenario, any of the active scenario_alternatives (if provided), or the
-   catch-all value 'all'. The 'year' column is similarly filtered to the target year
-   or the catch-all value 1. This means a single source Excel file can contain rows
-   for multiple scenarios and years; only the relevant rows survive.
+1. apply_whitelist() retains only rows whose 'scenario' column matches the current
+   scenario or the catch-all value 'all'. The 'year' column is similarly filtered to
+   the target year or the catch-all value 1. This means a single source Excel file
+   can contain rows for multiple scenarios and years; only the relevant rows survive.
 
-2. merge_row_by_row() processes the surviving rows in file load order. Each row
-   carries a 'method' value (replace / replace-partial / add / multiply / remove /
-   ...) that controls how it interacts with previously seen rows for the same key.
-   Because rows are handled in the order of appearance, base-scenario data can be
-   overwritten or supplemented in further input data files, and alternative-axis rows
-   can override or supplement base values without duplicating the full dataset.
+2. The variant selection (source_data_variants.py) keeps untagged rows, the ':all'
+   rows of a variant wherever the country has an option, and the rows of the option
+   the build chose for that country. Rows of other options are not read.
+
+3. merge_row_by_row() processes the kept rows in two passes: the base (untagged and
+   ':all' rows) in file load order, then the chosen options' rows in file load order.
+   Each row carries a 'method' value (replace / replace-partial / add / multiply /
+   remove / ...) that controls how it interacts with previously seen rows for the
+   same key. Base data can be overwritten or supplemented in further input data
+   files, and an option overrides the base whatever the file order.
 
 
 Interface
@@ -92,6 +94,7 @@ files are configured):
 
 import src.source_data.source_data_contributions as source_data_contributions
 import src.source_data.source_data_loader as data_loader
+import src.source_data.source_data_variants as source_data_variants
 import src.utils as utils
 import pandas as pd
 from src.source_data.source_data_inputs import SourceDataPipelineInputs
@@ -109,10 +112,7 @@ class SourceDataPipeline:
 
         self.scenario = inputs.scenario
         self.scenario_year = inputs.scenario_year
-        self.scenario_alternative = inputs.scenario_alternative
-        self.scenario_alternative2 = inputs.scenario_alternative2
-        self.scenario_alternative3 = inputs.scenario_alternative3
-        self.scenario_alternative4 = inputs.scenario_alternative4
+        self.variant = inputs.variant
         self.country_codes = inputs.country_codes
         self.logger = inputs.logger
 
@@ -134,120 +134,147 @@ class SourceDataPipeline:
         # sheet to open -- see collect_origins.
         self.origins: dict[str, dict[str, set[str]]] = {}
 
+        # What this build chose for each declared variant: variant -> country ->
+        # option, None where the variant is dormant. And what the build fell back
+        # on, which build_input_data.py puts in a PARTIAL banner.
+        self.variant_choices: dict[str, dict[str, str | None]] = {}
+        self.partial_causes: list[str] = []
+
+    #: What each table merges on. The variant checks merge every option on the
+    #: same keys, so the two cannot disagree about what one record is.
+    KEY_COLUMNS = {
+        'unittypedata': ['unittype'],
+        # (emission, group), not emission alone: create_ts_emissionPriceChange
+        # keys its output on the pair, so a narrower key here would merge two
+        # groups of one emission into a single row and drop the second group
+        # without a word.
+        'emissiondata': ['emission', 'group'],
+        'nodedata': ['country', 'grid', 'node'],
+        'demanddata': ['country', 'grid', 'node'],
+        'unitdata': ['country', 'unittype', 'unit_name_prefix'],
+        'transferdata': ['from_country', 'from_suffix', 'to_country', 'to_suffix', 'grid'],
+        'userconstraintdata': ['group', '1st dimension', '2nd dimension',
+                               '3rd dimension', '4th dimension', 'parameter'],
+    }
+
+    def _read(self, table: str, *, drop_underscores: bool = True) -> list:
+        """One table's sheets: read, variant tags checked, normalised.
+
+        The tags are checked first, on the rows as written: before the
+        underscore rule could drop a tag like 'bio_price:high' without saying
+        why, and before any filter, so a malformed tag is reported in every run.
+        """
+        dfs = data_loader.read_input_excels(self.data_folder, self.config[f'{table}_files'],
+                                            table, self.logger)
+        dfs = self.variants.check_tags(dfs, table)
+        dfs = [data_loader.normalize_dataframe(df, table, self.logger) for df in dfs]
+        if drop_underscores:
+            dfs = [data_loader.drop_underscore_values(df, table, self.logger) for df in dfs]
+        return dfs
+
+    def _selected(self, dfs: list, table: str) -> list:
+        """This build's rows of a table, in merge order: the base pass, then the options."""
+        base, chosen = self.variants.select(dfs, table)
+        return [*base, *chosen]
+
+    def _no_files(self, table: str) -> None:
+        self.logger.log_status(
+            f"No Excel files for '{table}_files' defined in the config file",
+            level="info"
+        )
+
     def run(self):
         """
         Run the full pipeline: load, process, and filter all input DataFrames.
+
+        In six steps, because a country's variant option depends on rows in
+        every table, and every table must follow the same choice:
+
+        0. read every workbook's variant declarations;
+        1. read and merge the tables without a country, first because units
+           are named from their unittype;
+        2. prepare every country table -- read, expand, name, filter -- without
+           merging any of them;
+        3. resolve each country's option per variant from all of them;
+        4. check every option of every variant;
+        5. select each table's rows for this build and merge them, the base
+           first and the chosen options after it.
         """
-        input_folder = self.data_folder
+        scenario_filter = {'scenario': [self.scenario], 'year': [self.scenario_year]}
+        country_filter = {**scenario_filter, 'country': self.country_codes}
+        exclude_grids = self.config['exclude_grids']
+        exclude_nodes = self.config['exclude_nodes']
 
-        # Build scenario whitelist: base scenario plus any non-empty alternatives
-        scen_and_alt = [self.scenario]
-        for alt in (self.scenario_alternative, self.scenario_alternative2,
-                    self.scenario_alternative3, self.scenario_alternative4):
-            if alt:
-                scen_and_alt.append(alt)
+        # --- 0. Variant declarations, from every workbook the config lists ---
+        self.variants = source_data_variants.Variants.from_workbooks(
+            self.data_folder, self.config, self.variant, self.country_codes, self.logger
+        )
 
-        # --- global datasets ---
+        # --- 1. Tables without a country ---
+        unittype_dfs, emission_dfs = [], []
+        if self.config['unittypedata_files']:
+            unittype_dfs = [data_loader.apply_whitelist(df, scenario_filter, self.logger, 'unittypedata')
+                            for df in self._read('unittypedata')]
+        else:
+            self._no_files('unittypedata')
+
+        if self.config['emissiondata_files']:
+            emission_dfs = [data_loader.apply_whitelist(df, scenario_filter, self.logger, 'emissiondata')
+                            for df in self._read('emissiondata')]
+        else:
+            self._no_files('emissiondata')
+
+        # They take the build's 'all' choice or the default, which needs no
+        # country table, so they can merge now -- and unittypedata has to.
+        self.variants.resolve_countryless({'unittypedata': unittype_dfs,
+                                           'emissiondata': emission_dfs})
+
         # unittypedata (internal — will be merged into df_unitdata before run() ends)
-        files = self.config['unittypedata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'unittypedata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'unittypedata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'unittypedata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'unittypedata')
-                   for df in dfs
-                   ]
+        if self.config['unittypedata_files']:
+            dfs = self._selected(unittype_dfs, 'unittypedata')
             data_loader.collect_origins(dfs, {'unittype'},
                                         into=self.origins.setdefault('unittype', {}))
             data_loader.collect_origins(dfs, {'grid'},
                                         into=self.origins.setdefault('grid', {}))
-            self._df_unittypedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['unittype'])
-        else:
-            self.logger.log_status(
-                "No Excel files for 'unittypedata_files' defined in the config file",
-                level="info"
-            )
+            self._df_unittypedata = data_loader.merge_row_by_row(
+                dfs, self.logger, key_columns=self.KEY_COLUMNS['unittypedata'])
 
-        # emissiondata
-        files = self.config['emissiondata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'emissiondata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'emissiondata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'emissiondata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year]}, self.logger, 'emissiondata')
-                   for df in dfs
-                   ]
-            # (emission, group), not emission alone: create_ts_emissionPriceChange
-            # keys its output on the pair, so a narrower key here would merge two
-            # groups of one emission into a single row and drop the second group
-            # without a word.
-            self.df_emissiondata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['emission', 'group'])
-        else:
-            self.logger.log_status(
-                "No Excel files for 'emissiondata_files' defined in the config file",
-                level="info"
-            )
+        if self.config['emissiondata_files']:
+            dfs = self._selected(emission_dfs, 'emissiondata')
+            self.df_emissiondata = data_loader.merge_row_by_row(
+                dfs, self.logger, key_columns=self.KEY_COLUMNS['emissiondata'])
 
-
-        # --- country-level datasets ---
-        exclude_grids = self.config['exclude_grids']
-        exclude_nodes = self.config['exclude_nodes']
-
+        # --- 2. Prepare every country table, merging none of them ---
         # nodedata
-        files = self.config['nodedata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'nodedata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'nodedata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'nodedata', self.logger) for df in dfs]
+        node_dfs = []
+        if self.config['nodedata_files']:
+            dfs = self._read('nodedata')
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, {'node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
-                                   self.logger, 'nodedata')
-                   for df in dfs
-                   ]
-            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
-            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
-            self.df_nodedata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
+            node_dfs = [data_loader.apply_whitelist(df, country_filter, self.logger, 'nodedata')
+                        for df in dfs]
         else:
-            self.logger.log_status(
-                "No Excel files for 'nodedata_files' defined in the config file",
-                level="info"
-            )
+            self._no_files('nodedata')
 
         # demanddata
-        files = self.config['demanddata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'demanddata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'demanddata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'demanddata', self.logger) for df in dfs]
+        demand_dfs = []
+        if self.config['demanddata_files']:
+            dfs = self._read('demanddata')
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
             dfs = [data_loader.build_node_column(df, self.logger) for df in dfs]
             dfs = [data_loader.apply_blacklist(df, {'node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
-                                   self.logger, 'demanddata')
-                   for df in dfs
-                   ]
-            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
-            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
-            self.df_demanddata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['country', 'grid', 'node'])
+            demand_dfs = [data_loader.apply_whitelist(df, country_filter, self.logger, 'demanddata')
+                          for df in dfs]
         else:
-            self.logger.log_status(
-                "No Excel files for 'demanddata_files' defined in the config file",
-                level="info"
-            )
+            self._no_files('demanddata')
 
         # unitdata
-        files = self.config['unitdata_files']
-        unit_whitelist = {'scenario': scen_and_alt, 'year': [self.scenario_year],
-                          'country': self.country_codes}
-        unit_keys = ['country', 'unittype', 'unit_name_prefix']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'unitdata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'unitdata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'unitdata', self.logger) for df in dfs]
+        unit_dfs, unit_dfs_before_exclusion = [], []
+        if self.config['unitdata_files']:
+            dfs = self._read('unitdata')
             dfs = [data_loader.expand_all_country(df, self.country_codes) for df in dfs]
             # Before merge_row_by_row, and that ordering is the point: the merge
             # keys on 'unittype', so every sheet's spelling has to have been
@@ -256,25 +283,91 @@ class SourceDataPipeline:
             # counts the same keys the real merge will.
             dfs = [data_loader.canonicalize_unittype_and_build_unit(df, self._df_unittypedata, self.logger) for df in dfs]
             dfs = [data_loader.build_unit_grid_and_node_columns(df, self._df_unittypedata, self.logger) for df in dfs]
+            unit_dfs_before_exclusion = dfs
+            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids) for d in dfs]
+            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes) for d in dfs]
+            unit_dfs = [data_loader.apply_whitelist(df, country_filter, self.logger, 'unitdata')
+                        for df in dfs]
+        else:
+            self._no_files('unitdata')
+
+        # transferdata
+        transfer_dfs = []
+        if self.config['transferdata_files']:
+            dfs = self._read('transferdata')
+            dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
+            dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'from_node': exclude_nodes}) for df in dfs]
+            dfs = [data_loader.apply_blacklist(df, {'to_node': exclude_nodes}) for df in dfs]
+            # Both ends in one call: apply_whitelist already ANDs its filters, so
+            # a link survives only if both countries are modelled. Two calls said
+            # the same thing and repeated every scenario and year comparison, and
+            # any warning either raised, twice.
+            transfer_dfs = [data_loader.apply_whitelist(df, {**scenario_filter,
+                                                             'from_country': self.country_codes,
+                                                             'to_country': self.country_codes},
+                                                        self.logger, 'transferdata')
+                            for df in dfs]
+        else:
+            self._no_files('transferdata')
+
+        # userconstraintdata: no underscore rule, because its selectors are node
+        # and unit names, which are built with underscores.
+        constraint_dfs = []
+        if self.config['userconstraintdata_files']:
+            dfs = self._read('userconstraintdata', drop_underscores=False)
+            constraint_dfs = [data_loader.apply_whitelist(df, country_filter, self.logger,
+                                                          'userconstraintdata')
+                              for df in dfs]
+        else:
+            self._no_files('userconstraintdata')
+
+        country_tables = {
+            'nodedata': node_dfs, 'demanddata': demand_dfs, 'unitdata': unit_dfs,
+            'transferdata': transfer_dfs, 'userconstraintdata': constraint_dfs,
+        }
+
+        # --- 3. Resolve each country's option, from rows in every table ---
+        self.variants.resolve_countries(country_tables)
+
+        # --- 4. Check every option of every variant, whatever this build chose ---
+        self.variants.check({'unittypedata': unittype_dfs, 'emissiondata': emission_dfs,
+                             **country_tables}, self.KEY_COLUMNS)
+
+        # --- 5. Select this build's rows and merge, in the order the tables were read ---
+        if self.config['nodedata_files']:
+            dfs = self._selected(node_dfs, 'nodedata')
+            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
+            self.df_nodedata = data_loader.merge_row_by_row(
+                dfs, self.logger, key_columns=self.KEY_COLUMNS['nodedata'])
+
+        if self.config['demanddata_files']:
+            dfs = self._selected(demand_dfs, 'demanddata')
+            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
+            self.df_demanddata = data_loader.merge_row_by_row(
+                dfs, self.logger, key_columns=self.KEY_COLUMNS['demanddata'])
+
+        if self.config['unitdata_files']:
+            unit_keys = self.KEY_COLUMNS['unitdata']
+            dfs = self._selected(unit_dfs, 'unitdata')
+            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
+            data_loader.collect_origins(dfs, {'unittype'},
+                                        into=self.origins.setdefault('unittype', {}))
+            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=unit_keys)
+
             # An excluded grid or node removes the entire unit connected to it, not
             # just that connection -- intended, and not what "exclude a node"
             # sounds like, so the count is said out loud. Units rather than rows,
             # because several sheets can describe one unit and a row count would
             # overstate what left the model. A count rather than names: this is
             # expected and handled, and docs/source-data.md carries the reasoning.
-            dfs_before_exclusion = dfs
-            dfs = [data_loader.apply_unit_grids_blacklist(d, exclude_grids) for d in dfs]
-            dfs = [data_loader.apply_unit_nodes_blacklist(d, exclude_nodes) for d in dfs]
-            dfs = [data_loader.apply_whitelist(df, unit_whitelist, self.logger, 'unitdata')
-                   for df in dfs
-                   ]
-            data_loader.collect_origins(dfs, {'node'}, into=self.origins.setdefault('node', {}))
-            data_loader.collect_origins(dfs, {'unittype'},
-                                        into=self.origins.setdefault('unittype', {}))
-            self.df_unitdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=unit_keys)
-
+            # The count selects as the real merge does, so a unit of an option this
+            # build did not choose is not counted as excluded.
             units_dropped = data_loader.count_units_without_exclusions(
-                dfs_before_exclusion, unit_whitelist, unit_keys
+                unit_dfs_before_exclusion, country_filter, unit_keys,
+                select=lambda kept: self._selected(kept, 'unitdata'),
             ) - len(self.df_unitdata)
             if units_dropped:
                 self.logger.log_status(
@@ -290,36 +383,13 @@ class SourceDataPipeline:
                 origins=self.origins.get('unittype', {}),
             )
 
-        else:
-            self.logger.log_status(
-                "No Excel files for 'unitdata_files' defined in the config file",
-                level="info"
-            )
-
-        # transferdata
-        files = self.config['transferdata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'transferdata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'transferdata', self.logger) for df in dfs]
-            dfs = [data_loader.drop_underscore_values(df, 'transferdata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, {'grid': exclude_grids}) for df in dfs]
-            dfs = [data_loader.build_from_to_columns(df, self.logger) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, {'from_node': exclude_nodes}) for df in dfs]
-            dfs = [data_loader.apply_blacklist(df, {'to_node': exclude_nodes}) for df in dfs]
-            # Both ends in one call: apply_whitelist already ANDs its filters, so
-            # a link survives only if both countries are modelled. Two calls said
-            # the same thing and repeated every scenario and year comparison, and
-            # any warning either raised, twice.
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year],
-                                                    'from_country': self.country_codes,
-                                                    'to_country': self.country_codes},
-                                   self.logger, 'transferdata')
-                   for df in dfs
-                   ]
+        if self.config['transferdata_files']:
+            dfs = self._selected(transfer_dfs, 'transferdata')
             data_loader.collect_origins(dfs, {'from_node', 'to_node'},
                                         into=self.origins.setdefault('node', {}))
             data_loader.collect_origins(dfs, {'grid'}, into=self.origins.setdefault('grid', {}))
-            self.df_transferdata = data_loader.merge_row_by_row(dfs, self.logger, key_columns=['from_country', 'from_suffix', 'to_country', 'to_suffix', 'grid'])
+            self.df_transferdata = data_loader.merge_row_by_row(
+                dfs, self.logger, key_columns=self.KEY_COLUMNS['transferdata'])
 
             # Deprecation check: old bidirectional format used export_capacity / import_capacity
             # per row; the new format uses one row per direction with transferCap instead.
@@ -336,36 +406,20 @@ class SourceDataPipeline:
                     add_empty_line_before=True,
                     add_empty_line_after=True,
                 )
-        else:
-            self.logger.log_status(
-                "No Excel files for 'transferdata_files' defined in the config file",
-                level="info"
-            )
 
-        # --- custom datasets ---
-        # userconstraintdata
-        files = self.config['userconstraintdata_files']
-        if len(files) > 0:
-            dfs = data_loader.read_input_excels(input_folder, files, 'userconstraintdata', self.logger)
-            dfs = [data_loader.normalize_dataframe(df, 'userconstraintdata', self.logger) for df in dfs]
-            dfs = [data_loader.apply_whitelist(df, {'scenario':scen_and_alt, 'year':[self.scenario_year], 'country': self.country_codes},
-                                   self.logger, 'userconstraintdata')
-                   for df in dfs
-                   ]
+        if self.config['userconstraintdata_files']:
+            # Selected first, because the choice is by country.
+            dfs = self._selected(constraint_dfs, 'userconstraintdata')
             # errors='ignore': a sheet may lack any of the three, and a sheet that
             # normalized to empty has no columns at all -- normalize_dataframe returns
             # a bare DataFrame for empty input. Raising here would abort the phase,
             # which the error policy in CLAUDE.md forbids after the logger exists.
             dfs = [df.drop(columns=['scenario', 'year', 'country'], errors='ignore') for df in dfs]
             self.df_userconstraintdata = data_loader.merge_row_by_row(
-                                            dfs, self.logger,
-                                            key_columns=['group', '1st dimension', '2nd dimension', '3rd dimension', '4th dimension', 'parameter']
-                                         )
-        else:
-            self.logger.log_status(
-                "No Excel files for 'userconstraintdata_files' defined in the config file",
-                level="info"
-            )
+                dfs, self.logger, key_columns=self.KEY_COLUMNS['userconstraintdata'])
+
+        self.variant_choices = self.variants.choices
+        self.partial_causes = self.variants.partial_causes
 
         # Both node-bearing frames are now filtered the same way -- same
         # blacklists, same whitelists -- so what they say about the node set can

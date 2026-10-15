@@ -41,6 +41,13 @@ phase that runs before it.
 | domains | `group`, `flow`, `emission`, `restype` | — |
 | other | `index`, `add_scen_tags` | — |
 
+`add_scen_tags` is one row naming the build: `scenario`, `year`, `variant` (the
+build's name in the config's [`variants`](variants.md), empty for the build `''`) and `name`
+(`ObservedTrends_2030_sens1`, one per build). Backbone does not read it. Spine
+Toolbox workflows do, by cell position — the importer in
+`.spinetoolbox/specifications/Importer/` takes cell (0, 0) — so a new cell goes on
+the end of the row.
+
 Sizes below are from the Observed Trends 2030 build (`config_OT2030.ini`):
 361 `p_gn` rows, 971 `p_gnu_io` rows, 503 units, 95 transfer links.
 

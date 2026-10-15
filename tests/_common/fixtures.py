@@ -22,10 +22,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Scenario settings
     "scenarios": ["test"],
     "scenario_years": [2030],
-    "scenario_alternatives": [""],
-    "scenario_alternatives2": [""],
-    "scenario_alternatives3": [""],
-    "scenario_alternatives4": [""],
+    # Named builds: build name -> variant -> {'all' or country code: option}
+    "variants": {"": {}},
     # Climate years -- two years, the minimum that lets forecast code run
     "climate_data": "2014-2015",
     "start_year": 2014,

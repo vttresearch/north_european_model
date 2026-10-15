@@ -1922,11 +1922,13 @@ class BBExcelPipeline:
 
         # --- scenario tags to an excel sheet ---
 
-        # Alternative columns are added only when present; column names follow the
-        # pattern alternative, alternative2, alternative3, alternative4.
-        _alt_col_names = ['alternative', 'alternative2', 'alternative3', 'alternative4']
-        _n_alts = len(self.scen_tags) - 2
-        scen_tags_df = pd.DataFrame([self.scen_tags], columns=['scenario', 'year'] + _alt_col_names[:_n_alts])
+        # One row: scenario, year, the build's name in `variants` ('' for the
+        # build with no suffix), and a name unique to this build. Spine Toolbox
+        # workflows read the row by cell position -- the repo's importer takes
+        # (0, 0) as its alternative -- so the order is an interface: new cells go
+        # on the end. See config_reader.scenario_tags.
+        _tag_columns = ['scenario', 'year', 'variant', 'name']
+        scen_tags_df = pd.DataFrame([self.scen_tags], columns=_tag_columns[:len(self.scen_tags)])
 
 
         # --- Write DataFrames to excel ---

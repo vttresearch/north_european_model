@@ -22,7 +22,7 @@ Six kinds of gap, and they are not equally interesting:
 - **Rules known to be provisional** — the code is deliberate, and its author
   already knows it is not the final answer.
 - **Deferred by the source data pass** — found while measuring, deliberately not
-  acted on. Alternatives being scenario names is the one with teeth.
+  acted on.
 - **Backbone parameters this build does not write** — derived from
   `../inc/1a_definitions.gms`. Mostly investment, reserves and part-load
   efficiency.
@@ -226,25 +226,6 @@ be written, so that table is also a list of columns that do not exist yet.
 ## Deferred by the source data pass
 
 Found while measuring the above, deliberately not acted on.
-
-### Alternatives are scenario names
-
-`scenario_alternatives` through `scenario_alternatives4` are four axes of a
-Cartesian product, and an alternative is not a thing in a workbook: it is a value
-in the ordinary `scenario` column, which `apply_whitelist` adds to the list of
-scenarios this run accepts.
-
-So **an alternative carries no precedence**. A base row in a later file overwrites
-an alternative row in an earlier one, and the only lever is config file order —
-the same lever everything else uses. Expressing "this alternative overrides the
-base" therefore means ordering files rather than saying so.
-
-All four shipped configs set `scenario_alternatives = []`, and no test exercises
-the axes. That is deliberate: pinning the current behaviour would make it harder
-to change, and reworking alternatives is its own piece of work.
-
-*Where it would live:* [The source data phase](source-data.md), once alternatives
-have a mechanism of their own.
 
 ### `country = 'all'` is expanded for three tables of five
 

@@ -4,7 +4,7 @@ import os
 import ast
 import configparser
 import build_input_data
-from src.infrastructure.config_reader import load_config
+from src.infrastructure.config_reader import config_output_folder_names, load_config
 from src.utils import parse_sys_args
 from openpyxl import load_workbook
 
@@ -12,18 +12,8 @@ if __name__ == '__main__':
     input_folder, config_file = parse_sys_args()
     #get the folder name
     config = load_config(config_file)
-    output_folder_prefix = config.get('output_folder_prefix')
-    scenarios = config.get('scenarios')
-    scenario_years = config.get('scenario_years')
-    scenario_alternatives = config.get('scenario_alternatives')
-    output_folders = []
-    for scenario in scenarios:
-        for scenario_year in scenario_years:
-            if scenario_alternatives and scenario_alternatives != ['']:
-                for scenario_alternative in scenario_alternatives:
-                    output_folders.append(os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}_{scenario_alternative}"))
-            else:
-                output_folders.append(os.path.join(f"{output_folder_prefix}_{scenario}_{str(scenario_year)}"))
+    # The builder's own rule, so the folders read here are the ones it wrote.
+    output_folders = config_output_folder_names(config)
 
     #call the actual script
     build_input_data.main(input_folder, config_file)

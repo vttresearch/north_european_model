@@ -11,7 +11,6 @@ class SourceDataPipelineInputs:
     scenario_year: int
     country_codes: list[str]
     logger: IterationLogger
-    scenario_alternative: str = ""
-    scenario_alternative2: str = ""
-    scenario_alternative3: str = ""
-    scenario_alternative4: str = ""
+    #: The build of config['variants'] to choose variant options by; '' is the
+    #: build with no folder suffix.
+    variant: str = ""

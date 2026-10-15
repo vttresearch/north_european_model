@@ -554,3 +554,61 @@ class TestSourceExcelsAreLoadedForDeclaringProcessors:
             for name, spec in manager.config["timeseries_specs"].items()
         )
         assert bool(forces_import) is expected
+
+
+class TestAChangedVariantChoiceRebuilds:
+    """A build's resolved choice of variants is part of what its folder was built from.
+
+    Expectations: tests/expectations/variants.md, G10 and G11. Each build
+    has its own output folder and cache, so only its own choice counts: changing
+    another build's must leave this one alone.
+
+    ``CacheManager(..., variant=<build name>)`` names the build, and run() stores
+    the build's choice in config_structural.json under ``variant_choice`` (the
+    mirror of _STRUCTURAL_KEYS above, for a value that is not a config key).
+    """
+
+    SENS1 = {"bio-price": {"FI": "high"}}
+
+    def manager(self, tmp_path, variants, build="sens1"):
+        output = tmp_path / "output"
+        output.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "input" / "data_files").mkdir(parents=True, exist_ok=True)
+        return CacheManager(
+            input_folder=tmp_path / "input",
+            output_folder=output,
+            config=make_config(variants=variants),
+            logger=FakeLogger(),
+            variant=build,
+        )
+
+    def settle(self, manager):
+        settle_cache(manager)
+        path = manager.cache_folder / "config_structural.json"
+        structural = json_exchange.load_json(path)
+        structural["variant_choice"] = manager.config["variants"][manager.variant]
+        json_exchange.save_json(path, structural)
+
+    def test_a_changed_choice_rebuilds_the_build(self, tmp_path):
+        # G10
+        self.settle(self.manager(tmp_path, {"": {}, "sens1": self.SENS1}))
+        manager = self.manager(tmp_path, {"": {}, "sens1": {"bio-price": {"FI": "low"}}})
+        manager.run()
+        assert manager.full_rerun
+        manager.logger.assert_logged("variant")
+
+    def test_an_unchanged_choice_does_not(self, tmp_path):
+        # The control.
+        self.settle(self.manager(tmp_path, {"": {}, "sens1": self.SENS1}))
+        manager = self.manager(tmp_path, {"": {}, "sens1": self.SENS1})
+        manager.run()
+        assert not manager.full_rerun
+
+    def test_another_builds_choice_leaves_this_one_alone(self, tmp_path):
+        # G11
+        self.settle(self.manager(tmp_path, {"": {}, "sens1": self.SENS1}))
+        manager = self.manager(
+            tmp_path, {"": {}, "sens1": self.SENS1, "sens2": {"bio-price": "high"}}
+        )
+        manager.run()
+        assert not manager.full_rerun

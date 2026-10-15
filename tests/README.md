@@ -23,8 +23,14 @@ tests/
   meta/        tests for the test infrastructure itself
   unit/        mirrors src/, one module per source module
   route/       full source-xlsx -> inputData.xlsx
+  expectations/  behaviour tables a group of tests is written from (Markdown, never collected)
   _common/workbooks/   the .wb.txt fixture library
 ```
+
+An `expectations/` table lists a feature's behaviour row by row, and each test names the
+row it pins (`variants.md`: A3, E15 …). It is more detailed than `docs/` should be, and it is
+what to read when a test's intent is unclear. "Contract" in this suite means something else:
+the dtype/NA postconditions in `_common/contracts.py`.
 
 Which folder does a new test go in?
 

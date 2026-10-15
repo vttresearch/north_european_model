@@ -70,6 +70,14 @@ not build and why, and has a documentation page of its own.
 
 ### Source workbooks
 
+- Variants replace `scenario_alternatives` … `scenario_alternatives4`, which a
+  config may no longer carry, even empty. A workbook declares variants in a
+  `variantdata` sheet and tags rows `variant:option`; the config's `variants`
+  names builds that each choose an option per country, one folder
+  `<prefix>_<scenario>_<year>_<build>` each, and `--variant <build>` builds one.
+  `add_scen_tags` is `scenario`, `year`, `variant`, `name`: the `alternative*`
+  cells are gone, and its GDX set has four dimensions.
+  [docs/variants.md](docs/variants.md)
 - `hydroUpd-v1.xlsx` is `hydropower-compilation.xlsx`: a compilation of several
   sources rather than an update to one, and the model's complete and independent
   statement of hydro. External capacity vintages are cross-checks, not sources.

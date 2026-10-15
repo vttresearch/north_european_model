@@ -39,7 +39,7 @@ module docstring, and `README.md` lists them all.
 1. `python build_input_data.py <input_folder> <config.ini>`
 2. Config is parsed defining general settings, input files, and run instructions.
    - Git config files are stored in `src_files/config_*.ini`
-3. For each (scenario, year, alternative) combination:
+3. For each (scenario, year, build) combination, a build being an entry of the config's `variants`:
    - **Logger** -- `logger` collects log messages from the run and is passed to all pipelines 
    - **Cache check** -- `CacheManager` determines which steps need re-running
    - **Source data phase** -- `SourceDataPipeline` reads and merges data Excel files

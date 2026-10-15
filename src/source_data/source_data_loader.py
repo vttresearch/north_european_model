@@ -32,11 +32,18 @@ _NA_STRINGS: tuple = tuple(sorted(
 #: the same sheet before anything is concluded.
 _RENAMED_DUPLICATE = re.compile(r"^(?P<base>.+)\.(?P<n>\d+)$")
 
+#: Marks the rows of a variant option, which merge after the base. A sheet's base
+#: row and its option row for one key are an option overriding the base, not the
+#: sheet repeating itself, so merge_row_by_row tells the two passes apart by it.
+VARIANT_PASS_COLUMN = "_variant_pass"
+
 #: What merge_row_by_row treats as instruction rather than data: dropped from
 #: the result, never merged, never reachable by a row's arithmetic. A module
 #: constant rather than a default argument, which was a mutable set shared by
 #: every call.
-MERGE_META_COLUMNS: frozenset = frozenset({"_source_file", "_source_sheet", "method"})
+MERGE_META_COLUMNS: frozenset = frozenset(
+    {"_source_file", "_source_sheet", "method", VARIANT_PASS_COLUMN}
+)
 
 
 def _has_no_header(col) -> bool:
@@ -1546,8 +1553,12 @@ class _SilentLogger:
         pass
 
 
-def count_units_without_exclusions(dfs, whitelist, key_columns) -> int:
+def count_units_without_exclusions(dfs, whitelist, key_columns, select=None) -> int:
     """How many units this run would have had if nothing were excluded.
+
+    `select`, when given, takes the whitelisted frames and returns the ones to
+    merge in order -- the build's variant selection -- so that rows of an option
+    the build did not choose are not counted as excluded.
 
     The caller subtracts the units it actually has, and the difference is what
     the exclusions cost. Doing it this way rather than counting the rows the
@@ -1566,6 +1577,8 @@ def count_units_without_exclusions(dfs, whitelist, key_columns) -> int:
     """
     silent = _SilentLogger()
     kept = [apply_whitelist(df, whitelist, silent, "unitdata") for df in dfs]
+    if select is not None:
+        kept = select(kept)
     return len(merge_row_by_row(kept, silent, key_columns=key_columns))
 
 
@@ -1840,6 +1853,9 @@ def merge_row_by_row(
             existing = acc.get(k)
 
             source = (row_dict.get("_source_file"), row_dict.get("_source_sheet"))
+            # The pass is part of where a record came from: a variant option
+            # replacing its own sheet's base row is what the option is for.
+            stamp = (source, row_dict.get(VARIANT_PASS_COLUMN))
 
             # --- 'remove': delete any existing record for this key --------------
             if method == "remove":
@@ -1856,7 +1872,7 @@ def merge_row_by_row(
             # exactly that.
             if (method in ("replace", "replace-partial")
                     and existing is not None
-                    and origin.get(k) == source
+                    and origin.get(k) == stamp
                     and any(part is not None for part in source)):
                 where = ":".join(str(part) for part in source if part is not None)
                 shown = "/".join("" if part is None else str(part) for part in k)
@@ -1872,7 +1888,7 @@ def merge_row_by_row(
                 shown = "/".join("" if part is None else str(part) for part in k)
                 unmatched.append(f"'{shown}' ({method})" + (f" in {where}" if where else ""))
 
-            origin[k] = source
+            origin[k] = stamp
 
             # --- Apply appropriate handler based on method ----------------------
             # Every method routes to its own handler, including when there are no

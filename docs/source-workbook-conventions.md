@@ -28,6 +28,7 @@ it. `inputData.xlsx` is not one of these files; the builder writes that one.
 | `all` as scenario or country, `1` as year | the row applies to every one of them |
 | a blank `scenario` or `year` | reports the row and drops it |
 | `method` | decides what a later row does to an earlier one |
+| `dh-level:cities` in a `variant` column | reads the row only where a build chose that option |
 | anything the builder cannot read | reports it and reads it as not set |
 
 Read [Writing a sheet](#writing-a-sheet) once. The rest is there for when a build
@@ -39,6 +40,7 @@ log says something you did not expect. The full lookup table is
 - [Writing a sheet](#writing-a-sheet)
 - [Naming things](#naming-things)
 - [Combining rows](#combining-rows)
+- [Variants](#variants)
 - [What each table needs](#what-each-table-needs)
 - [When a build complains](#when-a-build-complains)
 - [Renaming a value a formula depends on](#renaming-a-value-a-formula-depends-on)
@@ -307,6 +309,31 @@ to halve a capacity becomes a capacity of `0.5`.
 
 A `remove` matching nothing is silent and deliberate; see
 [The source data phase](source-data.md) for why.
+
+---
+
+## Variants
+
+A workbook can hold several versions of the same data side by side — district heating
+as one national node or as every city, fuel prices at two levels — and a config build
+chooses one of them per country. Each version is an **option** of a **variant**:
+`dh-level` is the variant, and `national` and `cities` are its options.
+
+A row joins an option through a `variant` column, which any data sheet may carry:
+
+| `variant` cell | The row is |
+|---|---|
+| empty | in no variant: read in every build, like a row of a sheet without the column |
+| `dh-level:cities` | in the option `cities` only |
+| `dh-level:grouped,cities` | in both of those options |
+| `dh-level:all` | in every option of `dh-level` |
+
+Every tag must be declared on the workbook's own `variantdata` sheet, with the columns
+`variant`, `option`, `default`, `check` and `description`. A tag that cannot be read or
+is not declared is reported with its sheet and row, and the row is dropped rather than
+read as untagged. Names are letters, digits and `-`, and `all` is reserved.
+
+How a build chooses, what it checks and what it says: [Variants](variants.md).
 
 ---
 
@@ -637,11 +664,18 @@ rule never matched.
 | `remove` on a key nothing established | nothing, and no message |
 | `grid_output1` on a `unitdata` sheet | discards it; `unittypedata` says which grid |
 | a node in `exclude_nodes` | drops it, and every unit connected to it, whole |
+| an empty `variant` cell | reads the row in every build |
+| `dh-level:cities` as a `variant` | reads the row where a build chose `cities` |
+| `dh-level:all` as a `variant` | reads the row wherever the country has an option of `dh-level` |
+| a tag its workbook's `variantdata` does not declare, or cannot be read | reports it and drops the row |
+| a variant with no default that no build chooses | reads none of its rows, and says so once |
 
 ## See also
 
 - [The source data phase](source-data.md) — the same subject from the builder's side:
   what happens to a sheet after it is read, in what order, and why that order
+- [Variants](variants.md) — several versions of the same data in one workbook, and how a
+  build chooses between them
 - [District heating demand timeseries](dh-demand-timeseries.md) — what `TWh/year` in a
   demand sheet means: a weather-normalised normal year, never a realised one, and the
   same holds for the electricity demand table

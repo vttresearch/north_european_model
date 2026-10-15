@@ -121,6 +121,10 @@ links to it.
   the order the steps run in and why, how file order and Excel tab order together decide
   which row wins, what excluding a node takes with it, and what the phase reports about a
   column nothing reads.
+- [Variants](docs/variants.md) — several versions of the same data in one workbook, such
+  as district heating by country or by city: how a row is tagged, how a config build
+  chooses an option per country, how options are checked against each other, and what a
+  PARTIAL build is.
 - [Timeseries](docs/timeseries.md) — how the build turns any hourly data source into
   Backbone input: what a processor is responsible for and what the shared pipeline does,
   what climate years and windows are, why a zero is the hard case, and what is checked
@@ -461,7 +465,7 @@ Python functions to build input data is called with syntax `python build_input_d
 	* `config_test.ini` for faster testing of the model.
 	* H2 heavy will be added soon.
 
-Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where the output folder name is a combination of `<output_folder_prefix>_<scenario>_<year>_<alternative>`, defined in the called config file.
+Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where the output folder name is a combination of `<output_folder_prefix>_<scenario>_<year>_<build>`, defined in the called config file. A build is an entry of the config's `variants`, which chooses between versions of the source data; the build `''` adds no suffix, and `--variant <build>` builds only that one. See [Variants](docs/variants.md).
 
 
 
