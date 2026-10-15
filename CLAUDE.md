@@ -152,8 +152,8 @@ here.** Skill discovery only looks in this folder, so the six skills in
 for running, varying and sweeping, `backbone-result-reader` for whether a result can be
 trusted. `../scripts/run_backbone.py` is the runner both they and `run_model.py` use,
 and `../docs/automation/` covers the same ground for a person. `docs/running-the-model.md`
-is this project's half: the scenarios, the one command, and why two runs of one scenario
-corrupt each other.
+is this project's half: the built input folders, the one command, and why two runs of one
+input folder corrupt each other.
 
 **Machine specifics belong in those two places and nowhere else.** Never an interpreter
 path, environment name, GAMS version or solver choice in `README.md`, `environment.yml`,

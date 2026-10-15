@@ -153,7 +153,7 @@ links to it.
   adds a parameter or a sheet.
 - [Running the model](docs/running-the-model.md) — how a built input folder becomes
   a solved model: the one command that starts a run, why runs happen from the Backbone
-  checkout above rather than from here, why two runs of one scenario corrupt each other,
+  checkout above rather than from here, why two runs of one input folder corrupt each other,
   how to tell a run worth trusting from one that merely finished, and what the parent
   checkout's skills and scripts already cover.
 - [Migration guide](docs/Migration%20guide.md) — what to change in a workbook or a
@@ -529,12 +529,12 @@ the tests work that way:
 
 **Starting a run.** `run_model.py` is the one command, and [Running the
 model](docs/running-the-model.md) is the page behind it: where a run's output goes, why
-two runs of one scenario corrupt each other, how to tell a run worth trusting from one
+two runs of one input folder corrupt each other, how to tell a run worth trusting from one
 that merely finished, and what the Backbone checkout above already covers.
 
 ```
 python run_model.py --list
-python run_model.py OT2030 --year 1998 --days 1
+python run_model.py input_ObservedTrends_2030 --year 1998 --days 1
 ```
 
 It runs the model through that checkout, which owns GAMS, the solver and the per-run
@@ -544,8 +544,8 @@ opens an interactive shell, which is convenient by hand and a hang that never en
 a script.
 
 **The check worth automating.** A one-day run on OT2030 is the cheapest thing that proves
-the whole chain end to end — a build, then `python run_model.py OT2030 --year 1998
---days 1`. From cold the two take about ten minutes together; with the build cache warm
+the whole chain end to end — a build, then `python run_model.py input_ObservedTrends_2030
+--year 1998 --days 1`. From cold the two take about ten minutes together; with the build cache warm
 the build alone is about two minutes and the solve about twenty seconds. It needs the
 [time series downloaded earlier](#downloading-required-time-series-files) to be in place;
 nothing in the pipeline can produce those.

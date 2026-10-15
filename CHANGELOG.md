@@ -290,6 +290,9 @@ not build and why, and has a documentation page of its own.
 - `run_model.py`: one run, through the parent checkout's `scripts/run_backbone.py`.
   Each run gets its own `results/<tag>/`, and an advisory lock stops a second run
   against an input folder already in use.
+- `run_model.py` takes the built input folder (`run_model.py input_ObservedTrends_2030`)
+  instead of a scenario name, and `--input-dir` is gone. `--list` lists built folders
+  and which config wrote each; the default tag is `<folder>-<year>-<days>d`.
 - `docs/running-the-model.md`: how a built folder becomes a solved model.
 - run-*.cmd: the comment claiming unique `scrdir` makes parallel runs safe was
   wrong. Runs sharing an input folder corrupt each other silently; run them one
