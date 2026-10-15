@@ -1,9 +1,12 @@
 """
-Run this model through the Backbone checkout it is installed in.
+Run one built input folder through the Backbone checkout this model is installed in.
 
-    python run_model.py OT2030 --year 1998 --days 1
-    python run_model.py OT2030 --year 1998 --days 1 --show
+    python run_model.py input_ObservedTrends_2030 --year 1998 --days 1
+    python run_model.py input_ObservedTrends_2030_sens1 --year 2015 --days 7 --show
     python run_model.py --list
+
+The argument is the folder `build_input_data.py` wrote, so every build of a config
+-- every scenario, year and build of its `variants` -- is run the same way.
 
 This is a worked example as much as a tool: it is the shortest correct way to
 start a run here, and the place to copy from when writing a sweep. Everything it
@@ -12,8 +15,8 @@ does that a hand-written command line would not is below.
 
 WHAT IT DELEGATES, AND WHY
 
-Nothing here builds a `gams` command line. The scenario, the climate year and the
-horizon are this project's business; which GAMS, which solver, and how a run is
+Nothing here builds a `gams` command line. The input folder, the climate year and
+the horizon are this project's business; which GAMS, which solver, and how a run is
 isolated from every other run are the parent checkout's, and it answers them in
 `scripts/run_backbone.py`. This file translates the first into arguments for the
 second and hands over.
@@ -39,9 +42,12 @@ Backbone prepares every run by writing into `<input_dir>/tempFiles/` under fixed
 names, and by converting `inputData.xlsx` in place. So the unit of parallelism
 here is the input folder, not the run:
 
-  - Two runs against *different* scenarios are safe to overlap.
+  - Two runs against *different* input folders are safe to overlap.
   - Two runs against the *same* input folder are not, and the failure is silent:
     each overwrites the other's prepared input, and both report numbers.
+
+Backbone also reads `--input_dir` relative to its own checkout, so an input folder
+has to sit inside it; one outside is refused here, before anything starts.
 
 No flag makes those names unique; going wider needs a copy of the input folder,
 which is ~450 MB. The lock this script takes covers exactly that -- it stops
@@ -60,7 +66,7 @@ defaults and this one deliberately does not repeat them, because a second copy
 goes stale without anyone noticing. `--year` and `--days` are surfaced here
 because every run sets them; anything else goes through after a bare `--`:
 
-    python run_model.py OT2030 --year 1998 --days 7 -- --debug=2 --diag=yes
+    python run_model.py input_ObservedTrends_2030 --year 1998 --days 7 -- --debug=2 --diag=yes
 
 `../.claude/skills/backbone-scenario-runner/` covers the four ways a Backbone run
 can be varied, and `../docs/running-backbone/command-line-parameters.md` the
@@ -81,6 +87,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from itertools import product
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -128,53 +135,87 @@ def import_runner(bb_root: Path):
     return run_backbone
 
 
-def config_for(scenario: str) -> Path:
-    """src_files/config_<scenario>.ini, or a message listing what does exist."""
-    config = HERE / "src_files" / f"config_{scenario}.ini"
-    if config.is_file():
-        return config
-    available = sorted(
-        p.name[len("config_"):-len(".ini")]
-        for p in (HERE / "src_files").glob("config_*.ini")
-    )
-    raise SystemExit(
-        f"No config for scenario '{scenario}' ({config.name} does not exist).\n"
-        f"Known scenarios: {', '.join(available)}"
-    )
+def is_built(folder: Path) -> bool:
+    """Whether `folder` is a built input folder: one holding the inputData.xlsx a build writes."""
+    return folder.is_dir() and (folder / "inputData.xlsx").is_file()
 
 
-def input_folders_for(config_file: Path):
-    """Every input folder a build of this config writes, by the build's own rule."""
+def config_folders(here: Path = HERE) -> dict:
+    """{input folder name: (config file name, build name)} for every config in src_files/.
+
+    By the builder's own naming rule, so a folder a config writes is recognised as
+    that config's. A config that does not load names no folder; --list and the
+    messages below are hints, and one broken config must not stop them.
+    """
     import src.infrastructure.config_reader as config_reader
 
-    config = config_reader.load_config(config_file)
-    return [HERE / name for name in config_reader.config_output_folder_names(config)]
+    known = {}
+    for config_file in sorted((here / "src_files").glob("config_*.ini")):
+        try:
+            config = config_reader.load_config(config_file)
+        except Exception:
+            continue
+        for scenario, year, build in product(config["scenarios"], config["scenario_years"],
+                                             config_reader.selected_builds(config)):
+            name = config_reader.output_folder_name(
+                config["output_folder_prefix"], scenario, year, build)
+            known.setdefault(name, (config_file.name, build))
+    return known
 
 
-def resolve_input_folder(scenario: str, override) -> Path:
-    if override:
-        folder = Path(override)
-        if not folder.is_absolute():
-            folder = HERE / folder
-        if not folder.is_dir():
-            raise SystemExit(f"--input-dir {folder} is not a folder.")
-        return folder
+def resolve_input_folder(name: str, here: Path = HERE) -> Path:
+    """The built input folder `name` names: relative to this project, or a full path.
 
-    folders = input_folders_for(config_for(scenario))
-    if len(folders) > 1:
-        listed = "\n  ".join(f.name for f in folders)
+    A name that is no folder but a config's scenario (`OT2030`, the <x> of
+    src_files/config_<x>.ini) is answered with the folders that config builds, since
+    one config can build several.
+    """
+    folder = Path(name)
+    if not folder.is_absolute():
+        folder = here / folder
+    if is_built(folder):
+        return folder.resolve()
+    if folder.is_dir():
         raise SystemExit(
-            f"config_{scenario}.ini builds {len(folders)} input folders, so the "
-            "scenario name alone does not say which to run. Name one with "
-            f"--input-dir:\n  {listed}"
+            f"{folder} holds no inputData.xlsx, so it is not a built input folder. "
+            f"Build it with build_input_data.py first."
         )
-    folder = folders[0]
-    if not folder.is_dir():
+
+    config = here / "src_files" / f"config_{name}.ini"
+    if config.is_file():
+        builds = [n for n, (c, _) in config_folders(here).items() if c == config.name]
+        listed = "\n  ".join(
+            f"{n}{'' if is_built(here / n) else '  (not built)'}" for n in builds)
         raise SystemExit(
-            f"{folder.name} has not been built yet. Build it with:\n"
-            f"  python build_input_data.py src_files src_files/config_{scenario}.ini"
+            f"run_model.py runs an input folder, not a scenario. {config.name} builds:\n"
+            f"  {listed}\n"
+            f"Run one of them, e.g.: python run_model.py {builds[0] if builds else '<folder>'}"
+        )
+    raise SystemExit(
+        f"No input folder '{name}' in {here}. `python run_model.py --list` shows the "
+        f"built ones."
+    )
+
+
+def check_inside(folder: Path, bb_root: Path) -> Path:
+    """`folder`, refused when it is outside the Backbone checkout.
+
+    Backbone takes --input_dir relative to its own root, so a folder outside it
+    cannot be named at all.
+    """
+    try:
+        folder.resolve().relative_to(bb_root.resolve())
+    except ValueError:
+        raise SystemExit(
+            f"{folder} is outside the Backbone checkout at {bb_root}. Backbone reads "
+            f"its input relative to that checkout, so build or copy the folder inside it."
         )
     return folder
+
+
+def default_tag(folder: Path, year, days) -> str:
+    """The results/ folder name a run gets unless --tag says otherwise."""
+    return f"{folder.name}-{year}-{days}d"
 
 
 def read_lock(folder: Path):
@@ -211,7 +252,7 @@ def take_lock(folder: Path, tag: str, force: bool) -> Path:
             f"(pid {held.get('pid')}{age}).\n"
             "Two runs against one input folder overwrite each other's prepared "
             "input and both still report numbers, so this one has not started.\n"
-            "Wait for it, run a different scenario, or pass --force if you know "
+            "Wait for it, run a different input folder, or pass --force if you know "
             "that run is gone."
         )
     lock = folder / LOCK_NAME
@@ -284,28 +325,21 @@ def check_passthrough(passthrough):
     return list(passthrough)
 
 
-def do_list() -> int:
-    """Every scenario, where it builds to, and whether it is built or busy."""
-    configs = sorted((HERE / "src_files").glob("config_*.ini"))
-    if not configs:
-        print("No config_*.ini in src_files/.")
-        return 1
-    for config_file in configs:
-        scenario = config_file.name[len("config_"):-len(".ini")]
-        try:
-            folders = input_folders_for(config_file)
-        except Exception as exc:  # report and keep listing; one bad config is not fatal
-            print(f"{scenario:28} !! could not read: {exc}")
-            continue
-        for folder in folders:
-            held = read_lock(folder) if folder.is_dir() else None
-            if not folder.is_dir():
-                state = "not built"
-            elif held:
-                state = f"BUSY ({held.get('tag')})"
-            else:
-                state = "built"
-            print(f"{scenario:28} {folder.name:42} {state}")
+def do_list(here: Path = HERE) -> int:
+    """Every built input folder here, whether a run holds it, and which config wrote it."""
+    folders = sorted(p for p in here.iterdir() if is_built(p))
+    if not folders:
+        print(f"No built input folder in {here}. Build one with:\n"
+              f"  python build_input_data.py src_files config_<x>.ini")
+        return 0
+    known = config_folders(here)
+    for folder in folders:
+        held = read_lock(folder)
+        state = f"BUSY ({held.get('tag')})" if held else "free"
+        config, build = known.get(folder.name, (None, ""))
+        source = (f"{config}" + (f", build '{build}'" if build else "")
+                  if config else "no config in src_files/ names it")
+        print(f"{folder.name:44} {state:22} {source}")
     return 0
 
 
@@ -316,20 +350,19 @@ def main(argv=None) -> int:
         epilog="Backbone's own arguments go last, after a bare --, for example: "
                "-- --debug=2 --diag=yes",
     )
-    parser.add_argument("scenario", nargs="?",
-                        help="Scenario name, i.e. the <x> in src_files/config_<x>.ini")
+    parser.add_argument("input_folder", nargs="?",
+                        help="The built input folder to run, e.g. input_ObservedTrends_2030: "
+                             "a name in this project, or a path inside the Backbone checkout")
     parser.add_argument("--year", "--climate-year", dest="year", type=int, default=1998,
                         help="Climate year, passed as --climateYear (default: 1998)")
     parser.add_argument("--days", type=int, default=1,
                         help="Days to model, passed as --modelledDays (default: 1)")
     parser.add_argument("--tag", default=None,
                         help="Name for this run's folder under results/ "
-                             "(default: <scenario>-<year>-<days>d)")
+                             "(default: <input folder>-<year>-<days>d)")
     parser.add_argument("--debug", default="1",
                         help="Backbone --debug level (default: 1, which writes the "
                              "debug gdx; 2 writes one gdx per solve)")
-    parser.add_argument("--input-dir", dest="input_dir", default=None,
-                        help="Input folder to run, when a config builds more than one")
     parser.add_argument("--solver", default=None,
                         help="Solver to use. Default: whichever the Backbone checkout "
                              "resolves, which it prints.")
@@ -340,21 +373,22 @@ def main(argv=None) -> int:
     parser.add_argument("--force", action="store_true",
                         help="Start even though another run holds this input folder")
     parser.add_argument("--list", action="store_true",
-                        help="List the scenarios, their input folders and their state")
+                        help="List the built input folders, whether a run holds each, "
+                             "and which config wrote it")
     own, passthrough = split_passthrough(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(own)
     args.backbone_args = check_passthrough(passthrough)
 
     if args.list:
         return do_list()
-    if not args.scenario:
-        parser.error("name a scenario, or pass --list to see them")
+    if not args.input_folder:
+        parser.error("name an input folder, or pass --list to see the built ones")
 
     bb_root = find_backbone_root(HERE)
+    input_folder = check_inside(resolve_input_folder(args.input_folder), bb_root)
     runner = import_runner(bb_root)
 
-    input_folder = resolve_input_folder(args.scenario, args.input_dir)
-    tag = args.tag or f"{args.scenario}-{args.year}-{args.days}d"
+    tag = args.tag or default_tag(input_folder, args.year, args.days)
     output_dir = HERE / "results" / tag
 
     runner_argv = build_argv(args, bb_root, input_folder, output_dir)

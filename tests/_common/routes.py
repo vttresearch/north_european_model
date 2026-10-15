@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -115,6 +115,12 @@ def build_input_folder(
     return folder
 
 
+def _scen_tags(scenario: str, year: int, variant: str) -> list[str]:
+    """The add_scen_tags row, by the builder's own rule."""
+    from src.infrastructure.config_reader import scenario_tags
+    return scenario_tags(scenario, year, variant)
+
+
 @dataclass
 class RouteResult:
     """Everything a route test needs to assert on."""
@@ -136,19 +142,21 @@ def run_source(
     config: dict | None = None,
     scenario: str = "test",
     year: int = 2030,
-    alternatives: Sequence[str] = (),
     logger: FakeLogger | None = None,
+    variant: str = "",
 ) -> tuple[SourceDataPipeline, FakeLogger]:
     """Read fixture workbooks through ``SourceDataPipeline`` only.
 
     For assertions about the *source* stage, where ``pd.NA`` and ``0`` are still
     distinct -- the convention changes only once BBExcelPipeline runs.
+
+    `variant` names the build of ``config['variants']``; '' is the build with no
+    suffix, which every config has unless it says otherwise.
     """
     logger = logger or FakeLogger()
     config = config or config_for_workbooks(workbooks)
     input_folder = build_input_folder(tmp_path, workbooks=workbooks, index_sheet=False)
 
-    alts = list(alternatives) + [""] * (4 - len(alternatives))
     pipeline = SourceDataPipeline(
         SourceDataPipelineInputs(
             config=config,
@@ -157,10 +165,7 @@ def run_source(
             scenario_year=year,
             country_codes=config["country_codes"],
             logger=logger,
-            scenario_alternative=alts[0],
-            scenario_alternative2=alts[1],
-            scenario_alternative3=alts[2],
-            scenario_alternative4=alts[3],
+            variant=variant,
         )
     )
     pipeline.run()
@@ -174,9 +179,9 @@ def run_route(
     config: dict | None = None,
     scenario: str = "test",
     year: int = 2030,
-    alternatives: Sequence[str] = (),
     contributions: Mapping[str, pd.DataFrame] | None = None,
     logger: FakeLogger | None = None,
+    variant: str = "",
 ) -> RouteResult:
     """Source workbooks -> ``inputData.xlsx``, read back and ready to assert on.
 
@@ -193,8 +198,8 @@ def run_route(
         config=config,
         scenario=scenario,
         year=year,
-        alternatives=alternatives,
         logger=logger,
+        variant=variant,
     )
 
     if contributions:
@@ -208,7 +213,7 @@ def run_route(
         BBExcelInputs(
             input_folder=input_folder,
             output_folder=output_folder,
-            scen_tags=[scenario, str(year), *alternatives],
+            scen_tags=_scen_tags(scenario, year, variant),
             config=config,
             cache_manager=None,   # stored, never read
             logger=logger,

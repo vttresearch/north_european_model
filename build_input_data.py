@@ -25,8 +25,31 @@ from src.utils import parse_sys_args, force_utf8_output
 _REPO_ROOT = Path(__file__).resolve().parent
 
 
-def main(input_folder: Path, config_file: Path, output_root: Path | None = None):
+def partial_banner(causes: list[str]) -> list[str]:
+    """The lines that open summary.log for a build that survived a variant problem.
+
+    Empty for a clean build. A build with a variant problem warns, falls back and
+    carries on, so everything after the first fault may be a consequence of it --
+    which is why the banner comes before anything else in the log.
+    """
+    if not causes:
+        return []
+    return [
+        f"PARTIAL BUILD: {len(causes)} variant problem(s) were warned about, and the "
+        f"build fell back and carried on:",
+        *(f"  - {cause}" for cause in causes),
+        "Later warnings in this log may follow from these, so fix these first.",
+        "-" * 89,
+    ]
+
+
+def main(input_folder: Path, config_file: Path, output_root: Path | None = None,
+         variant: str | None = None):
     """Build Backbone input data for every scenario the config declares.
+
+    variant:
+        One build of the config's `variants` to build, or None for every build.
+        An unknown name raises, listing the builds there are.
 
     output_root:
         Where the per-scenario output folders are created. Defaults to the
@@ -67,21 +90,14 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
 
 
 
-    # --- 2. The (scenario, year, alternative) loop ---
+    # Before the logger exists, so an unknown --variant raises, naming the builds.
+    builds = config_reader.selected_builds(config, variant)
 
-    # Lists of scenarios, scenario_years, and alternatives
-    scenarios = config['scenarios']
-    scenario_years = config['scenario_years']
-    scenario_alternatives = config['scenario_alternatives']
-    scenario_alternatives2 = config['scenario_alternatives2']
-    scenario_alternatives3 = config['scenario_alternatives3']
-    scenario_alternatives4 = config['scenario_alternatives4']
 
-    for scenario, year, alt1, alt2, alt3, alt4 in product(
-        scenarios, scenario_years,
-        scenario_alternatives, scenario_alternatives2,
-        scenario_alternatives3, scenario_alternatives4
-    ):
+
+    # --- 2. The (scenario, year, build) loop ---
+
+    for scenario, year, build in product(config['scenarios'], config['scenario_years'], builds):
 
 
         # --- 2.1. Preparations ---
@@ -89,17 +105,11 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
         logger = IterationLogger(print_all_elapsed_times=config['print_all_elapsed_times'])
         iteration_start_time = time.time()
 
-        # Collect non-empty alternatives for this combination
-        active_alts = [a for a in [alt1, alt2, alt3, alt4] if a]
-
-        # Printing the (scenario, year, alternatives) combination and storing them to scenario_tags
-        if active_alts:
-            logger.log_status(f"{scenario}, {year}, {', '.join(active_alts)}", section_start_length=70, add_empty_line_before=True)
-        else:
-            logger.log_status(f"{scenario}, {year}", section_start_length=70, add_empty_line_before=True)
-        # Each active alternative is stored as a separate element; bb_excel_pipeline.py
-        # uses the list length to determine which alternative columns to write.
-        scen_tags = [scenario, str(year)] + active_alts
+        # Printing the (scenario, year, build) combination; '' is the build with no suffix
+        logger.log_status(", ".join(str(part) for part in (scenario, year, build) if part != ""),
+                          section_start_length=70, add_empty_line_before=True)
+        # The add_scen_tags row: scenario, year, build, and this build's own name
+        scen_tags = config_reader.scenario_tags(scenario, year, build)
 
         # Print date and time
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -107,7 +117,7 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
 
         # Build output folder_name, check existence
         folder_name = config_reader.output_folder_name(
-            config['output_folder_prefix'], scenario, year, active_alts
+            config['output_folder_prefix'], scenario, year, build
         )
         output_folder = output_root / folder_name
         output_folder.mkdir(parents=True, exist_ok=True)
@@ -121,7 +131,8 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
 
         # --- 2.2. Cache manager ---
         # Initialize cache manager
-        cache_manager = CacheManager(input_folder, output_folder, config, logger=logger)
+        cache_manager = CacheManager(input_folder, output_folder, config, logger=logger,
+                                     variant=build)
 
         # Run cache manager to check which parts of code need rerunning
         cache_manager.run()
@@ -160,10 +171,7 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
             input_folder=input_folder,
             scenario=scenario,
             scenario_year=year,
-            scenario_alternative=alt1,
-            scenario_alternative2=alt2,
-            scenario_alternative3=alt3,
-            scenario_alternative4=alt4,
+            variant=build,
             country_codes=config['country_codes'],
             logger=logger,
         ))
@@ -174,8 +182,15 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
             logger.log_status("Processing source Excel files.",
                        level="run", add_empty_line_before=True, section_start_length=55)
             source_data_pipeline.run()
+            # Kept with the cache, so a later run that skips this phase still
+            # opens its log with the banner: the build is as partial as it was.
+            partial_causes = source_data_pipeline.partial_causes
+            cache_manager.merge_dict_to_cache({"partial_causes": partial_causes},
+                                              "general_flags.json")
         else:
             logger.log_status("Skipping source excel processing.", level="skip")
+            partial_causes = cache_manager.load_dict_from_cache(
+                "general_flags.json").get("partial_causes", [])
         source_excel_run_successfully = (logger.error_count == error_count_before_source_excel)
 
 
@@ -305,7 +320,10 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
 
         # Printing elapsed time (per iteration)
         minutes, seconds = logger.elapsed_time(iteration_start_time)
-        logger.log_status(f"Completed in {minutes} min {seconds} sec.", level="done", add_empty_line_before=True)
+        partial_note = (f" PARTIAL: {len(partial_causes)} variant problem(s), listed at the "
+                        f"top of summary.log." if partial_causes else "")
+        logger.log_status(f"Completed in {minutes} min {seconds} sec.{partial_note}",
+                          level="done", add_empty_line_before=True)
 
         # Cumulative time (console only, not in log)
         cum_minutes, cum_seconds = logger.elapsed_time(start_time)
@@ -341,9 +359,9 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None)
                 previous_logs = f.read().splitlines()
             logger.messages.extend(previous_logs)
 
-        # Write final merged log
+        # Write final merged log, a partial build's banner first
         with open(log_path, "w", encoding="utf-8") as log_file:
-            log_file.write("\n".join(logger.messages))
+            log_file.write("\n".join(partial_banner(partial_causes) + logger.messages))
 
 
 
@@ -701,6 +719,6 @@ def _log_gams_settings(logger, settings: dict) -> None:
 
 if __name__ == "__main__":
     # Parse CLI arguments
-    input_folder, config_file = parse_sys_args()
+    input_folder, config_file, variant = parse_sys_args(with_variant=True)
     print(f"\nLaunching pipelines defined in: {config_file}")
-    main(input_folder, config_file)
+    main(input_folder, config_file, variant=variant)

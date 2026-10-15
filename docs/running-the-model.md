@@ -6,8 +6,9 @@ worth trusting from one that merely finished.
 
 This model is installed inside a Backbone checkout, and that checkout — not this
 repository — owns running. It knows which GAMS, which solver, and how to keep two
-runs from spoiling each other. This page covers only what it cannot know: what
-the scenarios here are, and which of its rules bite hardest in this model.
+runs from spoiling each other. This page covers only what it cannot know: which
+input folders this project builds, and which of its rules bite hardest in this
+model.
 
 ## One minute summary
 
@@ -18,8 +19,10 @@ the scenarios here are, and which of its rules bite hardest in this model.
   debug gdx, listing, log, scratch and `warnings.log` together. Runs that share a
   folder overwrite each other's `warnings.log`, which is the first thing you are
   supposed to read.
-- **The unit of parallelism is the input folder, not the run.** Two scenarios can
-  run at once; two runs of *the same* scenario cannot, and the failure is silent.
+- **A run is pointed at a built input folder**, the one `build_input_data.py`
+  wrote: `python run_model.py input_ObservedTrends_2030`.
+- **The unit of parallelism is the input folder, not the run.** Two input folders
+  can run at once; two runs of *the same* folder cannot, and the failure is silent.
 - **Never write to `../input` or `../output`.** Those are shared with the Backbone
   repository and with whatever else is running. A run that fails to apply its
   `--output_dir` lands in `../output` without saying so — see *Traps* below.
@@ -31,18 +34,24 @@ the scenarios here are, and which of its rules bite hardest in this model.
 
 ```
 python run_model.py --list
-python run_model.py OT2030 --year 1998 --days 1
+python run_model.py input_ObservedTrends_2030 --year 1998 --days 1
+python run_model.py input_ObservedTrends_2030_sens1 --year 2015 --days 7
 ```
 
-`--list` prints every scenario, the input folder it builds to, and whether that
-folder is built or currently busy. A scenario is the `<x>` in
-`src_files/config_<x>.ini`, and its input folder name is derived from that config
-by the same rule the builder uses — so a scenario you can build is a scenario you
-can run, with no second list to keep in step.
+The argument is the input folder a build wrote:
+`<output_folder_prefix>_<scenario>_<year>_<build>`, from a config in `src_files/`.
+One config can write several — one per scenario, year and build of its
+[`variants`](variants.md) — and each is run the same way. A name is looked up in
+this project; a full path works too, as long as it is inside the Backbone
+checkout, because Backbone reads its input relative to that.
 
-If the folder has not been built yet, `run_model.py` says so and prints the
-`build_input_data.py` command that creates it. [Building input
-files](../README.md#building-input-files) covers that half.
+`--list` prints every built input folder here, whether a run currently holds it,
+and which config and build wrote it. A folder no config names — a copy made by
+hand, say — is listed too, and says so.
+
+A folder that has not been built is refused before anything starts, and so is a
+scenario name such as `OT2030`: the answer lists the folders that config builds.
+[Building input files](../README.md#building-input-files) covers that half.
 
 Useful flags:
 
@@ -50,14 +59,14 @@ Useful flags:
 |---|---|
 | `--show` | print the command that would run, and exit. Nothing is launched. |
 | `--days`, `--year` | the horizon and the climate year — the two every run sets |
-| `--tag` | name the output folder something other than `<scenario>-<year>-<days>d` |
+| `--tag` | name the output folder something other than `<input folder>-<year>-<days>d` |
 | `--solver`, `--gams` | override what the Backbone checkout would pick |
 | `--force` | start even though another run holds this input folder |
 
 Anything else goes to Backbone after a bare `--`:
 
 ```
-python run_model.py OT2030 --year 1985 --days 7 -- --debug=2 --diag=yes
+python run_model.py input_ObservedTrends_2030 --year 1985 --days 7 -- --debug=2 --diag=yes
 ```
 
 The switches this model declares live in `src_files/GAMS_files/changes.inc`
@@ -128,10 +137,10 @@ numbers.
 
 So:
 
-- Different scenarios in parallel — fine, they have different input folders.
-- Same scenario in parallel — only with a copy of the input folder per concurrent
-  run. An input folder here is about 456 MB, which is the real price of going
-  wider.
+- Different input folders in parallel — fine. Two builds of one config are two
+  folders, so they can run side by side.
+- One input folder in parallel — only with a copy of it per concurrent run. An
+  input folder here is about 456 MB, which is the real price of going wider.
 
 `run_model.py` takes an advisory lock on the input folder and refuses to start a
 second run against it, naming the one that holds it. The lock is advisory on

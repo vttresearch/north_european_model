@@ -19,6 +19,9 @@ phase says when something is wrong.
   contribute four sheets.
 - **Rows are filtered to this scenario, year and country, then merged key by key**
   in the order the config lists the files.
+- **A build may choose between variants** — several versions of the same data a
+  workbook holds side by side. Every country table is read before any is merged,
+  because a country's choice holds in every table.
 - **To see the actual inventory, read a config.** `src_files/config_OT2030.ini`'s
   seven `*_files` lists are the whole of what a build opens, and `summary.log` in
   the output folder says what that particular run made of them.
@@ -44,15 +47,37 @@ reported rather than silently dropped.
 
 ## The order, and why it is that order
 
-Every data type runs the same chain, and the order is load-bearing rather than
-incidental. For `nodedata` and `demanddata`:
+The phase runs in six steps, and the order is load-bearing rather than
+incidental:
+
+0. **Variant declarations.** Every listed workbook's `variantdata` sheet is read
+   once, and the declarations are merged.
+1. **The tables without a country** — `unittypedata`, `emissiondata` — are read,
+   filtered and merged first, because a unit is named from its unittype.
+2. **Every country table is prepared, and none is merged.** `nodedata`,
+   `demanddata`, `unitdata`, `transferdata` and `userconstraintdata` are each read,
+   expanded, named and filtered.
+3. **Each country's variant choice is resolved**, from the prepared rows of all of
+   them.
+4. **Every option of every variant is checked**, whatever this build chose.
+5. **Each country table keeps this build's rows and is merged**: the base first,
+   then the chosen options.
+
+Steps 2 and 3 are apart because a country's choice holds in every table, and the
+rows that justify it may sit in any of them: `cities` rows in `demanddata` alone
+are enough for Finland to choose `cities`, and `nodedata` must then drop its
+`national` row. So no table can be merged before every table has been read.
+[Variants](variants.md) has the rules.
+
+Inside step 2, every table runs the same chain. For `nodedata` and `demanddata`:
 
 ```
-read_input_excels  ->  normalize_dataframe  ->  drop_underscore_values
-   ->  expand_all_country  ->  exclude_grids  ->  build_node_column
-   ->  exclude_nodes  ->  apply_whitelist  ->  collect_origins
-   ->  merge_row_by_row
+read_input_excels  ->  variant tags checked  ->  normalize_dataframe
+   ->  drop_underscore_values  ->  expand_all_country  ->  exclude_grids
+   ->  build_node_column  ->  exclude_nodes  ->  apply_whitelist
 ```
+
+and in step 5, `variant selection -> collect_origins -> merge_row_by_row`.
 
 `unitdata` differs in the middle, because a unit's name and its connections both
 come from the unittype:
@@ -60,21 +85,29 @@ come from the unittype:
 ```
    ...  ->  expand_all_country  ->  canonicalize_unittype_and_build_unit
    ->  build_unit_grid_and_node_columns  ->  exclude_grids  ->  exclude_nodes
-   ->  apply_whitelist  ->  collect_origins  ->  merge_row_by_row
-   ->  merge_unittypedata_into_unitdata
+   ->  apply_whitelist
 ```
+
+and in step 5 it is merged, then `merge_unittypedata_into_unitdata` folds the
+type-level defaults in.
 
 **Form is judged before relevance.** Everything that decides whether a row is
 *well written* — the `##` marker, blank rows, repeated headers, malformed
-numbers, blank key columns, unrecognised columns — happens in
-`read_input_excels`, before `apply_whitelist` decides whether the row is
-*wanted*. If it ran the other way, a bad cell in a row belonging to another
+numbers, blank key columns, unrecognised columns, a variant tag that cannot be
+read or is not declared — happens as the sheet is read, before `apply_whitelist`
+decides whether the row is *wanted*. If it ran the other way, a bad cell in a row belonging to another
 scenario would disappear as merely irrelevant, and its author would meet it only
 when they ran that scenario. One build tells you about every mistake in the
 workbook, not only the ones this run happens to touch.
 
+**Variant tags are checked before `drop_underscore_values`**, so a tag like
+`bio_price:high` is reported as a malformed tag rather than vanishing with every
+other value that holds an underscore.
+
 **`country = 'all'` is expanded before the blacklists**, so an expanded row is
-subject to the same exclusions as one written out by hand.
+subject to the same exclusions as one written out by hand. It is expanded before
+the variant choice too, so an option written once for `all` has rows in every
+country.
 
 **Node names are built before the node blacklist**, because a node name has to
 exist before it can be excluded — which is why the grid blacklist and the node
@@ -122,6 +155,11 @@ The second is worth knowing about because nothing on screen suggests it.
 its tabs reorders which of them wins a key the others also mention. Row order
 inside a sheet is the third and last level.
 
+**Variants add a pass, not a level.** A build merges the untagged and `:all` rows
+first, in that order, and the rows of its chosen options after them, in the same
+order among themselves. An option therefore overrides the base whatever file it
+sits in.
+
 ## A key written twice in one sheet
 
 Overriding a value across files is what that file order is for. Two rows for one
@@ -131,6 +169,11 @@ then discarded, so it is dead text, and the build says so.
 It runs at merge time, after the whitelist, which is what keeps it quiet on a
 sheet holding six years of `replace` rows for one unit: only this run's year is
 still there by then.
+
+It knows the two merge passes. An option row replacing a `:all` row of its own
+sheet is an option doing its job, and two options' rows for one key never meet in
+one build. Two rows that both reach one build's option, `grouped,cities` and
+`cities` on one key, are dead text in a `cities` build and reported there.
 
 The check is also narrower than "a key seen twice", deliberately. `add` and
 `multiply` accumulate by definition — `dheat_unitdata_PL_DE_AT.xlsx` writes
@@ -279,13 +322,22 @@ Every one of them obeys the source-side conventions: three dtypes only
 
 The timeseries phase may add rows to these tables afterwards, through the
 contribution merge, and the workbook always wins where both have something to
-say. See [Timeseries](timeseries.md).
+say. See [Timeseries](timeseries.md). The processors read their nodes from these
+tables, never from the config, so a variant's nodes reach the time series without
+anything to configure.
+
+Beside the tables, the pipeline keeps what the build chose: `variant_choices`
+(variant → country → option, `None` where the variant is dormant) and
+`partial_causes`, the fallbacks `build_input_data.py` puts in a PARTIAL banner at
+the top of `summary.log`.
 
 ## Where the source data phase is defined
 
-- `src/source_data/source_data_pipeline.py` — `SourceDataPipeline`, the chain
+- `src/source_data/source_data_pipeline.py` — `SourceDataPipeline`, the six steps
   above, one block per data type
-- `src/source_data/source_data_loader.py` — every step of it
+- `src/source_data/source_data_loader.py` — every step of the chain
+- `src/source_data/source_data_variants.py` — variant declarations, tags, choices,
+  checks and row selection
 - `src/source_workbook_shape.py` — which table declares a dimension's values, and
   which column names a table can carry
 - `src/backbone_params.py` — the parameter vocabulary, shared with the other two
@@ -298,6 +350,8 @@ say. See [Timeseries](timeseries.md).
 - [Source workbook conventions](source-workbook-conventions.md) — the same
   subject from the sheet author's side: what to write and what the builder makes
   of it
+- [Variants](variants.md) — how a build chooses between versions of the same data,
+  and what it checks about them
 - [Input Excel builder](input-excel.md) — what becomes of these seven tables
 - [Timeseries](timeseries.md) — what a processor may contribute to them
 - [Identified gaps](identified-gaps.md) — what the workbooks cannot say yet

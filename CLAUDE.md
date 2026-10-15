@@ -39,7 +39,7 @@ module docstring, and `README.md` lists them all.
 1. `python build_input_data.py <input_folder> <config.ini>`
 2. Config is parsed defining general settings, input files, and run instructions.
    - Git config files are stored in `src_files/config_*.ini`
-3. For each (scenario, year, alternative) combination:
+3. For each (scenario, year, build) combination, a build being an entry of the config's `variants`:
    - **Logger** -- `logger` collects log messages from the run and is passed to all pipelines 
    - **Cache check** -- `CacheManager` determines which steps need re-running
    - **Source data phase** -- `SourceDataPipeline` reads and merges data Excel files
@@ -152,8 +152,8 @@ here.** Skill discovery only looks in this folder, so the six skills in
 for running, varying and sweeping, `backbone-result-reader` for whether a result can be
 trusted. `../scripts/run_backbone.py` is the runner both they and `run_model.py` use,
 and `../docs/automation/` covers the same ground for a person. `docs/running-the-model.md`
-is this project's half: the scenarios, the one command, and why two runs of one scenario
-corrupt each other.
+is this project's half: the built input folders, the one command, and why two runs of one
+input folder corrupt each other.
 
 **Machine specifics belong in those two places and nowhere else.** Never an interpreter
 path, environment name, GAMS version or solver choice in `README.md`, `environment.yml`,

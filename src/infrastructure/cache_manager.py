@@ -87,6 +87,7 @@ class CacheManager:
     _SOURCE_PIPELINE_FILES = [
         Path("./src/source_data/source_data_pipeline.py"),
         Path("./src/source_data/source_data_loader.py"),
+        Path("./src/source_data/source_data_variants.py"),
         Path("./src/source_data/source_data_inputs.py"),
         Path("./src/source_data/source_data_contributions.py"),
     ]
@@ -137,14 +138,18 @@ class CacheManager:
             or self.rebuild_bb_excel
         )
 
-    def __init__(self, input_folder: Path, output_folder: Path, config: dict, logger):
+    def __init__(self, input_folder: Path, output_folder: Path, config: dict, logger,
+                 variant: str = ""):
         """
         Initialize the CacheManager.
 
         Args:
             output_folder (Path): The root folder where cache directory will be created.
             logger: IterationLogger instance for status messages.
+            variant (str): The build of config['variants'] this folder holds; its
+                choice is part of what the folder was built from.
         """
+        self.variant = variant
         self.cache_folder = output_folder / "cache"
         self.cache_folder.mkdir(parents=True, exist_ok=True)
         self.config_hash_file = self.cache_folder / "config_hash.json"
@@ -554,12 +559,17 @@ class CacheManager:
             return {}
 
 
+    def _variant_choice(self) -> dict:
+        """This build's entry of config['variants']: variant -> {country or 'all': option}."""
+        return (self.config.get("variants") or {}).get(self.variant, {})
+
     def merge_dict_to_cache(self, data: dict, filename: str):
         """
         Merge new data into the existing cache entry (if any), then save the result.
 
         Key by key: a set-valued key unions, anything else takes the new value.
-        The only caller left is ``general_flags.json``, whose values are flags.
+        The only caller left is ``general_flags.json``, whose values are flags
+        and the build's list of partial causes.
 
         Args:
             data (dict): New data to merge.
@@ -962,6 +972,14 @@ class CacheManager:
             if changed:
                 full_rerun_reason = f"Forecast config changed ({', '.join(changed)}), starting a full rerun."
 
+        # This build's variant choice changed. Each build has its own folder and
+        # cache, so only its own choice counts; a cache from before variants has
+        # none stored, which is the same as the empty choice of the build ''.
+        if not full_rerun_reason:
+            if prev_config.get("variant_choice", {}) != self._variant_choice():
+                full_rerun_reason = (f"The variant choice of build '{self.variant}' changed, "
+                                     f"starting a full rerun.")
+
         # 2) Check source code based full reruns.
         # _save_all_source_code_hashes() checks and updates hashes for all three groups.
         # The guard stops at the first change found, but Phase 2 always regenerates
@@ -1126,6 +1144,7 @@ class CacheManager:
             "timeseries_specs"
         ]
         data = {k: self.config[k] for k in relevant_keys if k in self.config}
+        data["variant_choice"] = self._variant_choice()
         json_exchange.save_json(self.cache_folder / "config_structural.json", data)
 
         # Reset workflow_run_successfully flag

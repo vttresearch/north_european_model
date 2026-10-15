@@ -121,6 +121,10 @@ links to it.
   the order the steps run in and why, how file order and Excel tab order together decide
   which row wins, what excluding a node takes with it, and what the phase reports about a
   column nothing reads.
+- [Variants](docs/variants.md) — several versions of the same data in one workbook, such
+  as district heating by country or by city: how a row is tagged, how a config build
+  chooses an option per country, how options are checked against each other, and what a
+  PARTIAL build is.
 - [Timeseries](docs/timeseries.md) — how the build turns any hourly data source into
   Backbone input: what a processor is responsible for and what the shared pipeline does,
   what climate years and windows are, why a zero is the hard case, and what is checked
@@ -149,7 +153,7 @@ links to it.
   adds a parameter or a sheet.
 - [Running the model](docs/running-the-model.md) — how a built input folder becomes
   a solved model: the one command that starts a run, why runs happen from the Backbone
-  checkout above rather than from here, why two runs of one scenario corrupt each other,
+  checkout above rather than from here, why two runs of one input folder corrupt each other,
   how to tell a run worth trusting from one that merely finished, and what the parent
   checkout's skills and scripts already cover.
 - [Migration guide](docs/Migration%20guide.md) — what to change in a workbook or a
@@ -461,7 +465,7 @@ Python functions to build input data is called with syntax `python build_input_d
 	* `config_test.ini` for faster testing of the model.
 	* H2 heavy will be added soon.
 
-Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where the output folder name is a combination of `<output_folder_prefix>_<scenario>_<year>_<alternative>`, defined in the called config file.
+Processed input files are written to `c:\Backbone\north_european_model\<output_folder>`, where the output folder name is a combination of `<output_folder_prefix>_<scenario>_<year>_<build>`, defined in the called config file. A build is an entry of the config's `variants`, which chooses between versions of the source data; the build `''` adds no suffix, and `--variant <build>` builds only that one. See [Variants](docs/variants.md).
 
 
 
@@ -525,12 +529,12 @@ the tests work that way:
 
 **Starting a run.** `run_model.py` is the one command, and [Running the
 model](docs/running-the-model.md) is the page behind it: where a run's output goes, why
-two runs of one scenario corrupt each other, how to tell a run worth trusting from one
+two runs of one input folder corrupt each other, how to tell a run worth trusting from one
 that merely finished, and what the Backbone checkout above already covers.
 
 ```
 python run_model.py --list
-python run_model.py OT2030 --year 1998 --days 1
+python run_model.py input_ObservedTrends_2030 --year 1998 --days 1
 ```
 
 It runs the model through that checkout, which owns GAMS, the solver and the per-run
@@ -540,8 +544,8 @@ opens an interactive shell, which is convenient by hand and a hang that never en
 a script.
 
 **The check worth automating.** A one-day run on OT2030 is the cheapest thing that proves
-the whole chain end to end — a build, then `python run_model.py OT2030 --year 1998
---days 1`. From cold the two take about ten minutes together; with the build cache warm
+the whole chain end to end — a build, then `python run_model.py input_ObservedTrends_2030
+--year 1998 --days 1`. From cold the two take about ten minutes together; with the build cache warm
 the build alone is about two minutes and the solve about twenty seconds. It needs the
 [time series downloaded earlier](#downloading-required-time-series-files) to be in place;
 nothing in the pipeline can produce those.

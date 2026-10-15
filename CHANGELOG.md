@@ -70,6 +70,17 @@ not build and why, and has a documentation page of its own.
 
 ### Source workbooks
 
+- Variants replace `scenario_alternatives` … `scenario_alternatives4`, which a
+  config may no longer carry, even empty. A workbook declares variants in a
+  `variantdata` sheet and tags rows `variant:option`; the config's `variants`
+  names builds that each choose an option per country, one folder
+  `<prefix>_<scenario>_<year>_<build>` each, and `--variant <build>` builds one.
+  `add_scen_tags` is `scenario`, `year`, `variant`, `name`: the `alternative*`
+  cells are gone, and its GDX set has four dimensions.
+  [docs/variants.md](docs/variants.md)
+- Finnish district heating is the variant `dh-level`: `national`, `capitals` (the
+  default: the capital region and the rest) or `cities` (the eight nodes as before).
+  The shipped configs build two Finnish heat nodes where they built eight.
 - `hydroUpd-v1.xlsx` is `hydropower-compilation.xlsx`: a compilation of several
   sources rather than an update to one, and the model's complete and independent
   statement of hydro. External capacity vintages are cross-checks, not sources.
@@ -79,6 +90,8 @@ not build and why, and has a documentation page of its own.
   `AT00` and `SE04` reservoirs (7 and 5 MW). `FR00_ror` capacity falls
   20 500 -> 13 614 MW, the one fleet its inflow could not support.
   [docs/hydro.md](docs/hydro.md)
+- `AT00` and `DE00` run-of-river ramp limits are 0.001 higher, 0.00331 and 0.00395,
+  from runs of difficult hydro years.
 - Hydro minimum generation is Backbone's `minGen` and `minGenPenalty` on the
   turbines in `hydropower-compilation.xlsx` `unitdata`, no longer user constraints;
   same values, and `userconstraintdata_files` is empty in the shipped configs. The
@@ -279,6 +292,9 @@ not build and why, and has a documentation page of its own.
 - `run_model.py`: one run, through the parent checkout's `scripts/run_backbone.py`.
   Each run gets its own `results/<tag>/`, and an advisory lock stops a second run
   against an input folder already in use.
+- `run_model.py` takes the built input folder (`run_model.py input_ObservedTrends_2030`)
+  instead of a scenario name, and `--input-dir` is gone. `--list` lists built folders
+  and which config wrote each; the default tag is `<folder>-<year>-<days>d`.
 - `docs/running-the-model.md`: how a built folder becomes a solved model.
 - run-*.cmd: the comment claiming unique `scrdir` makes parallel runs safe was
   wrong. Runs sharing an input folder corrupt each other silently; run them one
@@ -304,6 +320,6 @@ not build and why, and has a documentation page of its own.
   inflow (was 10, 4 for wind and solar, 28 for inflow). Branch lengths are written
   as `forecastLength`, which needs a Backbone with per-branch end methods and lengths.
 - changes.inc: forecast branches read the realized hydro storage limits, except a
-  10 % higher floor in f02 (15 % for FR00's reservoir) and a 10 % lower ceiling in
+  10 % higher floor in f02 (15 % for the FR00 and ES00 reservoirs) and a 10 % lower ceiling in
   f03 (f02 was 10 % narrower and f03 10 % wider). `--forecasts` takes any count up
   to the branches built.

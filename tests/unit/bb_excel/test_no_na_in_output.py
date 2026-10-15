@@ -35,8 +35,9 @@ from tests._common.workbook_text import load_workbook_fixture
 
 FIXTURES = ("minimal", "chp", "transfer", "userconstraint", "reader_rules")
 
-#: Metadata rather than model data.
-IGNORED_SHEETS = {"index"}
+#: Metadata rather than model data. add_scen_tags names the build, and its
+#: 'variant' cell is empty for the build '' on purpose (config_reader.scenario_tags).
+IGNORED_SHEETS = {"index", "add_scen_tags"}
 
 
 def _na_columns(sheets) -> dict[str, list[str]]:

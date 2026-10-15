@@ -199,8 +199,9 @@ def tables_of(source_data_pipeline) -> dict[str, pd.DataFrame]:
 #: omit it, because normalize_dataframe creates it when it is absent. ``note``
 #: is the legacy marker ``##`` replaced; read_input_excels drops it before this
 #: question is asked, and it is listed so that a caller which does not drop it
-#: reaches the same answer.
-COMMON_COLUMNS: tuple[str, ...] = ("scenario", "year", "method", "note")
+#: reaches the same answer. ``variant`` tags a row into a variant option; the
+#: source stage reads and drops it (source_data_variants.py).
+COMMON_COLUMNS: tuple[str, ...] = ("scenario", "year", "method", "note", "variant")
 
 #: table -> the columns saying *which thing* a row is about.
 #:

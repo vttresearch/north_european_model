@@ -249,14 +249,6 @@ class TestLoadConfig:
                 _write_ini(tmp_path, MINIMAL_INI + "bb_timeseries_length = 365*5\n")
             )
 
-    def test_empty_scenario_alternatives_are_normalised_to_one_blank_entry(self, tmp_path):
-        # The scenario loop is a cartesian product; an empty axis would multiply
-        # out to zero iterations and silently build nothing.
-        config = load_config(
-            _write_ini(tmp_path, MINIMAL_INI + "scenario_alternatives = []\n")
-        )
-        assert config["scenario_alternatives"] == [""]
-
     @pytest.mark.parametrize("key", ["fueldata_files", "storagedata_files"])
     def test_rejects_the_deprecated_data_file_keys(self, tmp_path, key):
         # These were merged into nodedata_files. Failing loudly beats silently
@@ -467,9 +459,8 @@ class TestOutputFolderName:
     """The folder-name rule is shared by the builder and by ``run_model.py``.
 
     ``build_input_data.py`` uses it to decide where to write and ``run_model.py``
-    to decide what to pass as Backbone's ``--input_dir``, so a run cannot name a
-    folder a build would not have written. Pinned exactly: it names folders on
-    disk, and a change here silently points a run somewhere else.
+    to say which config and build wrote a folder. Pinned exactly: it names folders
+    on disk, and a change here silently renames every build's folder.
     """
 
     def test_spaces_are_removed_from_every_part(self):
@@ -484,15 +475,7 @@ class TestOutputFolderName:
         assert output_folder_name("input", "s", 2030) == "input_s_2030"
         assert output_folder_name("input", "s", "2030") == "input_s_2030"
 
-    def test_empty_alternatives_add_no_segment(self):
-        assert output_folder_name("input", "s", 2030, ["", "", "", ""]) == "input_s_2030"
-
-    def test_active_alternatives_append_in_order(self):
-        assert output_folder_name(
-            "input", "s", 2030, ["alt1", "", "alt3", ""]
-        ) == "input_s_2030_alt1_alt3"
-
-    def test_alternatives_default_to_none(self):
+    def test_no_build_name_adds_no_segment(self):
         assert output_folder_name("input", "s", 2030) == "input_s_2030"
 
 
@@ -503,31 +486,5 @@ class TestConfigOutputFolderNames:
         config = load_config(_write_ini(tmp_path, MINIMAL_INI))
         assert config_output_folder_names(config) == ["output_test_2030"]
 
-    def test_cartesian_product_order(self):
-        config = {
-            "output_folder_prefix": "input",
-            "scenarios": ["A", "B"],
-            "scenario_years": [2030, 2040],
-            "scenario_alternatives": ["x", "y"],
-            "scenario_alternatives2": [""],
-            "scenario_alternatives3": [""],
-            "scenario_alternatives4": [""],
-        }
-        assert config_output_folder_names(config) == [
-            "input_A_2030_x", "input_A_2030_y",
-            "input_A_2040_x", "input_A_2040_y",
-            "input_B_2030_x", "input_B_2030_y",
-            "input_B_2040_x", "input_B_2040_y",
-        ]
-
-    def test_all_four_alternative_axes_contribute(self):
-        config = {
-            "output_folder_prefix": "input",
-            "scenarios": ["s"],
-            "scenario_years": [2030],
-            "scenario_alternatives": ["a1"],
-            "scenario_alternatives2": ["a2"],
-            "scenario_alternatives3": ["a3"],
-            "scenario_alternatives4": ["a4"],
-        }
-        assert config_output_folder_names(config) == ["input_s_2030_a1_a2_a3_a4"]
+    # Several scenarios, years and builds: test_config_variants.py,
+    # TestOutputFolderNames.

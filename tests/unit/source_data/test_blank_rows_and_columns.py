@@ -162,6 +162,28 @@ class TestBlankRows:
         ])
         logger.assert_logged("are not read", level="warn")
 
+    def test_a_marked_block_below_the_end_is_silent(self, tmp_path):
+        # What the message itself tells the author to do: a check-totals block
+        # under the table, every row marked '##'. Nothing real is lost.
+        _, logger = _read(tmp_path, [
+            ["country", "capacity"],
+            ["FI", 1000],
+            [None, None],
+            ["## CHECK TOTALS", "capacity"],
+            ["## national", 1000],
+        ])
+        logger.assert_clean()
+
+    def test_only_unmarked_rows_are_counted(self, tmp_path):
+        _, logger = _read(tmp_path, [
+            ["country", "capacity"],
+            ["FI", 1000],
+            [None, None],
+            ["## check", 1000],
+            ["SE", 500],
+        ])
+        logger.assert_logged("1 row(s)", level="warn")
+
 
 class TestTheRealWorkbooksStaySilent:
     """The rule must fire on nothing that ships today, or it is noise."""

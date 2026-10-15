@@ -110,15 +110,20 @@ def force_utf8_output() -> None:
             pass
 
 
-def parse_sys_args():
+def parse_sys_args(with_variant: bool = False):
+    """(input_folder, config_file), plus the --variant build name when asked for.
+
+    `with_variant` is for build_input_data.py, which can build one build of the
+    config's `variants`; None there means every build.
+    """
     # Instructions in case of mispelled input cmd
     USAGE_MSG = (
-        "Usage: python build_input_data.py <input_folder> <config_file>,\n"
+        "Usage: python build_input_data.py <input_folder> <config_file> [--variant <build>],\n"
         "       e.g. python build_input_data.py src_files config_test.ini"
     )
 
-    # detect legacy key=val syntax
-    if any("=" in arg for arg in sys.argv[1:]):
+    # detect legacy key=val syntax; --variant=x is an option, not that
+    if any("=" in arg and not arg.startswith("--") for arg in sys.argv[1:]):
         print(USAGE_MSG)
         sys.exit(1)
     else:
@@ -137,11 +142,20 @@ def parse_sys_args():
             type=str,
             help="Config file name (relative to input_folder)"
         )
+        if with_variant:
+            parser.add_argument(
+                "--variant",
+                type=str,
+                default=None,
+                help="Build only this build of the config's variants (default: every build)"
+            )
         # argparse will print our USAGE_MSG if args are missing
         args = parser.parse_args()
         input_folder = Path(args.input_folder)
         config_file  = Path(input_folder, args.config_file)
 
+        if with_variant:
+            return (input_folder, config_file, args.variant)
         return (input_folder, config_file)
 
 
