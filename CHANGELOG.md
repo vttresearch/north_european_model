@@ -90,6 +90,8 @@ not build and why, and has a documentation page of its own.
   `AT00` and `SE04` reservoirs (7 and 5 MW). `FR00_ror` capacity falls
   20 500 -> 13 614 MW, the one fleet its inflow could not support.
   [docs/hydro.md](docs/hydro.md)
+- `AT00` and `DE00` run-of-river ramp limits are 0.001 higher, 0.00331 and 0.00395,
+  from runs of difficult hydro years.
 - Hydro minimum generation is Backbone's `minGen` and `minGenPenalty` on the
   turbines in `hydropower-compilation.xlsx` `unitdata`, no longer user constraints;
   same values, and `userconstraintdata_files` is empty in the shipped configs. The
@@ -318,6 +320,6 @@ not build and why, and has a documentation page of its own.
   inflow (was 10, 4 for wind and solar, 28 for inflow). Branch lengths are written
   as `forecastLength`, which needs a Backbone with per-branch end methods and lengths.
 - changes.inc: forecast branches read the realized hydro storage limits, except a
-  10 % higher floor in f02 (15 % for FR00's reservoir) and a 10 % lower ceiling in
+  10 % higher floor in f02 (15 % for the FR00 and ES00 reservoirs) and a 10 % lower ceiling in
   f03 (f02 was 10 % narrower and f03 10 % wider). `--forecasts` takes any count up
   to the branches built.

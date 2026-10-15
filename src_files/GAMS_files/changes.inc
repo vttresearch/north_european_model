@@ -264,11 +264,14 @@ ts_node(gn_tmp(grid, node), 'upwardLimit', f, tt)
     $ {ord(f) = 4 and ord(f) <= %forecastNumber% + 1}
     = ts_node(grid, node, 'upwardLimit', 'f00', tt) * 0.9;
 
-// additional safety margin for France
+// additional safety margin for France and Spain
 ts_node(gn_tmp(grid, node), 'downwardLimit', f, tt)
     $ {ord(f) = 3
        and ord(f) <= %forecastNumber% + 1
-       and sameAs(node, 'FR00_reservoir')}
+       and [sameAs(node, 'FR00_reservoir')
+            or sameAs(node, 'ES00_reservoir')
+            ]
+       }
     = ts_node(grid, node, 'downwardLimit', 'f00', tt) * 1.15;
 
 
