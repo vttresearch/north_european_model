@@ -184,7 +184,8 @@ happens to sit beside.
 **A fully empty row ends the sheet.** Everything below it is ignored. A row counts
 as empty when every cell is blank or whitespace. This is how you stop the table;
 it is not a spacer you can put in the middle of one. If real rows do follow it,
-they are dropped and you get a warning saying how many.
+they are dropped and you get a warning saying how many. Rows marked `##` below it
+are working material, such as a check-totals block, and stay quiet.
 
 **A column with no header is ignored.** Past the last named column that is the
 scratch area and nothing is said — several shipped sheets rely on it. A column
@@ -617,7 +618,7 @@ rule never matched.
 | `##` in any cell of a row | ignores the whole row |
 | `##` as a column header | ignores the whole column |
 | `## Description` on `unittypedata` | free text saying what the unittype is |
-| a fully empty row | stops reading the sheet there; warns if rows follow |
+| a fully empty row | stops reading the sheet there; warns if rows not marked `##` follow |
 | a column with no header, past the table | ignores that column, silently |
 | a column with no header, inside the table | ignores it, and warns |
 | `1,000.0`, `100 MW`, `(500)` in a parameter column | reports it and reads it as not set |

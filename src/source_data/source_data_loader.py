@@ -222,7 +222,8 @@ def read_input_excels(
       underscore would otherwise reach ``drop_underscore_values`` and delete its row.
     - Truncate the DataFrame at the first fully empty row (drop that row and all below).
       An "empty" cell is NA or a string consisting only of whitespace. Warned about only
-      when non-empty rows are discarded; trailing blank rows are how every sheet ends.
+      when non-empty rows without ``##`` are discarded; trailing blank rows are how every
+      sheet ends, and a ``##`` block below them is working material.
     - Drop rows carrying ``##`` in any cell, evaluated after the column drops so that
       scratch text in a helper column cannot delete a row of the real table.
     - Report and blank cells that should hold a number but do not, and cells holding an
@@ -417,9 +418,12 @@ def read_input_excels(
                 # rows are simply where the table stops and are silent -- every
                 # sheet has them. A blank row with real rows still below it is a
                 # spacer someone used mid-table, and everything under it is being
-                # thrown away.
-                below = row_is_empty.iloc[first_empty_pos:]
-                discarded = int((~below).sum())
+                # thrown away. Rows marked '##' are not counted: the row drop
+                # below removes them either way, and '##' is what this message
+                # tells the author to use.
+                below = df.iloc[first_empty_pos:]
+                lost = ~(row_is_empty.iloc[first_empty_pos:] | utils.ignored_row_mask(below))
+                discarded = int(lost.sum())
                 if discarded:
                     logger.log_status(
                         f"[{file_name}:{sheet}] An empty row at row {first_empty_pos + 2} ends "
