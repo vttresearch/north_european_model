@@ -78,6 +78,9 @@ not build and why, and has a documentation page of its own.
   `add_scen_tags` is `scenario`, `year`, `variant`, `name`: the `alternative*`
   cells are gone, and its GDX set has four dimensions.
   [docs/variants.md](docs/variants.md)
+- Finnish district heating is the variant `dh-level`: `national`, `capitals` (the
+  default: the capital region and the rest) or `cities` (the eight nodes as before).
+  The shipped configs build two Finnish heat nodes where they built eight.
 - `hydroUpd-v1.xlsx` is `hydropower-compilation.xlsx`: a compilation of several
   sources rather than an update to one, and the model's complete and independent
   statement of hydro. External capacity vintages are cross-checks, not sources.
