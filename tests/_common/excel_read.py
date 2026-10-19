@@ -59,6 +59,9 @@ PLAIN_SHEET_KEYS: dict[str, tuple[str, ...]] = {
     "unitUnittype": ("unit", "unittype"),
     "flowUnit": ("flow", "unit"),
     "effLevelGroupUnit": ("effLevel", "effSelector", "unit"),
+    # One becomeAvailable and one becomeUnavailable per unit at most; Backbone
+    # warns on a second, so 't' is deliberately not part of the key.
+    "utAvailabilityLimits": ("unit", "availabilityLimits"),
     "gnGroup": ("grid", "node", "group"),
     "p_nEmission": ("node", "emission"),
     "ts_emissionPriceChange": ("emission", "group", "t"),
@@ -89,6 +92,7 @@ EXPECTED_SHEETS = frozenset(
         "effLevelGroupUnit",
         "p_gnu_io",
         "p_unit",
+        "utAvailabilityLimits",
         "p_userconstraint",
         "p_nEmission",
         "ts_emissionPriceChange",

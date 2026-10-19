@@ -269,8 +269,10 @@ PLAUSIBLE_YEARS = range(1900, 2201)
 #: beyond twh/year has not been established, and a warning on correct data is
 #: worse than a column this check lets past.
 PARAMETER_COLUMNS: dict[str, tuple[str, ...]] = {
-    "unittypedata": (*backbone_params.PARAM_GNU, *backbone_params.PARAM_UNIT),
-    "unitdata": (*backbone_params.PARAM_GNU, *backbone_params.PARAM_UNIT),
+    "unittypedata": (*backbone_params.PARAM_GNU, *backbone_params.PARAM_UNIT,
+                     *backbone_params.UNIT_AVAILABILITY_LIMITS),
+    "unitdata": (*backbone_params.PARAM_GNU, *backbone_params.PARAM_UNIT,
+                 *backbone_params.UNIT_AVAILABILITY_LIMITS),
     "nodedata": (*backbone_params.PARAM_GN,
                  *backbone_params.PARAM_GN_BOUNDARY_TYPES),
     "demanddata": (*backbone_params.PARAM_GN,),

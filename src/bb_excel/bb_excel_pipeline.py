@@ -89,6 +89,7 @@ class BBExcelPipeline:
     # "which parameters does p_gnu_io have" expects to find.
     PARAM_GNU = backbone_params.PARAM_GNU
     PARAM_UNIT = backbone_params.PARAM_UNIT
+    UNIT_AVAILABILITY_LIMITS = backbone_params.UNIT_AVAILABILITY_LIMITS
     PARAM_GNN = backbone_params.PARAM_GNN
     PARAM_GN = backbone_params.PARAM_GN
     PARAM_GN_BOUNDARY_TYPES = backbone_params.PARAM_GN_BOUNDARY_TYPES
@@ -112,6 +113,9 @@ class BBExcelPipeline:
         self.input_folder = context.input_folder
         self.output_folder = context.output_folder
         self.scen_tags = context.scen_tags
+        # Hours in one climate window: the last time step a unit availability
+        # limit can name. 365 is config_reader's default.
+        self.window_hours = context.config.get('bb_timeseries_length', 365) * 24
 
         # The source data tables are the only data channel into this class.
         # Whatever the timeseries phase had to say about a node has already been
@@ -622,6 +626,67 @@ class BBExcelPipeline:
         # Create a new DataFrame from the list of rows with the desired columns
         effLevelGroupUnit = pd.DataFrame(rows, columns=['effLevel', 'effSelector', 'unit'])
         return effLevelGroupUnit
+
+
+    def create_utAvailabilityLimits(
+        self,
+        p_unit: pd.DataFrame,
+        df_unitdata: pd.DataFrame
+        ) -> pd.DataFrame:
+        """
+        utAvailabilityLimits(unit, t, availabilityLimits) from the
+        becomeAvailable and becomeUnavailable columns of the unit data.
+
+        A cell holds a time step number n and becomes the label t{n:06d}, counted
+        the way t_start is: 1 is t000001, the first hour of every climate window.
+        The unit is offline before its becomeAvailable step and from its
+        becomeUnavailable step on. Backbone derives p_unit('becomeAvailable') and
+        ('becomeUnavailable') from this set, so the set is what gets written.
+
+        Only units in p_unit are written, i.e. after drop_redundant_units: Backbone
+        domain-checks the set against `unit` when it loads it, so a row for a
+        dropped unit would stop the run.
+
+        0 and empty mean not set. A value that is not a whole number from 1 to
+        the window length (bb_timeseries_length * 24) is reported and left out:
+        past the window it would mean "never available" or "always available",
+        which nobody writes on purpose.
+        """
+        columns = ['unit', 't', 'availabilityLimits']
+        if p_unit.empty or 'unit' not in p_unit.columns:
+            return pd.DataFrame()
+
+        unit_rows = self._unit_rows_by_lowercase_name(df_unitdata)
+        rows = []
+        outside_window = []
+
+        for unit in p_unit['unit']:
+            unit_row = unit_rows.get(str(unit).lower())
+            if unit_row is None:
+                continue
+            for limit in self.UNIT_AVAILABILITY_LIMITS:
+                value = unit_row.get(limit.lower(), pd.NA)
+                if pd.isna(value) or value == 0:
+                    continue
+                if not (float(value).is_integer() and 1 <= value <= self.window_hours):
+                    outside_window.append(f"{unit} {limit} = {value:g}")
+                    continue
+                rows.append({'unit': unit, 't': f"t{int(value):06d}", 'availabilityLimits': limit})
+
+        if outside_window:
+            self.logger.log_status(
+                f"{len(outside_window)} unit availability limit(s) are not a time step "
+                f"of the {self.window_hours} h window and were left out of "
+                f"utAvailabilityLimits: {summarise(outside_window)}. Write a whole "
+                f"number from 1 to {self.window_hours}; 1 is t000001.",
+                level="warn"
+            )
+
+        # No rows is an empty sheet, as restype is, rather than a header over
+        # nothing: no unit in the model has a limit.
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows, columns=columns)
 
 
 
@@ -1734,12 +1799,12 @@ class BBExcelPipeline:
         already carry explicit connection suffixes.
         """
 
-        # --- 1) df_unitdata: PARAM_GNU + PARAM_UNIT ---
+        # --- 1) df_unitdata: PARAM_GNU + PARAM_UNIT + UNIT_AVAILABILITY_LIMITS ---
         # The only block that is not a plain name test: a param_gnu column may
-        # carry a connection suffix, a param_unit column may not, and saying so
+        # carry a connection suffix, a unit-level column may not, and saying so
         # is the one thing this method warns about.
         _gnu  = {p.lower() for p in self.PARAM_GNU}
-        _unit = {p.lower() for p in self.PARAM_UNIT}
+        _unit = {p.lower() for p in self.PARAM_UNIT + self.UNIT_AVAILABILITY_LIMITS}
         misplaced_suffix = []
         df = self.df_unitdata.copy()
         for col in df.columns:
@@ -1856,6 +1921,7 @@ class BBExcelPipeline:
         # Create remaining unit related tables
         flowUnit = self.create_flowUnit(self.df_unitdata, unitUnittype)
         effLevelGroupUnit = self.create_effLevelGroupUnit(self.df_unitdata, unitUnittype)
+        utAvailabilityLimits = self.create_utAvailabilityLimits(p_unit, self.df_unitdata)
 
 
         # --- Convert transfer derived input data tables to DataFrames ---
@@ -1953,6 +2019,7 @@ class BBExcelPipeline:
             'effLevelGroupUnit': effLevelGroupUnit,
             'p_gnu_io': p_gnu_io,
             'p_unit': p_unit,
+            'utAvailabilityLimits': utAvailabilityLimits,
             'p_userconstraint': p_userconstraint,
             # emission based input tables
             'p_nEmission': p_nEmission,

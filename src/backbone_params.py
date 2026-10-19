@@ -51,6 +51,7 @@ PARAM_GNU = [
     'invEnergyCost',
     'fomCosts',
     'vomCosts',
+    'profitMargin',
     'inertia',
     'unitSizeMVA',
     'availabilityCapacityMargin',
@@ -93,6 +94,15 @@ PARAM_UNIT = [
     'investMIP',
     'maxUnitCount',
     'minUnitCount',
+]
+
+#: The members of Backbone's availabilityLimits set. A unittypedata or unitdata
+#: column of either name holds a time step number and becomes a row of
+#: utAvailabilityLimits(unit, t, availabilityLimits), not a p_unit value:
+#: Backbone derives p_unit('becomeAvailable') and ('becomeUnavailable') from that
+#: set ("Unit lifetime" in inc/1e_inputs.gms), so the set is the input. Unit-level,
+#: like PARAM_UNIT, so a connection suffix on one of these is an error.
+UNIT_AVAILABILITY_LIMITS = [
     'becomeAvailable',
     'becomeUnavailable',
 ]
@@ -133,6 +143,9 @@ PARAM_GN = [
     'storageValueUseTimeseries',
     'influx',
     'price',
+    'maxInvest',
+    'invCost',
+    'annuityFactor',
 ]
 
 #: The boundary types this project writes. Values of the param_gnBoundaryTypes

@@ -112,7 +112,7 @@ class TestAZeroRowSheetKeepsItsColumnDimension:
 
 class TestAPopulatedSheetKeepsOnlyWhatWasSet:
     def test_p_unit_writes_only_the_parameters_in_use(self):
-        """p_unit lists all 26 PARAM_UNIT entries; a build sets a handful.
+        """p_unit lists every PARAM_UNIT entry; a build sets a handful.
 
         The rest used to be written as columns of zeros -- 19 of 29 columns in
         an OT2030 build. The survivors here are exactly the PARAM_UNIT_DEFAULTS

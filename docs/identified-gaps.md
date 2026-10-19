@@ -24,10 +24,10 @@ Six kinds of gap, and they are not equally interesting:
 - **Deferred by the source data pass** — found while measuring, deliberately not
   acted on.
 - **Backbone parameters this build does not write** — derived from
-  `../inc/1a_definitions.gms`. Mostly investment, reserves and part-load
-  efficiency.
+  `../inc/1a_definitions.gms`. Mostly part-load efficiency and the boundary
+  slack tiers.
 - **Backbone symbols with no sheet at all** — `src_files/indexSheet.xlsx` declares
-  63, the builder writes 21, and three more arrive as GDX. Reserves, group
+  63, the builder writes 22, and three more arrive as GDX. Reserves, group
   policies and unit constraints are the substance of what is left.
 
 The last two are inventory. The first four are the ones that change what someone
@@ -118,17 +118,26 @@ number here", once the sweep has been done.
 ## Backbone parameters this build does not write
 
 Re-derive rather than trusting this table: Backbone's own vocabulary moves. Last
-derived **2026-09-07**, the `p_gnu_io` row **2026-09-25** and the `p_gn` and
-`param_gnBoundaryTypes` rows **2026-09-28**, against the `param_*` set declarations in
+derived **2026-09-07**, the `param_gnBoundaryTypes` row **2026-09-28** and the
+`p_gnn` and `p_unit` rows **2026-10-19**, against the `param_*` set declarations in
 `../inc/1a_definitions.gms` rather than by hand — see
 [How to re-derive it](#how-to-re-derive-it) below.
 
+`p_gn` and `p_gnu_io` are written in full and have no row. A member no build could
+usefully write is not counted on either side. Backbone calculates four of them from
+other input — `p_gnu_io`'s `maxTsDelay` (`param_gnu_calculated`) and `p_unit`'s
+`becomeAvailable`, `becomeUnavailable` and `lastStepNotAggregated`
+(`param_unit_calculated`), both in `../inc/1a_definitions.gms`. The two availability
+limits are written as the set they are calculated from — see
+[Investment and unit lifetimes](investment.md#when-a-unit-exists). `p_gnn`'s
+`transferCapBidirectional` is deprecated in `../docs/dictionary.md` and nothing
+reads it; its GAMS declaration does not say so, which is why the recipe below
+still counts it.
+
 | Sheet | Written here | In Backbone, not written |
 |---|---|---|
-| `p_gn` | 18 of 21 | `maxInvest`, `invCost`, `annuityFactor` — node-level investment |
-| `p_gnn` | 12 of 18 | `transferCapBidirectional`, `boundStateMaxDiff`, `unitSize`, `portion_of_transfer_to_reserve`, `useTimeseriesAvailability`, `useTimeseriesLoss` |
-| `p_gnu_io` | 34 of 36 | `profitMargin`, `maxTsDelay` |
-| `p_unit` | 26 of 79 | `eff02`–`eff12` and `op02`–`op12`, the whole `hr*` / `hrop*` heat-rate family, `section`, `hrsection`, `outputCapacityTotal`, `unitOutputCapacityTotal`, `lastStepNotAggregated` |
+| `p_gnn` | 12 of 17 | `boundStateMaxDiff`, `unitSize`, `portion_of_transfer_to_reserve`, `useTimeseriesAvailability`, `useTimeseriesLoss` |
+| `p_unit` | 24 of 76 | `eff02`–`eff12` and `op02`–`op12`, the whole `hr*` / `hrop*` heat-rate family, `section`, `hrsection`, `outputCapacityTotal`, `unitOutputCapacityTotal` |
 | `param_gnBoundaryTypes` | 7 of 47 | `minSpill`, `upwardSlack01`–`upwardSlack20`, `downwardSlack02`–`downwardSlack20` |
 | `param_gnBoundaryProperties` | 4 of 5 | `multiplier` — deliberate, see above |
 
@@ -142,11 +151,10 @@ The check also runs the other way, and that direction is clean: **every name in
 `backbone_params.py` is a member of the Backbone set it claims to belong to.**
 Nothing had verified that before.
 
-Two of these are more than a missing column. **The efficiency curve stops at two
+One of these is more than a missing column. **The efficiency curve stops at two
 points**: a unit gets `eff00` / `eff01` and `op00` / `op01`, so every part-load
 efficiency in the model is a single straight segment, and the `hr*` heat-rate form
-is not available at all. And **investment is expressible per unit but not per
-node**, since `p_gn`'s three investment parameters are the three that are missing.
+is not available at all.
 
 *Where it would live:* [Input Excel builder](input-excel.md) for the parameters
 themselves, [Source workbook conventions](source-workbook-conventions.md) for the
@@ -173,11 +181,11 @@ eleven names. Compare against the `PARAM_*` lists in `src/backbone_params.py`.
 ## Backbone symbols with no sheet at all
 
 `src_files/indexSheet.xlsx` is this project's own statement of what a Backbone
-workbook can carry: 63 symbols. The builder writes 21 of them, plus the `index`
-sheet itself — the 22 that [Input Excel builder](input-excel.md) lists. Of the
+workbook can carry: 63 symbols. The builder writes 22 of them, plus the `index`
+sheet itself — the 23 that [Input Excel builder](input-excel.md) lists. Of the
 rest, 15 are `ts_*` and would arrive as GDX rather than as a sheet, and this
 project produces three of those: `ts_cf`, `ts_influx` and `ts_node`. That leaves
-**27 declared in the index sheet and written by no route at all**:
+**26 declared in the index sheet and written by no route at all**:
 
 - **Reserves, entirely** — `p_gnuReserves`, `p_gnnReserves`, `p_gnuRes2Res`,
   `p_groupReserves`, `p_groupReserves3D`, `p_groupReserves4D`, `restypeDirection`,
@@ -190,8 +198,7 @@ project produces three of those: `ts_cf`, `ts_influx` and `ts_node`. That leaves
   constraint can express some of the same things through `p_userconstraint`, which
   is written; the unit-constraint form is not.
 - **The rest** — `p_storageValue`, `p_uStartupfuel`, `p_gnuBoundaryProperties`,
-  `unitUnitEffLevel`, `utAvailabilityLimits`, `unit_fail`, `gnss_bound`,
-  `uss_bound`, `t_invest`.
+  `unitUnitEffLevel`, `unit_fail`, `gnss_bound`, `uss_bound`, `t_invest`.
 
 `p_gnuEmission` is a further case: it is in `../docs/dictionary.md` but not even in
 this project's index sheet, so per-unit emission factors have no route into the

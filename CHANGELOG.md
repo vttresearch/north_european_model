@@ -181,6 +181,9 @@ not build and why, and has a documentation page of its own.
   written as a column of zeros.
 - Warnings name the first three offenders and then count the rest, instead of
   one line each. [docs/timeseries.md](docs/timeseries.md)
+- `p_gn` `maxInvest`, `invCost`, `annuityFactor` and `p_gnu_io` `profitMargin` are read.
+- `becomeAvailable` / `becomeUnavailable` are written as `utAvailabilityLimits`, not
+  `p_unit`; a cell is a time step number, `1` = `t000001`. [docs/investment.md](docs/investment.md)
 
 ### Test suite
 

@@ -103,6 +103,10 @@ Backbone repository. A cell in one of these has to be a number; see
 [Cells that should be numbers](#cells-that-should-be-numbers) for what happens
 when it is not.
 
+Two unit columns hold a time step rather than a quantity: `becomeAvailable` and
+`becomeUnavailable`, where `1` is the first hour of the climate window. See
+[When a unit exists](investment.md#when-a-unit-exists).
+
 `method` is neither; it is an instruction, described under
 [Combining rows](#combining-rows).
 
@@ -522,7 +526,7 @@ so the message offers all three:
 - **it is yours, not the model's** — put `##` at the start of the header, and
   nothing more is said about it;
 - **it names a real Backbone parameter this build does not write yet** —
-  `profitMargin`, `invCost`, the `hr*` heat-rate family and about a hundred
+  `boundStateMaxDiff`, `eff02`, the `hr*` heat-rate family and about a hundred
   others. [Identified gaps](identified-gaps.md) has the list. The column still
   reaches nothing, which is why it is reported rather than quietly accepted.
 
@@ -663,6 +667,7 @@ rule never matched.
 | `add` or `multiply` on a key nothing established | reports it; `multiply` writes nothing |
 | `remove` on a key nothing established | nothing, and no message |
 | `grid_output1` on a `unitdata` sheet | discards it; `unittypedata` says which grid |
+| `becomeAvailable` = `13` on a unit or a unittype | the unit is offline before `t000013` |
 | a node in `exclude_nodes` | drops it, and every unit connected to it, whole |
 | an empty `variant` cell | reads the row in every build |
 | `dh-level:cities` as a `variant` | reads the row where a build chose `cities` |

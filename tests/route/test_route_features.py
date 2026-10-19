@@ -307,3 +307,59 @@ class TestMinimumGeneration:
         inputs = rows_for(min_gen.sheets["p_gnu_io"], unit="FI_mustRun", input_output="input")
         assert inputs["minGen"].tolist() == [60]
         assert not (pd.to_numeric(inputs["minGenPenalty"], errors="coerce") > 0).any()
+
+
+# Two units with an availability limit each: one set for the whole unittype, one
+# on the unit's own row. The test config's window is two days, so 48 hours.
+AVAILABILITY = """
+[unittypedata]
+scenario | year | unittype | grid_output1 | eff00 | isSource | becomeAvailable
+all      | 1    | newWind  | elec         | 1     | 1        | 13
+all      | 1    | oldWind  | elec         | 1     | 1        |
+
+[nodedata]
+Country | Grid | Scenario | Year | nodeBalance
+FI      | elec | all      | 1    | 1
+
+[unitdata]
+Country | unittype | unit_name_prefix | Scenario | Year | capacity_output1 | becomeUnavailable
+FI      | newWind  |                  | all      | 1    | 100              |
+FI      | oldWind  |                  | all      | 1    | 100              | 30
+
+[demanddata]
+Country | Grid | Scenario | Year | TWh/year
+FI      | elec | all      | 1    | 1
+"""
+
+
+@pytest.fixture(scope="module")
+def availability(tmp_path_factory):
+    return run_route(
+        tmp_path_factory.mktemp("availability"), workbooks={"data.xlsx": AVAILABILITY}
+    )
+
+
+class TestUnitAvailabilityLimits:
+    def test_the_route_runs_cleanly(self, availability):
+        availability.logger.assert_no_errors()
+        assert_workbook_consistent(availability.sheets)
+
+    def test_no_column_is_reported_unread(self, availability):
+        availability.logger.assert_not_logged("read by nothing")
+
+    def test_each_limit_becomes_a_row_of_the_set(self, availability):
+        rows = availability.sheets["utAvailabilityLimits"].to_dict("records")
+        assert {(r["unit"], r["t"], r["availabilityLimits"]) for r in rows} == {
+            ("FI_newWind", "t000013", "becomeAvailable"),
+            ("FI_oldWind", "t000030", "becomeUnavailable"),
+        }
+
+    def test_p_unit_does_not_carry_them(self, availability):
+        """Backbone derives these p_unit values from the set; the set is the input."""
+        columns = set(availability.sheets["p_unit"].columns)
+        assert not {"becomeAvailable", "becomeUnavailable"} & columns
+
+    def test_the_index_sheet_declares_the_set(self, availability):
+        # Without the index row GDXXRW never reads the sheet, and the limits
+        # silently do nothing.
+        assert "utAvailabilityLimits" in set(availability.sheets["index"]["Symbol"])

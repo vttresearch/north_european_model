@@ -147,6 +147,10 @@ links to it.
   gets, why a parameter column is missing whenever nothing set it, how a node is decided to
   be a price or a balance or a storage node, which capacities and storage start levels are
   derived rather than read, and what each of its warnings is asking you to change.
+- [Investment and unit lifetimes](docs/investment.md) — which source columns let the
+  model build units, transfer links and storage, how `becomeAvailable` and
+  `becomeUnavailable` say when a unit exists, and what an investment run needs that this
+  project does not ship.
 - [Identified gaps](docs/identified-gaps.md) — a working inventory rather than a
   reference page: what Backbone can express that this build does not write, and which
   of its own rules are known to be provisional. Read it before designing anything that

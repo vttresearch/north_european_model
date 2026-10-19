@@ -194,6 +194,7 @@ _REFERENCES: tuple[tuple[str, str, str, str], ...] = (
     ("flowUnit", "unit", "unit", "unit"),
     ("flowUnit", "flow", "flow", "flow"),
     ("effLevelGroupUnit", "unit", "unit", "unit"),
+    ("utAvailabilityLimits", "unit", "unit", "unit"),
     ("p_nEmission", "node", "node", "node"),
     ("p_nEmission", "emission", "emission", "emission"),
     ("gnGroup", "grid", "grid", "grid"),

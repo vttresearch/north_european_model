@@ -1,7 +1,7 @@
 # Input Excel builder
 
 The last phase of a build. `BBExcelPipeline` reads the merged source data tables
-and writes `inputData.xlsx` — 22 sheets, one per Backbone symbol — into the
+and writes `inputData.xlsx` — 23 sheets, one per Backbone symbol — into the
 scenario's output folder, where the GAMS side converts it to GDX.
 
 It is the point where this project's data conventions become Backbone's. Python
@@ -36,7 +36,7 @@ phase that runs before it.
 |---|---|---|
 | node | `grid`, `node`, `p_gn`, `p_gnBoundaryPropertiesForStates` | `p_gn`, `p_gnBoundary…` |
 | transfer | `p_gnn` | `p_gnn` |
-| unit | `unit`, `unittype`, `unitUnittype`, `flowUnit`, `effLevelGroupUnit`, `p_gnu_io`, `p_unit`, `p_userconstraint` | `p_gnu_io`, `p_unit` |
+| unit | `unit`, `unittype`, `unitUnittype`, `flowUnit`, `effLevelGroupUnit`, `p_gnu_io`, `p_unit`, `utAvailabilityLimits`, `p_userconstraint` | `p_gnu_io`, `p_unit` |
 | emission | `p_nEmission`, `ts_emissionPriceChange`, `gnGroup` | — |
 | domains | `group`, `flow`, `emission`, `restype` | — |
 | other | `index`, `add_scen_tags` | — |
@@ -55,6 +55,7 @@ Sizes below are from the Observed Trends 2030 build (`config_OT2030.ini`):
 
 - [The second header row](#the-second-header-row)
 - [Units it drops](#units-it-drops)
+- [When a unit is available](#when-a-unit-is-available)
 - [Capacities it fills in](#capacities-it-fills-in)
 - [Zero is not a number here](#zero-is-not-a-number-here)
 - [Storage start levels](#storage-start-levels)
@@ -107,6 +108,20 @@ Dropping is the intended way to switch a unit off for a scenario: give it zero
 capacity and no investment path in the source workbook, and it leaves the model
 rather than sitting in it doing nothing.
 
+## When a unit is available
+
+A `becomeAvailable` or `becomeUnavailable` column on `unittypedata` or `unitdata`
+holds a time step number, and becomes a row of the `utAvailabilityLimits` sheet:
+`13` is `t000013`, counted the way `t_start` is, so `1` is the first hour of the
+climate window. The unit is offline before its `becomeAvailable` step and from its
+`becomeUnavailable` step on. Neither goes to `p_unit`: Backbone calculates the
+`p_unit` values of the same names from this set.
+
+Only units that survive [the drop above](#units-it-drops) get a row, because
+Backbone checks every row's unit against the `unit` set. No limit anywhere writes an
+empty sheet. [Investment and unit lifetimes](investment.md#when-a-unit-exists) has
+the uses — commissioning, decommissioning, a maintenance break, vintages.
+
 ## Capacities it fills in
 
 Where one side of a unit has a capacity and the other does not, the builder
@@ -141,9 +156,9 @@ before the sheet is written. Measured on two builds:
 
 | Sheet | OT2030 | NT2040 | of |
 |---|---|---|---|
-| `p_gnu_io` | 9 | 17 | 32 `param_gnu` |
-| `p_unit` | 7 | 11 | 26 `param_unit` |
-| `p_gn` | 8 | 8 | 18 `param_gn` |
+| `p_gnu_io` | 9 | 17 | 35 `param_gnu` |
+| `p_unit` | 7 | 11 | 24 `param_unit` |
+| `p_gn` | 8 | 8 | 21 `param_gn` |
 | `p_gnn` | 5 | 5 | 12 `param_gnn` |
 
 One parameter per sheet is kept even when empty — `capacity`, `isActive` or
@@ -266,6 +281,7 @@ happened.
 | `N node(s) have a 'relative' start share but no state` | give the node a storage boundary such as `upwardLimit`, or remove the share |
 | `df_unitdata has no emission_group* columns` | no unit will produce emissions; check the unittype files |
 | `N unit data column(s) name a unit-level parameter with a connection suffix` | e.g. `availability_output1`; `param_unit` columns are per unit, drop the suffix |
+| `N unit availability limit(s) are not a time step of the … h window` | write a whole number from 1 to the window length in hours; see [When a unit is available](#when-a-unit-is-available) |
 | `p_userconstraint has N row(s) with an empty 'group'/'parameter'` | Backbone cannot resolve either; fill them in |
 | `The Backbone input excel file … is currently open` | close Excel and rerun |
 
