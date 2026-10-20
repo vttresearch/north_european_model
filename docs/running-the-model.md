@@ -23,12 +23,38 @@ model.
   wrote: `python run_model.py input_ObservedTrends_2030`.
 - **The unit of parallelism is the input folder, not the run.** Two input folders
   can run at once; two runs of *the same* folder cannot, and the failure is silent.
+- **Schedule and investment runs are run differently.** The command is the same
+  and the init file differs. The rules on threads, parallel runs and pinning
+  below are for schedule runs, the default.
+- **A schedule run's speed is in running several at once.** Its solver uses one
+  core, so runs side by side, unpinned, finish far more per hour than one at a
+  time. Add runs until memory runs low. Holding runs on the performance cores is
+  an optional safeguard on top.
 - **Never write to `../input` or `../output`.** Those are shared with the Backbone
   repository and with whatever else is running. A run that fails to apply its
   `--output_dir` lands in `../output` without saying so — see *Traps* below.
 - **A run that finishes is not a run to trust.** Exit code, then `warnings.log`,
   then the solve status, then the dummies.
 - **The `run-*.cmd` files are the by-hand route.** Quick, and strictly one at a time.
+
+## Schedule runs and investment runs
+
+Both start with `run_model.py` on the same built input folder. The init file
+makes the difference: `scheduleInit.gms` unless `-- --init_file=<file>` names
+another. They differ in almost everything that decides how to run them:
+
+| | Schedule run | Investment run |
+|---|---|---|
+| Init file | `scheduleInit.gms`, the default, shipped | your own, such as `investInit.gms`; none is shipped yet |
+| What is solved | one day after another, each solve looking a horizon ahead | one large solve over the periods the init file picks |
+| `--days`, `--forecasts`, horizon, forecast branches | read by `scheduleInit.gms` | not read, unless your init file reads them |
+| Solver threads | one, from `1_options.gms` | more: `--threads -1` |
+| Several at once | the way to go faster, until memory runs low | each wants several cores and holds its whole problem in memory |
+| Performance-core pin | an optional safeguard for a long run | no: it would hold a many-thread solve on a few cores |
+
+The rest of this page is about schedule runs where the two differ.
+[Running an investment model](investment.md#running-an-investment-model) is the
+investment side.
 
 ## Running one case
 
@@ -62,6 +88,8 @@ Useful flags:
 | `--tag` | name the output folder something other than `<input folder>-<year>-<days>d` |
 | `--solver`, `--gams` | override what the Backbone checkout would pick |
 | `--force` | start even though another run holds this input folder |
+| `--cpus` | keep a run on the fast cores — see [Performance cores](#performance-cores-an-optional-safeguard) |
+| `--threads` | solver threads for this run — see [Solver threads](#solver-threads) |
 
 Anything else goes to Backbone after a bare `--`:
 
@@ -76,6 +104,8 @@ rather than from any prose, including this page. For Backbone's own parameters
 see `../docs/running-backbone/command-line-parameters.md`.
 
 ## Horizon and horizon discount
+
+Schedule runs only: this section and the next are what `scheduleInit.gms` sets.
 
 Each daily solve looks `bb_horizon_weeks` ahead: 52 weeks by default, set in
 `src_files/config_*.ini` and written into `scheduleInit.gms` when the input
@@ -142,6 +172,24 @@ So:
 - One input folder in parallel — only with a copy of it per concurrent run. An
   input folder here is about 456 MB, which is the real price of going wider.
 
+**For schedule runs, several at once is where the speed is.** A schedule run's
+solver uses one core (see [Solver threads](#solver-threads)), so a machine with
+several cores can carry several runs. Each one added slows the others a little, because the cores share a
+power budget and memory, but together they finish far more per hour than one run
+at a time. Leave them unpinned, so the operating system can use every core.
+
+**Memory runs out before the cores do.** Each run holds its model in memory, and
+its results so far: up to about a gigabyte for a short OT2030 run, and more for a
+year run, whose results build up as it goes. Watch free memory as the runs start
+(Task Manager, *Performance*). Once it is gone, Windows moves memory to disk and
+every run slows to a crawl, so start no more runs than fit. On a machine with
+8 GB, that is only a few.
+
+**An investment run does not follow this.** Its one solve uses several cores,
+and it holds the whole problem in memory at once, so a second one beside it
+takes from the first. See
+[Running an investment model](investment.md#running-an-investment-model).
+
 `run_model.py` takes an advisory lock on the input folder and refuses to start a
 second run against it, naming the one that holds it. The lock is advisory on
 purpose: it stops the script colliding with itself, which is what a sweep does,
@@ -153,6 +201,67 @@ checkout already has the two rungs above it, with resume, a wall-clock budget an
 one-toolchain-per-batch enforcement:
 `../docs/automation/scripted-and-batch-runs.md`, and
 `../.claude/skills/backbone-scenario-runner/` for the experiment-design half.
+
+## Solver threads
+
+`1_options.gms` sets `threads = 1`, and one thread wins in schedule runs only.
+Given more, CPLEX races several LP algorithms at once on each daily solve, and
+dual simplex, which uses one core, has finished every schedule solve logged here:
+the other threads only take cores from runs beside it. One thread does the same
+work, with the same iterations and the same objective, in less time.
+
+An investment run is the other case: one large solve, where the solver can put
+several threads to work. The setting is shared by both, because both read the
+input folder's `1_options.gms`, so an investment run raises it for itself with
+`--threads -1`
+([Running an investment model](investment.md#running-an-investment-model)).
+
+`--threads N` changes it for one run, over the input folder's own setting. With
+`--cpus`, keep it no larger than the processors listed, or the threads that lose
+the race crowd the one that finishes, and the run is slower than unpinned. It
+writes `option threads = N;` into a mod folder inside the run's own output
+folder, passed in the highest `--modN_dir` slot your own arguments leave free. A
+later slot wins, so it overrides the input folder and any mod of yours below it.
+
+## Performance cores: an optional safeguard
+
+Many recent processors have two kinds of core: fast performance cores and slower
+efficiency cores, where the same solver work takes noticeably longer. The
+operating system usually gives a run a fast one, but not reliably: a run started
+beside other work, on battery or during a virus scan can land on a slow one. This
+section is about long schedule runs. An investment run is not pinned: held on a
+few cores, its many-thread solve loses the rest.
+
+`--cpus` holds GAMS and the solver on the logical processors listed, for as long
+as the run lasts:
+
+```
+python run_model.py input_ObservedTrends_2030 --year 2015 --days 365 --cpus <list>
+```
+
+- **A safeguard, not a speed-up.** On a quiet machine an unpinned run already gets
+  a fast core, and holding parallel runs on the performance cores adds little to
+  what running them in parallel gives. What it buys is that a long run cannot
+  slip onto a slow core when something else starts.
+- **Fewer pinned runs than performance cores.** A pinned run cannot move. With
+  every performance core held, other work lands on the same cores and slows all of
+  them, where unpinned runs would move to free ones. Run the rest unpinned.
+- **Only with the list `local-setup.txt` records.** Which processors are the fast
+  ones is for the operating system to say, and the Backbone checkout's
+  `backbone-quickstart` skill has a check that finds them and proves the pin. With
+  no list recorded, do not guess one.
+- **Check that it took**, once, while the run is going:
+  `Get-Process gams, gamscmex | Select-Object Name, ProcessorAffinity` prints the
+  processors as a mask, one bit each: 15 is processors 0-3.
+- **Processor affinity** is how the pin works: Windows and Linux have it, macOS
+  does not. On macOS the flag is refused, as is a processor the machine lacks, both
+  before GAMS starts.
+
+On such a machine an unpinned run's wall time includes whichever kind of core it
+landed on, so compare runs by solver iterations, not by wall clock.
+`../.claude/skills/backbone-scenario-runner/references/pinning-long-runs.md` has
+the Backbone checkout's reasoning, and what to do for each thing a machine's
+record can say.
 
 ## Is it still running?
 

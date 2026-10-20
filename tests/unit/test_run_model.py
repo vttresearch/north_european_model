@@ -10,6 +10,7 @@ pointed at, which is where a wrong answer would cost a run.
 """
 
 import json
+import re
 import textwrap
 from types import SimpleNamespace
 
@@ -90,8 +91,8 @@ class TestTheRun:
     def test_backbone_is_given_the_folder_relative_to_its_root(self, tmp_path):
         bb_root = tmp_path / "backbone"
         folder = built(bb_root / "model", "input_ObservedTrends_2030_sens1")
-        args = SimpleNamespace(gams=None, solver=None, show=False, year=2015, days=7,
-                               debug="1", backbone_args=[])
+        args = SimpleNamespace(gams=None, solver=None, cpus=None, show=False, year=2015,
+                               days=7, debug="1", backbone_args=[])
         argv = run_model.build_argv(args, bb_root, folder, bb_root / "model" / "results" / "t")
         assert "--input_dir=model/input_ObservedTrends_2030_sens1" in argv
         assert "--output-dir" in argv and "model/results/t" in argv
@@ -100,6 +101,76 @@ class TestTheRun:
         # The positional argument is the folder; there is no second way to name it.
         with pytest.raises(SystemExit):
             run_model.main(["--input-dir", "x"])
+
+
+class TestPinningALongRun:
+    """--cpus is the parent runner's own flag; --threads is the layer that goes with it."""
+
+    @staticmethod
+    def argv(tmp_path, *, cpus=None, backbone_args=(), threads_layer=None):
+        bb_root = tmp_path / "backbone"
+        folder = built(bb_root / "model", "input_x")
+        output_dir = bb_root / "model" / "results" / "t"
+        args = SimpleNamespace(gams=None, solver=None, cpus=cpus, show=False, year=2015,
+                               days=365, debug="1", backbone_args=list(backbone_args))
+        layer = output_dir / threads_layer if threads_layer else None
+        return run_model.build_argv(args, bb_root, folder, output_dir, layer)
+
+    def test_cpus_goes_to_the_runner_not_to_gams(self, tmp_path):
+        # The pin is the runner's process affinity, which GAMS inherits. Behind the
+        # bare -- it would reach GAMS as a --cpus parameter that nothing reads.
+        argv = self.argv(tmp_path, cpus="0-3")
+        cut = argv.index("--")
+        assert argv[argv.index("--cpus") + 1] == "0-3"
+        assert argv.index("--cpus") < cut
+
+    def test_unpinned_unless_asked(self, tmp_path):
+        argv = self.argv(tmp_path)
+        assert "--cpus" not in argv
+        assert not any(re.match(r"--mod\d_dir=", a) for a in argv)
+
+    def test_the_threads_layer_takes_the_last_slot(self, tmp_path):
+        # Backbone includes the slots' 1_options.gms in order and the last wins.
+        argv = self.argv(tmp_path, threads_layer=run_model.THREADS_LAYER)
+        assert argv[-1] == f"--mod5_dir=model/results/t/{run_model.THREADS_LAYER}"
+
+    def test_the_callers_own_mods_keep_their_slots(self, tmp_path):
+        argv = self.argv(tmp_path, backbone_args=["--mod1_dir=mods/a", "--mod5_dir=mods/b"],
+                         threads_layer=run_model.THREADS_LAYER)
+        assert "--mod1_dir=mods/a" in argv and "--mod5_dir=mods/b" in argv
+        assert argv[-1].startswith("--mod4_dir=")
+
+    def test_no_free_slot_is_refused(self, tmp_path):
+        # Dropping the cap quietly would leave a pinned run on the model's own count.
+        taken = [f"--mod{n}_dir=mods/m{n}" for n in range(1, 6)]
+        with pytest.raises(SystemExit, match="all 5 are taken"):
+            self.argv(tmp_path, backbone_args=taken, threads_layer=run_model.THREADS_LAYER)
+
+    def test_the_layer_sets_option_threads(self, tmp_path):
+        layer = run_model.write_threads_layer(tmp_path / "results" / "t" / "layer", 1)
+        assert (layer / "1_options.gms").read_text(encoding="utf-8") == "option threads = 1;\n"
+
+
+class TestScheduleAndInvestmentRuns:
+    """1_options.gms gives every run one thread, which wins in schedule runs only."""
+
+    @staticmethod
+    def note(*backbone_args, threads=None):
+        return run_model.threads_note(
+            SimpleNamespace(backbone_args=list(backbone_args), threads=threads))
+
+    def test_a_schedule_run_is_silent(self):
+        assert self.note() is None
+        assert self.note("--init_file=scheduleInit.gms") is None
+
+    def test_another_init_file_on_one_thread_is_told_how_to_raise_it(self):
+        note = self.note("--debug=2", "--init_file=investInit.gms")
+        assert "--init_file=investInit.gms" in note and "--threads -1" in note
+
+    def test_an_init_file_with_threads_set_is_silent(self):
+        # The caller has chosen; the note would only repeat what they did.
+        assert self.note("--init_file=investInit.gms", threads=-1) is None
+        assert self.note("--init_file=investInit.gms", threads=1) is None
 
 
 class TestList:

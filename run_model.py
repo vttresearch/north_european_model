@@ -79,11 +79,37 @@ A solver is a fact about the machine, and machine facts stay out of tracked
 files. Left alone, the parent resolves one and prints which it picked; `--solver`
 and the BB_SOLVER environment variable override it. This is a deliberate
 difference from the `run-*.cmd` files, which hardcode one.
+
+
+THREADS, PARALLEL RUNS AND THE PERFORMANCE CORES
+
+Schedule and investment runs are run differently; the init file decides which a
+run is. The input folder's `1_options.gms` gives the solver one thread, which wins
+in schedule runs only: dual simplex, which uses one core, finishes every daily
+solve. So a schedule run's speed is in running several input folders at once,
+unpinned, until memory runs low.
+
+`--threads` sets the solver's threads for one run, over that setting. An
+investment run, one large solve, can use more and should get them, unpinned
+(`docs/investment.md`). Never set it above the processors `--cpus` lists: CPLEX
+then races LP algorithms on more threads than cores, and the losing ones slow the
+one that finishes. The setting is a mod
+folder in this run's output folder whose `1_options.gms` sets `option threads`,
+in the highest `--modN_dir` slot the caller left free -- the same layer the
+parent's runner and performance-core probe use.
+
+`--cpus` is the parent's own flag, passed through, and an optional safeguard for
+schedule runs: it holds GAMS and the solver on the listed logical processors, so
+a long run cannot slip onto an efficiency core. Fewer pinned runs than performance cores, and only
+with the list `local-setup.txt` records.
+`../.claude/skills/backbone-scenario-runner/references/pinning-long-runs.md` is
+the parent's reasoning.
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -100,6 +126,10 @@ if str(HERE) not in sys.path:
 
 LOCK_NAME = ".run_model.lock"
 STALE_HOURS = 24
+THREADS_LAYER = "solver-threads"
+SCHEDULE_INIT = "scheduleInit.gms"
+# Backbone reads --mod1_dir to --mod5_dir, and a later slot's 1_options.gms wins.
+MOD_DIR_SLOTS = 5
 
 
 def find_backbone_root(start: Path) -> Path:
@@ -264,7 +294,52 @@ def take_lock(folder: Path, tag: str, force: bool) -> Path:
     return lock
 
 
-def build_argv(args, bb_root: Path, input_folder: Path, output_dir: Path):
+def free_mod_slot(backbone_args) -> int:
+    """The highest --modN_dir slot the caller's own arguments leave free.
+
+    The highest, because Backbone includes the slots' 1_options.gms in order and
+    the last one wins: below a caller's own mod, that mod could undo the cap.
+    """
+    taken = set()
+    for a in backbone_args:
+        m = re.match(r"--mod(\d)_dir=", a)
+        if m:
+            taken.add(int(m.group(1)))
+    free = next((n for n in range(MOD_DIR_SLOTS, 0, -1) if n not in taken), None)
+    if free is None:
+        raise SystemExit(
+            f"--threads needs a --modN_dir slot, and all {MOD_DIR_SLOTS} are taken by "
+            "the arguments after --. Drop one of those mods, or set threads in one of them."
+        )
+    return free
+
+
+def threads_note(args):
+    """A line for a run on another init file that keeps the one solver thread, or None.
+
+    Schedule and investment runs read the same 1_options.gms, and its one thread
+    wins in schedule runs only, so an investment run left on it solves its one
+    large problem on a single core. The init file is the only sign of which a run
+    is, and a schedule init file of another name is possible too, hence "if".
+    """
+    init = next((a.split("=", 1)[1] for a in args.backbone_args
+                 if a.startswith("--init_file=")), SCHEDULE_INIT)
+    if args.threads is not None or Path(init.strip("'\"")).name.lower() == SCHEDULE_INIT.lower():
+        return None
+    return (f"[note] --init_file={init}: 1_options.gms gives every run one solver thread, "
+            f"which wins in schedule runs only. If this is an investment run, give it more "
+            f"with --threads -1 (docs/investment.md).")
+
+
+def write_threads_layer(layer: Path, threads: int) -> Path:
+    """The mod folder whose 1_options.gms caps the solver at `threads`."""
+    layer.mkdir(parents=True, exist_ok=True)
+    (layer / "1_options.gms").write_text(f"option threads = {threads};\n", encoding="utf-8")
+    return layer
+
+
+def build_argv(args, bb_root: Path, input_folder: Path, output_dir: Path,
+               threads_layer: Path = None):
     """The run_backbone.py command line this run becomes."""
     def rel(path: Path) -> str:
         return path.relative_to(bb_root).as_posix()
@@ -274,6 +349,8 @@ def build_argv(args, bb_root: Path, input_folder: Path, output_dir: Path):
         argv += ["--gams", args.gams]
     if args.solver:
         argv += ["--solver", args.solver]
+    if args.cpus:
+        argv += ["--cpus", args.cpus]
     if args.show:
         argv += ["--show"]
     # Anything the caller set explicitly after -- wins, so the same key is never
@@ -288,7 +365,10 @@ def build_argv(args, bb_root: Path, input_folder: Path, output_dir: Path):
         f"--debug={args.debug}",
     ]
     argv += ["--"] + [d for d in defaults if d.split("=", 1)[0] not in overridden]
-    return argv + list(args.backbone_args)
+    argv += list(args.backbone_args)
+    if threads_layer is not None:
+        argv.append(f"--mod{free_mod_slot(args.backbone_args)}_dir={rel(threads_layer)}")
+    return argv
 
 
 def split_passthrough(argv):
@@ -368,6 +448,17 @@ def main(argv=None) -> int:
                              "resolves, which it prints.")
     parser.add_argument("--gams", default=None,
                         help="GAMS to use: a path, or an alias such as '47'")
+    parser.add_argument("--cpus", default=None, metavar="LIST",
+                        help="Optional safeguard for schedule runs: hold GAMS and the "
+                             "solver on these logical processors, e.g. 0-3, so a long run "
+                             "stays on the fast cores. Fewer pinned runs than performance "
+                             "cores, with the list local-setup.txt records. Not for "
+                             "investment runs.")
+    parser.add_argument("--threads", type=int, default=None, metavar="N",
+                        help="Solver threads for this run, over the input folder's "
+                             "1_options.gms, which sets 1 for schedule runs. An investment "
+                             "run can take more, e.g. -1. With --cpus, no more than the "
+                             "processors listed")
     parser.add_argument("--show", action="store_true",
                         help="Print the command that would run, and exit")
     parser.add_argument("--force", action="store_true",
@@ -391,14 +482,24 @@ def main(argv=None) -> int:
     tag = args.tag or default_tag(input_folder, args.year, args.days)
     output_dir = HERE / "results" / tag
 
-    runner_argv = build_argv(args, bb_root, input_folder, output_dir)
+    layer = output_dir / THREADS_LAYER if args.threads is not None else None
+    runner_argv = build_argv(args, bb_root, input_folder, output_dir, layer)
+    note = threads_note(args)
+    if note:
+        print(note, file=sys.stderr)
 
     if args.show:
-        return runner.main(runner_argv)
+        code = runner.main(runner_argv)
+        if layer is not None:
+            print(f"[note] --threads {args.threads}: {layer} is written when the run "
+                  "starts, not by --show.", file=sys.stderr)
+        return code
 
     lock = take_lock(input_folder, tag, args.force)
     started = time.time()
     try:
+        if layer is not None:
+            write_threads_layer(layer, args.threads)
         code = runner.main(runner_argv)
     finally:
         lock.unlink(missing_ok=True)

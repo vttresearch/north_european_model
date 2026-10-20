@@ -115,7 +115,9 @@ write (see below).
 
 The build writes the same input folder for schedule and investment runs. What
 makes a run an investment run is its init file, the GAMS file that sets the time
-structure and the model type.
+structure and the model type. The two are run differently;
+[Schedule runs and investment runs](running-the-model.md#schedule-runs-and-investment-runs)
+sets them side by side.
 
 - **Choose it with `init_file`.** `src_files/GAMS_files/modelsInit.gms` includes
   `%init_file%` and defaults to `scheduleInit.gms`. Pass another one after a bare
@@ -123,6 +125,17 @@ structure and the model type.
   Backbone reads it from the input folder. A build copies every file in
   `src_files/GAMS_files/` there, so that is where one goes. This project does not
   ship one.
+- **Give it more solver threads.** `1_options.gms` gives the solver one thread,
+  which wins in schedule runs only
+  ([Solver threads](running-the-model.md#solver-threads)). An investment run is
+  one large solve that can use more:
+  `python run_model.py <input folder> --threads -1 -- --init_file=investInit.gms`
+  gives it every core but one, for that run only. Started with another
+  `--init_file` and no `--threads`, `run_model.py` prints a note saying so.
+- **Run it on its own, unpinned.** Its solve already uses several cores and holds
+  the whole problem in memory, so another investment run or a batch of schedule
+  runs beside it takes cores and memory from it. Leave out `--cpus`: held on the
+  performance cores, a many-thread solve loses the others.
 - **What goes in it** is Backbone's subject:
   `../docs/running-backbone/investment-runs.md` covers the single solve,
   representative periods and the weights that go with them, and

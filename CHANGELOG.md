@@ -299,6 +299,16 @@ not build and why, and has a documentation page of its own.
   instead of a scenario name, and `--input-dir` is gone. `--list` lists built folders
   and which config wrote each; the default tag is `<folder>-<year>-<days>d`.
 - `docs/running-the-model.md`: how a built folder becomes a solved model.
+- `1_options.gms`: `threads = 1`, was -1, for schedule runs. CPLEX raced LP
+  algorithms on seven threads and dual simplex, which uses one, won every solve;
+  one thread does the same work faster and leaves the other cores to parallel
+  runs. An investment run takes more with `--threads`.
+- `docs/running-the-model.md`: schedule and investment runs side by side; the
+  threads, parallel and pinning rules are for schedule runs.
+- `run_model.py --cpus <list>` holds a run on those processors, through the
+  parent's `run_backbone.py --cpus`; `--threads <n>` sets one run's solver threads,
+  and a run on another `--init_file` without it gets a note.
+  [docs/running-the-model.md](docs/running-the-model.md#performance-cores-an-optional-safeguard)
 - run-*.cmd: the comment claiming unique `scrdir` makes parallel runs safe was
   wrong. Runs sharing an input folder corrupt each other silently; run them one
   at a time.

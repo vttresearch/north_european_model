@@ -12,7 +12,7 @@ solvelink = %Solvelink.Loadlibrary%  // Solvelink controls how the problem is pa
 *    solveopt = merge  // How solution values are stored after multiple solves. Default merge.
 *    savepoint = 1     // NOTE! Savepoint is controlled by Backbone model options.
 
-threads = -1          // How many cores the solver can use: 0 = all cores; negative values = all cores - n
+threads = 1           // How many cores the solver can use: 0 = all cores; negative values = all cores - n. One wins in schedule runs only: dual simplex, which uses one, finishes every daily solve, and parallel runs need the other cores. An investment run takes more with run_model.py --threads. docs/running-the-model.md
 
 solprint = Silent  // silent = no equations to backbone.lst, off = first rows of equations, on = full equations
 

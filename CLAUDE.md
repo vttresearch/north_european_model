@@ -152,8 +152,17 @@ here.** Skill discovery only looks in this folder, so the six skills in
 for running, varying and sweeping, `backbone-result-reader` for whether a result can be
 trusted. `../scripts/run_backbone.py` is the runner both they and `run_model.py` use,
 and `../docs/automation/` covers the same ground for a person. `docs/running-the-model.md`
-is this project's half: the built input folders, the one command, and why two runs of one
-input folder corrupt each other.
+is this project's half: the built input folders, the one command, why two runs of one
+input folder corrupt each other, and how to run several at once.
+
+**Schedule and investment runs are run differently: say which one a run is before
+choosing how.** A schedule run (`scheduleInit.gms`, the default) solves one day after
+another, and `threads = 1` in `1_options.gms` wins there: it goes on one solver thread,
+unpinned, several input folders at once until memory runs low, with the performance-core
+pin an optional safeguard. That holds for schedule runs only. An investment run is one
+large solve that can use more threads (`run_model.py --threads`), so neither the thread
+count nor the parallel rule carries over; `docs/investment.md` has its rules. The build
+already writes investment data, but no investment init file is shipped yet.
 
 **Machine specifics belong in those two places and nowhere else.** Never an interpreter
 path, environment name, GAMS version or solver choice in `README.md`, `environment.yml`,
