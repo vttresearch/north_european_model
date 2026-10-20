@@ -178,6 +178,25 @@ several cores can carry several runs. Each one added slows the others a little, 
 power budget and memory, but together they finish far more per hour than one run
 at a time. Leave them unpinned, so the operating system can use every core.
 
+**An example.** Measured on one laptop with four performance cores, four
+efficiency cores and 32 GB of memory, on 3-day OT2030 schedule runs, then scaled
+to full 365-day runs by the number of days (365 / 3). A real 365-day run does not
+scale exactly and no two machines are alike, so read the shape rather than the
+numbers:
+
+| Runs at once | Full 365-day runs per hour: one thread, unpinned | One thread, on the performance cores | Seven threads, unpinned |
+|---|---|---|---|
+| 1 | 1.1–1.2 | 1.1–1.2 | 0.8 |
+| 2 | 1.9–2.1 | 2.0–2.2 | — |
+| 3 | 2.9 | 2.5–2.9 | — |
+| 4 | 2.6–2.7 | 3.0 | 1.3–1.4 |
+| 8 | 3.8 | — | — |
+
+Three full 365-day runs side by side on one thread take about an hour; one after
+another on seven threads, nearly four. Part of the four-run row shared the machine
+with other work, and the eight-run row needs the memory for eight 365-day runs,
+which was not tried.
+
 **Memory runs out before the cores do.** Each run holds its model in memory, and
 its results so far: up to about a gigabyte for a short OT2030 run, and more for a
 year run, whose results build up as it goes. Watch free memory as the runs start
