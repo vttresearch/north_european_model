@@ -278,7 +278,7 @@ python run_model.py input_ObservedTrends_2030 --year 2015 --days 365 --cpus <lis
 
 On such a machine an unpinned run's wall time includes whichever kind of core it
 landed on, so compare runs by solver iterations, not by wall clock.
-`../.claude/skills/backbone-scenario-runner/references/pinning-long-runs.md` has
+`../.claude/skills/backbone-scenario-runner/references/threads-and-cores.md` has
 the Backbone checkout's reasoning, and what to do for each thing a machine's
 record can say.
 

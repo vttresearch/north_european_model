@@ -102,7 +102,7 @@ parent's runner and performance-core probe use.
 schedule runs: it holds GAMS and the solver on the listed logical processors, so
 a long run cannot slip onto an efficiency core. Fewer pinned runs than performance cores, and only
 with the list `local-setup.txt` records.
-`../.claude/skills/backbone-scenario-runner/references/pinning-long-runs.md` is
+`../.claude/skills/backbone-scenario-runner/references/threads-and-cores.md` is
 the parent's reasoning.
 """
 
