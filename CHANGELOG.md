@@ -199,9 +199,22 @@ not build and why, and has a documentation page of its own.
 - `tools/input_data_summary.py` describes one built folder as a `report.md` with
   embedded figures: capacity, demand, storage, hydro, interconnection and prices by
   country and carrier, a net-load duration curve, and what the climate years do.
-  Hydro is checked per store for minimum generation against inflow and for overflow
-  at full release. Climate windows of any length, annualised. Replaces the untracked
-  `analyze_ts.py` draft and its ~874 per-node figures.
+  Hydro is checked per storage node for minimum generation against inflow and for overflow
+  at full release. Climate windows of a year or longer, each read as its first 365
+  days. Replaces the untracked `analyze_ts.py` draft and its ~874 per-node figures.
+- The report opens with the build's settings: config, variants, climate windows,
+  forecast branches, and a note when investment or `utAvailabilityLimits` is set.
+- Checks for production with nowhere to go, and for dispatchable capacity at least
+  twice what could take it, shown per carrier.
+- Hydro table: minimum and maximum generation in, wettest and driest week out;
+  "Closest to floor" is its own subsection.
+- Carrier figures split into capacity-and-demand and capacity mix, with no empty
+  figures; storage energy on a log axis; a flow unit with no profile is acted on.
+- Report regrouped by carrier: electricity (generation, consumption, net load,
+  interconnection, storage, demand management), hydro from the water's side, then
+  district heat, steam and hydrogen. Storage and demand response leave generation and
+  charging leaves consumption, so each megawatt is counted once; CHP is named on both
+  sides, and net load lists what it leaves out.
 - The report said battery and heat storage carry no energy capacity anywhere. They
   carry 1.06 TWh, as `upperLimitCapacityRatio` in `p_gnu_io` -- a duration per grid,
   now reported as one and shown in the storage figure's legend.
@@ -218,11 +231,7 @@ not build and why, and has a documentation page of its own.
   as usable, seasonal envelope and nameplate, from one forecast branch.
 - Storage is two nested electricity groups -- battery and closed-loop pumped hydro,
   then plus inflow hydro -- derived from the grids, not listed. Heat storage is in
-  neither and says why.
-- "On what timescale" compared nothing: it reported unservable TWh/yr against storage
-  measured in TWh, and left hydro inflow out, so Norway read as the area least able to
-  cover itself. It now reports the store depth the residual needs at each timescale,
-  with the installed fleet on the same axis, and counts inflow as supply.
+  neither, and is reported under district heat.
 - `dheat` and `steam` were storage grids, because a `balancePenalty` row was read as a
   state. A state is now `energyStoredPerUnitOfState`, and an unknown storage grid is
   named rather than assumed to be pumped storage.

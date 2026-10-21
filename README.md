@@ -171,10 +171,14 @@ taking part in one, each documenting itself in its module docstring:
   deliberate data edit, since a binary `.xlsx` has no readable diff, and the only thing
   that catches a renamed value that a `SUMIF` or `VLOOKUP` still keys on.
 - `input_data_summary.py` — what is in one built folder, written as a `report.md` with
-  its figures into a subfolder of it: capacity, demand, storage, hydro, interconnection
-  and prices by country, plus a net-load duration curve and what 35 weather years do to
-  the numbers. Its hydro section checks, per bidding-zone store, whether inflow can
-  carry the minimum generation and whether a full store can pass its inflow. Run it
+  its figures into a subfolder of it: the config, variants, climate windows and forecast
+  branches that built it, then a chapter per carrier for a mean climate year --
+  electricity with its generation, consumption, net load, interconnection, storage and
+  demand response; hydro from the water's side; district heat, industrial steam and
+  hydrogen -- then what varies between the climate years, and prices, by country. It
+  checks each carrier's production capacity against everything that
+  could take it, and, per bidding-zone storage node, whether inflow can carry the minimum
+  generation and whether a full storage can pass its inflow. Run it
   after a build to see the scenario you just produced, or hand the folder to a
   colleague who was not going to run Python. Run it as
   `python build_input_summary.py <built_folder>` from the model folder; that wrapper is

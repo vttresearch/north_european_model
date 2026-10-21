@@ -2,9 +2,13 @@
 input_data_summary.py -- what is in one built input-data folder, as a report.
 
 Reads <built_folder>/inputData.xlsx and the per-climate-year ts_influx_*, ts_cf_*
-and ts_node_hydro_storage_limits_* GDX files beside it.
+and ts_node_hydro_storage_limits_* GDX files beside it, plus what the build
+recorded about itself: cache/config_structural.json, cache/general_flags.json
+and summary.log.
 Writes one self-contained report.md, with its figures, into a subfolder of the
-built folder -- so a colleague can be handed a folder and read it.
+built folder -- so a colleague can be handed a folder and read it. Each run
+rewrites report.md and the figures it draws; any other file in that subfolder
+is left as it is.
 
 Usage:
     python tools/input_data_summary.py <built_folder> [--zones]
@@ -17,29 +21,43 @@ Examples:
 
 What it shows
 -------------
-Countries by default, the bidding zones with --zones. How far each carrier
-reaches, counted at both levels whatever the report is written at, as a map of
-what each bidding zone models and a list of where each carrier is missing or
-has nothing demanding it; then one section per energy carrier -- electricity,
-district heat, hydrogen, industrial steam -- each with production capacity,
-consumption capacity and annual demand. Then storage in two nested groups --
-what the power system fills itself, and what the weather fills for it -- hydro
-by type, with two checks per bidding-zone store, interconnection as a corridor
-map, a net-load duration curve, how deep a store the residual needs at each
-timescale against how deep a store there is, how much 35 weather years move the
-numbers, and fuel, CO2 and emission prices.
+Countries by default, the bidding zones with --zones. First the build settings
+-- which config and variants built the folder, its climate windows and forecast
+branches, and the features this report does not handle yet. Then how far each
+carrier reaches, counted at both levels whatever the report is written at, as a
+map of what each bidding zone models and a list of where each carrier is missing
+or has nothing demanding it.
 
-Climate windows are taken as the build wrote them -- 365 days, 200, 400 or five
-years -- never cut to a year or refused. A figure per year is annualised from
-each window, and the hydro checks run every hour of every window, each window on
-its own, because each is its own model run.
+Then one chapter per carrier, each for a mean climate year. Electricity has
+generation, consumption, net load, interconnection, storage -- in two nested
+groups, what the power system fills itself and what the weather fills for it --
+and demand management. Hydro follows, from the water's side: volume by type,
+inflow, and how close each hydro storage comes to its floor. District heat, industrial
+steam and hydrogen each have generation, consumption, interconnection and
+storage. Every megawatt is counted once in a chapter: storage discharge is
+under storage rather than generation, demand response under demand management,
+and storage charging under storage rather than consumption. Consumption ends by
+setting dispatchable generation against everything that could take its output.
 
-Hydro is reported per type: storage, turbine draw, pump delivery, full-load
-hours, weeks of storage, and the wettest and driest week. Its two checks run per
-bidding-zone store whatever the level: whether inflow can carry the minimum
-generation in ``p_gnu_io`` (``minGen``) without the store falling below its floor,
-and whether a full store can pass its inflow with turbines and ``maxSpill`` at
-full. Every number is read from the built folder, never from a source workbook.
+Then what varies between the climate years, fuel, CO2 and emission prices, what
+Backbone may do with the units, and the checks.
+
+Climate windows: a window of a year or longer is reported; a shorter one is not.
+The build starts a window in every climate year, so a window longer than 365
+days overlaps the next. The annual and hourly figures therefore use the first
+365 days of each window, which counts each climate year once, while the hydro
+checks run every hour of every whole window, each window on its own, because
+each is its own run. A window shorter than 365 days covers only part of
+the seasons, so no annual figure can be made from it: the timeseries sections
+are left out and the report says why.
+
+Hydro is reported per type: storage, turbine draw, minimum generation, maximum
+generation where availability is below one, pump delivery, full-load hours and
+weeks of storage. Two checks run per bidding-zone storage node whatever the level:
+whether inflow can carry the minimum generation in ``p_gnu_io`` (``minGen``)
+without the storage falling below its floor, and whether a full storage can pass its
+inflow with turbines and ``maxSpill`` at full. Every number is read from the
+built folder, never from a source workbook.
 
 A storage volume is reported three ways, because a reservoir bounded by two
 seasonal series has no single size: usable is the mean of the gap between the
@@ -55,14 +73,17 @@ what they wanted -- the same documented degradation as a missing GAMS install.
 Nothing here imports a geometry library: the asset is read with ``json`` and
 drawn with matplotlib patches.
 
-A carrier with no data still gets its section, saying so. That is deliberate:
-during a data-adding phase an empty panel is the thing worth seeing, and a
-section that disappears cannot tell anyone it is empty.
+A carrier with no data still gets its chapter, saying so in one line: a chapter
+that disappears cannot tell anyone it is empty. It gets no figure, which would
+only repeat the line, and a carrier with one technology gets no capacity-mix
+figure, which would draw every bar at 100%. A carrier other than electricity
+with no corridors or no storage says so in its opening paragraph instead of
+carrying an empty subsection.
 
 What it cannot see
 ------------------
 Nothing below zone level -- there is no per-node figure at any flag setting,
-except the hydro checks, which are per store because a minimum binds one store.
+except the hydro checks, which are per storage node because a minimum binds one.
 No "Nordics" or "CWE" grouping: nothing in the tracked source data defines one,
 so none is invented, and zone and country are the only two levels offered.
 
@@ -77,19 +98,22 @@ What hydro does in the forecast branches. The checks see the realised climate
 years; Backbone also solves a dry inflow quantile with storage limits that
 ``changes.inc`` narrows at run time, and that is where minimum generation has
 actually run short. They also start each window from the middle of its range,
-where the model starts a psOpen or reservoir store at its ``relative`` share of
-the band on the starting date and any other store at its ``reference``.
+where Backbone starts a psOpen or reservoir storage at its ``relative`` share of
+the band on the starting date and any other storage at its ``reference``.
 
-How the model behaves. Every number here comes from the input data, never from a
+How Backbone behaves. Every number here comes from the input data, never from a
 solved run, so the net-load curve ignores storage, trade and dispatch, and the
-VRE figures ignore curtailment and outages. The timescale chapter is the one
-place a store and a demand meet, and it meets them at their upper bound:
-lossless, unlimited in power, free, and with no trade between areas.
+VRE figures ignore curtailment and outages.
 
-Which carrier a store really serves. Heat storage shifts district heat and
-reaches the electricity balance only through whatever produced that heat, so it
-is reported and never added to the electricity groups. Putting a number on that
-help needs a solved run.
+Investment. When the build lets Backbone invest -- ``p_gn('maxInvest')``,
+``p_unit('maxUnitCount')`` or ``p_gnn('transferCapInvLimit')`` -- or limits when
+a unit is available through ``utAvailabilityLimits``, the capacities here are
+the starting fleet only, and the build settings section says so.
+
+Which carrier a storage really serves. Storage is reported in the chapter of the
+carrier it gives its energy back to, so heat storage is under district heat and
+reaches the electricity balance only through whatever produced that heat.
+Putting a number on that help needs a solved run.
 
 The technology grouping is this tool's own: the source data names 63 unittypes
 and no grouping of them. Units are grouped by which grids they touch, and the
@@ -110,6 +134,7 @@ loop.
 import argparse
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -124,6 +149,7 @@ import matplotlib.lines as mlines
 import matplotlib.patheffects as pe
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 from matplotlib.collections import LineCollection, PatchCollection
 from matplotlib.patches import PathPatch, Rectangle
 from matplotlib.path import Path as MplPath
@@ -180,14 +206,17 @@ FUEL_GRID_LABELS = {
 #: power system under storage.
 HYDRO_INFLOW_GRIDS_FALLBACK = frozenset({"psOpen", "reservoir", "ror"})
 
-#: Carrier sections, in report order. A carrier absent from a build still gets
-#: its section.
+#: Carrier chapters, in report order; hydro sits between electricity and district
+#: heat. Hydrogen is last because not every scenario builds it. A carrier absent
+#: from a build still gets its chapter.
 CARRIERS = [
     ("elec", "Electricity", "elec"),
     ("dheat", "District heat", "dheat"),
-    ("H2", "Hydrogen", "h2"),
     ("steam", "Industrial steam", "steam"),
+    ("H2", "Hydrogen", "h2"),
 ]
+CARRIER_GRIDS = frozenset(grid for grid, _, _ in CARRIERS)
+CARRIER_TITLES = {grid: title for grid, title, _ in CARRIERS}
 
 #: The carriers the map tints, which is not all of them. Three carriers make
 #: seven combinations and a fill colour can carry that; a fourth makes fifteen
@@ -238,6 +267,13 @@ OTHER_LABEL = "other"
 VRE_LABELS = frozenset({"wind onshore", "wind offshore", "solar"})
 SHIFTING_LABELS = frozenset({"battery", "pumped storage", "demand response"})
 
+#: Output capacity that generates nothing: storage gives back what was put in,
+#: and demand response is demand left unserved. Each has its own subsection, so
+#: a generation table leaves them out and no megawatt is counted twice in one
+#: chapter.
+STORAGE_LABELS = frozenset({"battery", "pumped storage", "heat storage"})
+DEMAND_RESPONSE = "demand response"
+
 HOURS_PER_YEAR = 8760
 
 
@@ -279,37 +315,6 @@ GROUP_GLOSS = {
                     "power system put there itself",
     "elec_practical": "plus reservoir, open-loop pumped hydro and run-of-river, which "
                       "hold energy the weather puts there",
-}
-
-#: Storage durations the residual is measured against, shortest first.
-#:
-#: Every window is a whole multiple of the one before it, and that is not
-#: decoration. The figure stacks the increase from each window to the next, so
-#: a longer window must always need at least as deep a store as a shorter one.
-#: That holds only when the coarser blocks are unions of the finer ones: with a
-#: calendar month of 730 hours against a week of 168 the blocks cut across each
-#: other, a pure seasonal swing came out *higher* at the quarter than at the
-#: day, and the difference between them was a negative bar.
-#:
-#: So these are four weeks and sixteen weeks, not a month and a quarter, and
-#: they are labelled as what they are rather than rounded to a calendar the
-#: arithmetic cannot honour.
-DURATION_WINDOWS = [
-    ("within a day", 24),
-    ("within a week", 168),
-    ("within four weeks", 672),
-    ("within sixteen weeks", 2688),
-    ("within the year", None),          # None: the whole series as one block
-]
-
-#: Short timescales light, long timescales dark: the eye reads the dark end as
-#: the hard part, which is what it is. Fixed, so two scenarios compare.
-DURATION_STYLE = {
-    "within a day": "#cfe3f2",
-    "within a week": "#9ec5e8",
-    "within four weeks": "#6b9fd0",
-    "within sixteen weeks": "#3d6fa5",
-    "within the year": "#2a4d6e",
 }
 
 #: Sharp at the width a markdown viewer renders an embedded PNG, without the
@@ -403,16 +408,54 @@ MATERIAL_HYDRO_TWH = 10.0
 #: Names before a count, per the project's reporting rule.
 NAME_LIMIT = 3
 
+#: Production capacity this many times everything that could take its output
+#: -- peak demand, the capacity that consumes the carrier, and export capacity
+#: -- is capacity that can never run, and the check asks for it to be fixed.
+#: In the shipped scenarios electricity stays below 1.3 everywhere, district
+#: heat runs 1.0-1.5 apart from two countries, and industrial steam 1.1-8.6.
+OVERSIZE_RATIO = 2.0
+
+#: What the capacity check leaves out of production, per carrier: output that
+#: is weather-driven or moves energy in time, neither of which ever runs at
+#: nameplate against a peak.
+NOT_DISPATCHABLE = {
+    "elec": frozenset({"wind onshore", "wind offshore", "solar",
+                       "battery", "pumped storage", "demand response"}),
+    "dheat": frozenset({"solar", "heat storage"}),
+}
+
 MWH_TO_TWH = 1e-6
 MW_TO_GW = 1e-3
 
 
-def summarise(items: Sequence, limit: int = NAME_LIMIT) -> str:
-    """The first few names, then how many are left."""
+def summarise(items: Sequence, limit: int = NAME_LIMIT, sep: str = ", ") -> str:
+    """The first few names, then how many are left.
+
+    One name over the limit is named rather than counted: "and 1 more" costs
+    the reader a lookup and saves no space. ``sep`` is for items that carry
+    commas of their own.
+    """
     items = [str(i) for i in items]
-    if len(items) <= limit:
-        return ", ".join(items)
-    return f"{', '.join(items[:limit])} and {len(items) - limit} more"
+    if len(items) <= limit + 1:
+        return sep.join(items)
+    return f"{sep.join(items[:limit])} and {len(items) - limit} more"
+
+
+#: Plurals that are not the singular plus "s".
+_PLURALS = {"country": "countries"}
+
+
+def plural(count: int, word: str) -> str:
+    """'1 country', '16 countries' -- a count with its noun in the right number."""
+    if int(count) == 1:
+        return f"{count} {word}"
+    return f"{count} {_PLURALS.get(word, word + 's')}"
+
+
+def and_join(items: Sequence[str]) -> str:
+    """'a', 'a and b', 'a, b and c'."""
+    items = [str(i) for i in items]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
 # ============================================================================
@@ -489,6 +532,29 @@ class Workbook:
     nodes: List[str]
     unittypes: List[str]
     userconstraint: pd.DataFrame = field(default_factory=pd.DataFrame)
+    availability_limits: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: The build's name in the config's ``variants``; '' for the default build.
+    build: str = ""
+
+    def built_units(self) -> List[str]:
+        """The units this folder carries parameters for.
+
+        ``unitUnittype`` can list more: a unit the builder dropped for having no
+        capacity keeps its row there, and a source workbook commonly names more
+        unit types than one scenario uses. The report follows what was built.
+        """
+        if self.p_unit.empty or "unit" not in self.p_unit.columns:
+            return []
+        return sorted(set(self.p_unit["unit"].astype(str)))
+
+    def built_unittypes(self) -> List[str]:
+        """The unit types of the units this folder carries."""
+        uu = self.unit_unittype
+        if uu.empty or not {"unit", "unittype"} <= set(uu.columns):
+            return []
+        built = set(self.built_units())
+        return sorted({str(t) for u, t in zip(uu["unit"].astype(str), uu["unittype"])
+                       if u in built})
 
 
 def load_workbook(xlsx_path: Path) -> Workbook:
@@ -498,6 +564,8 @@ def load_workbook(xlsx_path: Path) -> Workbook:
     tags = read_bb_sheet(xl, "add_scen_tags")
     scenario = str(tags["scenario"].iloc[0]) if "scenario" in tags and len(tags) else "unknown"
     year = str(tags["year"].iloc[0]) if "year" in tags and len(tags) else "unknown"
+    build = tags["variant"].iloc[0] if "variant" in tags and len(tags) else ""
+    build = "" if pd.isna(build) else str(build)
 
     p_gnu_io = read_bb_sheet(xl, "p_gnu_io")
     for c in ("capacity", "isActive", "conversionCoeff"):
@@ -556,6 +624,8 @@ def load_workbook(xlsx_path: Path) -> Workbook:
         nodes=domain("node", "node"),
         unittypes=domain("unittype", "unittype"),
         userconstraint=userconstraint,
+        availability_limits=read_bb_sheet(xl, "utAvailabilityLimits").dropna(how="all"),
+        build=build,
     )
 
 
@@ -589,7 +659,7 @@ def display_name(code: str, zones: bool) -> str:
 # ============================================================================
 
 def state_grids(workbook: Workbook) -> set:
-    """Every grid whose nodes hold energy, by the model's own definition.
+    """Every grid whose nodes hold energy, by Backbone's own definition.
 
     A state is ``p_gn.energyStoredPerUnitOfState`` above zero. Reading it from
     the boundary sheet instead -- every grid with a row there -- looked
@@ -749,7 +819,7 @@ def _label_for(
         if "wind" in flow.lower():
             return "wind onshore", ""
 
-    # A unit whose output is a state is charging it, and the store it fills is
+    # A unit whose output is a state is charging it, and the storage it fills is
     # the technology. A heat-storage charger consumes district heat and a pump
     # consumes electricity; neither is a district-heat or an electricity plant,
     # and labelling them by their input grid put 8.7 GW of heat chargers under
@@ -826,6 +896,20 @@ def consumption_capacity(workbook: Workbook, carrier: str, zones: bool) -> pd.Da
     )
 
 
+def split_consumption(consumption: pd.DataFrame,
+                      storage_grids: set) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """``(consumers, charging)``: what a carrier is made into, and the storage it fills.
+
+    A unit whose product is a storage grid is charging it, and the storage
+    subsection reports it. Listing it among the consumers too would show the
+    same megawatt twice in one chapter.
+    """
+    if consumption.empty:
+        return consumption, consumption
+    filling = consumption["label"].astype(str).str[3:].isin(set(storage_grids))
+    return consumption[~filling], consumption[filling]
+
+
 # ============================================================================
 # Aggregation from the workbook
 # ============================================================================
@@ -845,6 +929,20 @@ def capacity_by_area(classification: Classification, carrier: str, zones: bool) 
     ordered = [l for l in TECH_STYLE if l in table.columns]
     extra = [c for c in table.columns if c not in ordered]
     return table[ordered + extra]
+
+
+def generation_only(capacity: pd.DataFrame, carrier: str) -> pd.DataFrame:
+    """``capacity_by_area`` less storage and, for electricity, demand response.
+
+    Both have subsections of their own. Demand response is left in for any
+    other carrier, which has no subsection to put it in: dropping it there
+    would lose it from the report altogether.
+    """
+    if capacity is None or capacity.empty:
+        return pd.DataFrame()
+    moved = STORAGE_LABELS | ({DEMAND_RESPONSE} if carrier == "elec" else set())
+    kept = capacity[[c for c in capacity.columns if c not in moved]]
+    return kept[kept.sum(axis=1) > 0]
 
 
 def constant_demand(workbook: Workbook, carrier: str, zones: bool) -> pd.DataFrame:
@@ -876,8 +974,9 @@ def constant_demand(workbook: Workbook, carrier: str, zones: bool) -> pd.DataFra
             .sort_values("mean", ascending=False))
 
 
-def transfer_by_area(workbook: Workbook, zones: bool) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
-    """Electricity transfer capacity per area, and the corridor matrix.
+def transfer_by_area(workbook: Workbook, zones: bool,
+                     grid: str = "elec") -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+    """One carrier's transfer capacity per area, and the corridor matrix.
 
     Each corridor appears twice, once per direction, and 15 of the 44 in the
     shipped scenarios carry a different capacity each way. A corridor is
@@ -885,7 +984,10 @@ def transfer_by_area(workbook: Workbook, zones: bool) -> Tuple[pd.DataFrame, pd.
     and taking one of them makes the answer depend on which row the builder
     happened to write first.
 
-    Links inside a multi-zone country are kept apart from its cross-border
+    A corridor is a node pair. For electricity that is a zone pair; district
+    heat can link networks inside one zone -- the Helsinki-area links are three
+    corridors in FI00 -- and calling them one would be wrong in the direction
+    of reassurance. Links inside one area are kept apart from its cross-border
     total, so Sweden's number is not inflated by SE01-SE02.
     """
     gnn = workbook.p_gnn
@@ -893,15 +995,14 @@ def transfer_by_area(workbook: Workbook, zones: bool) -> Tuple[pd.DataFrame, pd.
     if gnn.empty or not cols <= set(gnn.columns):
         return pd.DataFrame(), pd.DataFrame(), {}
 
-    elec = gnn[gnn["grid"].astype(str) == "elec"].copy()
-    if elec.empty:
+    links = gnn[gnn["grid"].astype(str) == grid].copy()
+    if links.empty:
         return pd.DataFrame(), pd.DataFrame(), {}
-    elec["cap"] = pd.to_numeric(col_or(elec, "transferCap", 0.0), errors="coerce").fillna(0.0)
-    elec["a"] = [zone_of(n) for n in elec["from_node"]]
-    elec["b"] = [zone_of(n) for n in elec["to_node"]]
-    elec["pair"] = [tuple(sorted((a, b))) for a, b in zip(elec["a"], elec["b"])]
+    links["cap"] = pd.to_numeric(col_or(links, "transferCap", 0.0), errors="coerce").fillna(0.0)
+    links["pair"] = [tuple(sorted((str(a), str(b))))
+                     for a, b in zip(links["from_node"], links["to_node"])]
 
-    per_pair = elec.groupby("pair", observed=True).agg(
+    per_pair = links.groupby("pair", observed=True).agg(
         mean_cap=("cap", "mean"),
         directions=("cap", "size"),
         spread=("cap", lambda s: float(s.max() - s.min())),
@@ -911,18 +1012,20 @@ def transfer_by_area(workbook: Workbook, zones: bool) -> Tuple[pd.DataFrame, pd.
     one_way = per_pair[
         (per_pair["directions"] == 2) & (per_pair["mean_cap"] > 0)
         & per_pair["pair"].map(
-            lambda p: bool(((elec["pair"] == p) & (elec["cap"] == 0)).any())
+            lambda p: bool(((links["pair"] == p) & (links["cap"] == 0)).any())
         )
     ]
 
-    rows = []
+    rows, inside = [], 0
     for (a, b), cap in zip(per_pair["pair"], per_pair["mean_cap"]):
-        internal = (not zones) and country_of(a) == country_of(b)
+        near_zone, far_zone = zone_of(a), zone_of(b)
+        internal = (near_zone == far_zone) if zones else country_of(near_zone) == country_of(far_zone)
+        inside += int(internal)
         # A cross-border corridor is capacity for the area at each of its ends,
         # so it is recorded twice, once per end. An internal one has both ends
         # in the same area and is recorded once: adding it per end would report
         # Sweden's own ring at twice its size.
-        ends = ((a, b),) if internal else ((a, b), (b, a))
+        ends = ((near_zone, far_zone),) if internal else ((near_zone, far_zone), (far_zone, near_zone))
         for near, far in ends:
             rows.append({
                 "area": near if zones else country_of(near),
@@ -943,40 +1046,22 @@ def transfer_by_area(workbook: Workbook, zones: bool) -> Tuple[pd.DataFrame, pd.
         .groupby(["area", "other"], observed=True)["cap"].sum().unstack(fill_value=0.0)
     )
 
-    # Which other carriers have corridors at all. A reader of the hydrogen
-    # section cannot otherwise tell whether its zones are connected to each
-    # other or are 22 islands, and in the shipped scenarios they are islands.
-    other_grids = {}
-    for grid, part in gnn.groupby(gnn["grid"].astype(str), observed=True):
-        if grid == "elec":
-            continue
-        # Counted on node pairs, not zone pairs: the three Helsinki-area
-        # district-heating links are one zone pair and three corridors, and
-        # calling them one would be wrong in the direction of reassurance.
-        node_pairs = {tuple(sorted((str(a), str(b))))
-                      for a, b in zip(part["from_node"], part["to_node"])}
-        other_grids[grid] = {
-            "corridors": len(node_pairs),
-            "between_areas": len({p for p in node_pairs if zone_of(p[0]) != zone_of(p[1])}),
-        }
+    def name(pair: Tuple[str, str]) -> str:
+        """A zone pair for electricity, the nodes themselves where both share a zone."""
+        a, b = pair
+        return f"{zone_of(a)}-{zone_of(b)}" if zone_of(a) != zone_of(b) else f"{a}-{b}"
 
     facts = {
         "pairs": int(len(per_pair)),
         "asymmetric": int(len(asymmetric)),
         "one_way": int(len(one_way)),
-        "other_grids": other_grids,
-        "carrier_grids": sorted(set(gnn["grid"].astype(str))),
-        # Which carriers exist at all. A carrier with no nodes has no corridors
-        # either, and saying so would report an absence the source data states
-        # on purpose -- which this project does not treat as a defect.
-        "node_grids": (sorted(set(workbook.p_gn["grid"].astype(str)))
-                       if not workbook.p_gn.empty and "grid" in workbook.p_gn.columns else []),
+        "inside": inside,
         "total_GW": float(per_pair["mean_cap"].sum() * MW_TO_GW),
         "largest_asymmetries": [
-            (f"{p[0]}-{p[1]}", float(s))
+            (name(p), float(s))
             for p, s in asymmetric.nlargest(3, "spread")[["pair", "spread"]].itertuples(index=False)
         ],
-        "transfer_loss": _uniform_or_none(elec, "transferLoss"),
+        "transfer_loss": _uniform_or_none(links, "transferLoss"),
     }
     return per_area, matrix, facts
 
@@ -996,7 +1081,7 @@ STORAGE_MEASURES = ["nameplate_MWh", "usable_mean_MWh", "usable_envelope_MWh"]
 def storage_carriers(workbook: Workbook) -> Dict[str, Tuple[frozenset, frozenset]]:
     """``{grid: (charged from, discharged to)}`` for every grid units connect.
 
-    Which carrier a store serves is a fact about the units attached to it, not
+    Which carrier a storage serves is a fact about the units attached to it, not
     about its name, and the scenario families do not agree on the names.
     """
     io = workbook.p_gnu_io
@@ -1029,13 +1114,13 @@ def storage_group_of(
     ) -> Optional[str]:
     """Which nested group a storage grid belongs to, or None for neither.
 
-    Inflow makes a store practical rather than literal: an open-loop pumped
+    Inflow makes a storage practical rather than literal: an open-loop pumped
     hydro node is filled by weather far more than by its pump -- Norwegian
     psOpen pumping is a few per cent of its turbining -- so counting it as
     energy the power system put there would be counting the spring melt.
 
-    A literal store must take electricity *and* give it back. Testing only one
-    end would file an electrolyser's product under electricity storage. A store
+    A literal storage must take electricity *and* give it back. Testing only one
+    end would file an electrolyser's product under electricity storage. A storage
     charged and discharged on some other carrier is in neither group, which is
     where heat storage sits: it is real and it helps, but not at full value and
     not on this balance.
@@ -1060,7 +1145,7 @@ def storage_groups_by_grid(workbook: Workbook, inflow_grids: set) -> Dict[str, O
 
 @dataclass
 class StorageInventory:
-    """Every store in the build, sized three ways and grouped two ways."""
+    """Every storage node in the build, sized three ways and grouped two ways."""
     by_node: pd.DataFrame            # grid, node, area, group, label, source, measures, power_MW
     by_group: pd.DataFrame           # cumulative group x measures, TWh, plus power_GW
     by_area: pd.DataFrame            # area x group, cumulative, TWh and GW
@@ -1074,7 +1159,7 @@ def _boundary_storage_energy(
     storage_limit: Optional[pd.DataFrame],
     facts: Dict,
     ) -> pd.DataFrame:
-    """Per-node energy for the stores whose size is an upwardLimit.
+    """Per-node energy for the storage nodes whose size is an upwardLimit.
 
     A row either carries a constant or says useTimeseries, never both. The
     constant rows are paired with their downwardLimit, which the builder writes
@@ -1146,20 +1231,20 @@ def storage_power_by_node(workbook: Workbook, states: set) -> pd.DataFrame:
     """Discharge power per storage node, read on the storage side of the unit.
 
     The input-side row of a discharging unit: a battery's charger has an output
-    row on the same grid, and counting both would double every store. These are
+    row on the same grid, and counting both would double every storage node. These are
     the same megawatts the electricity capacity table reports as hydro or
-    battery -- read there per carrier, here per store.
+    battery -- read there per carrier, here per storage node.
     """
     return storage_side_power_by_node(workbook, states, "input")
 
 
 def storage_side_power_by_node(workbook: Workbook, grids: set, side: str) -> pd.DataFrame:
-    """Unit capacity per node, read on the store's own row, from one side of the unit.
+    """Unit capacity per node, read on the storage's own row, from one side of the unit.
 
-    ``side="input"`` is what units can draw out of a store -- a turbine's water,
+    ``side="input"`` is what units can draw out of a storage -- a turbine's water,
     a battery's discharge. ``side="output"`` is what units can put into it -- a
     pump's delivery. Both are the storage grid's row, so no efficiency sits
-    between the number and the store.
+    between the number and the storage.
     """
     io = workbook.p_gnu_io
     empty = pd.DataFrame(columns=["grid", "node", "power_MW"])
@@ -1183,7 +1268,7 @@ def storage_power_by_area(
     states: set,
     inflow_grids: set,
     ) -> pd.DataFrame:
-    """area x technology discharge power, GW, for every store in the build."""
+    """area x technology discharge power, GW, for every storage node in the build."""
     per_node = storage_power_by_node(workbook, states)
     if per_node.empty:
         return pd.DataFrame()
@@ -1204,7 +1289,7 @@ def storage_inventory(
     zones: bool,
     inflow_grids: Optional[set] = None,
     ) -> StorageInventory:
-    """Every store, sized three ways, in two nested electricity groups.
+    """Every storage node, sized three ways, in two nested electricity groups.
 
     The two routes a size is written by stay separate until the last step: an
     upwardLimit in MWh for hydro, a duration per MW in p_gnu_io for battery and
@@ -1232,7 +1317,7 @@ def storage_inventory(
         by_ratio = by_ratio[[(g, n) not in seen
                              for g, n in zip(by_ratio["grid"], by_ratio["node"])]]
         if not by_ratio.empty:
-            # A duration store has no seasonal bound, so its three measures agree.
+            # Storage sized as a duration has no seasonal bound, so its three measures agree.
             for measure in STORAGE_MEASURES:
                 by_ratio[measure] = by_ratio["MWh"]
             parts.append(by_ratio.assign(source="duration in p_gnu_io").drop(columns=["MWh"]))
@@ -1308,6 +1393,155 @@ def _group_totals(by_node: pd.DataFrame, within: Optional[str]) -> pd.DataFrame:
     return table.set_index([within, "group"] if within else "group")
 
 
+def storage_grids_serving(workbook: Workbook, carrier: str, inflow_grids: set) -> List[str]:
+    """The storage grids that give their energy back to ``carrier``, inflow hydro aside.
+
+    Storage is reported in the chapter of the carrier it discharges to: a
+    battery under electricity, a heat pit under district heat. Inflow hydro
+    discharges to electricity too, but the weather fills it, and the hydro
+    chapter follows it from the water's side.
+    """
+    carriers = storage_carriers(workbook)
+    candidates = state_grids(workbook) - CARRIER_GRIDS - set(inflow_grids)
+    return sorted(g for g in candidates
+                  if carrier in carriers.get(g, (frozenset(), frozenset()))[1])
+
+
+def storage_by_area(workbook: Workbook, inventory: StorageInventory, grids: Sequence[str],
+                    zones: bool) -> pd.DataFrame:
+    """Per area: discharge GW per technology, then ``charge_GW`` and ``energy_GWh``.
+
+    Discharge and charge are read on the storage's own rows, so no efficiency sits
+    between them and the storage. Energy is the usable volume, which for storage
+    sized as a duration is its power times those hours.
+    """
+    grids = set(grids)
+    if not grids:
+        return pd.DataFrame()
+    out = storage_side_power_by_node(workbook, grids, "input")
+    into = storage_side_power_by_node(workbook, grids, "output")
+    if out.empty and into.empty:
+        return pd.DataFrame()
+
+    def with_area(frame: pd.DataFrame) -> pd.DataFrame:
+        return frame.assign(area=[area_of(n, zones) for n in frame["node"]],
+                            label=[storage_label(g) for g in frame["grid"]])
+
+    table = pd.DataFrame()
+    if not out.empty:
+        table = (with_area(out).groupby(["area", "label"], observed=True)["power_MW"].sum()
+                 .unstack(fill_value=0.0) * MW_TO_GW)
+        ordered = [l for l in TECH_STYLE if l in table.columns]
+        table = table[ordered + [c for c in table.columns if c not in ordered]]
+    charge = (with_area(into).groupby("area", observed=True)["power_MW"].sum() * MW_TO_GW
+              if not into.empty else pd.Series(dtype="float64"))
+    nodes = inventory.by_node
+    energy = (nodes[nodes["grid"].astype(str).isin(grids)]
+              .groupby("area", observed=True)["usable_mean_MWh"].sum() / 1e3
+              if len(nodes) else pd.Series(dtype="float64"))
+    index = table.index.union(charge.index).union(energy.index)
+    table = table.reindex(index).fillna(0.0)
+    table["charge_GW"] = charge.reindex(index).fillna(0.0)
+    table["energy_GWh"] = energy.reindex(index).fillna(0.0)
+    return table
+
+
+def storage_discharge(table: pd.DataFrame) -> pd.Series:
+    """Per area discharge GW from a ``storage_by_area`` table, every technology together."""
+    if table is None or table.empty:
+        return pd.Series(dtype="float64")
+    return table[[c for c in table.columns if c not in ("charge_GW", "energy_GWh")]].sum(axis=1)
+
+
+def demand_response(workbook: Workbook, classification: Classification,
+                    zones: bool) -> Tuple[pd.DataFrame, Dict[str, Tuple[float, float]]]:
+    """Electricity demand response, area x tier in GW, and each tier's cost range.
+
+    A tier is a unit type: the build writes one unit per zone and tier, each
+    flagged ``isSource`` because it makes electricity from nothing -- which is
+    how input data writes demand that may go unserved. Its cost is the
+    ``vomCosts`` on its electricity row, EUR/MWh.
+    """
+    rows = classification.rows
+    rows = rows[(rows["carrier"] == "elec") & (rows["label"] == DEMAND_RESPONSE)]
+    if rows.empty:
+        return pd.DataFrame(), {}
+    uu = workbook.unit_unittype
+    tier_of = (dict(zip(uu["unit"].astype(str), uu["unittype"].astype(str)))
+               if not uu.empty and {"unit", "unittype"} <= set(uu.columns) else {})
+    work = rows.assign(area=[area_of(n, zones) for n in rows["node"]],
+                       tier=[tier_of.get(str(u), str(u)) for u in rows["unit"]])
+    table = (work.groupby(["area", "tier"], observed=True)["capacity"].sum()
+             .unstack(fill_value=0.0) * MW_TO_GW)
+    table = table[sorted(table.columns)]
+
+    costs: Dict[str, Tuple[float, float]] = {}
+    io = workbook.p_gnu_io
+    if "vomCosts" in io.columns:
+        elec_out = io[(io["input_output"].astype(str) == "output")
+                      & (io["grid"].astype(str) == "elec")]
+        by_unit = dict(zip(elec_out["unit"].astype(str),
+                           pd.to_numeric(elec_out["vomCosts"], errors="coerce")))
+        for tier, part in work.groupby("tier", observed=True):
+            values = [by_unit.get(str(u)) for u in part["unit"]]
+            values = [float(v) for v in values if v is not None and np.isfinite(v)]
+            if values:
+                costs[str(tier)] = (min(values), max(values))
+    return table, costs
+
+
+def carrier_links(workbook: Workbook, carrier: str) -> Dict:
+    """How one carrier's generation is tied to electricity, in GW, for the whole build.
+
+    For a carrier other than electricity: ``co_GW`` is its capacity on units
+    that also generate electricity -- combined heat and power -- with
+    ``co_elec_GW`` their electricity and ``flexible_GW`` the part whose two
+    outputs may move apart between limits, ``cv`` on top of ``cb``. The rest
+    keeps a fixed ratio. ``from_elec_GW`` is its capacity made from electricity.
+
+    For electricity: ``co_by_carrier`` is its capacity on units that also make
+    each other carrier.
+    """
+    io = workbook.p_gnu_io
+    if io.empty or not {"grid", "unit", "input_output", "capacity"} <= set(io.columns):
+        return {}
+    io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1]
+    side = io["input_output"].astype(str)
+    outputs = io[side == "output"].assign(
+        _grid=lambda f: f["grid"].astype(str), _unit=lambda f: f["unit"].astype(str),
+        _cap=lambda f: pd.to_numeric(f["capacity"], errors="coerce").fillna(0.0))
+    makes = outputs.groupby("_unit", observed=True)["_grid"].agg(set).to_dict()
+    takes = (io[side == "input"].assign(_unit=lambda f: f["unit"].astype(str))
+             .groupby("_unit", observed=True)["grid"].agg(lambda s: {str(v) for v in s}).to_dict())
+
+    def gw(units: set, grid: str) -> float:
+        part = outputs[outputs["_unit"].isin(units) & (outputs["_grid"] == grid)]
+        return float(part["_cap"].sum() * MW_TO_GW)
+
+    if carrier == "elec":
+        co = {}
+        for other, _, _ in CARRIERS:
+            if other == "elec":
+                continue
+            value = gw({u for u, g in makes.items() if {"elec", other} <= g}, "elec")
+            if value:
+                co[other] = value
+        return {"co_by_carrier": co}
+
+    chp = {u for u, g in makes.items() if {"elec", carrier} <= g}
+    flexible = set()
+    if "cv" in outputs.columns:
+        cv = pd.to_numeric(outputs["cv"], errors="coerce").fillna(0.0)
+        flexible = set(outputs.loc[cv != 0, "_unit"]) & chp
+    from_elec = {u for u, g in takes.items() if "elec" in g and carrier in makes.get(u, set())}
+    return {
+        "co_GW": gw(chp, carrier),
+        "co_elec_GW": gw(chp, "elec"),
+        "flexible_GW": gw(flexible, carrier),
+        "from_elec_GW": gw(from_elec, carrier),
+    }
+
+
 def model_permissions(workbook: Workbook) -> Dict:
     """What the build lets a unit do, as counts.
 
@@ -1350,7 +1584,7 @@ def model_permissions(workbook: Workbook) -> Dict:
         facts["units"] = int(len(unit))
         facts["derated_units"] = 0
 
-    # A store starts at a level (boundStart) or at a share of its band
+    # A storage node starts at a level (boundStart) or at a share of its band
     # (boundStartRelative), never both; either column is absent when no node set it.
     flags = [c for c in ("boundStart", "boundStartRelative") if c in gn.columns]
     if not gn.empty and flags:
@@ -1374,7 +1608,7 @@ def model_permissions(workbook: Workbook) -> Dict:
 def firm_and_shifting(capacity: pd.DataFrame) -> pd.DataFrame:
     """Split producing capacity into what supplies energy and what moves it in time.
 
-    A battery, a pumped store and a demand-response block are all counted in the
+    A battery, a pumped-storage plant and a demand-response block are all counted in the
     headline capacity, and none of them adds a megawatt-hour to the year: they
     move one from an hour that had it to an hour that did not. Against a peak
     they still count, which is why they are a column of their own rather than
@@ -1561,6 +1795,99 @@ def co2_price(workbook: Workbook) -> Optional[float]:
 
 
 # ============================================================================
+# What the build recorded about itself
+# ============================================================================
+
+@dataclass
+class BuildRecord:
+    """The build's own record of its settings, read from beside the data.
+
+    ``config`` is the config snapshot the build cache keeps
+    (``cache/config_structural.json``), so it is what the build actually used
+    even if the config file has changed since.
+    """
+    config: Dict = field(default_factory=dict)
+    flags: Dict = field(default_factory=dict)
+    config_file: Optional[str] = None
+    built_at: Optional[str] = None
+    variant_lines: List[str] = field(default_factory=list)
+    warnings: int = 0
+    errors: int = 0
+    forecast_files: List[str] = field(default_factory=list)
+
+
+#: Status marks the build log opens its lines with.
+_LOG_MARKS = "✓⚠️❌⏩ "
+
+
+def read_build_record(folder: Path) -> BuildRecord:
+    """What ``build_input_data.py`` wrote about this folder: config, variants, status.
+
+    Every part is optional. A folder copied without its cache or its log still
+    gets a report, with the settings it cannot tell left out.
+    """
+    record = BuildRecord()
+    for name, attr in (("config_structural.json", "config"), ("general_flags.json", "flags")):
+        try:
+            setattr(record, attr, json.loads((folder / "cache" / name).read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+
+    # The same lookup as `run_model.py --list`: which config in src_files/ names
+    # this folder by the builder's own naming rule.
+    try:
+        from run_model import config_folders
+        found = config_folders().get(folder.resolve().name)
+        record.config_file = found[0] if found else None
+    except Exception:                              # noqa: BLE001 -- a hint, not a requirement
+        record.config_file = None
+
+    try:
+        lines = (folder / "summary.log").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    in_summary = False
+    for line in lines:
+        text = line.strip()
+        body = text.lstrip(_LOG_MARKS)
+        if body.startswith("Run timestamp:") and record.built_at is None:
+            record.built_at = body.split(":", 1)[1].strip()
+        elif body.startswith(("Variant '", "Dormant variants")):
+            record.variant_lines.append(body)
+        elif "Warnings and errors summary" in text:
+            in_summary = True
+        elif in_summary and text.startswith("⚠"):
+            record.warnings += 1
+        elif in_summary and text.startswith("❌"):
+            record.errors += 1
+    record.forecast_files = sorted(p.name for p in folder.glob("ts_*_forecasts.gdx"))
+    return record
+
+
+def investment_and_timing(workbook: Workbook) -> List[str]:
+    """What lets the fleet change during a run, which this report does not follow."""
+    def set_rows(frame: pd.DataFrame, column: str) -> int:
+        if frame.empty or column not in frame.columns:
+            return 0
+        return int((pd.to_numeric(frame[column], errors="coerce").fillna(0) != 0).sum())
+
+    found = []
+    for frame, column, noun, what in (
+            (workbook.p_gn, "maxInvest", "storage node", "may grow its storage"),
+            (workbook.p_unit, "maxUnitCount", "unit", "may be invested in"),
+            (workbook.p_gnn, "transferCapInvLimit", "corridor row", "may be invested in")):
+        n = set_rows(frame, column)
+        if n:
+            found.append(f"{plural(n, noun)} {what} (`{column}`)")
+    limits = workbook.availability_limits
+    if not limits.empty:
+        units = limits["unit"].nunique() if "unit" in limits.columns else len(limits)
+        found.append(f"{plural(units, 'unit')} become available or unavailable during the run "
+                     f"(`utAvailabilityLimits`)")
+    return found
+
+
+# ============================================================================
 # Timeseries layer
 # ============================================================================
 
@@ -1577,11 +1904,14 @@ class Timeseries:
     storage_limit_from: Optional[str] = None
     skipped: Optional[str] = None
     #: t labels per climate window: the build's window length in days times 24.
-    #: 8760 for the shipped scenarios, but 200 days, 400 days and five years are
-    #: all legitimate, and a window is taken as it is rather than cut to a year.
+    #: ``hours_per_year`` is what the annual and hourly figures use -- the first
+    #: 365 days of a longer window, so overlapping windows count each climate
+    #: year once. The hydro checks run on the whole window.
     window_hours: int = 0
     #: Per-node hydro series over each whole window, for the hydro checks.
     hydro: Optional["HydroSeries"] = None
+    #: carrier -> the nodes its demand series is non-zero on.
+    demand_nodes: Dict[str, set] = field(default_factory=dict)
 
     @property
     def available(self) -> bool:
@@ -1715,6 +2045,19 @@ def _t_positions(labels) -> Optional[np.ndarray]:
     return digits.astype(int).to_numpy() - 1
 
 
+def _without_initial_step(records: pd.DataFrame) -> pd.DataFrame:
+    """ts_node records without t000000, which is not an hour of the window.
+
+    The build writes t000000 into ts_node as a copy of t000001, because Backbone
+    reads a storage's starting state at that step. ``_t_positions`` would place
+    it at hour -1, which numpy reads as the last hour, and a mean over the hours
+    would count t000001 twice.
+    """
+    if "t" not in records.columns:
+        return records
+    return records[records["t"] != "t000000"]
+
+
 def _node_matrix(wide: Optional[pd.DataFrame]) -> Optional[Tuple[List[str], np.ndarray]]:
     """A t x node frame as ``(nodes, dense (hours, nodes) float32)``, placed by t label.
 
@@ -1793,6 +2136,8 @@ def _read_storage_limit_series(
     def reduce_one(_gdx_file, records):
         usable = (records is not None and not records.empty
                   and "param_gnBoundaryTypes" in records.columns)
+        if usable:
+            records = _without_initial_step(records)
         if usable and "f" in records.columns:
             branch = min(str(f) for f in records["f"].unique())
             records = records[records["f"].astype(str) == branch]
@@ -1877,16 +2222,23 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
     cf_seen: Dict[Tuple[str, str], List[float]] = {}
     annual_parts: List[pd.DataFrame] = []
     hours = 0
+    window = 0
     node_parts: List[Optional[Tuple[List[str], np.ndarray]]] = []
     grid_of: Dict[str, str] = {}
+    demand_nodes: Dict[str, set] = {}
+    last_label = f"t{HOURS_PER_YEAR:06d}"
 
     def sweep(key, family, parameter, sign=1.0, weights=None, flow=None, keep_nodes=False):
         """One family, every climate year, reduced per file.
 
-        ``keep_nodes`` also keeps the per-node hours, whole, for the one family
-        the hydro checks need them from -- without a second read of it.
+        A window longer than a year is cut to its first 365 days for everything
+        but the hydro checks: the build starts a window in every climate year,
+        so the rest of a long window is the next windows' start, and keeping it
+        would count those hours again. ``keep_nodes`` keeps the per-node hours,
+        whole, for the one family the hydro checks need them from -- without a
+        second read of it.
         """
-        nonlocal hours
+        nonlocal hours, window
         available = year_files(folder, family)
         if not available:
             return
@@ -1897,8 +2249,15 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         frames: List[Optional[np.ndarray]] = []
 
         def reduce_one(gdx_file, records):
+            nonlocal window
             wide = _node_hourly(records)
             array = _collapse_to_areas(wide, areas, weight_by_node=weights, sign=sign)
+            if array is not None:
+                window = max(window, array.shape[0])
+                array = array[:HOURS_PER_YEAR]
+            if key.startswith("demand_") and wide is not None:
+                live = wide.columns[wide.abs().sum(axis=0).to_numpy() > 0]
+                demand_nodes.setdefault(key[len("demand_"):], set()).update(map(str, live))
             frames.append(array)
             if keep_nodes:
                 node_parts.append(_node_matrix(wide))
@@ -1906,8 +2265,9 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
                     pairs = records[["grid", "node"]].drop_duplicates()
                     grid_of.update(zip(pairs["node"].astype(str), pairs["grid"].astype(str)))
             if flow is not None and records is not None and not records.empty:
+                first_year = records[records["t"].astype(str) <= last_label]
                 means = (
-                    records.assign(node=records["node"].astype(str))
+                    first_year.assign(node=first_year["node"].astype(str))
                     .groupby("node", observed=True)["value"].mean()
                 )
                 for node, mean_cf in means.items():
@@ -1915,8 +2275,8 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
             if array is None:
                 return None
             year = int(Path(gdx_file).stem.rsplit("_", 1)[-1])
-            # Annualised on this file's own length, so a 400-day window does not
-            # report 110% of a year and a 200-day one 55%.
+            # Annualised on the hours actually summed, which is a whole year
+            # unless a series ends early.
             return pd.DataFrame({
                 "key": key, "area": areas, "year": year,
                 "TWh": array.sum(axis=0) * MWH_TO_TWH * annualise(array.shape[0]),
@@ -1937,6 +2297,15 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
     for carrier, family in DEMAND_FAMILY.items():
         # Demand is stored negative, the way Backbone consumes it.
         sweep(f"demand_{carrier}", family, "ts_influx", sign=-1.0)
+        if window and window < HOURS_PER_YEAR:
+            # Read once, before anything else is: the length is the same in
+            # every family, and the rest of the read would be thrown away.
+            return Timeseries(
+                years=years, window_hours=window,
+                skipped=(f"its climate windows are {window / 24:,.4g} days, shorter than a "
+                         f"year, so they cover only part of the seasons and no annual "
+                         f"figure can be made from them"),
+            )
     sweep("inflow_hydro", "ts_influx_hydro", "ts_influx", keep_nodes=True)
     for flow, (family, _) in VRE_FAMILIES.items():
         sweep(f"vre_{flow}", family, "ts_cf",
@@ -1975,8 +2344,9 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         node_cf_mean=pd.DataFrame(cf_rows),
         storage_limit=storage_limit,
         storage_limit_from=storage_limit_from,
-        window_hours=hours,
+        window_hours=window,
         hydro=hydro,
+        demand_nodes=demand_nodes,
     )
 
 
@@ -2078,7 +2448,7 @@ def _storage_limit_measures(records: pd.DataFrame) -> Tuple[pd.DataFrame, Option
     grid and node -- which manufactures a psOpen row for every reservoir node
     and fills it with NaN.
     """
-    work = records.copy()
+    work = _without_initial_step(records).copy()
     for column in ("grid", "node", "param_gnBoundaryTypes", "f"):
         if column in work.columns:
             work[column] = work[column].astype(str)
@@ -2165,111 +2535,8 @@ def netload_by_area(timeseries: Timeseries) -> Dict[str, np.ndarray]:
 
     Hydro is not subtracted: reservoir hydro is dispatchable, so subtracting it
     would answer a different question than what firm capacity has to cover.
-    That other question -- how far in time energy has to be moved -- is asked by
-    residual_after_inflow, and it needs hydro on the supply side.
     """
     return _hourly_balance(timeseries, ("vre",))
-
-
-def residual_after_inflow(timeseries: Timeseries) -> Dict[str, np.ndarray]:
-    """Demand minus wind, solar and hydro inflow, per area.
-
-    Inflow is what a reservoir exists to move in time, so a storage question
-    that leaves it out is not asking about storage. Left out, Norway -- whose
-    inflow is three times its demand -- read as the area least able to cover
-    itself, which is the exact inverse of what its reservoirs do.
-
-    Run-of-river inflow is subtracted on the same footing even though barely
-    any of it can be held: hour for hour it is generation that happens, and
-    treating it as such is what makes the remainder the part that must move.
-    """
-    return _hourly_balance(timeseries, ("vre", "inflow_hydro"))
-
-
-def storage_depth(values: np.ndarray, window: Optional[int]) -> float:
-    """How deep a store must be to flatten ``values`` inside blocks of ``window``.
-
-    Within a block, firm generation supplies the mean and the store supplies
-    the deviation from it; the store must therefore hold the full range of the
-    running sum of that deviation. ``None`` means the whole series as one block.
-
-    The answer is an energy in MWh, which is what installed storage is measured
-    in -- unlike the unservable energy per year this used to report, which
-    could never be held against a storage volume however the caption was worded.
-
-    Blocks are fixed rather than sliding: a sliding window would let the same
-    surplus hour pay for two different deficits, and the answer would depend on
-    where the year is cut in a way no reader could check.
-    """
-    values = np.asarray(values, dtype="float64")
-    n = len(values)
-    if not n:
-        return 0.0
-    w = n if window is None else max(int(window), 1)
-    whole = (n // w) * w
-    deepest = 0.0
-    if whole:
-        block = values[:whole].reshape(-1, w)
-        running = np.cumsum(block - block.mean(axis=1, keepdims=True), axis=1)
-        deepest = float((running.max(axis=1) - running.min(axis=1)).max())
-    if whole < n:
-        # A week does not divide a year. The ragged last block is a real block,
-        # and dropping it moves the daily number by a few tenths of a per cent
-        # -- too little to notice and too much to be right.
-        tail = values[whole:]
-        running = np.cumsum(tail - tail.mean())
-        deepest = max(deepest, float(running.max() - running.min()))
-    return deepest
-
-
-def depth_by_timescale(curves: Dict[str, np.ndarray], timeseries: Timeseries) -> Dict:
-    """The store each area's residual needs, window by window, in TWh.
-
-    Returned as increments -- what each window needs that the one before it did
-    not -- so a stacked bar's colour boundaries are the depths themselves.
-
-    It is an upper bound on what a store could do, and therefore a lower bound
-    on the store needed: nothing here is charged an efficiency, a power limit,
-    a cost, or a megawatt-hour of trade with the neighbours.
-    """
-    if not curves or not timeseries.available or not timeseries.years:
-        return {}
-    hours = timeseries.hours_per_year
-    n_years = len(timeseries.years)
-    if not hours or n_years < 1:
-        return {}
-
-    labels = [label for label, _ in DURATION_WINDOWS]
-    windows = [w for _, w in DURATION_WINDOWS]
-
-    per_area_year: Dict[str, np.ndarray] = {}
-    usable = n_years * hours
-    for area, values in curves.items():
-        # A short series would raise on the reshape, and this tool does not
-        # raise once it has started reporting -- it says less instead.
-        if len(values) < usable:
-            continue
-        block = np.asarray(values[:usable], dtype="float64").reshape(n_years, hours)
-        depths = np.array([[storage_depth(block[y], w) for w in windows]
-                           for y in range(n_years)])
-        # A store that covers the season covers the day inside it, but the raw
-        # quantity does not always say so: a longer block subtracts a different
-        # mean, which tilts the running sum and can shrink its range. It is rare
-        # and it has never been seen on a real 8760-hour series, and a stacked
-        # bar must still be unable to draw a negative segment.
-        depths = np.maximum.accumulate(depths, axis=1)
-        increments = np.column_stack([depths[:, :1], np.diff(depths, axis=1)])
-        per_area_year[area] = np.clip(increments, 0.0, None) * MWH_TO_TWH
-
-    if not per_area_year:
-        return {}
-    system = np.sum(np.stack(list(per_area_year.values())), axis=0)
-    by_area = pd.DataFrame(
-        {area: values.sum(axis=0) / n_years for area, values in per_area_year.items()},
-        index=labels,
-    ).T
-    by_year = pd.DataFrame(system, index=list(timeseries.years), columns=labels)
-    return {"by_area": by_area, "by_year": by_year, "labels": labels}
 
 
 def capacity_weighted_cf(timeseries: Timeseries, workbook: Workbook, zones: bool) -> pd.DataFrame:
@@ -2334,18 +2601,15 @@ HYDRO_TYPE_ORDER = ("reservoir", "ror", "psOpen", "psClosed")
 
 HOURS_PER_WEEK = 168
 
-#: A store is close to its floor when it holds less than this many hours of its
+#: A storage node is close to its floor when it holds less than this many hours of its
 #: own minimum-generation draw above it. A starting value to iterate on, with an
 #: upper limit: the smallest run-of-river pond in the shipped scenarios holds
 #: 18.8 hours of its draw in all, so a margin above that flags it in every
 #: window whatever the water does.
 MIN_GEN_MARGIN_HOURS = 12.0
 
-#: Hours inside that margin, in any one window, before a store is worth watching.
+#: Hours inside that margin, in any one window, before a storage node is worth watching.
 MIN_GEN_WATCH_HOURS = 2
-
-#: How many of the stores that did not overflow the report names, tightest first.
-OVERFLOW_NAMED = 3
 
 
 def hydro_grids(workbook: Workbook, inflow_grids: set) -> set:
@@ -2359,29 +2623,53 @@ def hydro_grids(workbook: Workbook, inflow_grids: set) -> set:
     return set(inflow_grids) | pumped
 
 
-def weekly_shape(hourly: np.ndarray) -> Tuple[float, float, float]:
-    """``(mean week, wettest week / mean, driest week / mean)`` of a (windows, hours) series.
+def hydro_generation_by_node(workbook: Workbook, grids: set) -> pd.DataFrame:
+    """Per hydro storage node: the minimum and the maximum its turbines generate.
 
-    Weeks are 168-hour blocks cut inside each window from its first hour; a
-    remainder shorter than a week is left out rather than stretched, and a week
-    touching an hour with no data is left out whole. Every window's weeks are
-    pooled, so the wettest week is the wettest of any climate year.
+    A turbine draws on the storage on its input row and generates on its output
+    row. ``min_gen_MW`` is the ``minGen`` on those output rows and ``max_gen_MW``
+    their capacity times the unit's ``availability``, both in MW of what the
+    turbines make. ``timeseries_availability`` marks a storage node with a turbine that
+    takes its availability from a timeseries, which this report does not read.
+    A unit drawing on two storage nodes is counted on the first.
     """
-    array = np.asarray(hourly, dtype="float64")
-    if array.ndim == 1:
-        array = array[np.newaxis, :]
-    weeks = array.shape[1] // HOURS_PER_WEEK
-    if not weeks:
-        return np.nan, np.nan, np.nan
-    blocks = array[:, :weeks * HOURS_PER_WEEK].reshape(array.shape[0], weeks, HOURS_PER_WEEK)
-    totals = blocks.sum(axis=2)
-    totals = totals[np.isfinite(totals)]
-    if not totals.size:
-        return np.nan, np.nan, np.nan
-    mean = float(totals.mean())
-    if mean <= 0:
-        return mean, np.nan, np.nan
-    return mean, float(totals.max()) / mean, float(totals.min()) / mean
+    columns = ["node", "min_gen_MW", "max_gen_MW", "output_MW", "timeseries_availability"]
+    io = workbook.p_gnu_io
+    if io.empty or not {"grid", "node", "unit", "input_output"} <= set(io.columns):
+        return pd.DataFrame(columns=columns)
+    io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1].copy()
+    for c in ("grid", "node", "unit", "input_output"):
+        io[c] = io[c].astype(str)
+    draws = io[(io["input_output"] == "input") & io["grid"].isin(set(grids))]
+    if draws.empty:
+        return pd.DataFrame(columns=columns)
+    storage_of = draws.groupby("unit")["node"].agg(lambda s: sorted(set(s))[0]).to_dict()
+    availability, _ = _unit_numbers(workbook)
+    unit = workbook.p_unit
+    from_series = set()
+    if not unit.empty and "useTimeseriesAvailability" in unit.columns:
+        flag = pd.to_numeric(unit["useTimeseriesAvailability"], errors="coerce").fillna(0) == 1
+        from_series = set(unit.loc[flag, "unit"].astype(str))
+
+    outputs = io[(io["input_output"] == "output") & io["unit"].isin(storage_of)
+                 & ~io["grid"].isin(set(grids))]
+    if outputs.empty:
+        return pd.DataFrame(columns=columns)
+    capacity = pd.to_numeric(outputs["capacity"], errors="coerce").fillna(0.0)
+    min_gen = pd.to_numeric(col_or(outputs, "minGen", 0.0), errors="coerce").fillna(0.0)
+    units = outputs["unit"]
+    rows = pd.DataFrame({
+        "node": [storage_of[u] for u in units],
+        "min_gen_MW": min_gen.to_numpy(),
+        "max_gen_MW": capacity.to_numpy() * np.array([availability.get(u, 0.0) for u in units]),
+        "output_MW": capacity.to_numpy(),
+        "timeseries_availability": [u in from_series for u in units],
+    })
+    return (rows.groupby("node", observed=True)
+            .agg(min_gen_MW=("min_gen_MW", "sum"), max_gen_MW=("max_gen_MW", "sum"),
+                 output_MW=("output_MW", "sum"),
+                 timeseries_availability=("timeseries_availability", "any"))
+            .reset_index())
 
 
 def _sum_series(arrays: Sequence[np.ndarray]) -> Optional[np.ndarray]:
@@ -2401,18 +2689,18 @@ def hydro_characteristics(
     zones: bool,
     grids: set,
     ) -> pd.DataFrame:
-    """Storage, turbine, pump and inflow per area and hydro type.
+    """Storage, turbine, generation limits, pump and inflow per area and hydro type.
 
     One row per (area, type) that has anything, so an area without hydro is
-    silent. A country's weeks are cut from its zones' series added hour by
-    hour, not from their separate weeks, which would put every zone's wettest
-    week in the same week.
+    silent. A country's inflow is its zones' series added hour by hour.
     """
-    columns = ["area", "grid", "storage_MWh", "turbine_MW", "pump_MW", "inflow_MWh_yr",
-               "flh", "storage_weeks", "wettest_week", "driest_week"]
+    columns = ["area", "grid", "storage_MWh", "turbine_MW", "min_gen_MW", "max_gen_MW",
+               "output_MW", "timeseries_availability", "pump_MW", "inflow_MWh_yr", "flh",
+               "storage_weeks"]
     grids = set(grids)
     turbine = storage_side_power_by_node(workbook, grids, "input")
     pump = storage_side_power_by_node(workbook, grids, "output")
+    generation = hydro_generation_by_node(workbook, grids).set_index("node")
     by_node = inventory.by_node if inventory is not None else pd.DataFrame()
     storage = (by_node[by_node["grid"].astype(str).isin(grids)]
                if len(by_node) and "usable_mean_MWh" in by_node.columns else pd.DataFrame())
@@ -2442,7 +2730,8 @@ def hydro_characteristics(
         stored = float(sum(sizes)) if sizes else np.nan
         turbines = float(sum(turbine_mw.get(n, 0.0) for n in nodes))
         pumps = float(sum(pump_mw.get(n, 0.0) for n in nodes))
-        inflow_yr = flh = weeks = wettest = driest = np.nan
+        made = generation.loc[generation.index.intersection(nodes)]
+        inflow_yr = flh = weeks = np.nan
         if hydro is not None:
             series = _sum_series([hydro.inflow[n] for n in nodes if n in hydro.inflow])
             finite = series is not None and bool(np.isfinite(series).any())
@@ -2451,15 +2740,17 @@ def hydro_characteristics(
             if mean_hour > 0:
                 flh = inflow_yr / turbines if turbines > 0 else np.nan
                 weeks = stored / (mean_hour * HOURS_PER_WEEK) if np.isfinite(stored) else np.nan
-                _, wettest, driest = weekly_shape(series)
             else:
                 flh = 0.0
         if not (turbines or pumps or (np.isfinite(stored) and stored)
                 or (np.isfinite(inflow_yr) and inflow_yr)):
             continue
         rows.append(dict(area=area, grid=grid, storage_MWh=stored, turbine_MW=turbines,
-                         pump_MW=pumps, inflow_MWh_yr=inflow_yr, flh=flh, storage_weeks=weeks,
-                         wettest_week=wettest, driest_week=driest))
+                         min_gen_MW=float(made["min_gen_MW"].sum()),
+                         max_gen_MW=float(made["max_gen_MW"].sum()),
+                         output_MW=float(made["output_MW"].sum()),
+                         timeseries_availability=bool(made["timeseries_availability"].any()),
+                         pump_MW=pumps, inflow_MWh_yr=inflow_yr, flh=flh, storage_weeks=weeks))
     if not rows:
         return pd.DataFrame(columns=columns)
     table = pd.DataFrame(rows, columns=columns)
@@ -2469,15 +2760,15 @@ def hydro_characteristics(
             .reset_index(drop=True))
 
 
-def run_store(inflow, upward, downward, outflow, margin=None) -> Dict[str, np.ndarray]:
-    """A store run hour by hour, each climate window on its own.
+def run_storage(inflow, upward, downward, outflow, margin=None) -> Dict[str, np.ndarray]:
+    """A storage node run hour by hour, each climate window on its own.
 
     ``inflow``, ``upward`` and ``downward`` are (windows, hours, nodes) in MWh
     per hour and MWh, and a constant bound may be anything that broadcasts to
     that; ``outflow`` and ``margin`` are per node. Each window is its own run
-    because each climate window is its own model run.
+    because each climate window is its own run.
 
-    Every hour the store takes its inflow and gives its outflow. What rises
+    Every hour the storage takes its inflow and gives its outflow. What rises
     above the ceiling is counted and spilled; what falls below the floor is
     counted and made good, so one short hour is not charged again in every hour
     after it. Both sides are kept because the two hydro checks ask opposite
@@ -2485,9 +2776,9 @@ def run_store(inflow, upward, downward, outflow, margin=None) -> Dict[str, np.nd
     shortfall is water the minimum cannot have; with everything turbines and
     spill can pass as the outflow, an overflow is water that cannot leave.
 
-    The start is the middle of the first hour's range. The model starts
-    elsewhere: a psOpen or reservoir store at its ``relative`` share of the band
-    on the starting date, any other store at its ``reference``.
+    The start is the middle of the first hour's range. Backbone starts
+    elsewhere: a psOpen or reservoir storage at its ``relative`` share of the band
+    on the starting date, any other storage at its ``reference``.
 
     An hour with a NaN in any input is not run, which keeps a missing climate
     year, or the hours past the end of a shorter window, out of the counts.
@@ -2495,7 +2786,7 @@ def run_store(inflow, upward, downward, outflow, margin=None) -> Dict[str, np.nd
     Returns (windows, nodes) arrays: ``hours_run``, ``below_hours``,
     ``below_MWh``, ``above_hours``, ``above_MWh``, ``near_floor_hours`` (hours
     at most ``margin`` above the floor and not below it), and the closest the
-    store came to each bound, ``floor_gap`` and ``ceiling_gap`` -- negative when
+    storage came to each bound, ``floor_gap`` and ``ceiling_gap`` -- negative when
     it crossed, NaN when nothing ran.
     """
     inflow = np.asarray(inflow, dtype="float32")
@@ -2593,8 +2884,8 @@ def hydro_minimums(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[T
     """``(minimums the check can simulate, [(unit, why not)])`` for hydro ``minGen``.
 
     A ``minGen`` row in ``p_gnu_io`` is about hydro when its unit draws on a
-    hydro store, or when the row itself sits on a hydro grid. A minimum on the
-    output of a unit drawing on one store is simulated. Anything else is named
+    hydro storage node, or when the row itself sits on a hydro grid. A minimum on the
+    output of a unit drawing on one storage node is simulated. Anything else is named
     with the reason, because a minimum the check misread would be a verdict
     about data it never understood.
 
@@ -2616,8 +2907,8 @@ def hydro_minimums(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[T
     io["minGen"] = pd.to_numeric(io["minGen"], errors="coerce").fillna(0.0)
     coeff = pd.to_numeric(col_or(io, "conversionCoeff", 1.0), errors="coerce").fillna(1.0)
     io["conversionCoeff"] = coeff.replace(0.0, 1.0)
-    stores = io[(io["input_output"] == "input") & io["grid"].isin(grids)]
-    draws_from = stores.groupby("unit")["node"].agg(lambda s: sorted(set(s))).to_dict()
+    draws = io[(io["input_output"] == "input") & io["grid"].isin(grids)]
+    draws_from = draws.groupby("unit")["node"].agg(lambda s: sorted(set(s))).to_dict()
     availability, efficiency = _unit_numbers(workbook)
 
     rows, skipped = [], []
@@ -2630,7 +2921,7 @@ def hydro_minimums(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[T
         elif row.input_output != "output":
             reason = "on an input"
         elif len(draws_from[unit]) > 1:
-            reason = (f"draws on {len(draws_from[unit])} different stores "
+            reason = (f"draws on {len(draws_from[unit])} different storage nodes "
                       f"({summarise(draws_from[unit])})")
         elif (io.loc[io["unit"] == unit, "conversionCoeff"] != 1.0).any():
             reason = "a conversionCoeff other than 1"
@@ -2641,9 +2932,9 @@ def hydro_minimums(workbook: Workbook, grids: set) -> Tuple[pd.DataFrame, List[T
         if reason:
             skipped.append((unit, reason))
             continue
-        store = draws_from[unit][0]
-        rows.append(dict(unit=unit, node=store,
-                         grid=str(stores.loc[stores["node"] == store, "grid"].iloc[0]),
+        node = draws_from[unit][0]
+        rows.append(dict(unit=unit, node=node,
+                         grid=str(draws.loc[draws["node"] == node, "grid"].iloc[0]),
                          minimum_MW=row.minGen, draw_MWh=row.minGen / efficiency[unit],
                          deliverable_MW=row.capacity * availability.get(unit, 0.0)))
     return pd.DataFrame(rows, columns=columns), skipped
@@ -2662,7 +2953,7 @@ def _closest(gap: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 @dataclass
 class HydroChecks:
-    """The two hydro checks, per bidding-zone store."""
+    """The two hydro checks, per bidding-zone storage node."""
     minimum: pd.DataFrame = field(default_factory=pd.DataFrame)
     overflow: pd.DataFrame = field(default_factory=pd.DataFrame)
     not_simulated: List[Tuple[str, str]] = field(default_factory=list)
@@ -2673,10 +2964,10 @@ class HydroChecks:
 
 
 def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> HydroChecks:
-    """Minimum generation against inflow, and overflow of a full store.
+    """Minimum generation against inflow, and overflow of a full storage.
 
-    Always per bidding-zone store, whatever level the report is written at: a
-    minimum binds one store, and two stores added together can hold water
+    Always per bidding-zone storage node, whatever level the report is written at: a
+    minimum binds one storage node, and two added together can hold water
     neither of them has.
     """
     grids = set(grids)
@@ -2724,7 +3015,7 @@ def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> Hydr
     io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1] if not io.empty else io
 
     def side_water(node: str, side: str) -> float:
-        """Capacity times availability on the store's own row, for one side."""
+        """Capacity times availability on the storage's own row, for one side."""
         if io.empty:
             return 0.0
         rows = io[(io["node"].astype(str) == node) & (io["input_output"].astype(str) == side)]
@@ -2756,12 +3047,12 @@ def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> Hydr
         water = np.stack([inflow_of(n) for n in names], axis=2)
         top = np.stack([t for _, t, _ in usable], axis=2)
         bottom = np.stack([b for _, _, b in usable], axis=2)
-        run = run_store(water, top, bottom, draw, margin=draw * MIN_GEN_MARGIN_HOURS)
+        run = run_storage(water, top, bottom, draw, margin=draw * MIN_GEN_MARGIN_HOURS)
         pumps = np.array([side_water(n, "output") for n in names])
         with_pumps = run["below_hours"].copy()
         pumped = np.flatnonzero((run["below_hours"].sum(axis=0) > 0) & (pumps > 0))
         if len(pumped):
-            again = run_store(water[:, :, pumped] + pumps[pumped].astype("float32"),
+            again = run_storage(water[:, :, pumped] + pumps[pumped].astype("float32"),
                               top[:, :, pumped], bottom[:, :, pumped], draw[pumped])
             with_pumps[:, pumped] = again["below_hours"]
         closest, closest_window = _closest(run["floor_gap"])
@@ -2801,7 +3092,7 @@ def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> Hydr
         spill = np.array([spill_of(n) for n in names])
         turbines = np.array([side_water(n, "input") for n in names])
         water = np.stack([inflow_of(n) for n in names], axis=2)
-        run = run_store(water, np.stack([t for _, t, _ in usable], axis=2),
+        run = run_storage(water, np.stack([t for _, t, _ in usable], axis=2),
                         np.stack([b for _, _, b in usable], axis=2), turbines + spill)
         spare, tightest = _closest(run["ceiling_gap"])
         overflow = pd.DataFrame({
@@ -2818,8 +3109,8 @@ def hydro_checks(workbook: Workbook, timeseries: Timeseries, grids: set) -> Hydr
             "tightest_year": years[tightest],
         })
         overflow["state"] = np.where(overflow["over_hours"] > 0, CHECK_ACT, CHECK_OK)
-        # Tightness relative to what the store can release: in MW alone the
-        # smallest stores would always look tightest.
+        # Tightness relative to what the storage can release: in MW alone the
+        # smallest storage would always look tightest.
         release = overflow["turbine_MW"] + overflow["spill_MW"]
         overflow["spare_share"] = np.where(release > 0, overflow["spare_MW"] / release, np.nan)
         result.overflow = overflow.sort_values("spare_share").reset_index(drop=True)
@@ -2835,7 +3126,7 @@ def carrier_demand(workbook: Workbook, timeseries: Timeseries, carrier: str,
     """``(per-area annual demand, whether it is a constant)`` for one carrier.
 
     The two sources are never added. ``p_gn``'s constant is *overridden* by a
-    timeseries wherever one exists -- the model gates it on
+    timeseries wherever one exists -- Backbone gates it on
     ``not gn_influxTs(grid, node)`` in six places -- so summing them would
     double-count every node carrying both, in every table at once.
 
@@ -3185,7 +3476,7 @@ def figure_carrier_map(
     """Which carriers each area models and something actually demands.
 
     Always drawn per bidding zone, whatever level the tables use, with country
-    borders over the top -- the zones are the thing the model solves and the
+    borders over the top -- the zones are the thing Backbone solves and the
     borders are how a reader finds them.
 
     The fill counts a carrier where the area models it at all. It used to count
@@ -3283,6 +3574,15 @@ def _carrier_map_legend(ax, presence: pd.DataFrame) -> None:
               title=title, title_fontsize=7, framealpha=0.9)
 
 
+def _carrier_order(capacity: pd.DataFrame, demand: pd.DataFrame) -> Optional[List[str]]:
+    """Largest producer first, or largest demand when nothing produces."""
+    if capacity is not None and not capacity.empty:
+        return capacity.sum(axis=1).sort_values(ascending=False).index.tolist()
+    if demand is not None and not demand.empty:
+        return demand.set_index("area")["mean"].sort_values(ascending=False).index.tolist()
+    return None
+
+
 def figure_carrier(
     out_dir: Path,
     slug: str,
@@ -3291,33 +3591,21 @@ def figure_carrier(
     demand: pd.DataFrame,
     consumption: pd.DataFrame,
     zones: bool,
-    ) -> str:
-    """Production capacity and annual demand for one carrier, absolute then normalised.
+    ) -> Optional[str]:
+    """Production capacity and annual demand for one carrier, side by side.
 
-    Every panel keeps the same country order so a reader can put a country's
-    capacity against its own demand without moving between images.
-
-    The bottom row exists because the top row has a readability floor: against
-    Germany's 854 GW, Latvia's 5 GW is a hairline, and six of the sixteen
-    countries -- the ones whose mix is most distinctive -- cannot be read at
-    all. Normalised, every country is the same width and the mix is legible for
-    all of them. The absolute panel is still the one that says who is large.
+    Both panels keep the same area order so a reader can put an area's capacity
+    against its own demand without moving between images. None when the
+    carrier has neither: the section says so in a line, and an empty figure
+    would only repeat it.
     """
-    order = None
+    order = _carrier_order(capacity, demand)
+    if not order:
+        return None
+    fig, axes = plt.subplots(1, 2, figsize=(FIG_WIDTH_IN, _barh_height(len(order))),
+                             gridspec_kw={"width_ratios": [1.35, 1.0]})
+
     if capacity is not None and not capacity.empty:
-        order = capacity.sum(axis=1).sort_values(ascending=False).index.tolist()
-    elif demand is not None and not demand.empty:
-        order = demand.set_index("area")["mean"].sort_values(ascending=False).index.tolist()
-
-    n_rows = len(order) if order else 6
-    fig, axes_grid = plt.subplots(
-        2, 2, figsize=(FIG_WIDTH_IN, 2 * _barh_height(n_rows) - 0.6),
-        gridspec_kw={"width_ratios": [1.35, 1.0]},
-    )
-    axes = axes_grid[0]
-    lower = axes_grid[1]
-
-    if order and capacity is not None and not capacity.empty:
         table = capacity.reindex(order).fillna(0.0)
         table.index = [display_name(a, zones) for a in table.index]
         labels = [l for l in TECH_STYLE if l in table.columns]
@@ -3326,7 +3614,7 @@ def figure_carrier(
     else:
         _empty_panel(axes[0], f"No {title.lower()} production capacity\nin this scenario")
 
-    if order and demand is not None and not demand.empty:
+    if demand is not None and not demand.empty:
         series = demand.set_index("area")["mean"].reindex(order).fillna(0.0)
         positions = np.arange(len(series))
         axes[1].barh(positions, series.to_numpy(dtype="float64"),
@@ -3345,52 +3633,51 @@ def figure_carrier(
             note += f"\n\n({consumed:,.1f} GW of units consume it,\nbut nothing demands it directly)"
         _empty_panel(axes[1], note)
 
-    # ---- the same two quantities, normalised --------------------------------
-    if order and capacity is not None and not capacity.empty:
-        table = capacity.reindex(order).fillna(0.0)
-        totals = table.sum(axis=1).replace(0.0, np.nan)
-        share = (table.div(totals, axis=0) * 100.0).fillna(0.0)
-        share.index = [display_name(a, zones) for a in table.index]
-        labels = [l for l in TECH_STYLE if l in share.columns]
-        _stacked_barh(lower[0], share, labels, "share of the area's own capacity, %")
-        lower[0].set_xlim(0, 100)
-    else:
-        _empty_panel(lower[0], "")
-
-    if order and demand is not None and not demand.empty:
-        series = demand.set_index("area")["mean"].reindex(order).fillna(0.0)
-        total = float(series.sum())
-        if total > 0:
-            values = 100.0 * series.to_numpy(dtype="float64") / total
-            positions = np.arange(len(series))
-            lower[1].barh(positions, values, color="#4a6fa5", height=0.74)
-            lower[1].set_yticks(positions)
-            lower[1].set_yticklabels([display_name(a, zones) for a in series.index], fontsize=8)
-            lower[1].invert_yaxis()
-            lower[1].set_xlabel("share of all demand in the build, %", fontsize=9)
-            lower[1].grid(axis="x", alpha=0.25)
-            lower[1].tick_params(axis="x", labelsize=8)
-        else:
-            _empty_panel(lower[1], "")
-    else:
-        _empty_panel(lower[1], "")
-
-    fig.suptitle(f"{title}: capacity and demand by {'zone' if zones else 'country'}\n"
-                 f"absolute above, each area's own share below",
-                 fontsize=11)
+    fig.suptitle(f"{title}: capacity and demand by {level_header(zones)}", fontsize=11)
     return _finish(fig, out_dir / f"fig_{slug}.png")
 
 
-def figure_storage(out_dir: Path, inventory: "StorageInventory", zones: bool) -> str:
+def figure_carrier_mix(out_dir: Path, slug: str, title: str, capacity: pd.DataFrame,
+                       zones: bool) -> Optional[str]:
+    """Each area's own capacity mix, every area the same width.
+
+    The absolute panel has a readability floor: against Germany's 854 GW,
+    Latvia's 5 GW is a hairline, and the countries whose mix is most
+    distinctive cannot be read at all. None when there is one technology,
+    which would draw every bar at 100%.
+    """
+    if capacity is None or capacity.empty:
+        return None
+    labels = [l for l in TECH_STYLE if l in capacity.columns]
+    labels += [c for c in capacity.columns if c not in labels]
+    if len(labels) < 2:
+        return None
+    order = _carrier_order(capacity, None)
+    table = capacity.reindex(order).fillna(0.0)
+    totals = table.sum(axis=1).replace(0.0, np.nan)
+    share = (table.div(totals, axis=0) * 100.0).fillna(0.0)
+    share.index = [display_name(a, zones) for a in table.index]
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, _barh_height(len(order))))
+    _stacked_barh(ax, share, labels, "share of the area's own capacity, %")
+    ax.set_xlim(0, 100)
+    ax.legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.01, 1.0), framealpha=0.9)
+    fig.suptitle(f"{title}: each {level_header(zones)}'s capacity mix", fontsize=11)
+    return _finish(fig, out_dir / f"fig_{slug}_mix.png")
+
+
+def figure_storage(out_dir: Path, inventory: "StorageInventory", zones: bool,
+                   power: Optional[pd.DataFrame] = None) -> str:
     """Power on the left, energy on the right, because they are different facts.
 
-    The right panel stacks the two nested groups, so the dark part of a bar is
-    the hydro that the light part is not, and marks each area's nameplate with
-    a tick. The gap between the bar and the tick is the reservoir space the
-    seasonal floor never releases -- for the system it is most of the number,
-    and a figure that drew nameplate alone would hide that it had.
+    The left panel is electricity storage only, area x technology GW: inflow
+    hydro discharges through its turbines, which the chapter counts as
+    generation. The right panel draws the two nested groups over each other on
+    a log axis, the narrow dark bar being electricity storage and the wide light
+    one the total with inflow hydro, and marks each area's nameplate with a
+    tick. The gap between the bar and the tick is the reservoir space the
+    seasonal floor never releases.
     """
-    power = inventory.power
+    power = inventory.power if power is None else power
     by_area = inventory.by_area
     n_rows = max(len(power) if power is not None else 0,
                  by_area.index.get_level_values(0).nunique() if len(by_area) else 0)
@@ -3408,38 +3695,56 @@ def figure_storage(out_dir: Path, inventory: "StorageInventory", zones: bool) ->
         axes[0].legend(handles,
                        [f"{l} ({_num(hours[l], 0)} h)" if l in hours else l for l in labels],
                        fontsize=7, loc="lower right")
-        axes[0].set_title(f"Discharge power of every store\n"
+        axes[0].set_title(f"Discharge power of electricity storage\n"
                           f"({_num(float(table.to_numpy().sum()))} GW in total)", fontsize=9)
     else:
-        _empty_panel(axes[0], "No storage in this scenario")
+        _empty_panel(axes[0], "No electricity storage in this scenario")
 
-    increments = group_increments(by_area, "usable_mean_TWh")
-    if not increments.empty and float(increments.to_numpy().sum()) > 0:
-        order = list(increments.sum(axis=1).sort_values(ascending=False).index)
-        increments = increments.loc[order]
+    # Cumulative per group, in GWh, on a log axis: Norway's 37 TWh of hydro and
+    # Latvia's battery of under 1 GWh are four orders apart, and on a linear
+    # axis every battery in the build is a hairline. The groups are nested, so
+    # each is drawn from the axis floor, the narrower group over the wider.
+    cumulative = (by_area["usable_mean_TWh"].unstack("group") * 1000.0
+                  if len(by_area) else pd.DataFrame())
+    groups = [g for g in STORAGE_GROUPS if g[0] in cumulative.columns]
+    if groups and float(cumulative.to_numpy().max()) > 0:
+        cumulative = cumulative[[key for key, _, _ in groups]].fillna(0.0)
+        widest = groups[-1][0]
+        order = list(cumulative[widest].sort_values(ascending=False).index)
+        cumulative = cumulative.loc[order]
+        positive = cumulative.to_numpy()[cumulative.to_numpy() > 0]
+        floor = 10.0 ** math.floor(math.log10(float(positive.min())))
         positions = np.arange(len(order))
-        left = np.zeros(len(order))
-        for key, label, colour in STORAGE_GROUPS:
-            if key not in increments.columns:
-                continue
-            values = increments[key].to_numpy(dtype="float64")
-            axes[1].barh(positions, values, left=left, color=colour, label=label,
-                         edgecolor="white", linewidth=0.4, height=0.74)
-            left += values
-        widest = [key for key, _, _ in STORAGE_GROUPS][-1]
+        heights = np.linspace(0.74, 0.42, len(groups))      # widest group first, widest bar
+        for (key, label, colour), height in zip(reversed(groups), heights):
+            values = cumulative[key].to_numpy(dtype="float64")
+            shown = values > 0
+            axes[1].barh(positions[shown], values[shown] - floor, left=floor, color=colour,
+                         label=label, edgecolor="white", linewidth=0.4, height=height)
         nameplate = np.array([
-            float(by_area.loc[(area, widest), "nameplate_TWh"])
+            float(by_area.loc[(area, widest), "nameplate_TWh"]) * 1000.0
             if (area, widest) in by_area.index else 0.0 for area in order])
-        axes[1].plot(nameplate, positions, marker="|", markersize=9, linestyle="none",
-                     color="#333333", zorder=5, label="nameplate ceiling")
+        ticked = nameplate > 0
+        axes[1].plot(nameplate[ticked], positions[ticked], marker="|", markersize=9,
+                     linestyle="none", color="#333333", zorder=5, label="nameplate ceiling")
+        axes[1].set_xscale("log")
+        axes[1].set_xlim(left=floor)
+        axes[1].xaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}" if v >= 1 else f"{v:g}"))
         axes[1].set_yticks(positions)
         axes[1].set_yticklabels([display_name(a, zones) for a in order], fontsize=8)
         axes[1].invert_yaxis()
-        axes[1].set_xlim(left=0)
-        axes[1].set_xlabel("usable storage energy, TWh", fontsize=9)
+        axes[1].set_xlabel("usable storage energy, GWh (log scale)", fontsize=9)
         axes[1].grid(axis="x", alpha=0.25)
         axes[1].tick_params(axis="x", labelsize=8)
-        axes[1].legend(fontsize=7, loc="lower right")
+        # Narrowest group first, as in the tables, then the tick. Lower right: the
+        # smallest storage is at the bottom, so their bars end near the left
+        # edge and leave that corner empty.
+        by_label = dict(zip(*reversed(axes[1].get_legend_handles_labels())))
+        wanted = [label for _, label, _ in groups] + ["nameplate ceiling"]
+        shown = [label for label in wanted if label in by_label]
+        axes[1].legend([by_label[label] for label in shown], shown,
+                       fontsize=7, loc="lower right", framealpha=0.95)
         axes[1].set_title("Usable electricity storage\n(tick: the nameplate ceiling)",
                           fontsize=9)
     else:
@@ -3721,99 +4026,6 @@ def figure_netload(out_dir: Path, curves: Dict[str, np.ndarray], zones: bool) ->
     return _finish(fig, out_dir / "fig_netload_duration.png")
 
 
-def figure_duration(out_dir: Path, decomposition: Dict, installed: pd.DataFrame,
-                    zones: bool) -> str:
-    """How deep a store each area needs, against how deep a store it has.
-
-    Left is each area in TWh with its own fleet marked on the same axis, so the
-    comparison is a glance rather than an arithmetic exercise; right is the
-    system year by year, because which weather years are hard is a quantity.
-    """
-    path = out_dir / "fig_duration_decomposition.png"
-    if not decomposition:
-        fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, 3.0))
-        _empty_panel(ax, "The timescale comparison needs the timeseries files")
-        return _finish(fig, path)
-
-    by_area = decomposition["by_area"]
-    by_year = decomposition["by_year"]
-    labels = decomposition["labels"]
-    height = max(4.2, 0.30 * max(len(by_area), 8) + 1.8)
-    fig, axes = plt.subplots(1, 2, figsize=(FIG_WIDTH_IN, height),
-                             gridspec_kw={"width_ratios": [1.15, 1.0]})
-
-    # The order is fixed here and every overlay is looked up through it. Any
-    # re-sort after this point would attach Norway's reservoir to Germany's bar
-    # and the figure would still look plausible.
-    order = list(by_area.sum(axis=1).sort_values(ascending=False).index)
-    positions = np.arange(len(order))
-    left = np.zeros(len(order))
-    for label in labels:
-        values = by_area.loc[order, label].to_numpy(dtype="float64")
-        axes[0].barh(positions, values, left=left, color=DURATION_STYLE[label],
-                     edgecolor="white", linewidth=0.4, height=0.76, label=label)
-        left += values
-
-    # The narrowest group and the widest, whatever sits between them.
-    literal, practical = STORAGE_GROUPS[0][0], STORAGE_GROUPS[-1][0]
-    def column(group: str, measure: str) -> np.ndarray:
-        if installed is None or not len(installed):
-            return np.zeros(len(order))
-        return np.array([
-            float(installed.loc[(area, group), measure])
-            if (area, group) in installed.index else 0.0 for area in order])
-
-    usable = column(practical, "usable_mean_TWh")
-    envelope = column(practical, "usable_envelope_TWh")
-    axes[0].hlines(positions, usable, np.maximum(envelope, usable),
-                   colors="#1f5f52", linewidth=2.0, zorder=4)
-    axes[0].plot(usable, positions, marker="|", markersize=9, linestyle="none",
-                 color="#1f5f52", zorder=5)
-    axes[0].plot(column(literal, "usable_mean_TWh"), positions, marker="D", markersize=3.6,
-                 linestyle="none", color="#111111", zorder=6)
-
-    axes[0].set_yticks(positions)
-    axes[0].set_yticklabels([display_name(a, zones) for a in order], fontsize=7)
-    # Largest at the top, as every other bar chart here. Inverting the view does
-    # not move the data coordinates, so the overlays above stay on their bars.
-    axes[0].invert_yaxis()
-    axes[0].set_xlabel("storage energy, TWh", fontsize=8)
-    axes[0].set_xlim(left=0)
-    axes[0].grid(axis="x", alpha=0.25)
-    axes[0].tick_params(axis="x", labelsize=7)
-    axes[0].set_title("How deep a store the residual needs,\nand how deep a store there is",
-                      fontsize=9)
-    handles, names = axes[0].get_legend_handles_labels()
-    handles = handles[:len(labels)] + [
-        mlines.Line2D([], [], color="#111111", marker="D", linestyle="none", markersize=3.6,
-                      label="installed: battery and closed pumped hydro"),
-        mlines.Line2D([], [], color="#1f5f52", linewidth=2.0,
-                      label="installed, + hydro: usable to seasonal envelope"),
-    ]
-    axes[0].legend(handles=handles, fontsize=6.0, loc="lower right", framealpha=0.92)
-    # The smallest areas are at the bottom once inverted, so the legend sits over
-    # empty space rather than over Germany.
-
-    years = list(by_year.index)
-    at = np.arange(len(years))
-    bottom = np.zeros(len(years))
-    for label in labels:
-        values = by_year[label].to_numpy(dtype="float64")
-        axes[1].bar(at, values, bottom=bottom, color=DURATION_STYLE[label],
-                    edgecolor="white", linewidth=0.3, width=0.82, label=label)
-        bottom += values
-    axes[1].set_xticks(at)
-    axes[1].set_xticklabels([str(y) for y in years], fontsize=5.5, rotation=90)
-    axes[1].set_ylabel("store the system needs, TWh", fontsize=8)
-    axes[1].grid(axis="y", alpha=0.25)
-    axes[1].tick_params(axis="y", labelsize=7)
-    axes[1].set_title("The system, year by year", fontsize=9)
-    axes[1].set_ylim(top=float(bottom.max()) * 1.22)
-    axes[1].legend(fontsize=6.5, loc="upper right", ncol=2, framealpha=0.9)
-
-    return _finish(fig, path)
-
-
 # ============================================================================
 # Checks
 # ============================================================================
@@ -3829,8 +4041,9 @@ CHECK_MEANING = {
     CHECK_OK: "nothing found",
     CHECK_WATCH: "nothing in the data is wrong, but it is close to a limit or a known gap, "
                  "and worth knowing when reading a run",
-    CHECK_ACT: "the data as written cannot do what it asks, so a run will lean on penalties "
-               "or dummy variables -- follow it up before trusting one",
+    CHECK_ACT: "the data as written cannot do what it asks: a run will lean on penalties or "
+               "dummy variables, or carry capacity that can never run -- follow it up before "
+               "trusting one",
     CHECK_NOT_RUN: "the files this check needs were not read",
 }
 
@@ -3839,6 +4052,163 @@ class Check(NamedTuple):
     name: str
     result: str
     state: str
+
+
+def production_without_sink(workbook: Workbook, timeseries: Timeseries) -> Dict[str, Dict]:
+    """Per carrier, the nodes whose production has nowhere to go.
+
+    A node's output can go to demand on it (a ``ts_influx`` series or a negative
+    constant ``influx``), to a unit that consumes it, to a price node's market,
+    or over a corridor to a node that has one of those. Corridors are followed
+    to the end, so a chain of nodes with one sink between them is served. A
+    storage on the node is not a sink: it fills once and then the output stops.
+
+    Returns ``{carrier: {"nodes": [(node, MW)], "unknown": bool}}``, largest
+    first. ``unknown`` marks a carrier whose demand is in timeseries files that
+    were not read, so its answer is not known.
+    """
+    io = workbook.p_gnu_io
+    gn = workbook.p_gn
+    if io.empty or not {"grid", "node", "input_output"} <= set(io.columns):
+        return {}
+    io = io[col_or(io, "isActive", 1.0).fillna(1.0) == 1]
+    capacity = pd.to_numeric(io["capacity"], errors="coerce").fillna(0.0)
+    side, grid, node = (io["input_output"].astype(str), io["grid"].astype(str),
+                        io["node"].astype(str))
+
+    sinks: set = set()
+    sinks.update(node[(side == "input") & (capacity > 0)])
+    if not gn.empty and {"grid", "node"} <= set(gn.columns):
+        influx = col_or(gn, "influx", 0.0).fillna(0.0)
+        priced = col_or(gn, "usePrice", 0.0).fillna(0.0) == 1
+        sinks.update(gn.loc[(influx < 0) | priced, "node"].astype(str))
+    for nodes in timeseries.demand_nodes.values():
+        sinks.update(nodes)
+
+    # Nodes joined by a corridor share their sinks.
+    parent: Dict[str, str] = {}
+
+    def root(n: str) -> str:
+        while parent.get(n, n) != n:
+            n = parent[n]
+        return n
+
+    gnn = workbook.p_gnn
+    if not gnn.empty and {"from_node", "to_node"} <= set(gnn.columns):
+        open_link = pd.to_numeric(col_or(gnn, "transferCap", 0.0), errors="coerce").fillna(0.0) > 0
+        for a, b in zip(gnn.loc[open_link, "from_node"].astype(str),
+                        gnn.loc[open_link, "to_node"].astype(str)):
+            parent[root(a)] = root(b)
+    served = {root(n) for n in sinks}
+
+    out: Dict[str, Dict] = {}
+    produced = io[(side == "output") & (capacity > 0)].assign(
+        _cap=capacity, _grid=grid, _node=node)
+    for carrier, _, _ in CARRIERS:
+        part = produced[produced["_grid"] == carrier]
+        if part.empty:
+            continue
+        if carrier in DEMAND_FAMILY and not timeseries.available:
+            out[carrier] = {"nodes": [], "unknown": True}
+            continue
+        per_node = part.groupby("_node", observed=True)["_cap"].sum()
+        stranded = [(n, float(mw)) for n, mw in per_node.sort_values(ascending=False).items()
+                    if root(n) not in served]
+        out[carrier] = {"nodes": stranded, "unknown": False}
+    return out
+
+
+def _peak_by_area(timeseries: Timeseries, workbook: Workbook, carrier: str,
+                  zones: bool) -> pd.Series:
+    """Each area's highest hour of demand for one carrier, MW.
+
+    The hourly series where there is one, on the area's own coincident hours;
+    otherwise the constant rate, which is its own peak. Never both: the
+    constant is ignored wherever a series exists.
+    """
+    hourly = timeseries.hourly.get(f"demand_{carrier}")
+    if hourly is not None and timeseries.areas and float(np.abs(hourly).sum()) > 0:
+        peak = pd.Series(hourly.max(axis=0), index=timeseries.areas, dtype="float64")
+        return peak[peak > 0]
+    constant = constant_demand(workbook, carrier, zones)
+    if constant.empty:
+        return pd.Series(dtype="float64")
+    return (constant.set_index("area")["mean"] / MWH_TO_TWH / HOURS_PER_YEAR).astype("float64")
+
+
+def _exports_by_area(workbook: Workbook, carrier: str, zones: bool) -> pd.Series:
+    """Transfer capacity out of each area for one carrier, MW, each direction on its own."""
+    gnn = workbook.p_gnn
+    if gnn.empty or not {"grid", "from_node", "to_node"} <= set(gnn.columns):
+        return pd.Series(dtype="float64")
+    rows = gnn[gnn["grid"].astype(str) == carrier]
+    if rows.empty:
+        return pd.Series(dtype="float64")
+    frm = [area_of(n, zones) for n in rows["from_node"]]
+    to = [area_of(n, zones) for n in rows["to_node"]]
+    cap = pd.to_numeric(col_or(rows, "transferCap", 0.0), errors="coerce").fillna(0.0)
+    leaving = pd.Series(cap.to_numpy(), index=frm)[[a != b for a, b in zip(frm, to)]]
+    return leaving.groupby(level=0).sum().astype("float64")
+
+
+def capacity_against_uses(workbook: Workbook, classification: Classification,
+                          timeseries: Timeseries, carrier: str, zones: bool) -> pd.DataFrame:
+    """Per area: dispatchable production capacity against everything that could take it.
+
+    What could take a carrier's output in its busiest hour is the area's peak
+    demand, the capacity of every unit that consumes the carrier, and the
+    capacity to export it. Production beyond all three together can never run,
+    whatever Backbone decides. Weather-driven output and storage are left out
+    of production, since neither runs at nameplate against a peak.
+
+    Columns, GW: production, peak, consumers, exports, uses (the last three
+    summed with the peak), and ``ratio`` = production / uses, infinite where
+    production has no use at all. ``timeseries`` must be at the report's level.
+    Empty for a carrier whose demand is in series that were not read: its peak
+    is not known, and a zero in its place would flag every area.
+    """
+    columns = ["production", "peak", "consumers", "exports", "uses", "ratio"]
+    if carrier in DEMAND_FAMILY and not timeseries.available:
+        return pd.DataFrame(columns=columns, dtype="float64")
+    rows = classification.rows
+    rows = rows[(rows["carrier"] == carrier)
+                & ~rows["label"].isin(NOT_DISPATCHABLE.get(carrier, frozenset()))]
+    production = (rows.assign(area=[area_of(n, zones) for n in rows["node"]])
+                  .groupby("area", observed=True)["capacity"].sum()) if len(rows) else \
+        pd.Series(dtype="float64")
+    consumption = consumption_capacity(workbook, carrier, zones)
+    consumers = (consumption.groupby("area", observed=True)["capacity"].sum()
+                 if not consumption.empty else pd.Series(dtype="float64"))
+    table = pd.DataFrame({
+        "production": production,
+        "peak": _peak_by_area(timeseries, workbook, carrier, zones),
+        "consumers": consumers,
+        "exports": _exports_by_area(workbook, carrier, zones),
+    }).fillna(0.0) * MW_TO_GW
+    table = table[(table["production"] > 0) | (table["peak"] > 0)]
+    table["uses"] = table["peak"] + table["consumers"] + table["exports"]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        table["ratio"] = np.where(table["uses"] > 0, table["production"] / table["uses"],
+                                  np.where(table["production"] > 0, np.inf, np.nan))
+    return table
+
+
+def oversized(table: pd.DataFrame) -> pd.DataFrame:
+    """The rows of ``capacity_against_uses`` whose production can never all run.
+
+    Largest stranded capacity first: 65 GW at 4.9x matters more than 0.7 GW at 8.6x.
+    Production with no use at all is left to the nowhere-to-go check, which
+    names its nodes, so the same capacity is not reported twice.
+    """
+    if table is None or table.empty:
+        return pd.DataFrame()
+    big = table[(table["ratio"] >= OVERSIZE_RATIO) & np.isfinite(table["ratio"])]
+    stranded = (big["production"] - big["uses"]).clip(lower=0.0)
+    return big.assign(stranded=stranded).sort_values("stranded", ascending=False)
+
+
+def _ratio_text(ratio: float) -> str:
+    return "no use" if np.isinf(ratio) else f"{ratio:.1f}x"
 
 
 def run_checks(workbook: Workbook, classification: Classification, transfer: Dict,
@@ -3874,7 +4244,7 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
     )
 
     # A constant influx is overridden by a timeseries, never added to it -- the
-    # model gates it on `not gn_influxTs(grid, node)`. A node carrying both has a
+    # Backbone gates it on `not gn_influxTs(grid, node)`. A node carrying both has a
     # number in the workbook that does nothing, and nothing would say so.
     gn = workbook.p_gn
     with_constant = set()
@@ -3885,7 +4255,7 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
     overridden = sorted(f"{n}" for g, n in with_constant if g in served_by_timeseries)
     add(
         "Constant influx on a node that also has a timeseries",
-        (f"none of {len(with_constant)} node(s) with a constant influx" if not overridden
+        (f"none of {plural(len(with_constant), 'node')} with a constant influx" if not overridden
          else f"the constant is ignored on {summarise(overridden)}"),
         not overridden,
     )
@@ -3895,15 +4265,15 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
         if not priced.empty else pd.DataFrame()
     add(
         "Price at or below zero on a priced node",
-        f"none of {len(priced)} priced node(s)" if bad_price.empty
+        f"none of {plural(len(priced), 'priced node')}" if bad_price.empty
         else f"{len(bad_price)}: {summarise(bad_price['node'].tolist())}",
         bad_price.empty,
     )
 
     add(
         "One-way transfer capacity (the other direction is zero)",
-        f"none of {transfer.get('pairs', 0)} corridor(s)" if not transfer.get("one_way")
-        else f"{transfer['one_way']} corridor(s)",
+        f"none of {plural(transfer.get('pairs', 0), 'corridor')}" if not transfer.get("one_way")
+        else plural(transfer["one_way"], "corridor"),
         not transfer.get("one_way"),
     )
 
@@ -3929,80 +4299,110 @@ def run_checks(workbook: Workbook, classification: Classification, transfer: Dic
         missing = claims[col_or(claims, "constant", np.nan).isna()]
         add(
             "Storage row claiming a constant but carrying none",
-            f"none of {len(claims)} row(s)" if missing.empty
+            f"none of {plural(len(claims), 'row')}" if missing.empty
             else f"{len(missing)}: {summarise(missing['node'].tolist())}",
             missing.empty,
         )
 
-    # A flow with units but no profile generator is a known modelling gap, not a
-    # defect in the build: nobody running a build can act on it, so it is
-    # watched rather than acted on. It stays in the table because it is the kind
-    # of thing that otherwise goes unnoticed for a year.
-    flows = set(str(f) for f in workbook.flow_unit.get("flow", pd.Series(dtype=str)).unique())
+    # A flow unit generates its capacity times its ts_cf, so without a series it
+    # never generates at all: capacity that can never run, like any other.
+    flow_unit = workbook.flow_unit
+    flows = set(str(f) for f in flow_unit.get("flow", pd.Series(dtype=str)).unique())
     without = sorted(flows - set(VRE_FAMILIES))
+    parts = []
+    for flow in without:
+        units = set(flow_unit.loc[flow_unit["flow"].astype(str) == flow, "unit"].astype(str))
+        rows = classification.rows[classification.rows["unit"].astype(str).isin(units)]
+        parts.append(f"{flow}: {plural(len(units), 'unit')}, "
+                     f"{_num(float(rows['capacity'].sum()) * MW_TO_GW)} GW")
     checks.append(Check(
         "Flow with units but no capacity-factor timeseries",
         "none" if not without
-        else f"{', '.join(without)} -- units exist, no profile is built for them. "
-             f"A known gap, not a data error",
-        CHECK_WATCH if without else CHECK_OK,
+        else "; ".join(parts) + ". With no profile these units never generate",
+        CHECK_ACT if without else CHECK_OK,
     ))
     return checks
 
 
+def carrier_check_rows(stranded: Dict[str, Dict],
+                       against_uses: Dict[str, pd.DataFrame]) -> List[Check]:
+    """The two checks that set production against what could take it."""
+    titles = {grid: title.lower() for grid, title, _ in CARRIERS}
+    rows = []
+
+    name = "Production with nowhere to go"
+    found = [(c, v["nodes"]) for c, v in stranded.items() if v["nodes"]]
+    unknown = [c for c, v in stranded.items() if v["unknown"]]
+    if found:
+        parts = []
+        for carrier, nodes in found:
+            gw = sum(mw for _, mw in nodes) * MW_TO_GW
+            parts.append(f"{titles.get(carrier, carrier)}: {plural(len(nodes), 'node')}, "
+                         f"{_num(gw)} GW -- {summarise([n for n, _ in nodes])}")
+        text = "; ".join(parts) + ". No demand, consumer, price or corridor takes their output"
+        if unknown:
+            text += (f"; not known for {and_join([titles.get(c, c) for c in unknown])}, whose "
+                     f"demand series were not read")
+        rows.append(Check(name, text, CHECK_ACT))
+    elif unknown:
+        rows.append(Check(name, f"not known for {and_join([titles.get(c, c) for c in unknown])}, "
+                                f"whose demand series were not read", CHECK_NOT_RUN))
+    else:
+        rows.append(Check(name, "none: every node that produces has something to take its "
+                                "output", CHECK_OK))
+
+    name = f"Production capacity at least {OVERSIZE_RATIO:g}x what can take it"
+    parts = []
+    for carrier, table in against_uses.items():
+        big = oversized(table)
+        if len(big):
+            parts.append(f"{titles.get(carrier, carrier)} in "
+                         + summarise([f"{a} ({_ratio_text(r)})"
+                                      for a, r in zip(big.index, big["ratio"])]))
+    if parts:
+        rows.append(Check(name, "; ".join(parts) + ". See Consumption in each carrier's chapter",
+                          CHECK_ACT))
+    else:
+        rows.append(Check(name, "none", CHECK_OK))
+    return rows
+
+
 def hydro_check_rows(result: "HydroChecks") -> List[Check]:
-    """The two hydro checks as rows of the Checks table."""
+    """The hydro checks as rows of the Checks table.
+
+    The minimum-generation check gets a row only when a storage node cannot carry its
+    minimum. Storage nodes that come close are the ordinary state of run-of-river,
+    and the Closest to floor table shows them.
+    """
     rows = []
     minimum = result.minimum
-    skipped = ""
-    if result.not_simulated:
-        skipped = (f"; {len(result.not_simulated)} not simulated: "
-                   f"{summarise([name for name, _ in result.not_simulated])}")
 
     name = "Hydro minimum generation against inflow"
-    if not result.minimums:
-        rows.append(Check(name, "no hydro minimum generation is written", CHECK_OK))
-    elif result.skipped:
-        beyond = (sorted(minimum.loc[minimum["beyond_turbines"], "node"])
-                  if len(minimum) and "beyond_turbines" in minimum.columns else [])
-        if beyond:
-            rows.append(Check(name, f"{len(beyond)} store(s) ask more than their turbines can "
-                                    f"give: {summarise(beyond)}", CHECK_ACT))
-        else:
-            rows.append(Check(name, f"inflow was not read: {result.skipped}", CHECK_NOT_RUN))
-    elif not len(minimum):
-        rows.append(Check(name, f"none of {result.minimums} minimum(s) could be simulated{skipped}",
-                          CHECK_NOT_RUN))
-    else:
-        act = sorted(minimum.loc[minimum["state"] == CHECK_ACT, "node"])
-        watch = sorted(minimum.loc[minimum["state"] == CHECK_WATCH, "node"])
-        if act:
-            text, state = f"{len(act)} store(s) cannot carry their minimum: {summarise(act)}", CHECK_ACT
-            if watch:
-                text += f"; {len(watch)} to watch: {summarise(watch)}"
-        elif watch:
-            text = (f"all {len(minimum)} carry their minimum in {result.windows} window(s); "
-                    f"{len(watch)} come close: {summarise(watch)}")
-            state = CHECK_WATCH
-        else:
-            text = (f"all {len(minimum)} store(s) carry their minimum in {result.windows} "
-                    f"window(s), never within {MIN_GEN_MARGIN_HOURS:g} h of draw of the floor")
-            state = CHECK_OK
-        rows.append(Check(name, text + skipped, state))
+    act = (sorted(minimum.loc[minimum["state"] == CHECK_ACT, "node"])
+           if len(minimum) and "state" in minimum.columns else [])
+    beyond = (sorted(minimum.loc[minimum["beyond_turbines"], "node"])
+              if len(minimum) and "beyond_turbines" in minimum.columns else [])
+    if act:
+        rows.append(Check(name, f"{plural(len(act), 'storage node')} cannot carry their minimum: "
+                                f"{summarise(act)}", CHECK_ACT))
+    elif result.skipped and beyond:
+        rows.append(Check(name, f"{plural(len(beyond), 'storage node')} ask more than their turbines "
+                                f"can give: {summarise(beyond)}", CHECK_ACT))
 
-    name = "Hydro inflow a store cannot pass with turbines and spill at full"
+    name = "Hydro inflow a storage cannot pass with turbines and spill at full"
     overflow = result.overflow
     if result.skipped:
         rows.append(Check(name, f"inflow was not read: {result.skipped}", CHECK_NOT_RUN))
     elif not len(overflow):
-        rows.append(Check(name, "no store with a ceiling receives inflow", CHECK_OK))
+        rows.append(Check(name, "no storage node with a ceiling receives inflow", CHECK_OK))
     else:
         over = list(overflow.loc[overflow["state"] == CHECK_ACT, "node"])
         if over:
-            rows.append(Check(name, f"{len(over)} store(s) overflow: {summarise(over)}", CHECK_ACT))
+            rows.append(Check(name, f"{plural(len(over), 'storage node')} overflow: {summarise(over)}",
+                              CHECK_ACT))
         else:
-            rows.append(Check(name, f"none of {len(overflow)} store(s) overflows in "
-                                    f"{result.windows} window(s)", CHECK_OK))
+            rows.append(Check(name, f"none of {plural(len(overflow), 'storage node')} overflows in "
+                                    f"{plural(result.windows, 'climate window')}", CHECK_OK))
     return rows
 
 
@@ -4030,9 +4430,18 @@ def _num(value, digits: int = 1) -> str:
 @dataclass
 class Report:
     lines: List[str] = field(default_factory=list)
+    #: (level, title, anchor) of every heading, for the contents list.
+    toc: List[Tuple[int, str, str]] = field(default_factory=list)
 
     def add(self, text: str = "") -> None:
         self.lines.append(text)
+
+    def heading(self, anchor: str, title: str, level: int = 2) -> None:
+        self.add(f'<a id="{anchor}"></a>')
+        self.add()
+        self.add(f"{'#' * level} {title}")
+        self.add()
+        self.toc.append((level, title, anchor))
 
     def table(self, headers, rows) -> None:
         rendered = md_table(headers, rows)
@@ -4054,6 +4463,27 @@ class Report:
         return "\n".join(self.lines).rstrip() + "\n"
 
 
+@dataclass
+class ReportContext:
+    """What every chapter reads: the build, its series, and the per-carrier tables."""
+    workbook: Workbook
+    timeseries: Timeseries
+    zones: bool
+    out_dir: Path
+    carriers: Dict[str, Dict]
+    inventory: StorageInventory
+    hydro_set: set
+    hydro_table: pd.DataFrame
+    hydro_result: "HydroChecks"
+    peak: Optional[pd.Series]
+    zone_matrix: pd.DataFrame
+    shapes: ZoneShapes
+    countries: ZoneShapes
+    neighbours: bool
+    demand_response: pd.DataFrame
+    demand_response_costs: Dict[str, Tuple[float, float]]
+
+
 def build_report(
     workbook: Workbook,
     classification: Classification,
@@ -4063,10 +4493,11 @@ def build_report(
     shapes: Optional[ZoneShapes] = None,
     countries: Optional[ZoneShapes] = None,
     neighbours: bool = True,
+    record: Optional[BuildRecord] = None,
     ) -> Tuple[str, List[str]]:
     """The whole report.md, and the figure names written beside it."""
     level = "bidding zone" if zones else "country"
-    report = Report()
+    record = record if record is not None else BuildRecord()
     figures: List[str] = []
     # Both assets, whatever the report's level: the maps are always drawn per
     # bidding zone, with country borders over them.
@@ -4079,118 +4510,134 @@ def build_report(
     presence = carrier_presence(workbook, timeseries, zones)
     zone_presence = presence if zones else carrier_presence(workbook, zone_timeseries, True)
 
-    per_area_transfer, matrix, transfer_facts = transfer_by_area(workbook, zones)
-    _, zone_matrix, _ = transfer_by_area(workbook, True)
-    inventory = storage_inventory(workbook, timeseries, zones, classification.inflow_grids)
-    ratio_facts = inventory.ratio_facts
-    checks = run_checks(workbook, classification, transfer_facts,
-                        [c for c in DEMAND_FAMILY if not annual_range(
-                            timeseries, f"demand_{c}").empty])
-    hydro_set = hydro_grids(workbook, classification.inflow_grids)
+    inflow = classification.inflow_grids
+    inventory = storage_inventory(workbook, timeseries, zones, inflow)
+    hydro_set = hydro_grids(workbook, inflow)
     hydro_table = hydro_characteristics(workbook, inventory, timeseries, zones, hydro_set)
-    # Per bidding-zone store whatever the level: the series are node-keyed and
+    # Per bidding-zone storage node whatever the level: the series are node-keyed and
     # pass through the country roll-up untouched.
     hydro_result = hydro_checks(workbook, zone_timeseries, hydro_set)
-    checks += hydro_check_rows(hydro_result)
-    peak = _peak_demand(timeseries)
-
     capacity_factors = capacity_weighted_cf(timeseries, workbook, zones)
-    carrier_data = {}
+    # Any state that is not itself a carrier is storage, and what fills it is
+    # charging it rather than consuming the carrier.
+    storage = state_grids(workbook) - CARRIER_GRIDS
+
+    carrier_data: Dict[str, Dict] = {}
     for carrier, title, slug in CARRIERS:
+        capacity = capacity_by_area(classification, carrier, zones)
+        consumption = consumption_capacity(workbook, carrier, zones)
+        consumers, charging = split_consumption(consumption, storage)
+        storage_grids = storage_grids_serving(workbook, carrier, inflow)
         carrier_data[carrier] = {
             "title": title,
             "slug": slug,
-            "capacity": capacity_by_area(classification, carrier, zones),
-            "consumption": consumption_capacity(workbook, carrier, zones),
+            "capacity": capacity,
+            "generation": generation_only(capacity, carrier),
+            "consumption": consumption,
+            "consumers": consumers,
+            "charging": charging,
             **dict(zip(("demand", "demand_is_constant"),
                        carrier_demand(workbook, timeseries, carrier, zones))),
+            "peak": _peak_by_area(timeseries, workbook, carrier, zones),
             "capacity_factor": capacity_factors if carrier == "elec" else pd.DataFrame(),
+            "against_uses": capacity_against_uses(workbook, classification, timeseries,
+                                                  carrier, zones),
+            "transfer": transfer_by_area(workbook, zones, carrier),
+            "storage_grids": storage_grids,
+            "storage": storage_by_area(workbook, inventory, storage_grids, zones),
+            "links": carrier_links(workbook, carrier),
         }
 
-    elec_total = _total_gw(carrier_data["elec"]["capacity"])
-    elec_demand = carrier_data["elec"]["demand"]
+    corridors = [data["transfer"][2] for data in carrier_data.values() if data["transfer"][2]]
+    checks = run_checks(workbook, classification,
+                        {"pairs": sum(f["pairs"] for f in corridors),
+                         "one_way": sum(f["one_way"] for f in corridors)},
+                        [c for c in DEMAND_FAMILY if not annual_range(
+                            timeseries, f"demand_{c}").empty])
+    checks += carrier_check_rows(
+        production_without_sink(workbook, timeseries),
+        {carrier: data["against_uses"] for carrier, data in carrier_data.items()})
+    checks += hydro_check_rows(hydro_result)
+
+    response, response_costs = demand_response(workbook, classification, zones)
+    ctx = ReportContext(
+        workbook=workbook, timeseries=timeseries, zones=zones, out_dir=out_dir,
+        carriers=carrier_data, inventory=inventory, hydro_set=hydro_set,
+        hydro_table=hydro_table, hydro_result=hydro_result, peak=_peak_demand(timeseries),
+        zone_matrix=transfer_by_area(workbook, True)[1], shapes=shapes, countries=countries,
+        neighbours=neighbours, demand_response=response, demand_response_costs=response_costs,
+    )
+
+    elec = carrier_data["elec"]
+    elec_total = _total_gw(elec["generation"])
+    elec_demand = elec["demand"]
     demand_total = float(elec_demand["mean"].sum()) if not elec_demand.empty else 0.0
     to_act = [c.name for c in checks if c.state == CHECK_ACT]
     to_watch = [c.name for c in checks if c.state == CHECK_WATCH]
     not_run = [c.name for c in checks if c.state == CHECK_NOT_RUN]
 
     # ---- lead -------------------------------------------------------------
-    report.add(f"# Input data summary -- {workbook.scenario}, {workbook.year}")
-    report.add()
+    head = Report()
+    head.add(f"# Input data summary -- {workbook.scenario}, {workbook.year}")
+    head.add()
     lead = (
         f"This scenario builds a {len(set(country_of(zone_of(n)) for n in workbook.nodes))}-country, "
         f"{len(set(zone_of(n) for n in workbook.nodes))}-bidding-zone system with "
-        f"{len(workbook.unit_unittype):,} units across {len(workbook.unittypes)} unit types and "
-        f"{_num(elec_total)} GW of electricity capacity"
+        f"{len(workbook.built_units()):,} units across {len(workbook.built_unittypes())} unit "
+        f"types and {_num(elec_total)} GW of electricity generation"
     )
     if demand_total:
         lead += (f", against {_num(demand_total, 0)} TWh/yr of electricity demand averaged over "
-                 f"{len(timeseries.years)} climate year(s)")
+                 f"{plural(len(timeseries.years), 'climate year')}")
     lead += (". " + ("No check asks for action."
                     if not to_act else
-                    f"{len(to_act)} check(s) ask for action: {summarise(to_act)}."))
+                    f"{plural(len(to_act), 'check')} {'asks' if len(to_act) == 1 else 'ask'} "
+                    f"for action: {summarise(to_act)}."))
     if to_watch:
         lead += f" {len(to_watch)} worth watching: {summarise(to_watch)}."
-    report.add(lead)
-    report.add()
+    head.add(lead)
+    head.add()
 
     # ---- one minute summary ----------------------------------------------
-    report.add("## One minute summary")
-    report.add()
-    report.add(f"- **Scenario**: {workbook.scenario}, {workbook.year}, read from "
-               f"`{workbook.path.name}` in `{workbook.path.parent.name}/`.")
-    report.add(f"- **Reported by {level}**: {len(presence)} {level}(s)"
-               + ("." if zones else "; pass `--zones` to split them into bidding zones."))
-    if timeseries.available and timeseries.window_hours:
-        report.add(f"- **Climate windows**: {len(timeseries.years)} of "
-                   f"{timeseries.window_hours / 24:,.4g} days each, as the build wrote them; "
-                   f"figures per year are annualised from each window.")
+    head.add("## One minute summary")
+    head.add()
+    head.add(f"- **Scenario**: {workbook.scenario}, {workbook.year}, read from "
+             f"`{workbook.path.name}` in `{workbook.path.parent.name}/`"
+             + (f", built by `{record.config_file}`" if record.config_file else "")
+             + (f" as `{workbook.build}`" if workbook.build else "") + ".")
+    head.add(f"- **Reported by {level}**: {plural(len(presence), level)}"
+             + ("." if zones else "; pass `--zones` to split them into bidding zones."))
+    if timeseries.years:
+        head.add(f"- **Climate windows**: {_window_text(record.config, timeseries)}. Every "
+                 f"chapter reports a mean climate year; What varies between the years shows "
+                 f"how far single years move.")
+    if investment_and_timing(workbook):
+        head.add("- **Not handled yet**: the build lets the fleet change during a run, which "
+                 "this report does not follow; see Build settings.")
     for carrier, data in carrier_data.items():
-        total = _total_gw(data["capacity"])
-        consumed = float(data["consumption"]["capacity"].sum() * MW_TO_GW) if not data["consumption"].empty else 0.0
-        demand = float(data["demand"]["mean"].sum()) if not data["demand"].empty else 0.0
-        if not (total or consumed or demand):
-            report.add(f"- **{data['title']}**: nothing built in this scenario.")
-            continue
-        parts = [f"{_num(total)} GW producing"]
-        if consumed:
-            parts.append(f"{_num(consumed)} GW consuming")
-        parts.append(f"{_num(demand, 0)} TWh/yr demanded" if demand else "no demand built")
-        report.add(f"- **{data['title']}**: " + ", ".join(parts) + ".")
-    if len(inventory.by_group) and float(inventory.by_group["usable_mean_TWh"].max()):
-        narrow = inventory.by_group.loc[STORAGE_GROUPS[0][0]]
-        wide = inventory.by_group.loc[STORAGE_GROUPS[-1][0]]
-        report.add(f"- **Storage**: {_num(narrow['usable_mean_TWh'])} TWh usable as "
-                   f"{STORAGE_GROUPS[0][1]}, {_num(wide['usable_mean_TWh'])} TWh with inflow "
-                   f"hydro added ({_num(wide['usable_envelope_TWh'])} TWh across a season, "
-                   f"{_num(wide['nameplate_TWh'])} TWh of nameplate ceiling), "
-                   f"{_num(wide['power_GW'])} GW of discharge power, see Storage.")
-    outside_total = sum((inventory.facts.get("outside_groups") or {}).values())
-    if outside_total:
-        report.add(f"- **Heat storage**: {_num(outside_total * 1000, 0)} GWh, on the district "
-                   f"heat balance rather than the electricity one, see Storage.")
-    if transfer_facts:
-        report.add(f"- **Interconnection**: {_num(transfer_facts['total_GW'])} GW over "
-                   f"{transfer_facts['pairs']} zone pair(s).")
-    report.add(f"- **Checks**: {len(checks) - len(to_act) - len(to_watch) - len(not_run)} ok, "
-               f"{len(to_watch)} to watch, {len(to_act)} to act on"
-               + (f", {len(not_run)} not run" if not_run else "") + ", see Checks.")
-    report.add()
+        head.add(f"- **{data['title']}**: {_carrier_summary(ctx, carrier)}.")
+        if carrier == "elec" and not hydro_table.empty:
+            head.add(f"- **Hydro**: {_hydro_summary(ctx)}.")
+    head.add(f"- **Checks**: {len(checks) - len(to_act) - len(to_watch) - len(not_run)} ok, "
+             f"{len(to_watch)} to watch, {len(to_act)} to act on"
+             + (f", {len(not_run)} not run" if not_run else "") + ", see Checks.")
+    head.add()
 
     summary_rows = [
-        ["Electricity capacity", f"{_num(elec_total)} GW", "`p_gnu_io`, elec output side"],
+        ["Electricity generation", f"{_num(elec_total)} GW",
+         "`p_gnu_io`, elec output side, less storage and demand response"],
     ]
     if not elec_demand.empty:
         worst = elec_demand.loc[elec_demand["mean"].idxmax()]
         summary_rows.append([
             "Electricity demand",
             f"{_num(demand_total, 0)} TWh/yr mean, largest {worst['area']} at {_num(worst['mean'], 0)}",
-            f"`ts_influx_elec`, {len(timeseries.years)} climate year(s)",
+            f"`ts_influx_elec`, {plural(len(timeseries.years), 'climate year')}",
         ])
     if len(inventory.by_group) and float(inventory.by_group["usable_mean_TWh"].max()):
         widest = [key for key, _, _ in STORAGE_GROUPS][-1]
         summary_rows.append([
-            "Electricity storage",
+            "Electricity storage, with inflow hydro",
             f"{_num(inventory.by_group.loc[widest, 'usable_mean_TWh'])} TWh usable, "
             f"{_num(inventory.by_group.loc[widest, 'nameplate_TWh'])} TWh of nameplate",
             "`p_gnBoundaryPropertiesForStates` + `ts_node_hydro_storage_limits` + `p_gnu_io`",
@@ -4199,209 +4646,142 @@ def build_report(
     if price is not None:
         summary_rows.append(["CO2 price", f"{_num(price, 0)} EUR/t, one value for the run",
                              "`ts_emissionPriceChange`"])
-    report.table(["What", "Value", "Where it is read from"], summary_rows)
+    head.table(["What", "Value", "Where it is read from"], summary_rows)
 
-    # ---- contents ---------------------------------------------------------
-    report.add("## Contents")
-    report.add()
-    report.add("1. [Where the model is](#where-the-model-is)")
-    for carrier, data in carrier_data.items():
-        report.add(f"1. [{data['title']}](#{data['slug']})")
-    report.add("1. [Storage](#storage)")
-    report.add("1. [Hydro](#hydro)")
-    report.add("1. [Interconnection](#interconnection)")
-    report.add("1. [Net load](#net-load)")
-    report.add("1. [On what timescale](#on-what-timescale)")
-    report.add("1. [What the weather years do](#what-the-weather-years-do)")
-    report.add("1. [Fuel, CO2 and emissions](#fuel-co2-and-emissions)")
-    report.add("1. [What the model may do](#what-the-model-may-do)")
-    report.add("1. [Checks](#checks)")
-    report.add("1. [Not summarized](#not-summarized)")
-    report.add("1. [What this cannot see](#what-this-cannot-see)")
-    report.add()
-    if not zones:
-        report.add("Country codes roll up the bidding zones: "
-                   + ", ".join(f"**{c}** {n}" for c, n in sorted(COUNTRY_NAMES.items())
-                               if c in {country_of(zone_of(x)) for x in workbook.nodes})
-                   + ".")
-        report.add()
+    # ---- the body, whose headings make the contents -----------------------
+    body = Report()
+    body.heading("build-settings", "Build settings")
+    _build_section(body, record, workbook, timeseries)
 
-    # ---- where the model is -----------------------------------------------
-    report.add('<a id="where-the-model-is"></a>')
-    report.add()
-    report.add("## Where the model is")
-    report.add()
-    _coverage_section(report, presence, zone_presence, shapes, zones)
+    body.heading("where-the-model-is", "Where the model is")
+    _coverage_section(body, presence, zone_presence, shapes, zones)
     figures.append(figure_carrier_map(out_dir, shapes, countries, zone_presence, zones,
                                       neighbours))
-    report.figure(
+    body.figure(
         figures[-1],
         "Each bidding zone filled by the carriers it models, with country borders over the "
         "top. Industrial steam is not on the map: three carriers make seven fills and a "
         "colour can carry that, a fourth makes fifteen and it cannot. Take-away: how far "
         "each carrier reaches, and how much of the map is electricity alone.",
     )
-    _omissions_section(report, presence, zones)
+    _omissions_section(body, presence, zones)
 
-    # ---- carrier sections -------------------------------------------------
-    for carrier, data in carrier_data.items():
-        figures.append(_carrier_section(report, workbook, data, carrier, timeseries,
-                                        out_dir, zones, ratio_facts))
+    figures.extend(_electricity_chapter(body, ctx))
+    _hydro_chapter(body, ctx)
+    for carrier, _, _ in CARRIERS:
+        if carrier != "elec":
+            figures.extend(_carrier_chapter(body, ctx, carrier))
 
-    # ---- storage ----------------------------------------------------------
-    report.add('<a id="storage"></a>')
-    report.add()
-    report.add("## Storage")
-    report.add()
-    _storage_section(report, inventory, timeseries, zones)
-    figures.append(figure_storage(out_dir, inventory, zones))
-    report.figure(
-        figures[-1],
-        "Left: the discharge power of every store, with each duration-sized technology's hours in "
-        "the legend. Right: usable storage energy, the dark part being the hydro that the light "
-        "part is not, and the tick each area's nameplate ceiling. Take-away: a handful of "
-        "countries carry the system's seasonal energy in hydro, the rest hold hours rather than "
-        "months, and the ceiling is roughly twice what is usable.",
-    )
-
-    # ---- hydro ------------------------------------------------------------
-    report.add('<a id="hydro"></a>')
-    report.add()
-    report.add("## Hydro")
-    report.add()
-    _hydro_section(report, hydro_table, hydro_result, timeseries, zones)
-
-    # ---- interconnection --------------------------------------------------
-    report.add('<a id="interconnection"></a>')
-    report.add()
-    report.add("## Interconnection")
-    report.add()
-    _transfer_section(report, per_area_transfer, transfer_facts, peak, zones)
-    figures.append(figure_interconnection(out_dir, matrix, per_area_transfer, peak,
-                                          zone_matrix, shapes, countries, neighbours))
-    report.figure(
-        figures[-1],
-        "Transfer capacity as a map, and each area's total as a share of its own peak demand. "
-        "Take-away: who is connected to whom, and who depends on those connections rather than "
-        "on its own plant.",
-    )
-
-    # ---- net load ---------------------------------------------------------
-    report.add('<a id="net-load"></a>')
-    report.add()
-    report.add("## Net load")
-    report.add()
-    curves = netload_by_area(timeseries) if timeseries.available else {}
-    split = firm_and_shifting(carrier_data["elec"]["capacity"])
-    imports = (per_area_transfer["cross_border_MW"] if per_area_transfer is not None
-               and not per_area_transfer.empty else pd.Series(dtype="float64"))
-    vre_share = potential_vre_share(capacity_factors, carrier_data["elec"]["demand"])
-    _netload_section(report, curves, timeseries, zones, split, imports, vre_share)
-    figures.append(figure_netload(out_dir, curves, zones))
-    report.figure(
-        figures[-1],
-        "Net load -- demand minus wind and solar -- for every hour of every climate year, "
-        "sorted highest to lowest, one panel per area on its own scale, with the system added "
-        "hour by hour in the last panel. Orange is the part of "
-        "the year when wind and solar alone exceed demand. Take-away: the left edge is what "
-        "firm capacity has to cover; the orange area is what has to be stored, exported or "
-        "curtailed. It ignores storage, trade and dispatch, and treats VRE as never curtailed "
-        "and never out of service, so it is a statement about the input data and not a forecast.",
-    )
-
-    # ---- weather years ----------------------------------------------------
-    # ---- what storage of each duration could remove ------------------------
-    report.add('<a id="on-what-timescale"></a>')
-    report.add()
-    report.add("## On what timescale")
-    report.add()
-    decomposition = depth_by_timescale(residual_after_inflow(timeseries), timeseries)
-    _duration_section(report, decomposition, inventory, timeseries, zones)
-    figures.append(figure_duration(out_dir, decomposition, inventory.by_area, zones))
-    report.figure(
-        figures[-1],
-        "How deep a store each area's residual needs at each timescale, with the store it has "
-        "marked on the same axis: a diamond for battery and closed-loop pumped hydro, a bar from "
-        "usable to seasonal envelope once hydro is added. Take-away: where the markers sit inside "
-        "the light end, the fleet covers hours; where they reach the dark end, it covers a season.",
-    )
-
-    report.add('<a id="what-the-weather-years-do"></a>')
-    report.add()
-    report.add("## What the weather years do")
-    report.add()
+    body.heading("what-varies-between-the-years", "What varies between the years")
     material = _material_hydro_areas(timeseries)
-    _weather_section(report, timeseries, material, zones)
+    _variation_section(body, timeseries, material, zones)
     figures.append(figure_climate_variability(out_dir, timeseries, material, zones))
-    report.figure(
+    body.figure(
         figures[-1],
-        f"Each area's {len(timeseries.years) or 35} climate year(s) as a percentage of that area's "
+        f"Each area's climate years as a percentage of that area's "
         "own mean, so a small country and a large one are comparable. Take-away: a bad weather "
         "year barely moves electricity demand but can change hydro inflow by tens of per cent.",
-        caveat=(f"Read from the {len(timeseries.years)} real per-year files, never the "
-                f"forecast branches. Those are a per-hour quantile taken "
-                f"independently across the same years, not coherent alternative years, so "
-                f"a claim about \"the driest year\" cannot be built from them."
+        caveat=("Read from the realised climate years, not the forecast branches: those are "
+                "per-hour quantiles taken across the years, not alternative years of their own."
                 if timeseries.available else None),
     )
 
-    # ---- prices -----------------------------------------------------------
-    report.add('<a id="fuel-co2-and-emissions"></a>')
-    report.add()
-    report.add("## Fuel, CO2 and emissions")
-    report.add()
-    _price_section(report, workbook)
+    body.heading("fuel-co2-and-emissions", "Fuel, CO2 and emissions")
+    _price_section(body, workbook)
 
-    # ---- what the model may do --------------------------------------------
-    report.add('<a id="what-the-model-may-do"></a>')
-    report.add()
-    report.add("## What the model may do")
-    report.add()
-    _permissions_section(report, model_permissions(workbook))
+    body.heading("what-backbone-may-do", "What Backbone may do")
+    _permissions_section(body, model_permissions(workbook))
 
-    # ---- checks -----------------------------------------------------------
-    report.add('<a id="checks"></a>')
-    report.add()
-    report.add("## Checks")
-    report.add()
-    report.add("Values that cannot be what was meant, known gaps, and the hydro stores that "
-               "cannot do what the data asks of them. A number that is merely surprising is not "
-               "checked here; it is shown in the tables above. Each check is in one of four "
-               "states, and only one of them asks for anything:")
-    report.add()
+    body.heading("checks", "Checks")
+    body.add("Values that cannot be what was meant, capacity that can never run, known gaps, "
+             "and hydro storage that cannot do what the data asks of them. A number that is "
+             "merely surprising is not checked here; it is shown in the tables above. Each "
+             "check is in one of four states, and only one of them asks for anything:")
+    body.add()
     for state in (CHECK_OK, CHECK_WATCH, CHECK_ACT, CHECK_NOT_RUN):
-        report.add(f"- **{state}**: {CHECK_MEANING[state]}.")
-    report.add()
-    report.table(["Check", "State", "Result"],
-                 [[c.name, f"**{c.state}**" if c.state == CHECK_ACT else c.state,
-                   f"**{c.result}**" if c.state == CHECK_ACT else c.result] for c in checks])
+        body.add(f"- **{state}**: {CHECK_MEANING[state]}.")
+    body.add()
+    body.table(["Check", "State", "Result"],
+               [[c.name, f"**{c.state}**" if c.state == CHECK_ACT else c.state,
+                 f"**{c.result}**" if c.state == CHECK_ACT else c.result] for c in checks])
 
-    # ---- not summarized ---------------------------------------------------
-    report.add('<a id="not-summarized"></a>')
-    report.add()
-    report.add("## Not summarized")
-    report.add()
-    _not_summarized(report, workbook)
+    body.heading("not-summarized", "Not summarized")
+    _not_summarized(body, workbook)
 
-    # ---- what this cannot see --------------------------------------------
-    report.add('<a id="what-this-cannot-see"></a>')
-    report.add()
-    report.add("## What this cannot see")
-    report.add()
-    _limits_section(report, workbook, timeseries, inventory, zones)
+    body.heading("what-this-cannot-see", "What this cannot see")
+    _limits_section(body, workbook, timeseries, inventory, zones)
 
-    report.add("---")
-    report.add()
-    report.add(f"*Written by `tools/input_data_summary.py` from "
-               f"`{workbook.path.parent.name}/`. Every run overwrites this folder rather than "
-               f"keeping the previous one.*")
-    return report.text(), figures
+    body.add("---")
+    body.add()
+    body.add(f"*Written by `tools/input_data_summary.py` from "
+             f"`{workbook.path.parent.name}/`. Each run rewrites this report and the figures it "
+             f"draws; any other file in this folder is left as it is.*")
+
+    # ---- contents, from the headings the body wrote ------------------------
+    head.add("## Contents")
+    head.add()
+    for depth, title, anchor in body.toc:
+        head.add(("1. " if depth == 2 else "   - ") + f"[{title}](#{anchor})")
+    head.add()
+    if not zones:
+        head.add("Country codes roll up the bidding zones: "
+                 + ", ".join(f"**{c}** {n}" for c, n in sorted(COUNTRY_NAMES.items())
+                             if c in {country_of(zone_of(x)) for x in workbook.nodes})
+                 + ".")
+        head.add()
+    return Report(head.lines + body.lines).text(), figures
+
+
+def _carrier_summary(ctx: ReportContext, carrier: str) -> str:
+    """One carrier's line in the one-minute summary, each subsection's number once."""
+    data = ctx.carriers[carrier]
+    generated = _total_gw(data["generation"])
+    consumed = _capacity_gw(data["consumers"])
+    stored = storage_discharge(data["storage"])
+    response = _total_gw(ctx.demand_response) if carrier == "elec" else 0.0
+    corridors = data["transfer"][2]
+    demand = float(data["demand"]["mean"].sum()) if not data["demand"].empty else 0.0
+    if not (generated or consumed or demand or stored.sum()):
+        return "nothing built in this scenario"
+    parts = [f"{_num(generated)} GW generating"]
+    if demand:
+        parts.append(f"{_num(demand, 0)} TWh/yr demanded")
+    elif carrier in DEMAND_FAMILY and not ctx.timeseries.available:
+        parts.append("demand not read")
+    else:
+        parts.append("no demand built")
+    if consumed:
+        parts.append(f"{_num(consumed)} GW consuming")
+    if stored.sum():
+        energy = float(data["storage"]["energy_GWh"].sum())
+        parts.append(f"{_num(float(stored.sum()))} GW of storage holding {_num(energy, 0)} GWh")
+    if response:
+        parts.append(f"{_num(response)} GW of demand response")
+    if corridors:
+        parts.append(f"{_num(corridors['total_GW'])} GW of interconnection")
+    return ", ".join(parts)
+
+
+def _hydro_summary(ctx: ReportContext) -> str:
+    table = ctx.hydro_table
+    text = f"{_num(float(table['storage_MWh'].sum()) * MWH_TO_TWH)} TWh of usable storage"
+    if ctx.timeseries.hydro is not None:
+        text += (f", {_num(float(table['inflow_MWh_yr'].sum()) * MWH_TO_TWH, 0)} TWh/yr of "
+                 f"inflow in a mean year")
+    return text
 
 
 def _total_gw(capacity: pd.DataFrame) -> float:
     if capacity is None or capacity.empty:
         return 0.0
     return float(capacity.to_numpy(dtype="float64").sum())
+
+
+def _capacity_gw(frame: pd.DataFrame) -> float:
+    """The GW in a ``consumption_capacity``-shaped frame, which holds MW."""
+    if frame is None or frame.empty:
+        return 0.0
+    return float(frame["capacity"].sum() * MW_TO_GW)
 
 
 def _peak_demand(timeseries: Timeseries) -> Optional[pd.Series]:
@@ -4416,24 +4796,19 @@ def _peak_demand(timeseries: Timeseries) -> Optional[pd.Series]:
     return pd.Series(demand.max(axis=0), index=timeseries.areas, dtype="float64")
 
 
-def window_caveat(timeseries: Timeseries, suffix: str = "") -> Optional[str]:
-    """One sentence for a section whose reading changes when a window is not a year.
+def window_caveat(timeseries: Timeseries) -> Optional[str]:
+    """One sentence for a build whose climate windows are longer than a year.
 
-    Nothing is cut or refused: a 200-day or a five-year window is what the
-    model will run, so the analyses run on it as it is and say what that means.
+    A shorter window never reaches here: the timeseries are not read for it.
     """
     hours = timeseries.window_hours
-    if not timeseries.available or not hours or hours == HOURS_PER_YEAR:
+    if not timeseries.available or not hours or hours <= HOURS_PER_YEAR:
         return None
-    days = f"{hours / 24:,.4g}"
-    if hours > HOURS_PER_YEAR:
-        text = (f"Each climate window in this build is {days} days, longer than a year, so "
-                f"neighbouring windows overlap and the climate years are not independent of "
-                f"one another")
-    else:
-        text = (f"Each climate window in this build is {days} days, shorter than a year, so "
-                f"each covers only part of the seasons")
-    return f"*{text}{suffix}.*"
+    return (f"Each climate window is {hours / 24:,.4g} days and one starts in every climate "
+            f"year, so neighbouring windows overlap. The annual figures, the net load and the "
+            f"climate-year comparison use the first 365 days of each window, which counts "
+            f"each climate year once; the hydro checks run each window whole, as Backbone "
+            f"runs it.")
 
 
 def _material_hydro_areas(timeseries: Timeseries) -> List[str]:
@@ -4446,103 +4821,152 @@ def _material_hydro_areas(timeseries: Timeseries) -> List[str]:
     return means[means >= MATERIAL_HYDRO_TWH].sort_values(ascending=False).index.tolist()
 
 
-def _carrier_section(report, workbook, data, carrier, timeseries, out_dir, zones,
-                     ratio_facts=None) -> str:
-    report.add(f'<a id="{data["slug"]}"></a>')
-    report.add()
-    report.add(f"## {data['title']}")
-    report.add()
+def _electricity_chapter(report: Report, ctx: ReportContext) -> List[str]:
+    """Electricity: every subsection, always, each saying so when it has nothing."""
+    report.heading("elec", "Electricity")
+    _chapter_opening(report, ctx, "elec")
+    report.heading("elec-generation", "Generation", 3)
+    figures = _generation_subsection(report, ctx, "elec")
+    report.heading("elec-consumption", "Consumption", 3)
+    _consumption_subsection(report, ctx, "elec")
+    report.heading("elec-net-load", "Net load", 3)
+    figures += _netload_subsection(report, ctx)
+    report.heading("elec-interconnection", "Interconnection", 3)
+    figures += _transfer_subsection(report, ctx)
+    report.heading("elec-storage", "Storage", 3)
+    figures += _elec_storage_subsection(report, ctx)
+    report.heading("elec-demand-management", "Demand management", 3)
+    _demand_management_subsection(report, ctx)
+    return figures
 
-    capacity, demand, consumption = data["capacity"], data["demand"], data["consumption"]
-    produced = _total_gw(capacity)
-    consumed = float(consumption["capacity"].sum() * MW_TO_GW) if not consumption.empty else 0.0
 
-    if not produced and not consumed and demand.empty:
-        report.add(f"Nothing in this scenario produces, consumes or demands {data['title'].lower()}. "
-                   f"The section stays so that a later build can be compared against this one.")
+def _carrier_chapter(report: Report, ctx: ReportContext, carrier: str) -> List[str]:
+    """District heat, steam or hydrogen; corridors and storage only where the build has them."""
+    data = ctx.carriers[carrier]
+    slug = data["slug"]
+    report.heading(slug, data["title"])
+    if not _chapter_opening(report, ctx, carrier):
+        return []
+    report.heading(f"{slug}-generation", "Generation", 3)
+    figures = _generation_subsection(report, ctx, carrier)
+    report.heading(f"{slug}-consumption", "Consumption", 3)
+    _consumption_subsection(report, ctx, carrier)
+    if data["transfer"][2]:
+        report.heading(f"{slug}-interconnection", "Interconnection", 3)
+        _carrier_transfer_subsection(report, ctx, carrier)
+    if _has_storage(data):
+        report.heading(f"{slug}-storage", "Storage", 3)
+        _carrier_storage_subsection(report, ctx, carrier)
+    return figures
+
+
+def _has_storage(data: Dict) -> bool:
+    table = data["storage"]
+    return bool(table is not None and not table.empty
+                and (storage_discharge(table).sum() > 0 or table["energy_GWh"].sum() > 0))
+
+
+def _chapter_opening(report: Report, ctx: ReportContext, carrier: str) -> bool:
+    """The chapter's first paragraph, one number per subsection; False for an absent carrier."""
+    data = ctx.carriers[carrier]
+    title = data["title"].lower()
+    generated = _total_gw(data["generation"])
+    consumed = _capacity_gw(data["consumers"])
+    stored = float(storage_discharge(data["storage"]).sum())
+    demand = data["demand"]
+    corridors = data["transfer"][2]
+    response = _total_gw(ctx.demand_response) if carrier == "elec" else 0.0
+    if not (generated or consumed or stored or not demand.empty):
+        report.add(f"Nothing in this scenario produces, consumes or demands {title}.")
+        report.add()
+        return False
+
+    text = f"{_num(generated)} GW of capacity generates {title}"
+    if not demand.empty:
+        text += f", against {_num(float(demand['mean'].sum()), 0)} TWh/yr of demand"
+        if not data["demand_is_constant"]:
+            text += " in a mean climate year"
+    elif carrier in DEMAND_FAMILY:
+        # A demand series is written for this carrier in a normal build, so its
+        # absence here is about this folder, not about the carrier.
+        text += ", and its demand series could not be read"
+    else:
+        text += ", and nothing demands it directly"
+    text += "."
+    beside = []
+    if stored:
+        beside.append(f"{_num(stored)} GW of storage")
+    if response:
+        beside.append(f"{_num(response)} GW of demand response")
+    if corridors:
+        beside.append(f"{_num(corridors['total_GW'])} GW of interconnection")
+    if beside:
+        text += f" Beside it {'is' if len(beside) == 1 else 'are'} {and_join(beside)}."
+    if consumed:
+        text += f" {_num(consumed)} GW of units consume {title} to make something else."
+    if carrier != "elec":
+        absent = [what for what, has in (("corridors", corridors), ("storage", stored))
+                  if not has]
+        if absent:
+            text += f" It has no {' and no '.join(absent)} in this build."
+    report.add(text)
+    report.add()
+    return True
+
+
+def _generation_subsection(report: Report, ctx: ReportContext, carrier: str) -> List[str]:
+    """Generation capacity, its links to electricity, its figures; for electricity, its yield."""
+    data = ctx.carriers[carrier]
+    zones = ctx.zones
+    generation, title = data["generation"], data["title"]
+    if generation.empty:
+        report.add(f"Nothing generates {title.lower()} in this scenario.")
         report.add()
     else:
-        opening = f"{_num(produced)} GW of capacity produces {data['title'].lower()}"
-        if consumed:
-            opening += f" and {_num(consumed)} GW consumes it"
-        if not demand.empty:
-            opening += f", against {_num(float(demand['mean'].sum()), 0)} TWh/yr of demand"
-        elif carrier in DEMAND_FAMILY:
-            # A demand series is written for this carrier in a normal build, so
-            # its absence here is about this folder, not about the carrier.
-            opening += ", and its demand series could not be read"
-        elif consumed or produced:
-            opening += ", and nothing demands it directly"
-        report.add(opening + ".")
-        report.add()
-
-    if capacity is not None and not capacity.empty:
-        labels = [l for l in capacity.columns]
+        produced = _total_gw(generation)
+        labels = list(generation.columns)
+        ordered = generation.sum(axis=1).sort_values(ascending=False)
         rows = []
-        ordered = capacity.sum(axis=1).sort_values(ascending=False)
         for area in ordered.index:
             row = [display_name(area, zones)]
-            row += [_num(capacity.loc[area, l]) if capacity.loc[area, l] else "-" for l in labels]
+            row += [_num(generation.loc[area, l]) if generation.loc[area, l] else "-"
+                    for l in labels]
             row.append(f"**{_num(ordered[area])}**")
             rows.append(row)
-        totals = ["**total**"] + [f"**{_num(capacity[l].sum())}**" for l in labels]
-        totals.append(f"**{_num(produced)}**")
-        rows.append(totals)
-        report.add(f"Production capacity, GW, output side only -- a unit that also consumes "
-                   f"another carrier is counted once, here.")
+        rows.append(["**total**"] + [f"**{_num(generation[l].sum())}**" for l in labels]
+                    + [f"**{_num(produced)}**"])
+        report.add("Generation capacity, GW, output side only -- a unit that also consumes "
+                   "another carrier is counted once, here." + _moved_text(data))
         report.add()
         report.table([level_header(zones)] + labels + ["total"], rows)
-
-    if not demand.empty:
-        rows = [[display_name(r["area"], zones), _num(r["mean"], 1)]
-                for _, r in demand.iterrows()]
-        rows.append(["**total**", f"**{_num(float(demand['mean'].sum()), 1)}**"])
-        if data.get("demand_is_constant"):
-            report.add(f"Annual demand, TWh/yr. It is a constant hourly rate in `p_gn`'s "
-                       f"`influx` column rather than an hourly series, so it is the same in "
-                       f"every climate year and does not appear in "
-                       f"[What the weather years do](#what-the-weather-years-do).")
-        else:
-            report.add(f"Annual demand, TWh/yr, the mean over {len(timeseries.years)} "
-                       f"climate year(s). How far individual years move is in "
-                       f"[What the weather years do](#what-the-weather-years-do).")
-        report.add()
-        report.table([level_header(zones), "TWh/yr"], rows)
-    elif carrier in DEMAND_FAMILY and timeseries.skipped:
-        report.add(f"Demand needs the timeseries files, which were not read: {timeseries.skipped}.")
-        report.add()
-    elif carrier in DEMAND_FAMILY:
-        # The family exists for this carrier but no file of it was found, which
-        # is different from a carrier that never has one.
-        report.add(f"No `{DEMAND_FAMILY[carrier]}_<year>.gdx` file was found in this folder, so "
-                   f"there is no demand to report. The units above still exist.")
-        report.add()
-    else:
-        # Both routes checked: no ts_influx family is written for this carrier,
-        # and p_gn carries no constant influx for it either. The units above are
-        # built and nothing draws on what they make.
-        report.add(f"Nothing demands {data['title'].lower()} in this build, by either route -- "
-                   f"there is no `ts_influx` family for it and no constant `influx` in `p_gn`. "
-                   f"The capacity above has no sink.")
-        report.add()
-
-    if not consumption.empty:
-        rows = []
-        pivot = consumption.pivot_table(index="area", columns="label", values="capacity",
-                                       aggfunc="sum", fill_value=0.0) * MW_TO_GW
-        for area in pivot.sum(axis=1).sort_values(ascending=False).index:
-            rows.append([display_name(area, zones)]
-                        + [_num(pivot.loc[area, c]) if pivot.loc[area, c] else "-"
-                           for c in pivot.columns])
-        report.add(f"Capacity that consumes {data['title'].lower()}, GW, by what it makes from it. "
-                   f"These are dispatchable units, not demand: the model decides when they run, "
-                   f"so they are not part of the demand figures above.")
-        report.add()
-        report.table([level_header(zones)] + list(pivot.columns), rows)
-        gloss = explain_grids(pivot.columns, ratio_facts)
-        if gloss:
-            report.add(gloss)
+        links = _links_text(data, carrier)
+        if links:
+            report.add(links)
             report.add()
+
+    names = []
+    name = figure_carrier(ctx.out_dir, data["slug"], title, generation, data["demand"],
+                          data["consumers"], zones)
+    if name:
+        names.append(name)
+        report.figure(
+            name,
+            f"{title} generation capacity and annual demand, in the same area order. Take-away: "
+            f"what each area has built for this carrier, read directly against what it uses.",
+            caveat=("Technologies are grouped by the grids each unit connects, not by its unit "
+                    "type's name: pumped hydro with natural inflow counts as hydro, closed-loop "
+                    "pumped hydro as storage. Capacity that fits no group is counted under Checks."
+                    if carrier == "elec" else None),
+        )
+    name = figure_carrier_mix(ctx.out_dir, data["slug"], title, generation, zones)
+    if name:
+        names.append(name)
+        report.figure(
+            name,
+            f"Each area's {title.lower()} generation capacity as shares of its own total, so a "
+            f"small area reads as clearly as a large one. Take-away: which technologies each "
+            f"area relies on.",
+        )
 
     if carrier == "elec" and not data["capacity_factor"].empty:
         factors = data["capacity_factor"]
@@ -4555,7 +4979,7 @@ def _carrier_section(report, workbook, data, carrier, timeseries, out_dir, zones
                 if f in part.index else "-" for f in flows
             ])
         report.add(f"What the wind and solar fleets actually yield, over "
-                   f"{len(timeseries.years)} climate year(s):")
+                   f"{plural(len(ctx.timeseries.years), 'climate year')}:")
         report.add()
         report.add("`capacity factor = sum over nodes(capacity x its own factor) / "
                    "sum over nodes(capacity)`")
@@ -4563,27 +4987,551 @@ def _carrier_section(report, workbook, data, carrier, timeseries, out_dir, zones
         report.table([level_header(zones)] + [f"{f} CF" for f in flows], rows)
         report.add("*Weighted, so a 200 MW zone cannot count for as much as a 12 GW one.*")
         report.add()
+    if carrier == "elec" and not ctx.hydro_table.empty:
+        report.add("Hydro here is turbine capacity. What the water allows it -- how much each "
+                   "storage holds, what flows in, and what the turbines must keep generating -- is "
+                   "in [Hydro](#hydro).")
+        report.add()
+    return names
 
-    name = figure_carrier(out_dir, data["slug"], data["title"], capacity, demand,
-                          consumption, zones)
+
+def _moved_text(data: Dict) -> str:
+    """Which output capacity the generation table leaves out, and where it went."""
+    capacity, generation = data["capacity"], data["generation"]
+    if capacity is None or capacity.empty:
+        return ""
+    moved = [c for c in capacity.columns if c not in generation.columns and capacity[c].sum() > 0]
+    stored = [c for c in moved if c in STORAGE_LABELS]
+    parts = []
+    if stored:
+        parts.append(f"{and_join(stored)} {'is' if len(stored) == 1 else 'are'} under Storage")
+    if DEMAND_RESPONSE in moved:
+        parts.append(f"{DEMAND_RESPONSE} under Demand management")
+    if not parts:
+        return ""
+    text = parts[0] if len(parts) == 1 else f"{parts[0]}, and {parts[1]}"
+    return f" {text[0].upper()}{text[1:]}, so no megawatt is counted twice."
+
+
+def _links_text(data: Dict, carrier: str) -> str:
+    """How the carrier's generation is tied to electricity, in one or two sentences."""
+    links = data["links"] or {}
+    if carrier == "elec":
+        co = links.get("co_by_carrier") or {}
+        if not co:
+            return ""
+        named = and_join([f"{_num(gw)} GW is on units that also make "
+                          f"{CARRIER_TITLES[other].lower()}" for other, gw in co.items()])
+        return (f"Of this, {named}: combined heat and power, which makes both from one fuel. "
+                f"Their chapters say how tightly the two outputs are tied.")
+    produced = _total_gw(data["generation"])
+
+    def share(gw: float) -> str:
+        return "All of it" if gw >= produced - 0.05 else f"{_num(gw)} GW of it"
+
+    sentences = []
+    co = links.get("co_GW", 0.0)
+    if co:
+        flexible = links.get("flexible_GW", 0.0)
+        split = []
+        if co - flexible > 0.05:
+            split.append(f"{_num(co - flexible)} GW at a fixed ratio between the two outputs "
+                         f"(`cb`)")
+        if flexible > 0.05:
+            split.append(f"{_num(flexible)} GW free to move between limits (`cb` with `cv`)")
+        sentences.append(f"{share(co)} is combined heat and power that also generates "
+                         f"{_num(links.get('co_elec_GW', 0.0))} GW of electricity"
+                         + (f": {and_join(split)}" if split else "") + ".")
+    made = links.get("from_elec_GW", 0.0)
+    if made:
+        sentences.append(f"{share(made)} is made from electricity.")
+    return " ".join(sentences)
+
+
+def _consumption_subsection(report: Report, ctx: ReportContext, carrier: str) -> None:
+    """Demand and the units that consume the carrier, then capacity against every use."""
+    data = ctx.carriers[carrier]
+    zones, timeseries = ctx.zones, ctx.timeseries
+    title = data["title"].lower()
+    demand, consumers = data["demand"], data["consumers"]
+
+    if demand.empty and carrier in DEMAND_FAMILY and timeseries.skipped:
+        report.add(f"Demand needs the timeseries files, which were not read: {timeseries.skipped}.")
+        report.add()
+    elif demand.empty and carrier in DEMAND_FAMILY:
+        # The family exists for this carrier but no file of it was found, which
+        # is different from a carrier that never has one.
+        report.add(f"No `{DEMAND_FAMILY[carrier]}_<year>.gdx` file was found in this folder, so "
+                   f"there is no demand to report.")
+        report.add()
+    elif demand.empty:
+        # Both routes checked: no ts_influx family is written for this carrier,
+        # and p_gn carries no constant influx for it either.
+        report.add(f"Nothing demands {title} in this build, by either route -- there is no "
+                   f"`ts_influx` series for it and no constant `influx` in `p_gn`"
+                   + (", so the units that consume it are its only outlet."
+                      if not consumers.empty else "."))
+        report.add()
+
+    if not demand.empty or not consumers.empty:
+        pivot = (consumers.pivot_table(index="area", columns="label", values="capacity",
+                                       aggfunc="sum", fill_value=0.0) * MW_TO_GW
+                 if not consumers.empty else pd.DataFrame())
+        by_demand = demand.set_index("area")["mean"] if not demand.empty else pd.Series(dtype="float64")
+        peak = data["peak"] * MW_TO_GW
+        areas = list(by_demand.sort_values(ascending=False).index)
+        if not pivot.empty:
+            areas += [a for a in pivot.sum(axis=1).sort_values(ascending=False).index
+                      if a not in areas]
+        demanded = not demand.empty
+        rows = []
+        for area in areas:
+            row = [display_name(area, zones)]
+            if demanded:
+                row += [_num(by_demand[area]) if area in by_demand.index else "-",
+                        _num(peak[area]) if area in peak.index else "-"]
+            row += [_num(pivot.loc[area, c]) if area in pivot.index and pivot.loc[area, c] else "-"
+                    for c in pivot.columns]
+            rows.append(row)
+        rows.append(["**total**"] + ([f"**{_num(float(by_demand.sum()))}**", ""] if demanded else [])
+                    + [f"**{_num(float(pivot[c].sum()))}**" for c in pivot.columns])
+
+        if not demand.empty and data["demand_is_constant"]:
+            source = (" Demand is a constant hourly rate in `p_gn`'s `influx` column, the same in "
+                      "every climate year, so its peak is that rate.")
+        elif not demand.empty:
+            source = (f" Demand is the mean over {plural(len(timeseries.years), 'climate year')} "
+                      f"and its peak the highest hour in any of them; [What varies between the "
+                      f"years](#what-varies-between-the-years) shows how far single years move.")
+        else:
+            source = ""
+        if pivot.empty:
+            what = f"Demand for {title}."
+        else:
+            what = (f"{'Demand, and the units' if demanded else 'The units'} that consume "
+                    f"{title}, GW, by what they make from it. A consuming unit is not demand: "
+                    f"Backbone decides when it runs.")
+        report.add(what + source)
+        report.add()
+        report.table([level_header(zones)] + (["demand TWh/yr", "peak GW"] if demanded else [])
+                     + [str(c) for c in pivot.columns], rows)
+        gloss = explain_grids(list(pivot.columns), ctx.inventory.ratio_facts)
+        if gloss:
+            report.add(gloss)
+            report.add()
+    if not data["charging"].empty:
+        # No number: this is the carrier's side of the charger and Storage reads
+        # the storage's side, and two totals for one unit would only disagree.
+        report.add(f"Units that charge storage with {title} are under Storage, beside the storage "
+                   f"they fill.")
+        report.add()
+    _uses_table(report, data, carrier, zones)
+
+
+#: What "dispatchable" leaves out of generation, per carrier, said the way the
+#: reader needs it. Storage and demand response are not generation to begin with.
+_LEFT_OUT = {
+    "elec": "wind and solar",
+    "dheat": "solar heat",
+}
+
+
+def _uses_table(report: Report, data: Dict, carrier: str, zones: bool) -> None:
+    """Dispatchable generation against everything that could take its output."""
+    uses = data["against_uses"]
+    if uses is None or uses.empty:
+        return
+    title = data["title"].lower()
+
+    def cell(area, column):
+        return _num(uses.loc[area, column]) if uses.loc[area, column] else "-"
+
+    rows = []
+    for area in uses.sort_values("production", ascending=False).index:
+        ratio = uses.loc[area, "ratio"]
+        shown = _ratio_text(ratio) if np.isfinite(ratio) or np.isinf(ratio) else "-"
+        rows.append([display_name(area, zones), cell(area, "production"), cell(area, "peak"),
+                     cell(area, "consumers"), cell(area, "exports"),
+                     f"**{shown}**" if ratio >= OVERSIZE_RATIO else shown])
+    rows.append(["**total**", f"**{_num(float(uses['production'].sum()))}**", "", "", "", ""])
+
+    left_out = (f" Dispatchable generation leaves out {_LEFT_OUT[carrier]}, which never all run "
+                f"at nameplate against a peak." if carrier in _LEFT_OUT else "")
+    report.add(f"Dispatchable generation against everything that could take its output in the "
+               f"busiest hour: the peak demand, the units that consume {title} or charge "
+               f"storage with it, and the capacity to export it. The last column divides the "
+               f"first by those three together.{left_out}")
+    report.add()
+    report.table([level_header(zones), "dispatchable GW", "peak GW", "consumers & charging GW",
+                  "exports GW", "dispatchable / uses"], rows)
+
+    big = oversized(uses)
+    if len(big):
+        named = summarise([f"{a} {_ratio_text(r)}, {_num(s)} GW"
+                           for a, r, s in zip(big.index, big["ratio"], big["stranded"])],
+                          sep="; ")
+        report.add(f"**In {plural(len(big), level_header(zones))} dispatchable {title} capacity "
+                   f"is at least {OVERSIZE_RATIO:g} times everything that could take it**, "
+                   f"largest excess first, with the GW that can never run: {named}. Capacity this "
+                   f"far above every use usually means a capacity in the source data is wrong.")
+        report.add()
+    idle = uses[np.isinf(uses["ratio"])]
+    if len(idle):
+        report.add(f"**{plural(len(idle), level_header(zones))} produce {title} with no use for "
+                   f"it at all**: "
+                   + summarise([f"{a} {_num(p)} GW" for a, p in
+                                idle["production"].sort_values(ascending=False).items()])
+                   + ". See the nowhere-to-go check.")
+        report.add()
+
+
+def _carrier_transfer_subsection(report: Report, ctx: ReportContext, carrier: str) -> None:
+    """A carrier's corridors as a table; the map is electricity's."""
+    data = ctx.carriers[carrier]
+    per_area, _, facts = data["transfer"]
+    zones = ctx.zones
+    text = (f"{plural(facts['pairs'], 'corridor')} carry {_num(facts['total_GW'])} GW of "
+            f"{data['title'].lower()}, each the mean of its two directions.")
+    if facts["inside"]:
+        text += (f" {facts['inside']} of them {'links' if facts['inside'] == 1 else 'link'} two "
+                 f"nodes inside one {level_header(zones)} and {'counts' if facts['inside'] == 1 else 'count'} "
+                 f"as internal.")
+    report.add(text)
+    report.add()
+    total = (per_area["cross_border_MW"] + per_area["inter_zonal_MW"]).sort_values(ascending=False)
+    rows = [[display_name(area, zones), _num(total[area] * MW_TO_GW),
+             _num(per_area.loc[area, "cross_border_MW"] * MW_TO_GW)
+             if per_area.loc[area, "cross_border_MW"] else "-",
+             _num(per_area.loc[area, "inter_zonal_MW"] * MW_TO_GW)
+             if per_area.loc[area, "inter_zonal_MW"] else "-"]
+            for area in total.index]
+    report.table([level_header(zones), "total GW", "cross-border GW", "internal GW"], rows)
+
+
+def _duration_table(report: Report, ratio_facts: Dict, grids: Sequence[str], what: str) -> None:
+    """The storage sized as hours of discharge power, one row per grid."""
+    by_grid = {g: e for g, e in (ratio_facts or {}).get("by_grid", {}).items() if g in set(grids)}
+    if not by_grid:
+        return
+    report.add(f"{what} sized as hours of discharge power (`upperLimitCapacityRatio` in "
+               f"`p_gnu_io`), by grid:")
+    report.add()
+    rows = []
+    for grid in sorted(by_grid, key=lambda g: -by_grid[g]["TWh"]):
+        entry = by_grid[grid]
+        hours = (_num(entry["hours"], 0) if entry["hours"] is not None
+                 else summarise([_num(h, 0) for h in entry["hours_seen"]]))
+        rows.append([f"`{grid}`", hours, _num(entry["power_GW"]),
+                     _num(entry["TWh"] * 1000, 0), str(entry["nodes"])])
+    if len(rows) > 1:
+        rows.append(["**total**", "", "",
+                     f"**{_num(sum(e['TWh'] for e in by_grid.values()) * 1000, 0)}**", ""])
+    report.table(["grid", "hours", "power GW", "energy GWh", "nodes"], rows)
+
+
+def _storage_gaps(report: Report, ctx: ReportContext, grids: Sequence[str]) -> None:
+    """What the volumes above leave out, for these grids only."""
+    facts, ratio_facts = ctx.inventory.facts, ctx.inventory.ratio_facts or {}
+    grids = set(grids)
+    io = ctx.workbook.p_gnu_io
+    in_grids = (set(io.loc[io["grid"].astype(str).isin(grids), "node"].astype(str))
+                if not io.empty and {"grid", "node"} <= set(io.columns) else set())
+    unconvertible = [n for n in ratio_facts.get("unconvertible", []) if n in in_grids]
+    if unconvertible:
+        report.add(f"{plural(len(unconvertible), 'storage node')} state a duration but no "
+                   f"`energyStoredPerUnitOfState`, so their energy is not known and is left out: "
+                   f"{summarise(unconvertible)}.")
+        report.add()
+    empty = [g for g in facts.get("grids_without_energy", []) if g in grids]
+    if empty:
+        report.add(f"**{', '.join(empty)}** have discharge power but no stated energy -- no "
+                   f"`upwardLimit` and no `upperLimitCapacityRatio` -- so their volume is not in "
+                   f"the totals above.")
+        report.add()
+    both = [n for n in facts.get("both_routes", []) if n in in_grids]
+    if both:
+        report.add(f"{plural(len(both), 'storage node')} state a size both ways; each is counted once, "
+                   f"by its `upwardLimit`: {summarise(both)}.")
+        report.add()
+
+
+def _carrier_storage_subsection(report: Report, ctx: ReportContext, carrier: str) -> None:
+    """The storage a carrier other than electricity charges and discharges, by area."""
+    data = ctx.carriers[carrier]
+    zones = ctx.zones
+    table, grids = data["storage"], data["storage_grids"]
+    discharge = storage_discharge(table)
+    report.add(f"{_num(float(table['energy_GWh'].sum()), 0)} GWh of storage in "
+               f"{plural(int((discharge > 0).sum()), level_header(zones))}, with "
+               f"{_num(float(discharge.sum()))} GW of discharge and "
+               f"{_num(float(table['charge_GW'].sum()))} GW of charging, all of it on "
+               f"{data['title'].lower()}.")
+    report.add()
+    _duration_table(report, ctx.inventory.ratio_facts, grids, "Storage")
+    rows = [[display_name(area, zones), _num(discharge[area]),
+             _num(table.loc[area, "charge_GW"]), _num(table.loc[area, "energy_GWh"], 0)]
+            for area in table["energy_GWh"].sort_values(ascending=False).index]
+    report.table([level_header(zones), "discharge GW", "charge GW", "energy GWh"], rows)
+    _storage_gaps(report, ctx, grids)
+
+
+def _elec_storage_subsection(report: Report, ctx: ReportContext) -> List[str]:
+    """Electricity storage, the nested group with inflow hydro, and the pumps."""
+    data = ctx.carriers["elec"]
+    inventory, zones = ctx.inventory, ctx.zones
+    table, grids = data["storage"], data["storage_grids"]
+    groups = inventory.by_group
+    widest = [key for key, _, _ in STORAGE_GROUPS][-1]
+    has_groups = len(groups) and float(groups["usable_mean_TWh"].max()) > 0
+    if (table is None or table.empty) and not has_groups:
+        report.add("No electricity storage is built in this scenario.")
+        report.add()
+        return []
+
+    labels = [c for c in (table.columns if table is not None else [])
+              if c not in ("charge_GW", "energy_GWh")]
+    discharge = storage_discharge(table)
+    if table is not None and not table.empty:
+        report.add(f"Electricity storage -- {GROUP_GLOSS['elec_literal']} -- holds "
+                   f"{_num(float(table['energy_GWh'].sum()), 0)} GWh, with "
+                   f"{_num(float(discharge.sum()))} GW of discharge and "
+                   f"{_num(float(table['charge_GW'].sum()))} GW of charging."
+                   + (f" Counting the storage the weather fills as well, "
+                      f"{_num(float(groups.loc[widest, 'usable_mean_TWh']))} TWh is usable."
+                      if has_groups else ""))
+        report.add()
+    if has_groups:
+        rows = []
+        for key, label, _ in STORAGE_GROUPS:
+            if key not in groups.index:
+                continue
+            row = groups.loc[key]
+            rows.append([label, _num(row["usable_mean_TWh"]), _num(row["usable_envelope_TWh"]),
+                         _num(row["nameplate_TWh"])])
+        report.table(["group", "usable TWh", "seasonal envelope TWh", "nameplate TWh"], rows)
+        report.add("; ".join(f"**{label}** is {GROUP_GLOSS[key]}"
+                             for key, label, _ in STORAGE_GROUPS if key in GROUP_GLOSS) + ". "
+                   "The three measures differ only where the bounds follow the season; "
+                   "[Storage volume](#hydro-volume) says how. Inflow hydro discharges "
+                   "through its turbines, which are under Generation as hydro, so its power is "
+                   "not repeated here.")
+        report.add()
+        if ctx.timeseries.skipped:
+            report.add(f"Inflow hydro volumes need the timeseries, which were not read: "
+                       f"{ctx.timeseries.skipped}. The totals with it are incomplete.")
+            report.add()
+
+    # Per area: the storage the power system fills, then the inflow hydro it
+    # sits beside -- its volume and the pumps that put water back.
+    hydro_pumps = storage_side_power_by_node(ctx.workbook, set(ctx.hydro_set) - set(grids),
+                                             "output")
+    pumps = (hydro_pumps.assign(area=[area_of(n, zones) for n in hydro_pumps["node"]])
+             .groupby("area", observed=True)["power_MW"].sum() * MW_TO_GW
+             if not hydro_pumps.empty else pd.Series(dtype="float64"))
+    with_hydro = (inventory.by_area["usable_mean_TWh"].xs(widest, level="group") * 1000.0
+                  if len(inventory.by_area) else pd.Series(dtype="float64"))
+    base = table if table is not None and not table.empty else pd.DataFrame(
+        columns=["charge_GW", "energy_GWh"], dtype="float64")
+    areas = base.index.union(with_hydro[with_hydro > 0].index).union(pumps[pumps > 0].index)
+    if len(areas):
+        order = sorted(areas, key=lambda a: -(float(with_hydro.get(a, 0.0))
+                                              + float(base["energy_GWh"].get(a, 0.0))))
+        rows = []
+        for area in order:
+            row = [display_name(area, zones)]
+            row += [_num(base.loc[area, l]) if area in base.index and base.loc[area, l] else "-"
+                    for l in labels]
+            row += [_num(base.loc[area, "charge_GW"]) if area in base.index
+                    and base.loc[area, "charge_GW"] else "-",
+                    _num(base.loc[area, "energy_GWh"], 0) if area in base.index
+                    and base.loc[area, "energy_GWh"] else "-",
+                    _num(float(with_hydro.get(area, 0.0)), 0) if with_hydro.get(area, 0.0) else "-",
+                    _num(float(pumps.get(area, 0.0))) if pumps.get(area, 0.0) else "-"]
+            rows.append(row)
+        rows.append(["**total**"] + [f"**{_num(float(base[l].sum()))}**" for l in labels]
+                    + [f"**{_num(float(base['charge_GW'].sum()))}**",
+                       f"**{_num(float(base['energy_GWh'].sum()), 0)}**",
+                       f"**{_num(float(with_hydro.sum()), 0)}**",
+                       f"**{_num(float(pumps.sum()))}**"])
+        report.add("Discharge and charging power, GW, read on each storage's own rows, and usable "
+                   "energy, GWh. The last two columns are the inflow hydro beside it: the "
+                   "usable volume with it added, and the pumps that put water back.")
+        report.add()
+        report.table([level_header(zones)] + [f"{l} GW" for l in labels]
+                     + ["charging GW", "storage GWh", "with inflow hydro GWh",
+                        "inflow hydro pumps GW"], rows)
+    _duration_table(report, inventory.ratio_facts, grids, "Electricity storage")
+    _storage_gaps(report, ctx, grids)
+
+    power = table[labels] if labels else pd.DataFrame()
+    name = figure_storage(ctx.out_dir, inventory, zones, power)
     report.figure(
         name,
-        f"{data['title']} capacity and annual demand, same area order in every panel. "
-        f"Take-away: what each area has built for this carrier, read directly against what it "
-        f"uses.",
-        caveat=(f"The technology grouping is this tool's own: the source data names "
-                f"{len(workbook.unittypes)} unit types and no grouping of them, so units are "
-                f"grouped by which grids they connect. That is what keeps inflow-driven pumped "
-                f"hydro counted as generation and closed-loop pumped hydro as storage, where a "
-                f"rule keyed on the unit type's name would merge them. Watch the check on "
-                f"capacity with no home when a new unit type appears."
-                if carrier == "elec" else None),
+        "Left: the discharge power of electricity storage, with each duration-sized "
+        "technology's hours in the legend. Right: usable storage energy on a log scale, so "
+        "batteries and reservoirs show on one axis -- the narrow dark bar is electricity "
+        "storage, the wide light bar the total with inflow hydro, and the tick each area's "
+        "nameplate ceiling. Take-away: a handful of countries carry the system's seasonal energy "
+        "in hydro, the rest hold hours rather than months.",
     )
-    return name
+    return [name]
+
+
+def _demand_management_subsection(report: Report, ctx: ReportContext) -> None:
+    """Demand response by area and tier, against each area's own peak."""
+    table, costs, zones = ctx.demand_response, ctx.demand_response_costs, ctx.zones
+    if table is None or table.empty:
+        report.add("No demand response is built in this scenario.")
+        report.add()
+        return
+
+    def cost(tier: str) -> str:
+        low, high = costs[tier]
+        return (f"{_num(low, 0)} EUR/MWh" if round(high) - round(low) == 0
+                else f"{_num(low, 0)}-{_num(high, 0)} EUR/MWh")
+
+    total = table.sum(axis=1)
+    tiers = list(table.columns)
+    priced = [f"`{t}` at {cost(t)}" for t in tiers if t in costs]
+    report.add(f"{_num(float(total.sum()))} GW of demand response in "
+               f"{plural(int((total > 0).sum()), level_header(zones))}: demand Backbone may "
+               f"leave unserved at a price, written as units that make electricity from nothing "
+               f"(`isSource` in `p_unit`), one per zone and tier"
+               + (f". The price is each tier's `vomCosts`: {and_join(priced)}." if priced else "."))
+    report.add()
+    peak = ctx.peak
+    rows = []
+    for area in total.sort_values(ascending=False).index:
+        share = (f"{_num(100.0 * total[area] / (peak[area] * MW_TO_GW), 0)}%"
+                 if peak is not None and area in peak.index and peak[area] > 0 else "-")
+        rows.append([display_name(area, zones)]
+                    + [_num(table.loc[area, t]) if table.loc[area, t] else "-" for t in tiers]
+                    + [f"**{_num(total[area])}**", share])
+    rows.append(["**total**"] + [f"**{_num(float(table[t].sum()))}**" for t in tiers]
+                + [f"**{_num(float(total.sum()))}**", ""])
+    report.table([level_header(zones)] + [f"`{t}` GW" for t in tiers]
+                 + ["total GW", "share of peak demand"], rows)
+    report.add("`share of peak demand = demand response / the area's own highest hour of "
+               "electricity demand`")
+    report.add()
 
 
 def level_header(zones: bool) -> str:
     return "zone" if zones else "country"
+
+
+def _forecast_text(config: Dict, files: Sequence[str]) -> str:
+    """The forecast branches as the build set them up, one clause per branch."""
+    if not files:
+        return "none written: every solve sees only the realised weather"
+    quantiles = config.get("energy_quantiles") or {}
+    weights = config.get("forecast_weights") or {}
+    shapes = config.get("forecast_branches") or {}
+    parts = []
+    for label in sorted(quantiles):
+        head = f"{label} at the {quantiles[label]:g} quantile, weight {weights.get(label, 0):g}"
+        shape = shapes.get(label)
+        if not isinstance(shape, dict):
+            parts.append(f"{head}, the central branch to the horizon")
+            continue
+        end = str(shape.get("end", "cut"))
+        then = {"cut": "then ends",
+                "bound": "then ends at the central branch's storage levels",
+                "continue": "then continues on the central branch's data"}.get(end, f"then {end}")
+        blend = shape.get("blend_days") or 0
+        if end == "continue" and blend:
+            then += f", blending over {blend:g} days"
+        parts.append(f"{head}, {shape.get('length_days', '?')} days, {then}")
+    text = "; ".join(parts) if parts else "written, with no branch recorded"
+    overrides = [f"{name} {', '.join(f'{k} at {v:g}' for k, v in spec['energy_quantiles'].items())}"
+                 for name, spec in sorted((config.get("timeseries_specs") or {}).items())
+                 if isinstance(spec, dict) and spec.get("energy_quantiles")]
+    if overrides:
+        text += ". Series with their own quantiles: " + "; ".join(overrides)
+    return text
+
+
+def _window_text(config: Dict, timeseries: Timeseries) -> str:
+    """How many climate windows, how long, and where each starts."""
+    years = timeseries.years
+    hours = timeseries.window_hours or int(config.get("bb_timeseries_length") or 0) * 24
+    if not years:
+        return "no per-year timeseries file was found"
+    start = config.get("bb_timeseries_start") or "01-01"
+    text = (f"{plural(len(years), 'window')} of {hours / 24:,.4g} days, one starting on "
+            f"{start} of each year {min(years)}-{max(years)}")
+    if hours and hours < HOURS_PER_YEAR:
+        text += (". **Shorter than a year, so the annual figures, net load and climate-year "
+                 "comparison are left out of this report**")
+    elif hours > HOURS_PER_YEAR:
+        text += (". Longer than a year, so neighbouring windows overlap: the annual figures "
+                 "use the first 365 days of each, and the hydro checks the whole window")
+    return text
+
+
+def _build_section(report, record: BuildRecord, workbook: Workbook,
+                   timeseries: Timeseries) -> None:
+    """Which config and variants built the folder, and the settings that shape the data."""
+    config = record.config
+    rows = []
+    if record.config_file:
+        rows.append(["Config", f"`{record.config_file}`"])
+    else:
+        rows.append(["Config", "no config in `src_files/` names this folder"])
+    rows.append(["Build", f"`{workbook.build}`" if workbook.build
+                 else "the default build (no variant suffix)"])
+
+    status = []
+    if record.built_at:
+        status.append(record.built_at)
+    causes = record.flags.get("partial_causes") or []
+    if causes:
+        status.append(f"**PARTIAL**: {summarise(causes)}")
+    elif record.flags.get("workflow_run_successfully") is False:
+        status.append("**the build logged errors**")
+    elif record.flags:
+        status.append("complete")
+    if record.warnings or record.errors:
+        notes = [plural(record.warnings, "warning")] if record.warnings else []
+        notes += [plural(record.errors, "error")] if record.errors else []
+        status.append(f"{' and '.join(notes)} in `summary.log`")
+    rows.append(["Built", ", ".join(status) if status else "not recorded"])
+
+    if record.variant_lines:
+        # "Variant 'dh-level': capitals in every country." -> "`dh-level`: capitals in every country"
+        variants = "; ".join(re.sub(r"^Variant '([^']+)'", r"`\1`", line).rstrip(".")
+                             for line in record.variant_lines)
+        choice = config.get("variant_choice") or {}
+        if not choice:
+            variants += ". This build chooses none, so each variant takes its default"
+        rows.append(["Variants", variants])
+    else:
+        rows.append(["Variants", "none declared in the source data"])
+
+    zones = sorted({zone_of(n) for n in workbook.nodes})
+    where = (f"{plural(len(zones), 'bidding zone')} in "
+             f"{plural(len({country_of(z) for z in zones}), 'country')}")
+    excluded = [*(config.get("exclude_grids") or []), *(config.get("exclude_nodes") or [])]
+    if excluded:
+        where += f"; left out by the config: {summarise(excluded)}"
+    rows.append(["Areas", where])
+    rows.append(["Climate windows", _window_text(config, timeseries)])
+    rows.append(["Forecast branches", _forecast_text(config, record.forecast_files)])
+    if config.get("bb_horizon_weeks"):
+        rows.append(["Horizon", f"{config['bb_horizon_weeks']} weeks ahead of each solve"])
+    report.table(["Setting", "Value"], rows)
+    if not config:
+        report.add("`cache/config_structural.json` is missing, so the settings the build used "
+                   "are not known beyond what the data shows.")
+        report.add()
+
+    changing = investment_and_timing(workbook)
+    if changing:
+        report.add(f"**This report does not handle investment or changing fleets yet.** In this "
+                   f"build, {'; '.join(changing)}. Every capacity here is the starting fleet; "
+                   f"what Backbone may add, and when units come and go, is not in these "
+                   f"numbers.")
+        report.add()
 
 
 def _permissions_section(report, facts: Dict) -> None:
@@ -4606,12 +5554,21 @@ def _permissions_section(report, facts: Dict) -> None:
          "`p_gn` `boundStart`, `boundStartRelative`"],
     ]
     report.table(["What", "Count", "Where it is read from"], rows)
-    report.add("These are counts, not findings. A zero ramp-limit count means any unit in this "
-               "build may go from nothing to full output in one hour; no unit-commitment rows "
-               "means no minimum load and no start cost; availability 1 everywhere means the "
-               "capacity totals in this report are plate ratings with no outage derating. "
-               "Whether that suits the question being asked is a modelling decision this report "
-               "does not make.")
+    meaning = []
+    if not facts["ramp_limited_rows"]:
+        meaning.append("with no ramp limit, any unit may go from nothing to full output in one "
+                       "hour")
+    else:
+        meaning.append("a unit with no ramp limit may go from nothing to full output in one hour")
+    if not facts["commitment_rows"]:
+        meaning.append("with no unit-commitment rows, no unit has a minimum load or a start cost")
+    if facts["derated_units"]:
+        meaning.append(f"the capacity tables are plate ratings; {plural(facts['derated_units'], 'unit')} "
+                       f"can deliver only part of theirs")
+    else:
+        meaning.append("with availability 1 everywhere, the capacity tables are plate ratings "
+                       "with no outage derating")
+    report.add("These are counts, not findings: " + "; ".join(meaning) + ".")
     report.add()
 
 
@@ -4638,7 +5595,8 @@ def _coverage_section(report, presence: pd.DataFrame, zone_presence: pd.DataFram
     by_country = presence_by_country(zone_presence) if not zone_presence.empty else presence
     countries, zone_areas = len(by_country), len(zone_presence)
 
-    report.add(f"The input data covers {countries} country(s), {zone_areas} bidding zone(s).")
+    report.add(f"The input data covers {plural(countries, 'country')}, "
+               f"{plural(zone_areas, 'bidding zone')}.")
     report.add()
     for carrier in presence.columns:
         in_countries = int((by_country[carrier] != PRESENCE_ABSENT).sum())
@@ -4696,236 +5654,173 @@ def _omissions_section(report, presence: pd.DataFrame, zones: bool) -> None:
     report.table(["carrier", f"not modelled ({level})", "modelled, nothing demands it"], rows)
 
 
-def _storage_section(report, inventory: "StorageInventory", timeseries, zones) -> None:
-    facts = inventory.facts
-    groups = inventory.by_group
-    widest = [key for key, _, _ in STORAGE_GROUPS][-1]
-
-    if len(groups) and float(groups["usable_mean_TWh"].max()) > 0:
-        total = float(groups.loc[widest, "usable_mean_TWh"])
-        report.add(f"The build holds **{_num(total)} TWh** of usable electricity storage, in two "
-                   f"nested groups: what the power system fills itself, and what the weather "
-                   f"fills for it.")
-        report.add()
-        rows = []
-        for key, label, _ in STORAGE_GROUPS:
-            if key not in groups.index:
-                continue
-            row = groups.loc[key]
-            rows.append([label, _num(row["usable_mean_TWh"]), _num(row["usable_envelope_TWh"]),
-                         _num(row["nameplate_TWh"]), _num(row["power_GW"])])
-        report.table(["group", "usable TWh", "seasonal envelope TWh", "nameplate TWh",
-                      "discharge GW"], rows)
-        report.add("; ".join(f"**{label}** is {GROUP_GLOSS[key]}"
-                             for key, label, _ in STORAGE_GROUPS if key in GROUP_GLOSS) + ".")
-        report.add()
-        report.add("Three energy columns, because a reservoir whose bounds are a season-long "
-                   "shape has no single size. **Usable** is the mean of `upwardLimit` minus "
-                   "`downwardLimit` over the year: the room to move on an average hour. The "
-                   "**seasonal envelope** is `max(upwardLimit)` minus `min(downwardLimit)`, the "
-                   "widest swing those bounds permit across a year, and it is the one to hold "
-                   "against a seasonal demand. **Nameplate** is the ceiling on its own.")
-        report.add()
-        ceiling = float(groups.loc[widest, "nameplate_TWh"])
-        if ceiling > total * 1.05:
-            report.add(f"The three differ by a factor of {_num(ceiling / total)} here, and the "
-                       f"nameplate is the one this report used to print. It counts reservoir "
-                       f"space that the seasonal floor never lets go of, so it is a fact about "
-                       f"the reservoir rather than about the energy the system can move.")
-            report.add()
-
-    if timeseries.skipped:
-        report.add(f"Storage energy could only be read from the workbook: {timeseries.skipped}. "
-                   f"The numbers above are incomplete, not totals.")
-        report.add()
-
-    by_source = facts.get("by_source") or {}
-    if by_source:
-        report.add("Where those megawatt-hours are written -- three places, which must not be "
-                   "confused:")
-        report.add()
-        if by_source.get("timeseries"):
-            report.add(f"- **{_num(by_source['timeseries'])} TWh** in "
-                       f"`ts_node_hydro_storage_limits`, where "
-                       f"{len(facts['timeseries_nodes'])} node(s) set `useTimeseries` and leave "
-                       f"their constant empty: {summarise(facts['timeseries_nodes'])}. Both "
-                       f"bounds are seasonal shapes there, and the aggregates above agree across "
-                       f"climate years and forecast branches to within 0.01%, so one file answers "
-                       f"it"
-                       + (f" -- {facts['provenance']}." if facts.get("provenance") else "."))
-        if by_source.get("workbook constant"):
-            report.add(f"- **{_num(by_source['workbook constant'])} TWh** as a constant in "
-                       f"`p_gnBoundaryPropertiesForStates`, against a `downwardLimit` the builder "
-                       f"writes as `Eps`, so for these the usable volume is the ceiling.")
-        if by_source.get("duration in p_gnu_io"):
-            report.add(f"- **{_num(by_source['duration in p_gnu_io'] * 1000, 0)} GWh** as "
-                       f"`upperLimitCapacityRatio` in `p_gnu_io`. Battery and heat storage have "
-                       f"no `upwardLimit` row at all; the ratio is v_state units per MW on the "
-                       f"discharge unit, so where `energyStoredPerUnitOfState` is 1 it is the "
-                       f"store's duration in hours and the energy is power times it.")
-        report.add()
-        if by_source.get("timeseries"):
-            hydro = by_source.get("timeseries", 0.0) + by_source.get("workbook constant", 0.0)
-            share = 100.0 * by_source["timeseries"] / hydro if hydro else 0.0
-            report.add(f"Reading the workbook alone would report "
-                       f"{_num(by_source.get('workbook constant', 0.0))} TWh of hydro storage and "
-                       f"silently omit {_num(share, 0)}% of it.")
-            report.add()
-    if facts.get("timeseries_missing"):
-        report.add(f"{len(facts['timeseries_missing'])} node(s) claim `useTimeseries` and no "
-                   f"series was read for them, so they contribute nothing above: "
-                   f"{summarise(facts['timeseries_missing'])}.")
-        report.add()
-    if facts.get("both_routes"):
-        report.add(f"{len(facts['both_routes'])} node(s) state a size both ways; each is counted "
-                   f"once, by its `upwardLimit`: {summarise(facts['both_routes'])}.")
-        report.add()
-
-    ratio_facts = inventory.ratio_facts or {}
-    if ratio_facts.get("total_TWh"):
-        by_grid = ratio_facts["by_grid"]
-        report.add("The duration is one number per grid, not per area, so the energy below is "
-                   "each area's power at that grid's duration:")
-        report.add()
-        rows = []
-        for grid in sorted(by_grid, key=lambda g: -by_grid[g]["TWh"]):
-            entry = by_grid[grid]
-            hours = (_num(entry["hours"], 0) if entry["hours"] is not None
-                     else summarise([_num(h, 0) for h in entry["hours_seen"]]))
-            rows.append([f"`{grid}`", hours, _num(entry["power_GW"]),
-                         _num(entry["TWh"] * 1000, 0), str(entry["nodes"])])
-        rows.append(["**total**", "", "", f"**{_num(ratio_facts['total_TWh'] * 1000, 0)}**", ""])
-        report.table(["grid", "hours", "power GW", "energy GWh", "node(s)"], rows)
-        if ratio_facts.get("unconvertible"):
-            report.add(f"{len(ratio_facts['unconvertible'])} node(s) state a ratio but no "
-                       f"`energyStoredPerUnitOfState`, so their v_state is not MWh and their "
-                       f"energy cannot be read from it: "
-                       f"{summarise(ratio_facts['unconvertible'])}.")
-            report.add()
-
-    outside = facts.get("outside_groups") or {}
-    if outside:
-        named = ", ".join(f"`{g}` {_num(v * 1000, 0)}"
-                          for g, v in sorted(outside.items(), key=lambda x: -x[1]))
-        report.add(f"A further **{_num(sum(outside.values()) * 1000, 0)} GWh** sits in stores that "
-                   f"are in neither group above ({named} GWh). They are charged and discharged on "
-                   f"district heat, so they shift heat demand and reach the electricity balance "
-                   f"only through whatever produced that heat. That help is real and it is not "
-                   f"worth its full megawatt-hour, so it is reported here and never added to the "
-                   f"electricity totals.")
-        report.add()
-
-    if facts.get("grids_without_energy"):
-        report.add(f"**{', '.join(facts['grids_without_energy'])}** carry discharge power but no "
-                   f"stated energy anywhere in this workbook -- no `upwardLimit` row and no "
-                   f"`upperLimitCapacityRatio`. That is a property of the data rather than "
-                   f"something missing from this report.")
-        report.add()
-
-    power = inventory.power
-    if power is not None and not power.empty:
-        report.add("Discharge power, read on the storage side of each unit. These are the same "
-                   "megawatts the electricity capacity table reports as hydro, battery and pumped "
-                   "storage -- counted there per carrier, here per store.")
-        report.add()
-        rows = []
-        for area in power.sum(axis=1).sort_values(ascending=False).index:
-            rows.append([display_name(area, zones)]
-                        + [_num(power.loc[area, c]) if power.loc[area, c] else "-"
-                           for c in power.columns])
-        rows.append(["**total**"] + [f"**{_num(power[c].sum())}**" for c in power.columns])
-        report.table([level_header(zones)] + list(power.columns), rows)
+#: How each route states a storage's size, said for a reader.
+_SIZED_BY = {
+    "timeseries": "seasonal bounds",
+    "workbook constant": "a constant ceiling",
+    "duration in p_gnu_io": "hours of discharge power",
+}
 
 
-def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeseries, zones) -> None:
-    """Hydro by area and type, then the two checks per bidding-zone store."""
+def _hydro_chapter(report: Report, ctx: ReportContext) -> None:
+    """Hydro from the water's side: what each storage holds, receives, and must give."""
+    report.heading("hydro", "Hydro")
+    table, checks, timeseries, zones = (ctx.hydro_table, ctx.hydro_result, ctx.timeseries,
+                                        ctx.zones)
     if table.empty:
         report.add("No hydro is built in this scenario.")
         report.add()
         return
-
-    report.add(f"Every hydro type by {level_header(zones)}, as the build states it: how much it "
-               f"stores, how hard it can draw and pump, and the water it receives.")
-    report.add()
     read = timeseries.hydro is not None
+    opening = (f"Hydro as water: {_num(float(table['storage_MWh'].sum()) * MWH_TO_TWH)} TWh of "
+               f"usable storage in {plural(table['area'].nunique(), level_header(zones))}")
+    if read:
+        opening += (f", receiving {_num(float(table['inflow_MWh_yr'].sum()) * MWH_TO_TWH, 0)} TWh "
+                    f"of inflow in a mean climate year")
+    report.add(opening + ". The turbines are under Electricity as generation and the pumps "
+               "under its Storage; this chapter is what the water allows them.")
+    report.add()
+
+    report.heading("hydro-storage", "Storage and inflow", 3)
+    report.add(f"Every hydro type by {level_header(zones)}, as the build states it: how much it "
+               f"stores, what its turbines can draw and must generate, what its pumps put back, "
+               f"and the water it receives.")
+    report.add()
+    derated = bool(((table["output_MW"] - table["max_gen_MW"]).abs() > 0.5).any()
+                   or table["timeseries_availability"].any())
+    headers = [level_header(zones), "type", "storage GWh", "turbine MW", "min generation MW"]
+    if derated:
+        headers.append("max generation MW")
+    headers += ["pump MW", "inflow TWh/yr", "full-load h", "storage weeks"]
     rows = []
     for r in table.itertuples():
-        rows.append([
-            display_name(r.area, zones), f"`{r.grid}`",
-            _num(r.storage_MWh / 1e3, 0) if np.isfinite(r.storage_MWh) else "-",
-            _num(r.turbine_MW, 0), _num(r.pump_MW, 0),
-            _num(r.inflow_MWh_yr * MWH_TO_TWH, 2) if read else "-",
-            _num(r.flh, 0) if np.isfinite(r.flh) else "-",
-            (_num(r.storage_weeks, 1 if r.storage_weeks >= 1 else 2)
-             if np.isfinite(r.storage_weeks) else "-"),
-            _num(r.wettest_week, 2) if np.isfinite(r.wettest_week) else "-",
-            _num(r.driest_week, 2) if np.isfinite(r.driest_week) else "-",
-        ])
-    report.table([level_header(zones), "type", "storage GWh", "turbine MW", "pump MW",
-                  "inflow TWh/yr", "full-load h", "storage weeks", "wettest week",
-                  "driest week"], rows)
+        row = [display_name(r.area, zones), f"`{r.grid}`",
+               _num(r.storage_MWh / 1e3, 0) if np.isfinite(r.storage_MWh) else "-",
+               _num(r.turbine_MW, 0), _num(r.min_gen_MW, 0) if r.min_gen_MW else "-"]
+        if derated:
+            row.append("timeseries" if r.timeseries_availability else _num(r.max_gen_MW, 0))
+        row += [_num(r.pump_MW, 0),
+                _num(r.inflow_MWh_yr * MWH_TO_TWH, 2) if read else "-",
+                _num(r.flh, 0) if np.isfinite(r.flh) else "-",
+                (_num(r.storage_weeks, 1 if r.storage_weeks >= 1 else 2)
+                 if np.isfinite(r.storage_weeks) else "-")]
+        rows.append(row)
+    report.table(headers, rows)
     report.add("- **storage GWh**: the usable volume, the mean of `upwardLimit` minus "
-               "`downwardLimit` over the year -- the same measure as in Storage.")
-    report.add("- **turbine MW** and **pump MW**: what the turbines can draw out of the store and "
-               "what the pumps can put into it, both read on the store's own row, so no "
-               "efficiency sits between them and the water.")
+               "`downwardLimit` over the year; [Storage volume](#hydro-volume) has the other "
+               "two measures.")
+    report.add("- **turbine MW** and **pump MW**: what the turbines can draw out of the storage "
+               "and what the pumps can put into it, in water, on the storage's own row.")
+    report.add("- **min generation MW**: the `minGen` the turbines must keep generating, in MW "
+               "of electricity.")
+    if derated:
+        report.add("- **max generation MW**: the turbines' output capacity times their "
+                   "`availability`, shown because some turbine's availability is below 1; "
+                   "'timeseries' where it comes from a series this report does not read.")
     report.add("- **full-load h**: mean annual inflow over turbine MW -- the hours the turbines "
                "would run at full draw to pass one average year's water. Zero means no inflow.")
     report.add("- **storage weeks**: the usable volume over a mean week of inflow -- how many "
-               "average weeks of water the store can hold. Below 1 the store is a pond that "
-               "passes its water on as it arrives; tens of weeks is a store that can carry water "
+               "average weeks of water the storage can hold. Below 1 it is a pond that "
+               "passes its water on as it arrives; tens of weeks is a reservoir that can carry water "
                "from one season into the next. '-' when no water arrives.")
-    report.add("- **wettest week**: the largest week of inflow in any climate window, as a "
-               "multiple of the mean week. 5 means one week brings five average weeks of water, "
-               "which the store has to hold, generate or spill; read it against storage weeks.")
-    report.add("- **driest week**: the smallest week of inflow in any climate window, as a "
-               "multiple of the mean week. 0.05 means one week brings a twentieth of an average "
-               "week, and anything the store must give that week -- a minimum generation above "
-               "all -- comes out of what it holds.")
-    report.add()
-    report.add("A week is 168 hours cut from each window's first hour; a remainder shorter than a "
-               "week is left out, and the weeks of every climate window are pooled, so the "
-               "extremes are the most extreme of any year. A country's weeks are cut from its "
-               "zones' inflow added hour by hour.")
     report.add()
     if not read:
         report.add(f"The inflow columns need the hydro timeseries, which were not read"
                    + (f": {timeseries.skipped}" if timeseries.skipped else "") + ".")
         report.add()
+    overflow = checks.overflow
+    over = overflow[overflow["state"] == CHECK_ACT] if len(overflow) else overflow
+    if len(over):
+        report.add(f"**{plural(len(over), 'storage node')} overflow even with turbines and `maxSpill` "
+                   f"at full**: "
+                   + summarise([f"`{r.node}` {_num(r.over_GWh, 1)} GWh in "
+                                f"{plural(r.windows_over, 'window')}"
+                                for r in over.itertuples()])
+                   + ". Water that cannot leave is met by a dummy variable or makes the problem "
+                     "infeasible.")
+        report.add()
 
-    report.add("### Minimum generation and overflow")
-    report.add()
-    report.add("Both checks run on every bidding-zone store separately, whatever level the table "
-               "above is at, because a minimum binds one store and two stores added together can "
-               "hold water neither of them has. Each climate window is run on its own, hour by "
-               "hour, as the model will run it, starting from the middle of its first hour's "
-               "range between `downwardLimit` and `upwardLimit`.")
-    report.add()
-    report.add("- **Minimum generation**: the store gives exactly the `minGen` of its turbines "
-               "in `p_gnu_io`, turned into water at their efficiency, and spills whatever rises "
-               "above its ceiling. No store can keep more water for its minimum than that, so an "
-               "hour below the floor is an hour Backbone can meet only by paying `minGenPenalty` "
-               "(`vq_minGen`, reported as `r_qMinGen_gnu`). A store that runs short without "
-               "its pumps but not with them at full availability is watched, not acted on: "
-               "whether it pumps is the market's decision.")
-    report.add(f"- **Overflow**: the store releases everything its turbines, at their "
-               f"availability, and `maxSpill` can pass. An hour above the ceiling even so is water "
-               f"that cannot leave, which the model answers with a dummy variable or not at all.")
-    report.add()
-    report.add("*Each window starts from the middle of its first hour's range. Backbone "
-               "starts a psOpen or reservoir store at its `relative` share of the band on the "
-               "starting date, and any other store at its `reference`.*")
-    report.add()
+    report.heading("hydro-volume", "Storage volume", 3)
+    _hydro_volume(report, ctx)
 
+    report.heading("hydro-floor", "Closest to floor", 3)
+    _hydro_floor(report, checks)
+
+
+def _hydro_volume(report: Report, ctx: ReportContext) -> None:
+    """Each hydro type sized three ways, and which route states each size."""
+    nodes = ctx.inventory.by_node
+    facts = ctx.inventory.facts
+    hydro = nodes[nodes["grid"].astype(str).isin(ctx.hydro_set)] if len(nodes) else nodes
+    report.add("Storage whose bounds follow the season has no single size, so each is measured "
+               "three ways. **Usable** is the mean of `upwardLimit` minus `downwardLimit` over "
+               "the year: the room to move on an average hour. The **seasonal envelope** is "
+               "`max(upwardLimit)` minus `min(downwardLimit)`, the widest swing those bounds "
+               "permit across a year, and it is the one to hold against a seasonal demand. "
+               "**Nameplate** is the ceiling on its own.")
+    report.add()
+    if len(hydro):
+        rows = []
+        for grid, part in sorted(hydro.groupby(hydro["grid"].astype(str), observed=True),
+                                 key=lambda kv: -float(kv[1]["usable_mean_MWh"].sum())):
+            sources = and_join([_SIZED_BY.get(str(s), str(s))
+                                for s in sorted(part["source"].astype(str).unique())])
+            rows.append([f"`{grid}`", str(len(part)),
+                         _num(float(part["usable_mean_MWh"].sum()) * MWH_TO_TWH, 2),
+                         _num(float(part["usable_envelope_MWh"].sum()) * MWH_TO_TWH, 2),
+                         _num(float(part["nameplate_MWh"].sum()) * MWH_TO_TWH, 2), sources])
+        rows.append(["**total**", f"**{len(hydro)}**",
+                     f"**{_num(float(hydro['usable_mean_MWh'].sum()) * MWH_TO_TWH, 2)}**",
+                     f"**{_num(float(hydro['usable_envelope_MWh'].sum()) * MWH_TO_TWH, 2)}**",
+                     f"**{_num(float(hydro['nameplate_MWh'].sum()) * MWH_TO_TWH, 2)}**", ""])
+        report.table(["type", "storage nodes", "usable TWh", "seasonal envelope TWh", "nameplate TWh",
+                      "sized by"], rows)
+        usable = float(hydro["usable_mean_MWh"].sum())
+        ceiling = float(hydro["nameplate_MWh"].sum())
+        if usable and ceiling > usable * 1.05:
+            report.add(f"Here the nameplate is {_num(ceiling / usable)} times the usable volume: "
+                       f"it counts reservoir space that the seasonal floor never lets go of.")
+            report.add()
+        seasonal = [n for n in facts.get("timeseries_nodes", [])
+                    if n in set(hydro["node"].astype(str))]
+        if seasonal:
+            report.add(f"Seasonal bounds come from `ts_node_hydro_storage_limits`, for "
+                       f"{plural(len(seasonal), 'storage node')}: {summarise(seasonal)}. A constant "
+                       f"ceiling is `p_gnBoundaryPropertiesForStates`, with no floor.")
+            report.add()
+    if ctx.timeseries.skipped:
+        report.add(f"Storage energy could only be read from the workbook: "
+                   f"{ctx.timeseries.skipped}. The numbers above are incomplete, not totals.")
+        report.add()
+    if facts.get("timeseries_missing"):
+        report.add(f"{plural(len(facts['timeseries_missing']), 'storage node')} take their bounds from "
+                   f"a timeseries that was not read, so they are missing from the totals above: "
+                   f"{summarise(facts['timeseries_missing'])}.")
+        report.add()
+
+
+def _hydro_floor(report: Report, checks: "HydroChecks") -> None:
+    """How close each storage node with a minimum generation comes to its floor."""
+    if checks.minimums == 0:
+        report.add("No hydro storage has a minimum generation in this scenario.")
+        report.add()
+        return
+    report.add(f"Each storage node with a minimum generation, followed hour by hour through every "
+               f"climate window: it gives exactly its minimum, at its turbines' efficiency, and "
+               f"spills whatever rises above its ceiling. **Closest to floor** is the least water "
+               f"it ever has left above its floor, in hours of that minimum. Below the floor the "
+               f"storage runs short, and Backbone meets those hours only by paying `minGenPenalty`. "
+               f"A storage node is watched when it spends {MIN_GEN_WATCH_HOURS} or more hours of one "
+               f"window within {MIN_GEN_MARGIN_HOURS:g} hours of its floor, or runs short only "
+               f"without pumping; it is acted on when it runs short even with its pumps at full, "
+               f"or when its minimum is more than its turbines can give.")
+    report.add()
     if checks.skipped:
-        report.add(f"Neither check could run on water: {checks.skipped}.")
+        report.add(f"The water could not be followed: {checks.skipped}.")
         report.add()
 
     minimum = checks.minimum
-    if checks.minimums == 0:
-        report.add("No hydro minimum generation is written in this scenario.")
-        report.add()
-    elif len(minimum) and "state" in minimum.columns:
+    if len(minimum) and "state" in minimum.columns:
         severity = {CHECK_ACT: 0, CHECK_WATCH: 1, CHECK_OK: 2}
         ordered = minimum.assign(_s=minimum["state"].map(severity)).sort_values(
             ["_s", "closest_hours"])
@@ -4933,118 +5828,56 @@ def _hydro_section(report, table: pd.DataFrame, checks: "HydroChecks", timeserie
         for r in ordered.itertuples():
             short = r.short_hours > 0
             state = f"**{r.state}**" if r.state == CHECK_ACT else r.state
+            pumps = _num(r.pump_MW, 0) if r.pump_MW else "-"
+            if short and r.pump_MW:
+                pumps += ", still short" if r.short_with_pumps else ", enough"
             rows.append([
-                f"`{r.node}`", _num(r.minimum_MW, 0), _num(r.draw_MWh, 0),
+                f"`{r.node}`", _num(r.minimum_MW, 0),
                 f"**{_num(r.deliverable_MW, 0)}**" if r.beyond_turbines else _num(r.deliverable_MW, 0),
-                f"{r.windows_short} of {r.windows_run}",
-                _num(r.short_hours, 0), _num(r.short_GWh, 1),
                 "below the floor" if short else
                 (f"{_num(r.closest_hours, 0)} h ({_num(r.closest_MWh / 1e3, 1)} GWh)"
                  if np.isfinite(r.closest_hours) else "-"),
                 str(r.closest_year) if np.isfinite(r.closest_MWh) else "-",
                 _num(r.near_hours_worst, 0),
-                (_num(r.pump_MW, 0) if r.pump_MW else "-")
-                + (f", {'still short' if r.short_with_pumps else 'enough'}" if short and r.pump_MW else ""),
-                state,
+                f"{r.windows_short} of {r.windows_run}", _num(r.short_GWh, 1),
+                pumps, state,
             ])
-        report.table(["store", "minimum MW", "draw MWh/h", "turbines give MW", "windows short",
-                      "short h", "short GWh", "closest to floor", "in",
-                      f"h within {MIN_GEN_MARGIN_HOURS:g} h of floor", "pumps MW", "state"], rows)
-        report.add(f"**Closest to floor** is the least water left above the floor in any hour, as "
-                   f"hours of the minimum's own draw. A store is watched when some window keeps "
-                   f"it within {MIN_GEN_MARGIN_HOURS:g} h of draw of its floor for "
-                   f"{MIN_GEN_WATCH_HOURS} hours or more; both thresholds are starting values to "
-                   f"iterate on. **Turbines give** is capacity times availability, and a minimum "
-                   f"above it is acted on whatever the water does.")
+        report.table(["storage node", "minimum MW", "turbines give MW", "closest to floor", "in",
+                      f"hours within {MIN_GEN_MARGIN_HOURS:g} h of floor", "windows short",
+                      "short GWh", "pumps MW", "state"], rows)
+        report.add("**Turbines give** is their capacity times availability; **in** is the climate "
+                   "window where the storage came closest.")
         report.add()
     if checks.not_simulated:
-        report.add(f"{len(checks.not_simulated)} hydro minimum(s) or store(s) are not simulated, "
-                   f"because this check cannot model them and will not guess: "
+        report.add(f"{plural(len(checks.not_simulated), 'minimum')} cannot be followed this way "
+                   f"and are left out: "
                    + summarise([f"`{name}` ({why})" for name, why in checks.not_simulated]) + ".")
         report.add()
 
-    overflow = checks.overflow
-    if len(overflow):
-        over = overflow[overflow["state"] == CHECK_ACT]
-        fine = overflow[overflow["state"] != CHECK_ACT]
-        shown = pd.concat([over, fine.head(OVERFLOW_NAMED)])
-        rows = []
-        for r in shown.itertuples():
-            state = f"**{r.state}**" if r.state == CHECK_ACT else r.state
-            rows.append([
-                f"`{r.node}`", _num(r.turbine_MW, 0), _num(r.spill_MW, 0),
-                _num(r.peak_inflow_MW, 0), f"{r.windows_over} of {r.windows_run}",
-                _num(r.over_hours, 0), _num(r.over_GWh, 1),
-                (f"{_num(r.spare_MW, 0)} ({_num(100 * r.spare_share, 0)}%)"
-                 if r.over_hours == 0 and np.isfinite(r.spare_share) else "-"),
-                str(r.tightest_year), state,
-            ])
-        report.add(("Every store that overflows, then the " if len(over) else "The ")
-                   + f"{min(OVERFLOW_NAMED, len(fine))} tightest of the "
-                   f"{len(fine)} that do not:")
-        report.add()
-        report.table(["store", "turbines MW", "maxSpill MW", "peak inflow MW", "windows over",
-                      "over h", "over GWh", "spare at tightest hour MW", "in", "state"], rows)
-        rest = fine.iloc[OVERFLOW_NAMED:]
-        if len(rest) and np.isfinite(rest["spare_share"]).any():
-            report.add(f"The other {len(rest)} store(s) keep at least "
-                       f"{_num(100 * float(rest['spare_share'].min()), 0)}% of what they can "
-                       f"release to spare in their tightest hour.")
-            report.add()
-        report.add("**Spare at tightest hour** is how much more inflow the store could have taken "
-                   "in its closest hour without overflowing, with turbines and spill at full, and "
-                   "as a share of that release -- the margin to look at before raising `maxSpill`.")
-        report.add()
 
-
-def _transfer_section(report, per_area, facts, peak, zones) -> None:
+def _transfer_subsection(report: Report, ctx: ReportContext) -> List[str]:
+    """Electricity corridors, as a table and a map."""
+    per_area, matrix, facts = ctx.carriers["elec"]["transfer"]
+    peak, zones = ctx.peak, ctx.zones
     if per_area is None or per_area.empty:
         report.add("No electricity transfer capacity is written in this scenario.")
         report.add()
-        return
-    report.add(f"{facts['pairs']} corridor(s) carry {_num(facts['total_GW'])} GW in total.")
+        return []
+    report.add(f"{plural(facts['pairs'], 'corridor')} carry {_num(facts['total_GW'])} GW in "
+               f"total. A corridor has a capacity in each direction, and the tables use the "
+               f"mean of the two:")
     report.add()
-    report.add("`corridor capacity = (the A-to-B row + the B-to-A row) / 2`")
-    report.add()
-    report.add("*Every corridor is written once per direction. Adding the two would count it "
-               "twice; taking one would depend on which row the builder wrote first.*")
+    report.add("`corridor capacity = (the A-to-B capacity + the B-to-A capacity) / 2`")
     report.add()
     if facts["asymmetric"]:
-        largest = ", ".join(f"{name} differs by {_num(spread, 0)} MW"
+        largest = ", ".join(f"{name} {_num(spread, 0)} MW"
                             for name, spread in facts["largest_asymmetries"])
-        report.add(f"{facts['asymmetric']} of {facts['pairs']} corridor(s) carry a different "
-                   f"capacity each way, which is normal for this kind of data and is not flagged: "
-                   f"{largest}.")
+        report.add(f"{facts['asymmetric']} of {plural(facts['pairs'], 'corridor')} have a "
+                   f"different capacity each way; the largest differences are {largest}.")
         report.add()
     if facts.get("transfer_loss") is not None:
         report.add(f"Every corridor carries the same transfer loss, "
                    f"{_num(100 * facts['transfer_loss'], 1)}%.")
-        report.add()
-
-    # Which carriers can move between areas at all, said out loud: a carrier
-    # with units in every zone and no corridor between them is a set of
-    # islands, and nothing else in the report would show it.
-    titles = {grid: title for grid, title, _ in CARRIERS}
-    carried = set(facts.get("carrier_grids", []))
-    exists = set(facts.get("node_grids", []))
-    # Steam is left out for the opposite reason to elec: elec's corridors are the
-    # section itself, and industrial steam is site-local -- no build would pipe it
-    # between countries, so saying it has none would fire on correct data forever.
-    silent = [grid for grid in titles
-              if grid not in carried and grid not in ("elec", "steam") and grid in exists]
-    for grid, counts in sorted(facts.get("other_grids", {}).items()):
-        name = titles.get(grid, grid)
-        if counts["between_areas"]:
-            report.add(f"{name} also has corridors: {counts['between_areas']} of its "
-                       f"{counts['corridors']} link one {level_header(zones)} to another.")
-        else:
-            report.add(f"{name} has {counts['corridors']} corridor(s), every one of them inside a "
-                       f"single {level_header(zones)} and so below the level this report shows.")
-        report.add()
-    if silent:
-        report.add(", ".join(titles[g] for g in silent)
-                   + " has no corridor anywhere in this build: wherever it is modelled it is an "
-                     "island, and nothing can move from one to the next.")
         report.add()
 
     rows = []
@@ -5075,111 +5908,38 @@ def _transfer_section(report, per_area, facts, peak, zones) -> None:
                    "more transfer capacity than its own peak load.*")
         report.add()
 
-
-def _duration_section(report, decomposition: Dict, inventory, timeseries: Timeseries,
-                      zones: bool) -> None:
-    """How deep a store the residual needs, against how deep a store there is."""
-    if not decomposition:
-        report.add("The timescale comparison needs the hourly timeseries, which were not read"
-                   + (f": {timeseries.skipped}" if timeseries.skipped else "") + ".")
-        report.add()
-        return
-
-    labels = decomposition["labels"]
-    by_area = decomposition["by_area"]
-    by_year = decomposition["by_year"]
-    installed = inventory.by_area if inventory is not None else pd.DataFrame()
-    # The narrowest group and the widest, whatever sits between them.
-    literal, practical = STORAGE_GROUPS[0][0], STORAGE_GROUPS[-1][0]
-
-    report.add("Electricity demand less wind, solar and hydro inflow, and then the question a "
-               "store answers: how much energy has to be held to flatten what is left inside a "
-               "window of each length. Firm generation supplies the average over the window and "
-               "the store supplies the swing around it, so the number below is the store's depth "
-               "in TWh -- the same unit the fleet is measured in, which is what makes the two "
-               "comparable. Blocks are fixed, not sliding, so no surplus hour is spent twice.")
-    report.add()
-    caveat = window_caveat(timeseries, "; \"within the year\" below means within one whole window")
-    if caveat:
-        report.add(caveat)
-        report.add()
-
-    def held(area: str, group: str, measure: str) -> float:
-        if installed is None or not len(installed) or (area, group) not in installed.index:
-            return 0.0
-        return float(installed.loc[(area, group), measure])
-
-    cumulative = by_area[labels].cumsum(axis=1)
-    rows = []
-    for area in cumulative[labels[-1]].sort_values(ascending=False).index:
-        fleet = held(area, practical, "usable_mean_TWh")
-        reaches = [l for l in labels if cumulative.loc[area, l] <= fleet]
-        rows.append([display_name(area, zones)]
-                    + [_num(cumulative.loc[area, l]) for l in labels]
-                    + [_num(held(area, literal, "usable_mean_TWh")), _num(fleet),
-                       reaches[-1][len("within "):] if reaches else "less than a day"])
-    system = cumulative.sum(axis=0)
-    system_fleet = sum(held(a, practical, "usable_mean_TWh") for a in cumulative.index)
-    system_reaches = [l for l in labels if system[l] <= system_fleet]
-    rows.append(["**system**"] + [f"**{_num(system[l])}**" for l in labels]
-                + [f"**{_num(sum(held(a, literal, 'usable_mean_TWh') for a in cumulative.index))}**",
-                   f"**{_num(system_fleet)}**",
-                   f"**{system_reaches[-1][len('within '):] if system_reaches else 'less than a day'}**"])
-    report.table([level_header(zones)] + [f"{l} TWh" for l in labels]
-                 + ["has: storage TWh", "has: + hydro TWh", "reaches"], rows)
-
-    # The usable volume is the average hour's room; a seasonal swing is allowed
-    # the whole envelope, and for the reservoir countries that is the difference
-    # between covering a quarter and covering the year.
-    further = []
-    for area in cumulative.index:
-        reach = [l for l in labels if cumulative.loc[area, l]
-                 <= held(area, practical, "usable_mean_TWh")]
-        wider = [l for l in labels if cumulative.loc[area, l]
-                 <= held(area, practical, "usable_envelope_TWh")]
-        if len(wider) > len(reach):
-            further.append(f"{display_name(area, zones)} to "
-                           f"{wider[-1][len('within '):]}")
-    if further:
-        report.add(f"Read against the seasonal envelope rather than the average usable volume, "
-                   f"{len(further)} area(s) reach further: {summarise(further)}.")
-        report.add()
-
-    report.add("The first installed column is battery and closed-loop pumped hydro. Those are "
-               "hour-scale machines by design and nobody built them to carry a season, so a small "
-               "number there is a description and not a shortfall. The column that decides the "
-               "answer is the second: large hydro is the only thing in these scenarios that holds "
-               "a season at all, and the areas that have it are the areas whose residual can be "
-               "moved that far.")
-    report.add()
-
-    hardest = by_year.sum(axis=1)
-    report.add(f"Averaged over the climate years the system needs a store of "
-               f"{_num(float(system[labels[-1]]))} TWh to flatten its residual across the year, "
-               f"and {_num(float(system[labels[0]]))} TWh to flatten it within a day. The hardest "
-               f"climate year is {hardest.idxmax()} at {_num(float(hardest.max()))} TWh and the "
-               f"easiest {hardest.idxmin()} at {_num(float(hardest.min()))} TWh, a spread of "
-               f"{_num(100.0 * (float(hardest.max()) / float(hardest.min()) - 1), 0)}%.")
-    report.add()
-    report.add("*Every figure here is an upper bound on what a store could do, and so a lower "
-               "bound on the store needed: nothing is charged an efficiency, a power limit or a "
-               "cost, and no energy is traded between areas. The installed columns are the usable "
-               "volume; across a season the envelope is larger, and the figure draws both.*")
-    report.add()
+    name = figure_interconnection(ctx.out_dir, matrix, per_area, peak, ctx.zone_matrix,
+                                  ctx.shapes, ctx.countries, ctx.neighbours)
+    report.figure(
+        name,
+        "Transfer capacity as a map, and each area's total as a share of its own peak demand. "
+        "Take-away: who is connected to whom, and who depends on those connections rather than "
+        "on its own plant.",
+    )
+    return [name]
 
 
-def _netload_section(report, curves, timeseries, zones, split, imports, vre_share) -> None:
+def _netload_subsection(report: Report, ctx: ReportContext) -> List[str]:
+    """Demand less wind and solar, hour by hour, and what is left to meet its peak."""
+    timeseries, zones = ctx.timeseries, ctx.zones
+    elec = ctx.carriers["elec"]
+    curves = netload_by_area(timeseries) if timeseries.available else {}
     if not curves:
         report.add(f"Net load needs the hourly timeseries, which were not read"
                    + (f": {timeseries.skipped}" if timeseries.skipped else "") + ".")
         report.add()
-        return
+        return []
+    per_area_transfer = elec["transfer"][0]
+    split = firm_and_shifting(elec["capacity"])
+    imports = (per_area_transfer["cross_border_MW"] if per_area_transfer is not None
+               and not per_area_transfer.empty else pd.Series(dtype="float64"))
+    vre_share = potential_vre_share(elec["capacity_factor"], elec["demand"])
+
     report.add(f"Net load is electricity demand minus wind and solar output, hour by hour, over "
-               f"all {len(timeseries.years)} climate year(s) pooled -- "
-               f"{len(next(iter(curves.values()))):,} hours per area. Wind and solar output is "
-               f"installed capacity times the capacity factor in the build, so it assumes nothing "
-               f"is ever curtailed or out of service: that makes VRE an upper bound and net load "
-               f"a lower one. Hydro is not subtracted, because reservoir hydro is dispatchable.")
+               f"all {plural(len(timeseries.years), 'climate year')} pooled -- "
+               f"{len(next(iter(curves.values()))):,} hours per area. It is a screening view of "
+               f"the input data, kept deliberately simple; what it leaves out is listed under "
+               f"the table.")
     report.add()
     report.add("`net load = electricity demand - wind output - solar output`, and "
                "`left over = firm + storage and DR + imports - peak`.")
@@ -5207,13 +5967,12 @@ def _netload_section(report, curves, timeseries, zones, split, imports, vre_shar
     report.table([level_header(zones), "peak GW", "1st pct GW", "minimum GW", "hours in surplus",
                   "VRE energy / demand", "firm GW", "storage & DR GW", "imports GW",
                   "left over GW"], rows)
-    report.add("The last column is what is left once firm capacity, the storage and "
-               "demand-response that can shift into that hour, and the whole import capacity are "
-               "set against the peak. Negative does not mean the area fails: it means it cannot "
-               "cover its own worst hour from those three alone, which is what interconnection "
-               "and a wider system are for. The system row adds the areas hour by hour, so it "
-               "already accounts for peaks that do not coincide, and its imports are zero because "
-               "trade between members cancels inside it.")
+    report.add("The last column sets firm generation, the storage and demand response that can "
+               "shift into that hour, and the whole import capacity against the peak. Negative "
+               "means the area cannot cover its own worst hour from those three alone, which is "
+               "what interconnection and a wider system are for. The system row adds the areas "
+               "hour by hour, so it already accounts for peaks that do not coincide, and its "
+               "imports are zero because trade between members cancels inside it.")
     report.add()
     if not vre_share.empty:
         report.add("VRE energy over demand is installed wind and solar at their own "
@@ -5221,6 +5980,44 @@ def _netload_section(report, curves, timeseries, zones, split, imports, vre_shar
                    "about 80% an area is short of energy; above 100% it could in principle make "
                    "its whole year from wind and sun and its problem is timing.")
         report.add()
+
+    chp = sum((elec["links"] or {}).get("co_by_carrier", {}).values())
+    derated = model_permissions(ctx.workbook)["derated_units"]
+    report.add("**What this table leaves out.** Each of these is a reason the left-over column "
+               "can be wrong, and none of them is small:")
+    report.add()
+    report.add("- **Wind and solar** are capacity times the capacity factor in the build: never "
+               "curtailed, never out of service.")
+    report.add("- **Firm capacity** is plate rating, with no outages"
+               + (f" and no derating, though {plural(derated, 'unit')} have availability below 1"
+                  if derated else "")
+               + ". Hydro counts at full turbine capacity whatever water it has.")
+    if chp:
+        report.add(f"- **Combined heat and power**, {_num(chp)} GW of the firm capacity, counts "
+                   f"at full electrical output. What it can give in an hour depends on the heat "
+                   f"or steam it must make then, and on how freely its two outputs may move "
+                   f"apart.")
+    report.add("- **Storage and demand response** count at full power, however empty the storage "
+               "or long the event.")
+    report.add("- **Imports** count every corridor at full, as if every neighbour had power to "
+               "spare in the same hour.")
+    report.add("- **Nothing is dispatched**: no ramp limits, no reserves, no forecast error.")
+    report.add()
+    report.add("Whether an area covers its peak is something only a run of Backbone can say.")
+    report.add()
+
+    name = figure_netload(ctx.out_dir, curves, zones)
+    report.figure(
+        name,
+        "Net load -- demand minus wind and solar -- for every hour of every climate year, "
+        "sorted highest to lowest, one panel per area on its own scale, with the system added "
+        "hour by hour in the last panel. Orange is the part of "
+        "the year when wind and solar alone exceed demand. Take-away: the left edge is what "
+        "firm capacity has to cover; the orange area is what has to be stored, exported or "
+        "curtailed. It ignores storage, trade and dispatch, and treats VRE as never curtailed "
+        "and never out of service, so it is a statement about the input data and not a forecast.",
+    )
+    return [name]
 
 
 def _netload_row(area, values, split, imports, vre_share, label, bold: bool = False):
@@ -5249,16 +6046,27 @@ def _netload_row(area, values, split, imports, vre_share, label, bold: bool = Fa
     ]
 
 
-def _weather_section(report, timeseries, material, zones) -> None:
+#: The quantities that move between climate years, in the order the chapter
+#: lists them.
+_VARYING = (("demand_elec", "electricity demand"), ("demand_dheat", "district heat demand"),
+            ("vre", "wind and solar output"), ("inflow_hydro", "hydro inflow"))
+
+
+def _variation_section(report: Report, timeseries: Timeseries, material, zones) -> None:
+    """How far single climate years move from the mean the rest of the report uses."""
     if not timeseries.available:
         report.add(f"The climate years were not read"
                    + (f": {timeseries.skipped}" if timeseries.skipped else "") + ".")
         report.add()
         return
 
+    report.add(f"Every chapter above reports a mean climate year. This one is about the years "
+               f"themselves: {plural(len(timeseries.years), 'climate year')} "
+               f"({min(timeseries.years)}-{max(timeseries.years)}), how far a single year moves "
+               f"from that mean, and whether the bad ones arrive together.")
+    report.add()
     rows = []
-    for key, label in (("demand_elec", "electricity demand"), ("demand_dheat", "district heat"),
-                       ("inflow_hydro", "hydro inflow")):
+    for key, label in _VARYING:
         part = timeseries.annual[timeseries.annual["key"] == key]
         if part.empty:
             continue
@@ -5276,13 +6084,13 @@ def _weather_section(report, timeseries, material, zones) -> None:
         median_high = float(np.median([s[2] for s in spreads]))
         rows.append([label, f"{_num(median_low, 0)}% / +{_num(median_high, 0)}%",
                      f"{widest[0]} at {_num(widest[1], 0)}% / +{_num(widest[2], 0)}%"])
-    report.add(f"Over {len(timeseries.years)} climate year(s) ({min(timeseries.years)}-"
-               f"{max(timeseries.years)}), as a percentage of each area's own mean:")
+    report.add("The lowest and highest year, as a percentage of each area's own mean; the "
+               "typical range is the median across areas:")
     report.add()
     report.table(["quantity", "typical range", "widest area"], rows)
-    caveat = window_caveat(timeseries, ", which matters most for the correlations below")
+    caveat = window_caveat(timeseries)
     if caveat:
-        report.add(caveat)
+        report.add(f"*{caveat}*")
         report.add()
 
     elec = annual_range(timeseries, "demand_elec")
@@ -5297,16 +6105,14 @@ def _weather_section(report, timeseries, material, zones) -> None:
         )
         report.add(f"Electricity demand is the least weather-sensitive quantity in the build, and "
                    f"its extremes agree across areas: {peak_year} is the highest-demand year "
-                   f"system-wide and in {agreeing} of {elec['area'].nunique()} area(s).")
+                   f"system-wide and in {agreeing} of {plural(elec['area'].nunique(), 'area')}.")
         report.add()
 
     correlations = _correlations(timeseries)
     if not correlations.empty:
         report.add("Does a low-resource year fall in the same year as a high-demand year in the "
                    "same area? Pearson correlation of each area's annual anomalies, over the "
-                   "climate years. This is a table and not a scatter plot on purpose: demand's "
-                   "spread is so much narrower than inflow's that a shared axis would draw demand "
-                   "as a flat line whatever the correlation.")
+                   "climate years:")
         report.add()
         rows = [[display_name(r["area"], zones),
                  _num(r["hydro"], 2) if np.isfinite(r["hydro"]) else "-",
@@ -5317,27 +6123,26 @@ def _weather_section(report, timeseries, material, zones) -> None:
         total_areas = len(correlations)
         floor = significance_floor(len(timeseries.years))
         if floor is None:
-            report.add(f"With {len(timeseries.years)} climate year(s) there are too few points to "
-                       f"say whether any of these correlations differs from noise.")
+            report.add(f"With {plural(len(timeseries.years), 'climate year')} there are too few "
+                       f"points to say whether any of these correlations differs from noise.")
             report.add()
         else:
             strong_hydro = int((correlations["hydro"].abs() >= floor).sum())
             negative_vre = int((correlations["vre"] <= -floor).sum())
             report.add(
-                f"With {len(timeseries.years)} climate years a correlation has to reach "
+                f"With {plural(len(timeseries.years), 'climate year')} a correlation has to reach "
                 f"|r| = {_num(floor, 2)} before it is distinguishable from noise at the usual 5% "
-                f"level, so that -- and not a round number -- is what the counts below are "
-                f"against. Hydro inflow and demand: {strong_hydro} of {total_areas} area(s) "
-                f"clear it. Wind and solar: {negative_vre} of {total_areas} area(s) sit at or "
-                f"below -{_num(floor, 2)}, so a low-VRE year does tend to be a high-demand year, "
-                f"though with this many years the effect is barely resolved and its size should "
-                f"not be read off these numbers. If this scenario is ever run as one hand-picked "
-                f"year rather than all of them, that is still the relationship worth picking "
-                f"against.")
+                f"level. Hydro inflow and demand: {strong_hydro} of "
+                f"{plural(total_areas, 'area')} clear it. Wind and solar: {negative_vre} of "
+                f"{plural(total_areas, 'area')} sit at or below -{_num(floor, 2)}"
+                + (", so a low-VRE year does tend to be a high-demand year, though the effect is "
+                   "barely resolved and its size should not be read off these numbers. When one "
+                   "climate year is picked to run, that is the relationship to pick against."
+                   if negative_vre > total_areas / 2 else "."))
             report.add()
     if material:
         left_out = [a for a in timeseries.areas if a not in material]
-        report.add(f"The figure below shows the {len(material)} area(s) with at least "
+        report.add(f"The figure below shows the {plural(len(material), 'area')} with at least "
                    f"{_num(MATERIAL_HYDRO_TWH, 0)} TWh/yr of mean inflow. The other "
                    f"{len(left_out)} are left out because a large percentage swing on a very small "
                    f"inflow says more about the denominator than about the system.")
@@ -5393,8 +6198,8 @@ def _price_section(report, workbook) -> None:
         if varying.empty:
             report.add("Every fuel costs the same in every zone.")
         else:
-            report.add(f"{len(varying)} of {len(prices)} fuel(s) cost different amounts in "
-                       f"different zones, and the table below shows one of them: "
+            report.add(f"{len(varying)} of {plural(len(prices), 'fuel')} cost different amounts in "
+                       f"different zones, and the table below shows each one's median: "
                        + summarise([str(r["grid"]) for _, r in varying.iterrows()]) + ".")
         report.add()
 
@@ -5452,28 +6257,28 @@ def _not_summarized(report, workbook) -> None:
     uc = workbook.userconstraint
     if not uc.empty:
         groups = uc["group"].nunique() if "group" in uc.columns else 0
-        items.append(f"{groups} user constraint group(s) over {len(uc)} row(s) "
+        items.append(f"{plural(groups, 'user constraint group')} over {plural(len(uc), 'row')} "
                      f"(`p_userconstraint`) -- scenario-specific shapes with nothing in common "
                      f"across builds, so they are counted and not interpreted.")
     if not workbook.p_unit.empty:
-        items.append("Unit efficiency curves and availability (`p_unit`) -- technology parameters "
-                     "rather than facts about countries at annual level.")
+        items.append("Unit efficiency curves (`p_unit`) -- technology parameters rather than "
+                     "facts about countries at annual level.")
+    if not workbook.availability_limits.empty:
+        items.append("When units become available or unavailable (`utAvailabilityLimits`) -- "
+                     "every capacity here is counted as available for the whole run.")
     for item in items:
         report.add(f"- {item}")
     report.add()
 
 
 def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
-    """What survives here rather than sitting under the figure it qualifies.
+    """The limits that apply to the whole report.
 
-    Two caveats that used to live in this section now sit in small type under
-    the figure each one is about -- the technology grouping under the capacity
-    figures, the forecast branches under the climate-year figure -- because a
-    caveat quarantined at the end of a document is read by nobody who is
-    looking at the picture it applies to.
+    A caveat about one figure sits in small type under that figure, where the
+    reader looking at the picture sees it; this section holds the rest.
     """
     report.add("There is no figure or table below zone level, at any flag setting, other than "
-               "the hydro checks, which are per store because a minimum binds one store. There "
+               "the hydro checks, which are per storage node because a minimum binds one. There "
                "is no \"Nordics\" or \"CWE\" grouping, because nothing in the tracked source data "
                "defines one. The maps inherit that: a zone's whole fleet sits at one point. "
                "They are always drawn per bidding zone whatever level the tables use, with "
@@ -5486,20 +6291,20 @@ def _limits_section(report, workbook, timeseries, inventory, zones) -> None:
                    f"bound all need those files. Everything read from `inputData.xlsx` -- capacity, "
                    f"interconnection capacity, prices, emissions and the structural checks -- is "
                    f"unaffected.")
-    report.add()
-    report.add("Nothing here comes from a solved model. The net-load curve ignores storage, trade "
-               "and dispatch; VRE output assumes no curtailment and no outages; and capacity times "
-               "hours is never converted into energy for dispatchable plant, because the input "
-               "data cannot support that claim.")
+        report.add()
+    report.add("Nothing here comes from a Backbone run. [Net load](#elec-net-load) lists what its "
+               "simple balance leaves out, and capacity times hours is never converted into "
+               "energy for dispatchable plant, because the input data cannot support that claim.")
     report.add()
     report.add("The hydro checks see the realised climate years only. Backbone also solves "
                "forecast branches -- per-hour quantiles of inflow, down to a dry one whose "
-               "floor `changes.inc` raises by 10 % -- and those are where minimum generation has "
-               "actually run short in past runs, so a store this report finds sufficient can "
-               "still pay a penalty there. They also start each window from the middle of its "
-               "range rather than the model's start level, run hour by hour where the model may "
-               "aggregate hours and take the tightest bound within each step, and ignore ramp "
-               "limits.")
+               "floor `changes.inc` raises by 10 % -- and that is where minimum generation runs "
+               "short first, so a storage node this report finds sufficient can still pay a penalty "
+               "there. The checks also start each window from the middle of its range, where "
+               "Backbone starts a reservoir or psOpen storage at its `relative` share of the band "
+               "and any other at its `reference`; they run hour by hour where Backbone may "
+               "aggregate hours and take the tightest bound within each step; and they ignore "
+               "ramp limits.")
     report.add()
 
 
@@ -5529,7 +6334,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--out-subdir", default="summary", metavar="NAME",
         help="subfolder of built_folder for report.md and its figures "
-             "(default: summary). Overwritten on every run",
+             "(default: summary). Each run rewrites those files and leaves any other alone",
     )
     return parser
 
@@ -5575,13 +6380,14 @@ def main(argv=None) -> int:
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         text, figures = build_report(workbook, classification, timeseries, out_dir, args.zones,
-                                     shapes, countries, not args.no_neighbours)
+                                     shapes, countries, not args.no_neighbours,
+                                     read_build_record(folder))
         (out_dir / "report.md").write_text(text, encoding="utf-8")
     except OSError as exc:
         print(f"Could not write the report into {out_dir}: {exc}")
         return 1
 
-    print(f"{len(figures)} figure(s) written")
+    print(f"{plural(len(figures), 'figure')} written")
     print(f"Report written: {out_dir / 'report.md'}")
     return 0
 

@@ -17,10 +17,18 @@ design:
 - a reservoir bounded by two seasonal series has no single size. Its nameplate
   ceiling is twice its usable volume in the shipped scenarios, and both are
   believable numbers printed in TWh next to the word storage.
-- the depth a store needs is not monotone in the window it is measured over,
-  though on every real 8760-hour series it has been. The figure stacks the
-  differences, so a rare inversion would draw a negative bar.
-- a hydro store is run hour by hour, each climate window on its own, and a short
+- the build starts a climate window in every climate year, so a window longer
+  than a year overlaps the next. Summed whole, its extra days are counted twice
+  and every annual figure drifts by the share they make up; a window shorter
+  than a year is a season, and annualising it reports that season as a year.
+- production capacity is set against everything that could take it: peak
+  demand, the units consuming the carrier, and export capacity. Peak demand
+  alone flags every exporter; leaving out consumers flags every electrolyser.
+- a storage's discharge unit is output capacity on the carrier it serves, and its
+  charger input capacity on it. Counted as generation or consumption as well
+  as under storage, the same megawatt appears twice in one chapter, and so
+  does demand response, which is a unit that makes electricity from nothing.
+- a hydro storage node is run hour by hour, each climate window on its own, and a short
   hour is made good before the next. Charging every later hour for one early
   deficit, or carrying one window's level into the next, both print hours that
   look like findings.
@@ -306,7 +314,7 @@ class TestHydroUsableVolumeIsNotItsNameplate:
     def _records(self, upward, downward, branches=("f01",)):
         rows = []
         for branch in branches:
-            for hour, (up, down) in enumerate(zip(upward, downward)):
+            for hour, (up, down) in enumerate(zip(upward, downward), start=1):
                 rows.append(("reservoir", "SE01_reservoir", "upwardLimit", branch,
                              f"t{hour:06d}", up))
                 rows.append(("reservoir", "SE01_reservoir", "downwardLimit", branch,
@@ -345,12 +353,34 @@ class TestHydroUsableVolumeIsNotItsNameplate:
             rows[rows["param_gnBoundaryTypes"] == "upwardLimit"])
         assert table.iloc[0]["usable_mean_MWh"] == pytest.approx(100.0)
 
+    def test_the_initial_step_is_not_an_hour(self):
+        """The build writes t000000 into ts_node for Backbone's starting state.
+
+        Given a value no hour has, it would show in every measure if counted.
+        """
+        rows = self._records([100.0, 80.0], [40.0, 20.0])
+        initial = rows[rows["t"] == "t000001"].assign(t="t000000", value=999.0)
+        table, _ = summary._storage_limit_measures(pd.concat([initial, rows]))
+        row = table.iloc[0]
+        assert row["nameplate_MWh"] == pytest.approx(100.0)
+        assert row["usable_mean_MWh"] == pytest.approx(60.0)
+        assert row["usable_envelope_MWh"] == pytest.approx(80.0)
+
+    def test_the_initial_step_is_dropped_from_categorical_labels(self):
+        """gams.transfer returns t as a categorical, and that is what is read."""
+        rows = self._records([100.0, 80.0], [40.0, 20.0])
+        initial = rows[rows["t"] == "t000001"].assign(t="t000000")
+        records = pd.concat([initial, rows]).astype({"t": "category"})
+        out = summary._without_initial_step(records)
+        assert set(out["t"].astype(str)) == {"t000001", "t000002"}
+        assert len(out) == len(rows)
+
 
 class TestStorageGroupsAreNested:
     """Two groups, the second containing the first, and heat storage in neither."""
 
     def _workbook(self, battery="battery4h"):
-        """Two stores charged and discharged on elec, one on dheat, one with inflow.
+        """Two storage grids charged and discharged on elec, one on dheat, one with inflow.
 
         Written as the builder writes it: hydro states its size as an
         upwardLimit in MWh, battery and heat state theirs as a duration per MW.
@@ -545,128 +575,25 @@ class TestAnAreaCollectsEveryFeatureThatMapsToIt:
             assert asset.is_file(), f"{asset} is committed and must be readable"
 
 
-class TestRequiredStorageDepth:
-    """How deep a store must be to flatten a swing, window by window.
+class TestNetLoadLeavesHydroForFirmCapacity:
+    """Net load asks what firm capacity must cover, and reservoir hydro is dispatchable."""
 
-    The quantity is an energy in TWh, which is the point: the unservable energy
-    per year this replaced could never be held against an installed volume,
-    however the caption was worded.
-
-    The windows have to be nested -- each a whole multiple of the one before --
-    because the figure stacks the increase from one to the next. A calendar
-    month of 730 hours against a week of 168 cuts across it and that difference
-    comes out negative.
-    """
-
-    def _windows(self):
-        return [w for _, w in summary.DURATION_WINDOWS]
-
-    def _chain(self, values):
-        return [summary.storage_depth(values, w) for w in self._windows()]
-
-    def _timeseries(self, values):
-        import numpy as np
-        return summary.Timeseries(
-            years=[1990], areas=["DE"], hours_per_year=len(values),
-            hourly={"demand_elec": np.asarray(values, dtype="float64").reshape(-1, 1)},
-        )
-
-    def test_a_flat_series_needs_no_storage(self):
-        """Nothing has to move, so nothing has to be held."""
-        import numpy as np
-        assert self._chain(np.full(8760, 10.0)) == pytest.approx([0.0] * 5)
-
-    def test_a_daily_swing_needs_the_same_store_at_every_window(self):
-        """Twelve hours of surplus is 120 MWh whether you look at a day or a year."""
-        import numpy as np
-        day = np.tile(np.r_[np.full(12, 10.0), np.full(12, -10.0)], 365)
-        assert self._chain(day) == pytest.approx([120.0] * 5)
-
-    def test_a_seasonal_swing_needs_a_season(self):
-        import numpy as np
-        half = np.r_[np.full(4380, 10.0), np.full(4380, -10.0)]
-        chain = self._chain(half)
-        assert chain[-1] == pytest.approx(43800.0)
-        assert chain[1] < chain[-1] / 100.0        # a week reaches almost none of it
-
-    def test_a_constant_offset_changes_nothing(self):
-        """Firm generation supplies the block mean; the store supplies the rest."""
-        import numpy as np
-        rng = np.random.default_rng(3)
-        values = rng.normal(0.0, 20.0, 8760)
-        assert self._chain(values + 5000.0) == pytest.approx(self._chain(values))
-
-    def test_a_sine_needs_its_half_cycle_integral(self):
-        """A sin(2*pi*t/P) integrates to A*P/pi between its turning points."""
-        import numpy as np
-        period, amplitude = 24, 10.0
-        wave = amplitude * np.sin(2 * np.pi * np.arange(8760) / period)
-        full = summary.storage_depth(wave, period)
-        assert full == pytest.approx(amplitude * period / np.pi, rel=0.03)
-        assert summary.storage_depth(wave, period // 4) < full
-
-    def test_the_ragged_last_block_is_still_a_block(self):
-        """8760 is not a multiple of 168, and the leftover hours are real."""
-        import numpy as np
-        values = np.zeros(200)
-        values[168:184] = 10.0                      # entirely inside the tail block
-        assert summary.storage_depth(values, 168) > 0.0
-
-    def test_the_raw_depth_can_fall_as_the_window_grows(self):
-        """Why depth_by_timescale accumulates before it differences.
-
-        A longer block subtracts a different mean, which tilts the running sum
-        and can shrink its range. It has never been seen on a real 8760-hour
-        series, which is exactly why the guard looks removable.
-        """
-        values = [-1.0, -1.0, 0.0, 0.0, 2.0, -1.0, -1.0, 2.0]
-        assert summary.storage_depth(values, 4) == pytest.approx(3.0)
-        assert summary.storage_depth(values, 8) == pytest.approx(2.0)
-
-    def test_the_chain_never_goes_backwards(self):
-        """The property the figure depends on, asserted where the figure reads it."""
-        import numpy as np
-        rng = np.random.default_rng(0)
-        for values in (rng.normal(5, 20, 8760),
-                       np.cumsum(rng.normal(0, 5, 8760)),
-                       np.r_[np.full(4380, 10.0), np.full(4380, -10.0)]):
-            table = summary.depth_by_timescale(
-                summary.netload_by_area(self._timeseries(values)), self._timeseries(values))
-            assert (table["by_area"].to_numpy() >= -1e-9).all()
-
-    def test_the_windows_are_nested(self):
-        windows = [w for _, w in summary.DURATION_WINDOWS if w is not None]
-        for finer, coarser in zip(windows, windows[1:]):
-            assert coarser % finer == 0, f"{coarser} is not a multiple of {finer}"
-
-    def test_the_last_window_is_the_whole_series(self):
-        assert summary.DURATION_WINDOWS[-1][1] is None
-
-
-class TestTheResidualPutsHydroInflowOnTheSupplySide:
-    """Norway's inflow is three times its demand. Left out, it read as a deficit."""
-
-    def _timeseries(self):
+    def test_net_load_subtracts_wind_and_solar_only(self):
         import numpy as np
         column = lambda v: np.full((24, 1), v, dtype="float64")
-        return summary.Timeseries(
+        timeseries = summary.Timeseries(
             years=[1990], areas=["NO"], hours_per_year=24,
             hourly={"demand_elec": column(100.0), "vre": column(20.0),
                     "inflow_hydro": column(50.0)},
         )
+        assert summary.netload_by_area(timeseries)["NO"][0] == pytest.approx(80.0)
 
-    def test_net_load_leaves_hydro_for_firm_capacity_to_cover(self):
-        """Chapter 7 asks what firm capacity must cover, and hydro is dispatchable."""
-        assert summary.netload_by_area(self._timeseries())["NO"][0] == pytest.approx(80.0)
-
-    def test_the_storage_residual_counts_the_inflow(self):
-        assert summary.residual_after_inflow(self._timeseries())["NO"][0] == pytest.approx(30.0)
 
 
 class TestDemandCountsBothRoutesWithoutDoubleCounting:
     """A constant influx and a timeseries are alternatives, never a sum.
 
-    `p_gn`'s `influx` is "overridden by time series if provided", and the model
+    `p_gn`'s `influx` is "overridden by time series if provided", and Backbone
     gates it on `not gn_influxTs(grid, node)` in six places. Adding them would
     double-count every node carrying both, in every table at once, and the
     result would look entirely plausible. Industrial steam is 495 TWh/yr of
@@ -851,7 +778,7 @@ def _hydro_workbook(turbine_availability=1.0, spill=None, pump=True, min_gen=Non
     """AT00_ror with a turbine, NOS0_psOpen with a turbine and a pump, as the builder writes them.
 
     Turbine efficiency 0.95 and pump 0.8, with an eff01 of 0 that must not count.
-    Each store is 0-100 MWh with a constant bound. ``min_gen`` maps
+    Each storage node is 0-100 MWh with a constant bound. ``min_gen`` maps
     ``(unit, input_output)`` to the ``minGen`` of that p_gnu_io row; the default
     is 9.5 MW on AT00_rorTurbine's output, whose draw is therefore 10 MWh/h.
     """
@@ -907,25 +834,25 @@ def _series(inflow):
 
 
 class TestAStoreStartsAtTheMiddleOfItsFirstHour:
-    """The checks start at the middle of the range, not at the model's own start share."""
+    """The checks start at the middle of the range, not at Backbone's own start share."""
 
     def test_the_first_hour_range_decides_the_start(self):
         import numpy as np
 
         up = np.array([100.0, 1000.0])[None, :, None]
         down = np.array([20.0, 0.0])[None, :, None]
-        run = summary.run_store(np.zeros((1, 2, 1)), up, down, [0.0])
+        run = summary.run_storage(np.zeros((1, 2, 1)), up, down, [0.0])
         # Started at 60 and never moved: 40 above the first hour's floor of 20.
         assert run["floor_gap"][0, 0] == pytest.approx(40.0)
 
 
 class TestAStoreThatCannotCarryItsMinimumIsShort:
-    """The best a store can do for its minimum is give exactly the minimum and keep the rest."""
+    """The best a storage can do for its minimum is give exactly the minimum and keep the rest."""
 
     def test_inflow_that_covers_the_draw_is_never_short(self):
         import numpy as np
 
-        run = summary.run_store(np.full((1, 50, 1), 10.0), 100.0, 0.0, [10.0])
+        run = summary.run_storage(np.full((1, 50, 1), 10.0), 100.0, 0.0, [10.0])
         assert run["below_hours"][0, 0] == 0
 
     def test_an_empty_store_is_short_by_the_draw_not_by_everything_it_missed(self):
@@ -933,7 +860,7 @@ class TestAStoreThatCannotCarryItsMinimumIsShort:
         short from hour 6. Each short hour is made good, so the next is short by 10 again."""
         import numpy as np
 
-        run = summary.run_store(np.zeros((1, 8, 1)), 100.0, 0.0, [10.0])
+        run = summary.run_storage(np.zeros((1, 8, 1)), 100.0, 0.0, [10.0])
         assert run["below_hours"][0, 0] == 3
         assert run["below_MWh"][0, 0] == pytest.approx(30.0)
 
@@ -942,7 +869,7 @@ class TestAStoreThatCannotCarryItsMinimumIsShort:
 
         inflow = np.zeros((1, 12, 1))
         inflow[0, 0, 0] = 1000.0
-        run = summary.run_store(inflow, 100.0, 0.0, [10.0])
+        run = summary.run_storage(inflow, 100.0, 0.0, [10.0])
         assert run["above_hours"][0, 0] == 1
         # Full at 100 after the flood; ten hours of 10 empty it and the twelfth is short.
         assert run["below_hours"][0, 0] == 1
@@ -952,7 +879,7 @@ class TestAStoreThatCannotCarryItsMinimumIsShort:
 
         inflow = np.zeros((2, 8, 1))
         inflow[1] = 10.0
-        run = summary.run_store(inflow, 100.0, 0.0, [10.0])
+        run = summary.run_storage(inflow, 100.0, 0.0, [10.0])
         assert run["below_hours"][:, 0].tolist() == [3, 0]
         assert run["floor_gap"][1, 0] == pytest.approx(50.0)
 
@@ -961,14 +888,14 @@ class TestAStoreThatCannotCarryItsMinimumIsShort:
 
         inflow = np.zeros((2, 8, 1))
         inflow[1] = np.nan
-        run = summary.run_store(inflow, 100.0, 0.0, [10.0])
+        run = summary.run_storage(inflow, 100.0, 0.0, [10.0])
         assert run["hours_run"][:, 0].tolist() == [8, 0]
         assert np.isnan(run["floor_gap"][1, 0])
 
     def test_hours_near_the_floor_exclude_the_short_ones(self):
         import numpy as np
 
-        run = summary.run_store(np.zeros((1, 8, 1)), 100.0, 0.0, [10.0], margin=[25.0])
+        run = summary.run_storage(np.zeros((1, 8, 1)), 100.0, 0.0, [10.0], margin=[25.0])
         # Levels 40, 30, 20, 10, 0, then short three times: 20, 10 and 0 are near.
         assert run["near_floor_hours"][0, 0] == 3
 
@@ -980,7 +907,7 @@ class TestAStoreThatCannotCarryItsMinimumIsShort:
         down = rng.uniform(0, 30, size=(3, 200, 4))
         up = down + rng.uniform(5, 80, size=(3, 200, 4))
         draw = np.array([5.0, 10.0, 15.0, 25.0])
-        run = summary.run_store(inflow, up, down, draw)
+        run = summary.run_storage(inflow, up, down, draw)
         for w in range(3):
             for n in range(4):
                 level = (up[w, 0, n] + down[w, 0, n]) / 2
@@ -1024,7 +951,7 @@ class TestOnlyAMinimumTheSimpleModelCanAttributeIsSimulated:
             extra_io=[("psOpen", "NOS0_psOpen", "AT00_rorTurbine", "input", 100.0)])
         minimums, skipped = summary.hydro_minimums(workbook, {"ror", "psOpen"})
         assert minimums.empty
-        assert "2 different stores" in skipped[0][1]
+        assert "2 different storage nodes" in skipped[0][1]
 
     def test_a_minimum_on_other_plant_is_not_a_hydro_minimum(self):
         workbook = _hydro_workbook(min_gen={("DE00_gasTurbine", "output"): 100.0})
@@ -1040,7 +967,7 @@ class TestOnlyAMinimumTheSimpleModelCanAttributeIsSimulated:
 
 
 class TestAPumpedStoreIsOnlyShortIfPumpingCannotSaveIt:
-    """Whether a store pumps is the market's decision, so pumping that saves it is watched."""
+    """Whether a storage pumps is the market's decision, so pumping that saves it is watched."""
 
     def _row(self, pump):
         workbook = _hydro_workbook(pump=pump, min_gen={("NOS0_psOpenTurbine", "output"): 9.5})
@@ -1062,7 +989,7 @@ class TestAFullStoreThatCannotReleaseOverflows:
     def test_release_above_inflow_never_overflows(self):
         import numpy as np
 
-        run = summary.run_store(np.full((1, 24, 1), 50.0), 100.0, 0.0, [60.0])
+        run = summary.run_storage(np.full((1, 24, 1), 50.0), 100.0, 0.0, [60.0])
         assert run["above_hours"][0, 0] == 0
 
     def test_a_peak_beyond_room_and_release_overflows_by_the_excess(self):
@@ -1070,13 +997,13 @@ class TestAFullStoreThatCannotReleaseOverflows:
 
         inflow = np.zeros((1, 3, 1))
         inflow[0, 0, 0] = 200.0
-        run = summary.run_store(inflow, 100.0, 0.0, [100.0])
+        run = summary.run_storage(inflow, 100.0, 0.0, [100.0])
         # 50 at the start, 200 in, 100 out: 150 against a ceiling of 100.
         assert run["above_hours"][0, 0] == 1
         assert run["above_MWh"][0, 0] == pytest.approx(50.0)
 
     def test_spill_is_only_what_the_build_writes(self):
-        """No maxSpill row means the store releases through its turbine alone."""
+        """No maxSpill row means the storage releases through its turbine alone."""
         peak = [[300.0] + [0.0] * 23]
         without = summary.hydro_checks(_hydro_workbook(), _series({"AT00_ror": peak}),
                                        {"ror", "psOpen"})
@@ -1084,46 +1011,6 @@ class TestAFullStoreThatCannotReleaseOverflows:
                                           _series({"AT00_ror": peak}), {"ror", "psOpen"})
         assert without.overflow.set_index("node").loc["AT00_ror", "state"] == summary.CHECK_ACT
         assert with_spill.overflow.set_index("node").loc["AT00_ror", "state"] == summary.CHECK_OK
-
-
-class TestWeeksAreCutInsideEachWindow:
-    """A week is 168 hours from the window's first hour, whatever length the window is."""
-
-    def test_a_remainder_shorter_than_a_week_is_left_out(self):
-        import numpy as np
-
-        series = np.ones((1, 8760))
-        series[0, -24:] = 100.0           # the 24 hours after week 52
-        mean, wettest, driest = summary.weekly_shape(series)
-        assert mean == pytest.approx(168.0)
-        assert wettest == pytest.approx(1.0) and driest == pytest.approx(1.0)
-
-    @pytest.mark.parametrize("days", [200, 365, 400])
-    def test_any_window_length_is_cut_the_same_way(self, days):
-        import numpy as np
-
-        series = np.ones((2, days * 24))
-        series[1, :168] = 3.0
-        mean, wettest, _ = summary.weekly_shape(series)
-        weeks = 2 * (days * 24 // 168)
-        assert mean == pytest.approx(168.0 * (weeks + 2) / weeks)
-        assert wettest == pytest.approx(3.0 * 168.0 / mean)
-
-    def test_a_country_adds_its_zones_before_it_cuts_weeks(self):
-        """Two zones wet in alternate weeks make a country that is wet every week."""
-        import numpy as np
-
-        wet_odd = np.tile(np.r_[np.full(168, 2.0), np.zeros(168)], 26)[None, :]
-        wet_even = np.tile(np.r_[np.zeros(168), np.full(168, 2.0)], 26)[None, :]
-        workbook = make_workbook(p_gnu_io=pd.DataFrame({
-            "grid": ["reservoir", "reservoir"], "node": ["SE01_reservoir", "SE02_reservoir"],
-            "unit": ["SE01_t", "SE02_t"], "input_output": ["input", "input"],
-            "capacity": [10.0, 10.0], "isActive": [1, 1]}))
-        series = _series({"SE01_reservoir": wet_odd, "SE02_reservoir": wet_even})
-        zones = summary.hydro_characteristics(workbook, None, series, True, {"reservoir"})
-        country = summary.hydro_characteristics(workbook, None, series, False, {"reservoir"})
-        assert zones["wettest_week"].tolist() == pytest.approx([2.0, 2.0])
-        assert country.iloc[0]["wettest_week"] == pytest.approx(1.0)
 
 
 class TestTheHydroTableReadsTheBuild:
@@ -1170,6 +1057,29 @@ class TestTheHydroTableReadsTheBuild:
         table = self._table(zones=True).reset_index()
         assert set(table["area"]) == {"AT00", "BE00", "NOS0"}
 
+    def test_minimum_generation_is_the_mingen_on_the_turbine_output(self):
+        row = self._table().loc["ror"]
+        assert row["min_gen_MW"] == pytest.approx(9.5)
+        assert self._table().loc["psOpen", "min_gen_MW"] == 0.0
+
+    def test_maximum_generation_is_output_capacity_times_availability(self):
+        """The column the report adds only when some turbine is derated."""
+        workbook = _hydro_workbook(turbine_availability=0.5)
+        table = summary.hydro_characteristics(
+            workbook, None, _series({"AT00_ror": [[1.0] * 48]}), True,
+            {"ror", "psOpen"}).set_index("grid")
+        assert table.loc["ror", "output_MW"] == pytest.approx(95.0)
+        assert table.loc["ror", "max_gen_MW"] == pytest.approx(47.5)
+        assert table.loc["psOpen", "max_gen_MW"] == pytest.approx(95.0)
+
+    def test_a_turbine_on_an_availability_series_is_marked_not_guessed(self):
+        workbook = _hydro_workbook()
+        workbook.p_unit["useTimeseriesAvailability"] = [
+            1 if u == "AT00_rorTurbine" else 0 for u in workbook.p_unit["unit"]]
+        generation = summary.hydro_generation_by_node(workbook, {"ror", "psOpen"})
+        flags = dict(zip(generation["node"], generation["timeseries_availability"]))
+        assert flags == {"AT00_ror": True, "NOS0_psOpen": False}
+
 
 class TestPerYearFiguresAreAnnualised:
     """A 400-day window summed is 110% of a year, and a 200-day one 55%."""
@@ -1182,35 +1092,472 @@ class TestPerYearFiguresAreAnnualised:
 class TestACheckSaysWhatItsStateMeans:
     """A row that is not ok must not read as a failure unless it asks for action."""
 
-    def test_an_impossible_value_asks_for_action_and_a_known_gap_is_watched(self):
+    def test_an_impossible_value_asks_for_action(self):
         workbook = make_workbook(
             p_gnu_io=pd.DataFrame({"grid": ["elec"], "node": ["DE00_elec"], "unit": ["DE00_st"],
                                    "input_output": ["output"], "capacity": [-1.0],
-                                   "isActive": [1]}),
-            flow_unit=pd.DataFrame({"flow": ["solar thermal"], "unit": ["DE00_st"]}))
+                                   "isActive": [1]}))
         checks = {c.name: c.state for c in summary.run_checks(
             workbook, summary.classify_capacity(workbook), {})}
         assert checks["Negative capacity, transferCap or emission factor"] == summary.CHECK_ACT
-        assert checks["Flow with units but no capacity-factor timeseries"] == summary.CHECK_WATCH
+
+    def test_a_flow_unit_with_no_profile_never_generates_and_asks_for_action(self):
+        workbook = make_workbook(
+            p_gnu_io=pd.DataFrame({"grid": ["dheat"], "node": ["DE00_dheat"], "unit": ["DE00_st"],
+                                   "input_output": ["output"], "capacity": [120.0],
+                                   "isActive": [1]}),
+            flow_unit=pd.DataFrame({"flow": ["solar thermal"], "unit": ["DE00_st"]}))
+        check = next(c for c in summary.run_checks(workbook, summary.classify_capacity(workbook), {})
+                     if c.name == "Flow with units but no capacity-factor timeseries")
+        assert check.state == summary.CHECK_ACT
+        assert check.result.startswith("solar thermal: 1 unit, 0.1 GW")
 
     def _states(self, result):
         return [c.state for c in summary.hydro_check_rows(result)]
 
-    def test_hydro_states_follow_the_worst_store(self):
+    def test_a_store_that_only_comes_close_gets_no_row(self):
+        """Run-of-river sits near its floor by design; the Closest to floor table shows it."""
         minimum = pd.DataFrame({"node": ["A_ror", "B_ror"], "state": ["ok", "watch"],
                                 "beyond_turbines": [False, False]})
         overflow = pd.DataFrame({"node": ["A_ror"], "state": ["act"]})
         result = summary.HydroChecks(minimum=minimum, overflow=overflow, minimums=2, windows=35)
-        assert self._states(result) == [summary.CHECK_WATCH, summary.CHECK_ACT]
+        rows = summary.hydro_check_rows(result)
+        assert [c.state for c in rows] == [summary.CHECK_ACT]
+        assert rows[0].name.startswith("Hydro inflow")
+
+    def test_a_store_that_runs_short_gets_a_row(self):
+        minimum = pd.DataFrame({"node": ["A_ror", "B_ror"], "state": ["act", "watch"],
+                                "beyond_turbines": [False, False]})
+        result = summary.HydroChecks(minimum=minimum, minimums=2, windows=35)
+        rows = summary.hydro_check_rows(result)
+        assert rows[0].name == "Hydro minimum generation against inflow"
+        assert rows[0].state == summary.CHECK_ACT and "A_ror" in rows[0].result
 
     def test_nothing_read_is_not_run_rather_than_ok(self):
         result = summary.HydroChecks(minimums=1, skipped="gamsapi is not importable",
                                      minimum=pd.DataFrame({"node": ["A_ror"],
                                                            "beyond_turbines": [False]}))
-        assert self._states(result) == [summary.CHECK_NOT_RUN, summary.CHECK_NOT_RUN]
+        assert self._states(result) == [summary.CHECK_NOT_RUN]
 
-    def test_a_minimum_the_check_cannot_model_does_not_raise_the_state(self):
+    def test_a_minimum_the_check_cannot_model_does_not_raise_a_row(self):
         minimum = pd.DataFrame({"node": ["A_ror"], "state": ["ok"], "beyond_turbines": [False]})
         result = summary.HydroChecks(minimum=minimum, minimums=2, windows=35,
                                      not_simulated=[("A_rorTurbine", "on its storage side")])
-        assert self._states(result)[0] == summary.CHECK_OK
+        assert self._states(result) == [summary.CHECK_OK]
+
+
+class TestNamesBeforeACount:
+    """Three names, then a count -- but never "and 1 more"."""
+
+    def test_one_over_the_limit_is_named(self):
+        assert summary.summarise(["A", "B", "C", "D"]) == "A, B, C, D"
+
+    def test_more_than_that_is_counted(self):
+        assert summary.summarise(["A", "B", "C", "D", "E"]) == "A, B, C and 2 more"
+
+    def test_items_with_commas_of_their_own_take_another_separator(self):
+        text = summary.summarise(["a, 1", "b, 2", "c, 3", "d, 4", "e, 5"], sep="; ")
+        assert text == "a, 1; b, 2; c, 3 and 2 more"
+
+    @pytest.mark.parametrize("count, text", [(1, "1 country"), (16, "16 countries"),
+                                             (0, "0 storage nodes"), (1, "1 storage node")])
+    def test_a_count_takes_its_noun_in_the_right_number(self, count, text):
+        noun = "country" if "countr" in text else "storage node"
+        assert summary.plural(count, noun) == text
+
+
+def _carrier_workbook(io_rows, gn_rows=(), gnn_rows=()):
+    """A workbook of carrier nodes and the units on them, active and with capacity in MW."""
+    p_gnu_io = pd.DataFrame(io_rows, columns=["grid", "node", "unit", "input_output", "capacity"])
+    p_gn = pd.DataFrame(list(gn_rows), columns=["grid", "node", "influx", "usePrice"])
+    p_gnn = pd.DataFrame(list(gnn_rows), columns=["grid", "from_node", "to_node", "transferCap"])
+    nodes = sorted(set(p_gnu_io["node"]) | set(p_gn["node"]))
+    return make_workbook(p_gnu_io=p_gnu_io.assign(isActive=1), p_gn=p_gn, p_gnn=p_gnn,
+                         nodes=nodes)
+
+
+#: An electrolyser in FI making hydrogen nothing takes, beside a market for its power.
+_ELECTROLYSER = [("elec", "FI00_elec", "FI00_electrolyser", "input", 100.0),
+                 ("H2", "FI00_H2", "FI00_electrolyser", "output", 70.0)]
+
+
+class TestProductionNeedsSomewhereToGo:
+    """Hydrogen made where nothing demands, burns, stores away or carries it can never run."""
+
+    def _stranded(self, workbook, timeseries=None):
+        timeseries = timeseries or summary.Timeseries(years=[1990])
+        return summary.production_without_sink(workbook, timeseries)
+
+    def test_output_with_no_outlet_is_stranded(self):
+        found = self._stranded(_carrier_workbook(_ELECTROLYSER))
+        assert found["H2"]["nodes"] == [("FI00_H2", 70.0)]
+
+    def test_a_unit_that_consumes_it_is_an_outlet(self):
+        turbine = [("H2", "FI00_H2", "FI00_H2turbine", "input", 30.0),
+                   ("elec", "FI00_elec", "FI00_H2turbine", "output", 15.0)]
+        assert self._stranded(_carrier_workbook(_ELECTROLYSER + turbine))["H2"]["nodes"] == []
+
+    def test_a_corridor_to_a_node_with_demand_is_an_outlet(self):
+        workbook = _carrier_workbook(
+            _ELECTROLYSER,
+            gn_rows=[("H2", "SE01_H2", -10.0, 0)],
+            gnn_rows=[("H2", "FI00_H2", "SE01_H2", 50.0), ("H2", "SE01_H2", "FI00_H2", 50.0)])
+        assert self._stranded(workbook)["H2"]["nodes"] == []
+
+    def test_a_closed_corridor_is_not(self):
+        workbook = _carrier_workbook(_ELECTROLYSER, gn_rows=[("H2", "SE01_H2", -10.0, 0)],
+                                     gnn_rows=[("H2", "FI00_H2", "SE01_H2", 0.0)])
+        assert [n for n, _ in self._stranded(workbook)["H2"]["nodes"]] == ["FI00_H2"]
+
+    def test_a_price_node_is_a_market(self):
+        workbook = _carrier_workbook(_ELECTROLYSER, gn_rows=[("H2", "FI00_H2", 0.0, 1)])
+        assert self._stranded(workbook)["H2"]["nodes"] == []
+
+    def test_a_demand_series_is_an_outlet(self):
+        plant = [("gas", "FI00_gas", "FI00_ccgt", "input", 200.0),
+                 ("elec", "FI00_elec", "FI00_ccgt", "output", 100.0)]
+        timeseries = summary.Timeseries(years=[1990], demand_nodes={"elec": {"FI00_elec"}})
+        assert self._stranded(_carrier_workbook(plant), timeseries)["elec"]["nodes"] == []
+
+    def test_unread_demand_series_make_the_answer_unknown(self):
+        plant = [("gas", "FI00_gas", "FI00_ccgt", "input", 200.0),
+                 ("elec", "FI00_elec", "FI00_ccgt", "output", 100.0)]
+        found = self._stranded(_carrier_workbook(plant), summary.Timeseries(skipped="no GAMS"))
+        assert found["elec"] == {"nodes": [], "unknown": True}
+        row = summary.carrier_check_rows(found, {})[0]
+        assert row.state == summary.CHECK_NOT_RUN
+
+    def test_the_check_names_the_carrier_and_asks_for_action(self):
+        found = self._stranded(_carrier_workbook(_ELECTROLYSER))
+        row = summary.carrier_check_rows(found, {})[0]
+        assert row.state == summary.CHECK_ACT
+        assert "hydrogen: 1 node" in row.result and "FI00_H2" in row.result
+
+
+#: An industrial CHP whose steam side is five times the flat demand it serves.
+_STEAM_CHP = [("coal", "UK00_coal", "UK00_chp", "input", 1200.0),
+              ("elec", "UK00_elec", "UK00_chp", "output", 300.0),
+              ("steam", "UK00_steam", "UK00_chp", "output", 500.0)]
+
+
+class TestCapacityIsSetAgainstEverythingThatCouldTakeIt:
+    """Capacity beyond peak demand, consumers and exports together can never run."""
+
+    def _uses(self, workbook, carrier, timeseries=None):
+        timeseries = timeseries or summary.Timeseries()
+        return summary.capacity_against_uses(
+            workbook, summary.classify_capacity(workbook), timeseries, carrier, True)
+
+    def test_a_flat_demand_is_its_own_peak(self):
+        workbook = _carrier_workbook(_STEAM_CHP, gn_rows=[("steam", "UK00_steam", -100.0, 0)])
+        row = self._uses(workbook, "steam").loc["UK00"]
+        assert row["peak"] == pytest.approx(0.1)
+        assert row["ratio"] == pytest.approx(5.0)
+
+    def test_consumers_count_as_a_use(self):
+        dryer = [("steam", "UK00_steam", "UK00_dryer", "input", 400.0),
+                 ("elec", "UK00_elec", "UK00_dryer", "output", 1.0)]
+        workbook = _carrier_workbook(_STEAM_CHP + dryer, gn_rows=[("steam", "UK00_steam", -100.0, 0)])
+        assert self._uses(workbook, "steam").loc["UK00", "ratio"] == pytest.approx(1.0)
+
+    def test_exports_count_as_a_use(self):
+        workbook = _carrier_workbook(_STEAM_CHP, gn_rows=[("steam", "UK00_steam", -100.0, 0)],
+                                     gnn_rows=[("steam", "UK00_steam", "FR00_steam", 400.0)])
+        assert self._uses(workbook, "steam").loc["UK00", "ratio"] == pytest.approx(1.0)
+
+    def test_wind_is_not_dispatchable_and_is_left_out(self):
+        wind = [("elec", "UK00_elec", "UK00_wind", "output", 5000.0)]
+        workbook = _carrier_workbook(_STEAM_CHP + wind)
+        workbook.flow_unit = pd.DataFrame({"flow": ["onshore"], "unit": ["UK00_wind"]})
+        timeseries = summary.Timeseries(years=[1990], areas=["UK00"], hours_per_year=2,
+                                        hourly={"demand_elec": pd.DataFrame([[300.0], [150.0]])
+                                                .to_numpy()})
+        row = self._uses(workbook, "elec", timeseries).loc["UK00"]
+        assert row["production"] == pytest.approx(0.3)
+        assert row["ratio"] == pytest.approx(1.0)
+
+    def test_an_unread_demand_series_is_no_verdict(self):
+        """A missing peak is unknown, not zero; zero would flag every area."""
+        plant = [("gas", "FI00_gas", "FI00_ccgt", "input", 200.0),
+                 ("elec", "FI00_elec", "FI00_ccgt", "output", 100.0)]
+        uses = self._uses(_carrier_workbook(plant), "elec", summary.Timeseries(skipped="no GAMS"))
+        assert uses.empty
+
+    def test_production_with_no_use_at_all_is_left_to_the_other_check(self):
+        """It is stranded, and the nowhere-to-go check names its nodes; counting it here too
+        would report the same capacity twice."""
+        uses = self._uses(_carrier_workbook(_STEAM_CHP), "steam")
+        assert uses.loc["UK00", "ratio"] == float("inf")
+        assert summary._ratio_text(uses.loc["UK00", "ratio"]) == "no use"
+        assert summary.oversized(uses).empty
+
+    def test_the_largest_stranded_capacity_is_named_first(self):
+        table = pd.DataFrame({"production": [0.8, 82.0], "uses": [0.1, 16.8],
+                              "ratio": [8.0, 4.9]}, index=["EE", "UK"])
+        big = summary.oversized(table)
+        assert list(big.index) == ["UK", "EE"]
+        assert big.loc["UK", "stranded"] == pytest.approx(65.2)
+
+    def test_below_the_ratio_nothing_is_flagged(self):
+        table = pd.DataFrame({"production": [1.9], "uses": [1.0], "ratio": [1.9]}, index=["AT"])
+        assert summary.oversized(table).empty
+        row = summary.carrier_check_rows({}, {"steam": table})[1]
+        assert row.state == summary.CHECK_OK
+
+
+def _io(rows, **columns):
+    """p_gnu_io from (grid, node, unit, side, MW) rows, with optional extra columns."""
+    frame = pd.DataFrame(rows, columns=["grid", "node", "unit", "input_output", "capacity"])
+    for name, values in columns.items():
+        frame[name] = values
+    return frame.assign(isActive=1)
+
+
+class TestEachMegawattIsCountedOnceInAChapter:
+    """Storage discharge is not generation, its charging is not consumption."""
+
+    def _workbook(self):
+        rows = [
+            ("gas", "DE00_gas", "DE00_ccgt", "input", 200.0),
+            ("elec", "DE00_elec", "DE00_ccgt", "output", 100.0),
+            ("battery4h", "DE00_battery4h", "DE00_Charge", "output", 50.0),
+            ("elec", "DE00_elec", "DE00_Charge", "input", 50.0),
+            ("battery4h", "DE00_battery4h", "DE00_Disch", "input", 50.0),
+            ("elec", "DE00_elec", "DE00_Disch", "output", 50.0),
+            ("elec", "DE00_elec", "DE00_electrolyser", "input", 30.0),
+            ("H2", "DE00_H2", "DE00_electrolyser", "output", 20.0),
+            ("elec", "DE00_elec", "DE00_DRcutofftier1", "output", 40.0),
+        ]
+        return make_workbook(
+            p_gnu_io=_io(rows, vomCosts=[None] * 8 + [400.0]),
+            p_gn=pd.DataFrame({"grid": ["battery4h"], "node": ["DE00_battery4h"],
+                               "energyStoredPerUnitOfState": [1.0]}),
+            p_unit=pd.DataFrame({"unit": ["DE00_DRcutofftier1"], "isSource": [1]}),
+            unit_unittype=pd.DataFrame({"unit": ["DE00_DRcutofftier1"],
+                                        "unittype": ["DRcutofftier1"]}),
+        )
+
+    def _elec(self, workbook):
+        return summary.capacity_by_area(summary.classify_capacity(workbook), "elec", True)
+
+    def test_storage_and_demand_response_leave_generation(self):
+        capacity = self._elec(self._workbook())
+        assert {"battery", "demand response"} <= set(capacity.columns)
+        generation = summary.generation_only(capacity, "elec")
+        assert list(generation.columns) == ["gas"]
+        assert generation.loc["DE00", "gas"] == pytest.approx(0.1)
+
+    def test_demand_response_stays_where_it_has_no_subsection(self):
+        """Only electricity has demand management; dropping it elsewhere would lose it."""
+        capacity = pd.DataFrame({"gas": [1.0], "demand response": [0.5]}, index=["FI"])
+        assert "demand response" in summary.generation_only(capacity, "dheat").columns
+
+    def test_charging_a_store_is_not_consumption(self):
+        consumption = summary.consumption_capacity(self._workbook(), "elec", True)
+        consumers, charging = summary.split_consumption(consumption, {"battery4h"})
+        assert list(consumers["label"]) == ["to H2"]
+        assert list(charging["label"]) == ["to battery4h"]
+
+    def test_demand_response_is_counted_by_tier_with_its_price(self):
+        workbook = self._workbook()
+        table, costs = summary.demand_response(workbook, summary.classify_capacity(workbook), True)
+        assert table.loc["DE00", "DRcutofftier1"] == pytest.approx(0.04)
+        assert costs == {"DRcutofftier1": (400.0, 400.0)}
+
+
+class TestAStoreIsReportedWhereItGivesItsEnergyBack:
+    """A battery under electricity, a heat pit under district heat, inflow hydro under neither."""
+
+    def test_each_store_lands_in_its_carriers_chapter(self):
+        workbook = TestStorageGroupsAreNested()._workbook()
+        inflow = summary.HYDRO_INFLOW_GRIDS_FALLBACK
+        assert summary.storage_grids_serving(workbook, "elec", inflow) == ["battery4h", "psClosed"]
+        assert summary.storage_grids_serving(workbook, "dheat", inflow) == ["heatStor"]
+
+    def test_power_is_read_on_the_stores_own_rows_and_energy_from_its_duration(self):
+        workbook = TestStorageGroupsAreNested()._workbook()
+        inventory = summary.storage_inventory(workbook, summary.Timeseries(), zones=False,
+                                              inflow_grids=summary.HYDRO_INFLOW_GRIDS_FALLBACK)
+        table = summary.storage_by_area(workbook, inventory, ["battery4h"], zones=False)
+        assert table.loc["DE", "battery"] == pytest.approx(0.1)
+        assert table.loc["DE", "charge_GW"] == pytest.approx(0.1)
+        assert table.loc["DE", "energy_GWh"] == pytest.approx(0.4)
+
+
+class TestCombinedHeatAndPowerIsNamedOnBothSides:
+    """The steam and heat chapters say how much of their capacity also makes electricity."""
+
+    def _workbook(self):
+        rows = [
+            ("coal", "UK00_coal", "UK00_steamCHP", "input", 1200.0),
+            ("elec", "UK00_elec", "UK00_steamCHP", "output", 300.0),
+            ("steam", "UK00_steam", "UK00_steamCHP", "output", 500.0),
+            ("gas", "FI00_gas", "FI00_heatCHP", "input", 300.0),
+            ("elec", "FI00_elec", "FI00_heatCHP", "output", 100.0),
+            ("dheat", "FI00_dheat", "FI00_heatCHP", "output", 100.0),
+            ("elec", "FI00_elec", "FI00_boiler", "input", 10.0),
+            ("dheat", "FI00_dheat", "FI00_boiler", "output", 10.0),
+        ]
+        return make_workbook(p_gnu_io=_io(rows, cb=[None, 0.6, None, None, 1.0, None, None, None],
+                                          cv=[None, -0.17, None, None, None, None, None, None]))
+
+    def test_a_cv_unit_moves_its_outputs_apart_and_a_cb_unit_does_not(self):
+        steam = summary.carrier_links(self._workbook(), "steam")
+        assert steam["co_GW"] == pytest.approx(0.5)
+        assert steam["co_elec_GW"] == pytest.approx(0.3)
+        assert steam["flexible_GW"] == pytest.approx(0.5)
+        heat = summary.carrier_links(self._workbook(), "dheat")
+        assert heat["flexible_GW"] == pytest.approx(0.0)
+
+    def test_heat_made_from_electricity_is_its_own_number(self):
+        assert summary.carrier_links(self._workbook(), "dheat")["from_elec_GW"] == pytest.approx(0.01)
+
+    def test_electricity_names_each_carrier_it_shares_a_unit_with(self):
+        links = summary.carrier_links(self._workbook(), "elec")
+        assert links["co_by_carrier"] == {"dheat": pytest.approx(0.1), "steam": pytest.approx(0.3)}
+
+
+class TestACorridorInsideOneZoneIsInternal:
+    """Helsinki-area heat links are three node pairs in one zone, not one zone pair."""
+
+    def _workbook(self):
+        links = [("FI00_dheat_HKI", "FI00_dheat_VAN", 100.0), ("FI00_dheat_VAN", "FI00_dheat_HKI", 100.0),
+                 ("FI00_dheat_HKI", "FI00_dheat_ESP", 50.0), ("FI00_dheat_ESP", "FI00_dheat_HKI", 50.0)]
+        return make_workbook(p_gnn=pd.DataFrame({
+            "grid": ["dheat"] * 4, "from_node": [a for a, _, _ in links],
+            "to_node": [b for _, b, _ in links], "transferCap": [c for _, _, c in links]}))
+
+    @pytest.mark.parametrize("zones, area", [(True, "FI00"), (False, "FI")])
+    def test_every_link_counts_once_as_internal(self, zones, area):
+        per_area, _, facts = summary.transfer_by_area(self._workbook(), zones, "dheat")
+        assert facts["pairs"] == 2 and facts["inside"] == 2
+        assert per_area.loc[area, "inter_zonal_MW"] == pytest.approx(150.0)
+        assert per_area.loc[area, "cross_border_MW"] == pytest.approx(0.0)
+
+    def test_electricity_is_not_read_as_heat(self):
+        per_area, _, facts = summary.transfer_by_area(self._workbook(), False)
+        assert per_area.empty and facts == {}
+
+
+class TestTheBuildRecordIsReadFromBesideTheData:
+    """The settings come from what the build wrote, so they are what it actually used."""
+
+    def _folder(self, tmp_path):
+        import json
+
+        (tmp_path / "cache").mkdir()
+        (tmp_path / "cache" / "config_structural.json").write_text(json.dumps({
+            "climate_data": "1982-2016", "bb_timeseries_start": "01-01",
+            "bb_timeseries_length": 365, "bb_horizon_weeks": 52,
+            "energy_quantiles": {"f01": 0.5, "f02": 0.1},
+            "forecast_weights": {"f01": 0.8, "f02": 0.2},
+            "forecast_branches": {"f02": {"length_days": 252, "end": "continue",
+                                          "blend_days": 28}},
+            "timeseries_specs": {"hydro inflow": {"energy_quantiles": {"f02": 0.01}}},
+            "variant_choice": {}, "exclude_nodes": ["BE00_dheat"]}), encoding="utf-8")
+        (tmp_path / "cache" / "general_flags.json").write_text(
+            json.dumps({"workflow_run_successfully": True, "partial_causes": []}),
+            encoding="utf-8")
+        (tmp_path / "summary.log").write_text("\n".join([
+            "---     Observed Trends, 2030 ----",
+            "  Run timestamp: 2026-10-20 13:10:59",
+            "✓ Variant 'dh-level': capitals in every country.",
+            "---     Warnings and errors summary ------",
+            "⚠️ 1 node(s) are neither price nor balance nodes:",
+            "    UK00_CO2",
+        ]), encoding="utf-8")
+        (tmp_path / "ts_cf_PV_forecasts.gdx").write_bytes(b"")
+        return tmp_path
+
+    def test_the_log_gives_time_variants_and_warnings(self, tmp_path):
+        record = summary.read_build_record(self._folder(tmp_path))
+        assert record.built_at == "2026-10-20 13:10:59"
+        assert record.variant_lines == ["Variant 'dh-level': capitals in every country."]
+        assert (record.warnings, record.errors) == (1, 0)
+        assert record.forecast_files == ["ts_cf_PV_forecasts.gdx"]
+
+    def test_the_forecast_branches_are_described_as_set_up(self, tmp_path):
+        record = summary.read_build_record(self._folder(tmp_path))
+        text = summary._forecast_text(record.config, record.forecast_files)
+        assert "f01 at the 0.5 quantile, weight 0.8, the central branch" in text
+        assert "f02 at the 0.1 quantile, weight 0.2, 252 days, then continues" in text
+        assert "blending over 28 days" in text
+        assert "hydro inflow f02 at 0.01" in text
+
+    def test_no_forecast_file_means_no_branches(self):
+        assert summary._forecast_text({"energy_quantiles": {"f01": 0.5}}, []).startswith("none")
+
+    def test_a_folder_without_its_record_still_reports(self, tmp_path):
+        record = summary.read_build_record(tmp_path)
+        assert record.config == {} and record.built_at is None
+
+    def test_investment_is_named_as_not_handled(self):
+        workbook = make_workbook(
+            p_unit=pd.DataFrame({"unit": ["FI00_wind", "FI00_pv"], "maxUnitCount": [3, 0]}),
+            availability_limits=pd.DataFrame({"unit": ["FI00_wind"], "t": ["t000100"]}))
+        found = summary.investment_and_timing(workbook)
+        assert found[0] == "1 unit may be invested in (`maxUnitCount`)"
+        assert "utAvailabilityLimits" in found[1]
+
+    def test_a_build_without_investment_says_nothing(self):
+        assert summary.investment_and_timing(make_workbook()) == []
+
+
+class TestTheUnitCountFollowsTheBuild:
+    """unitUnittype keeps units the builder dropped; the report counts what was built."""
+
+    def test_a_dropped_unit_is_not_counted(self):
+        workbook = make_workbook(
+            p_unit=pd.DataFrame({"unit": ["AT00_gasCCGT"]}),
+            unit_unittype=pd.DataFrame({"unit": ["AT00_gasCCGT", "AT00_gasCCGTOld1"],
+                                        "unittype": ["gasCCGT", "gasCCGTOld"]}))
+        assert workbook.built_units() == ["AT00_gasCCGT"]
+        assert workbook.built_unittypes() == ["gasCCGT"]
+
+
+class TestAClimateWindowIsReadAsWholeYears:
+    """The build starts a window in every climate year, so a long window overlaps the next."""
+
+    def _write(self, folder, hours, years=(1990, 1991)):
+        from types import SimpleNamespace
+
+        from src import GDX_exchange as gx
+
+        # One megawatt for the first year, a thousand after it: anything read
+        # past hour 8760 shows up a thousandfold.
+        values = [-1.0 if t < 8760 else -1000.0 for t in range(hours)]
+        records = pd.DataFrame({
+            "grid": "elec", "node": "DE00_elec", "f": "f00",
+            "t": [f"t{t + 1:06d}" for t in range(hours)], "value": values})
+        quiet = SimpleNamespace(log_status=lambda *args, **kwargs: None)
+        for year in years:
+            gx.write_df_to_gdx(records, str(folder / f"ts_influx_elec_{year}.gdx"), quiet,
+                               "ts_influx", ["grid", "node", "f", "t"])
+
+    @pytest.mark.gams
+    @pytest.mark.parametrize("days", [365, 400, 730])
+    def test_a_year_or_longer_is_read_as_its_first_365_days(self, tmp_path, days):
+        self._write(tmp_path, days * 24)
+        timeseries = summary.read_timeseries(tmp_path, make_workbook(nodes=["DE00_elec"]), True)
+        assert timeseries.available
+        assert timeseries.window_hours == days * 24
+        assert timeseries.hours_per_year == 8760
+        annual = timeseries.annual[timeseries.annual["key"] == "demand_elec"]
+        assert annual["TWh"].tolist() == pytest.approx([8760 * 1e-6] * 2)
+        assert timeseries.hourly["demand_elec"].shape == (2 * 8760, 1)
+
+    @pytest.mark.gams
+    def test_a_window_shorter_than_a_year_is_not_read(self, tmp_path):
+        self._write(tmp_path, 200 * 24)
+        timeseries = summary.read_timeseries(tmp_path, make_workbook(nodes=["DE00_elec"]), True)
+        assert not timeseries.available
+        assert "shorter than a year" in timeseries.skipped
+        assert timeseries.window_hours == 4800 and timeseries.years == [1990, 1991]
+
+    def test_the_settings_say_which_rule_applied(self):
+        long = summary.Timeseries(years=[1990, 1991], window_hours=730 * 24)
+        short = summary.Timeseries(years=[1990], window_hours=200 * 24, skipped="short")
+        assert "first 365 days of each" in summary._window_text({}, long)
+        assert "Shorter than a year" in summary._window_text({}, short)
+        assert summary.window_caveat(long) is not None
+        assert summary.window_caveat(summary.Timeseries(years=[1990], window_hours=8760)) is None

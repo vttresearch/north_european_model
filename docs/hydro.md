@@ -130,10 +130,11 @@ is, and that is what the checks below measure.
 The **Hydro** section of `build_input_summary.py` answers it from the built folder
 alone, never from a source workbook. For each hydro type in each country — or bidding
 zone, with `--zones` — it gives the usable storage, what the turbines can draw from the
-store and the pumps put into it, **full-load hours** (mean annual inflow over turbine
-draw), weeks of storage against a mean week of inflow, and the wettest and driest week
-as multiples of the mean. Both sides of full-load hours come from the same build, which
-is what makes it the one ratio a classification argument can settle.
+storage, the minimum generation they must hold, their maximum generation where
+availability is below one, what the pumps put into the storage, **full-load hours** (mean
+annual inflow over turbine draw), and weeks of storage against a mean week of inflow.
+Both sides of full-load hours come from the same build, which is what makes it the one
+ratio a classification argument can settle.
 
 Each type is its own row, so nothing has to be set aside to keep a ratio honest.
 Closed-loop pumped storage — 22.7 GW of turbine draw — shows no inflow, and so do
@@ -158,14 +159,15 @@ reservoir. SE04 additionally carries the level data described in
 [the caveats](#some-caveats-from-cross-checking-the-data). Neither is corrected until
 better data exists.
 
-Two checks run on every bidding-zone store, whatever the level. **Minimum generation**
+Two checks run on every bidding-zone storage node, whatever the level. **Minimum generation**
 runs each climate window hour by hour, giving exactly the turbines' `minGen` and
-spilling above the ceiling, and asks whether the store ever
+spilling above the ceiling, and asks whether the storage ever
 falls below its floor. **Overflow** releases everything the turbines and `maxSpill` can
-pass, and asks whether the store ever rises above its ceiling. In the OT2030 build no
-store runs short and none overflows in 35 windows; `DE00_ror`, `AT00_ror` and
+pass, and asks whether the storage ever rises above its ceiling. In the OT2030 build no
+storage runs short and none overflows in 35 windows; `DE00_ror`, `AT00_ror` and
 `FR00_ror` come within 6, 10 and 12 hours of their own draw of the floor, and are the
-ones to watch. Both checks start each window from the middle of its range rather than
+ones to watch in the report's **Closest to floor** table. An overflow is named only when
+one happens. Both checks start each window from the middle of its range rather than
 from the model's [start share](#start-levels), and both see the realised years only:
 the forecast branches, where minimum generation has actually run short, are beyond
 them.
