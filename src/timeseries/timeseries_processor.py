@@ -45,7 +45,10 @@ Post-processing applied by ProcessorRunner
 After the interface is validated: coerce ``time`` to datetime if the processor
 did not, categorise the dimension columns for memory and groupby speed, round
 ``value`` to ``rounding_precision``, and apply ``cutoff_below`` -- small
-magnitudes to 0, leaving NaN untouched.
+magnitudes to 0, leaving NaN untouched. A parameter in
+``INITIAL_STEP_PARAMETERS`` (``ts_node``) also gets its t000001 rows repeated
+as t000000, realized and forecast alike: Backbone reads a storage's starting
+state there.
 """
 
 import os
@@ -63,6 +66,8 @@ from src.infrastructure.config_reader import branch_energy_days, spec_energy_qua
 from src.source_data.source_data_pipeline import SourceDataPipeline
 from src.timeseries.processors.base_processor import declared_source_data
 from src.timeseries.timeseries_helpers import (
+    INITIAL_STEP_PARAMETERS,
+    add_initial_step,
     find_incomplete_climate_windows,
     find_time_axis_defects,
     order_timeseries_for_labelling,
@@ -730,6 +735,9 @@ class ProcessorRunner:
                 f"them are correct; the windows are simply shorter.",
                 level="warn",
             )
+        # After the length check, which counts the hours of the data.
+        if bb_parameter in INITIAL_STEP_PARAMETERS:
+            annual_dfs = {yr: add_initial_step(frame) for yr, frame in annual_dfs.items()}
         GDX_exchange.write_climate_window_GDX_files(
             annual_dfs, self.output_folder, self.logger,
             bb_parameter=bb_parameter,
@@ -780,6 +788,8 @@ class ProcessorRunner:
                 group_ids=group_ids,
             )
             forecast_df = forecasts.frame
+            if bb_parameter in INITIAL_STEP_PARAMETERS:
+                forecast_df = add_initial_step(forecast_df)
             self._report_per_hour_quantiles(processor_name, energy_quantiles, forecasts)
 
             forecast_gdx_path = os.path.join(

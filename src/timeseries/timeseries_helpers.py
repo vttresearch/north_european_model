@@ -495,6 +495,42 @@ def split_timeseries_to_climate_windows(
     return out
 
 
+#: Backbone parameters that are also read at t000000, the step before the first
+#: hour of data, where a storage's starting state sits. Backbone copies t000001
+#: there itself when a series has none, and prints a note saying so; writing the
+#: copy here gives the model the same values without the note. ts_influx and
+#: ts_cf are never read at t000000.
+INITIAL_STEP_PARAMETERS = frozenset({"ts_node"})
+
+
+def add_initial_step(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with its ``t000001`` rows repeated as ``t000000``, ahead of the rest.
+
+    Every other column is copied as it is, so each (dimensions, f) series gets
+    its own first hour at t000000: realized and forecast branches alike, which
+    is the copy Backbone makes. A categorical ``t`` stays categorical, with
+    t000000 as its first category. A frame with no t000001 row is returned
+    unchanged.
+    """
+    initial, first = "t000000", "t000001"
+    t = frame["t"]
+    is_first = (t == first).to_numpy()
+    if not is_first.any():
+        return frame
+
+    head = frame[is_first].copy()
+    if isinstance(t.dtype, pd.CategoricalDtype):
+        categories = t.cat.categories
+        if initial not in categories:
+            categories = pd.Index([initial]).append(categories)
+        dtype = pd.CategoricalDtype(categories, ordered=t.cat.ordered)
+        frame = frame.astype({"t": dtype})
+        head["t"] = pd.Categorical([initial] * len(head), dtype=dtype)
+    else:
+        head["t"] = initial
+    return pd.concat([head, frame], ignore_index=True)
+
+
 def climate_window_rows(
     time_np: np.ndarray,
     group_ids: np.ndarray,

@@ -67,6 +67,8 @@ not build and why, and has a documentation page of its own.
   per series and over the branch's length. `0.5` is each series' mean (a per-hour
   median carried 70 % of onshore wind's), `0.1` a one-in-ten low. A config with
   the old key stops with the reason. [docs/timeseries.md](docs/timeseries.md#what-an-energy-quantile-means)
+- `ts_node` files carry `t000000`, a copy of `t000001`, so Backbone no longer
+  copies it and notes so in warnings.log.
 
 ### Source workbooks
 

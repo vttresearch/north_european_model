@@ -80,6 +80,10 @@ Into the output folder, per source:
   For the per-year case it reads the year from `%climateYear%`, so Backbone picks
   the window at run time rather than at build time.
 
+Every series starts at `t000001`, the first hour of the window. `ts_node` files
+also carry `t000000`, a copy of `t000001`, because Backbone reads a storage's
+starting state at that step.
+
 Two things do not belong to any one source. Demand grids that appear in the
 demand tables but have no processor of their own get a **constant** demand rather
 than a time series: the annual energy spread evenly over the hours, which is the
