@@ -271,7 +271,7 @@ happened.
 |---|---|
 | `N unit connection(s) name a grid but no node` | a `grid_<put>` column without its `node_<put>`; check spelling in unitdata |
 | `N unit(s) have no row in the unit data` | a unit in `unitUnittype` that unitdata does not have; check spelling |
-| `Dropped N unit(s) with zero capacity and no investment parameters` | expected when switching units off; check the names are the ones you meant |
+| `Dropped N unit(s) with zero capacity and no investment parameters` | expected when switching units off, and the units are in no sheet; check the names are the ones you meant |
 | `N node(s) set both 'usePrice' and 'nodeBalance'` | contradictory; pick one in nodedata |
 | `N node(s) set 'usePrice' together with 'energyStoredPerUnitOfState'` | a price node cannot hold a state; pick one |
 | `N node(s) are neither price nor balance nodes` | give the node a price, a demand, or an explicit flag |

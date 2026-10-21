@@ -186,6 +186,8 @@ not build and why, and has a documentation page of its own.
 - `p_gn` `maxInvest`, `invCost`, `annuityFactor` and `p_gnu_io` `profitMargin` are read.
 - `becomeAvailable` / `becomeUnavailable` are written as `utAvailabilityLimits`, not
   `p_unit`; a cell is a time step number, `1` = `t000001`. [docs/investment.md](docs/investment.md)
+- A unit dropped for zero capacity is left out of `unit`, `unittype` and
+  `unitUnittype` too, so Backbone no longer defaults and deactivates it.
 
 ### Test suite
 

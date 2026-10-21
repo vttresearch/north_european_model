@@ -1898,7 +1898,18 @@ class BBExcelPipeline:
 
         p_gnu_io = self.create_p_gnu_io(self.df_unitdata)
 
-        # unit, unittype domain tables - derived from df_unitdata
+        # p_unit for every unit in p_gnu_io: the drop below reads both
+        unitUnittype = self.create_unitUnittype(
+            self.df_unitdata, p_gnu_io['unit'].dropna().unique()
+        )
+        p_unit = self.create_p_unit(unitUnittype, self.df_unitdata)
+
+        # Remove units without capacity or investment parameters
+        p_gnu_io, p_unit = self.drop_redundant_units(p_gnu_io, p_unit)
+
+        # unit, unittype domain tables and unitUnittype - only the units left after
+        # the drop. A dropped unit left in them reaches Backbone with no data, which
+        # defaults its efficiency and conversionCoeff and then deactivates it.
         active_units = p_gnu_io['unit'].dropna().unique()
         unit = compile_domain_df(active_units.tolist(), 'unit')
         unittype_vals = (
@@ -1907,13 +1918,7 @@ class BBExcelPipeline:
             .dropna().unique().tolist()
         )
         unittype = compile_domain_df(unittype_vals, 'unittype')
-
-        # unitUnittype - unit-unittype pairs from df_unitdata for active units
-        unitUnittype = self.create_unitUnittype(self.df_unitdata, active_units)
-        p_unit = self.create_p_unit(unitUnittype, self.df_unitdata)
-
-        # Remove units without capacity or investment parameters
-        p_gnu_io, p_unit = self.drop_redundant_units(p_gnu_io, p_unit)
+        unitUnittype = unitUnittype[unitUnittype['unit'].isin(active_units)].reset_index(drop=True)
 
         # Calculate missing input or output capacities in p_gnu_io
         p_gnu_io = self.fill_capacities(p_gnu_io, p_unit)
