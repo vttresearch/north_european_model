@@ -64,6 +64,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 
 import src.GDX_exchange as GDX_exchange  # noqa: E402  (needs the path above)
+from src.timeseries.timeseries_helpers import timeseries_folder  # noqa: E402
 
 #: The realized quantiles of a window's energy that --targets solves for.
 TARGETS = (("p05", 0.05), ("p10", 0.10), ("mean", None), ("p90", 0.90), ("p95", 0.95))
@@ -103,13 +104,14 @@ def read_schedule(folder: Path) -> dict:
 def find_families(folder: Path) -> list:
     """(name, parameter, forecast file, {year: file}) for every family with branches."""
     families = []
-    for forecast_file in sorted(folder.glob("ts_*_forecasts.gdx")):
+    gdx_folder = timeseries_folder(folder)
+    for forecast_file in sorted(gdx_folder.glob("ts_*_forecasts.gdx")):
         stem = forecast_file.name[:-len("_forecasts.gdx")]
         parameter = re.match(r"(ts_[A-Za-z]+)_", stem + "_").group(1)
         if parameter == "ts_node":
             continue
         years = {}
-        for path in folder.glob(f"{stem}_*.gdx"):
+        for path in gdx_folder.glob(f"{stem}_*.gdx"):
             tail = path.name[len(stem) + 1:-len(".gdx")]
             if re.fullmatch(r"\d{4}", tail):
                 years[int(tail)] = path
@@ -255,7 +257,8 @@ def report(folder: Path, *, targets: bool, by_node: bool, windows) -> int:
     hours = schedule["data_length"]
     families = find_families(folder)
     if not families:
-        print(f"No ts_*_forecasts.gdx with climate-year files beside it in {folder}.")
+        print(f"No ts_*_forecasts.gdx with climate-year files beside it in "
+              f"{timeseries_folder(folder)}.")
         return 1
     capacities = flow_capacities(folder)
 

@@ -12,14 +12,16 @@ import pytest
 
 from src.timeseries.timeseries_helpers import (
     nodes_needing_flow,
+    timeseries_folder,
     update_import_timeseries_inc,
 )
 
 
 class TestUpdateImportTimeseriesInc:
     def _write_gdx(self, folder: Path, name: str) -> None:
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / name).write_bytes(b"not a real gdx")
+        # Into the build's timeseries folder, where the processor writes them.
+        timeseries_folder(folder).mkdir(parents=True, exist_ok=True)
+        (timeseries_folder(folder) / name).write_bytes(b"not a real gdx")
 
     def test_writes_a_gdxin_block_for_a_single_file(self, tmp_path):
         self._write_gdx(tmp_path, "ts_influx_elec.gdx")
@@ -28,7 +30,7 @@ class TestUpdateImportTimeseriesInc:
         )
 
         content = (tmp_path / "import_timeseries.inc").read_text()
-        assert "$$gdxin '%input_dir%/ts_influx_elec.gdx'" in content
+        assert "$$gdxin '%input_dir%/timeseries/ts_influx_elec.gdx'" in content
         assert "$$loaddcm ts_influx" in content
 
     def test_per_year_files_are_imported_through_the_climate_year_macro(self, tmp_path):
@@ -40,7 +42,7 @@ class TestUpdateImportTimeseriesInc:
         )
 
         content = (tmp_path / "import_timeseries.inc").read_text()
-        assert "ts_influx_elec_%climateYear%.gdx" in content
+        assert "'%input_dir%/timeseries/ts_influx_elec_%climateYear%.gdx'" in content
 
     def test_calling_it_twice_does_not_duplicate_the_block(self, tmp_path):
         """Idempotency, which the build depends on.

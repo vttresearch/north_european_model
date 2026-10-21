@@ -4,6 +4,7 @@ import shutil
 import pathlib
 import spinedb_api as api
 from src.GDX_exchange import new_container
+from src.timeseries.timeseries_helpers import timeseries_folder
 
 def main(include_db= False):
     if include_db:
@@ -43,6 +44,12 @@ def copy_files(input_folder):
                 shutil.copy(file_path, output_folder)
             else:
                 print(f"Warning: {file_path} is not a file.")
+    # The timeseries GDX files have a folder of their own, which
+    # import_timeseries.inc loads them from.
+    if timeseries_folder(input_folder).is_dir():
+        print(f"Copying {timeseries_folder(input_folder)} to {timeseries_folder(output_folder)}")
+        shutil.copytree(timeseries_folder(input_folder), timeseries_folder(output_folder),
+                        dirs_exist_ok=True)
 
 
 if __name__ == "__main__":

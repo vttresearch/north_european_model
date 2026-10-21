@@ -69,6 +69,8 @@ not build and why, and has a documentation page of its own.
   the old key stops with the reason. [docs/timeseries.md](docs/timeseries.md#what-an-energy-quantile-means)
 - `ts_node` files carry `t000000`, a copy of `t000001`, so Backbone no longer
   copies it and notes so in warnings.log.
+- The timeseries GDX files go into a `timeseries/` subfolder of the built folder,
+  which `import_timeseries.inc` loads them from.
 
 ### Source workbooks
 

@@ -13,6 +13,7 @@ from src.infrastructure.logger import IterationLogger
 from src.source_data.source_data_contributions import apply_contributions, combine_contributions
 from src.source_data.source_data_inputs import SourceDataPipelineInputs
 from src.source_data.source_data_pipeline import SourceDataPipeline
+from src.timeseries.timeseries_helpers import timeseries_folder
 from src.timeseries.timeseries_inputs import TimeseriesPipelineInputs
 from src.timeseries.timeseries_pipeline import TimeseriesPipeline
 from src.bb_excel.bb_excel_inputs import BBExcelInputs
@@ -138,13 +139,15 @@ def main(input_folder: Path, config_file: Path, output_root: Path | None = None,
         cache_manager.run()
 
         # On full rerun, delete root-level output files (inputData.xlsx, GAMS files, logs, etc.)
-        # Subdirectories such as cache/ are preserved — cache_manager.run() already cleaned those.
+        # and the timeseries GDX files. Other subdirectories such as cache/ are preserved —
+        # cache_manager.run() already cleaned those.
         if cache_manager.full_rerun:
             output_path = Path(output_folder)
 
             # glob("*") + is_file() matches only direct children, not files inside subdirectories
             files = list(output_path.glob("*"))
             files = [f for f in files if f.is_file()]
+            files += [f for f in timeseries_folder(output_path).glob("*") if f.is_file()]
 
             if files:
                 locked_file = None

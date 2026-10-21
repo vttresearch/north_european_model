@@ -211,6 +211,17 @@ class TestTimeAxis:
         assert not run.logger.matching("do not cover the full")
 
 
+class TestWhereTheOutputGoes:
+    @pytest.mark.gams
+    def test_the_gdx_files_go_into_the_timeseries_folder(self, tmp_path):
+        """None at the root, where the include file and the GAMS files are."""
+        run = run_fake_processor(tmp_path, hourly_frame())
+
+        assert run.gdx_files
+        assert not list(run.output_folder.glob("*.gdx"))
+        assert (run.output_folder / "import_timeseries.inc").exists()
+
+
 class TestDeclarationsOfIntent:
     """A processor says what its output should look like; the runner checks it.
 

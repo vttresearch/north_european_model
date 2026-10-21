@@ -116,6 +116,17 @@ def nodes_needing_flow(df_unitdata, flow: str) -> set | None:
     }
 
 
+#: The subfolder of a built folder that holds its timeseries GDX files. A build
+#: writes one per parameter and climate year, a few hundred in all, and the root
+#: keeps the files a person opens or edits.
+TIMESERIES_FOLDER = "timeseries"
+
+
+def timeseries_folder(built_folder: str | Path) -> Path:
+    """Where a built folder's timeseries GDX files are."""
+    return Path(built_folder) / TIMESERIES_FOLDER
+
+
 def update_import_timeseries_inc(
     output_folder: str | Path,
     file_suffix: Optional[str] = None,
@@ -125,7 +136,9 @@ def update_import_timeseries_inc(
     Append a GAMS block to import_timeseries.inc that loads one parameter's GDX.
 
     Args:
-        output_folder (str): where the GDX files are and where the .inc is written
+        output_folder (str): the built folder. The GDX files are in its
+            timeseries subfolder, and the .inc is written at its root, where
+            changes.inc includes it.
         file_suffix (str, optional): suffix of a specific GDX. If None, the two
             standard patterns are searched for instead -- one file, or one per
             climate year.
@@ -134,40 +147,42 @@ def update_import_timeseries_inc(
     """
     bb_parameter = kwargs.get('bb_parameter')
     gdx_name_suffix = kwargs.get('gdx_name_suffix')
+    gdx_folder = timeseries_folder(output_folder)
 
     if file_suffix is not None:
-        filename = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx')
+        filename = os.path.join(gdx_folder, f'{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx')
         if os.path.exists(filename):
             matching_files = filename
         else:
-            raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx not found in {output_folder}.")
+            raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx not found in {gdx_folder}.")
 
     else:
         # One file for the whole run...
-        file_a = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}.gdx')
+        file_a = os.path.join(gdx_folder, f'{bb_parameter}_{gdx_name_suffix}.gdx')
         if os.path.exists(file_a):
             matching_files = file_a
             file_suffix = None
         else:
             # ...or one per climate year, which GAMS picks by %climateYear%.
-            pattern_b = os.path.join(output_folder, f'{bb_parameter}_{gdx_name_suffix}_[0-9][0-9][0-9][0-9].gdx')
+            pattern_b = os.path.join(gdx_folder, f'{bb_parameter}_{gdx_name_suffix}_[0-9][0-9][0-9][0-9].gdx')
             matching_files = glob.glob(pattern_b)
             if matching_files:
                 file_suffix = "%climateYear%"
 
     if matching_files is None:
-        raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}.gdx or {bb_parameter}_{gdx_name_suffix}_year.gdx not found in {output_folder}.")
+        raise FileNotFoundError(f"{bb_parameter}_{gdx_name_suffix}.gdx or {bb_parameter}_{gdx_name_suffix}_year.gdx not found in {gdx_folder}.")
 
 
     if file_suffix is None:
         gdx_name = f"{bb_parameter}_{gdx_name_suffix}.gdx"
     else:
         gdx_name = f"{bb_parameter}_{gdx_name_suffix}_{file_suffix}.gdx"
+    gdx_path = f"%input_dir%/{TIMESERIES_FOLDER}/{gdx_name}"
 
     text_block = "\n".join([
-        f"$ifthen exist '%input_dir%/{gdx_name}'",
+        f"$ifthen exist '{gdx_path}'",
         f"    // If {gdx_name} exists, load input data",
-        f"    $$gdxin '%input_dir%/{gdx_name}'",
+        f"    $$gdxin '{gdx_path}'",
         f"    $$loaddcm {bb_parameter}",
         "    $$gdxin",
         "$endIf",

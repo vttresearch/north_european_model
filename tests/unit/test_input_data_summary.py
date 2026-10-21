@@ -1466,7 +1466,8 @@ class TestTheBuildRecordIsReadFromBesideTheData:
             "⚠️ 1 node(s) are neither price nor balance nodes:",
             "    UK00_CO2",
         ]), encoding="utf-8")
-        (tmp_path / "ts_cf_PV_forecasts.gdx").write_bytes(b"")
+        summary.timeseries_folder(tmp_path).mkdir()
+        (summary.timeseries_folder(tmp_path) / "ts_cf_PV_forecasts.gdx").write_bytes(b"")
         return tmp_path
 
     def test_the_log_gives_time_variants_and_warnings(self, tmp_path):
@@ -1530,8 +1531,10 @@ class TestAClimateWindowIsReadAsWholeYears:
             "grid": "elec", "node": "DE00_elec", "f": "f00",
             "t": [f"t{t + 1:06d}" for t in range(hours)], "value": values})
         quiet = SimpleNamespace(log_status=lambda *args, **kwargs: None)
+        gdx_folder = summary.timeseries_folder(folder)
+        gdx_folder.mkdir()
         for year in years:
-            gx.write_df_to_gdx(records, str(folder / f"ts_influx_elec_{year}.gdx"), quiet,
+            gx.write_df_to_gdx(records, str(gdx_folder / f"ts_influx_elec_{year}.gdx"), quiet,
                                "ts_influx", ["grid", "node", "f", "t"])
 
     @pytest.mark.gams

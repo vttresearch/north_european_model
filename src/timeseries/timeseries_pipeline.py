@@ -21,9 +21,9 @@ demand grid with no profile of its own gets a flat influx.
 
 Output
 ------
-Per executed processor, into ``output_folder``: one or more
-``{bb_parameter}_{gdx_name_suffix}.gdx`` files, and a matching ``$gdxin``
-directive appended to ``import_timeseries.inc``.
+Per executed processor: one or more ``{bb_parameter}_{gdx_name_suffix}.gdx``
+files in ``output_folder/timeseries/``, and a matching ``$gdxin`` directive
+appended to ``import_timeseries.inc`` at the root of ``output_folder``.
 """
 
 from pathlib import Path

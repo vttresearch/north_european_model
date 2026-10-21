@@ -30,7 +30,7 @@ has its own page, and those pages come and go as the data sources do.
 | | |
 |---|---|
 | what a processor returns | long format: dimensions + `time` + `value` |
-| what the pipeline writes | `{bb_parameter}_{gdx_name_suffix}_{year}.gdx` |
+| what the pipeline writes | `timeseries/{bb_parameter}_{gdx_name_suffix}_{year}.gdx` |
 | which weather years | `climate_data`, in `src_files/config_*.ini` |
 | how much of each year | `bb_timeseries_start`, `bb_timeseries_length`, same file |
 | which sources run, and how each behaves | `timeseries_specs`, same file |
@@ -70,15 +70,18 @@ and it is the one to check first.
 
 ## What a build produces
 
-Into the output folder, per source:
+Per source:
 
 - **One GDX per climate year**, `{bb_parameter}_{gdx_name_suffix}_{year}.gdx`, or
   a single `{bb_parameter}_{gdx_name_suffix}.gdx` when the run has only one year.
   Both halves of the name are that source's own `bb_parameter` and
-  `gdx_name_suffix` from `timeseries_specs`.
-- **A line in `import_timeseries.inc`**, the GAMS include file that loads them.
-  For the per-year case it reads the year from `%climateYear%`, so Backbone picks
-  the window at run time rather than at build time.
+  `gdx_name_suffix` from `timeseries_specs`. They go into the output folder's
+  `timeseries/` subfolder: a build writes a few hundred of them, and the root
+  keeps the files a person opens or edits.
+- **A line in `import_timeseries.inc`**, the GAMS include file at the root of the
+  output folder that loads them from `%input_dir%/timeseries/`. For the per-year
+  case it reads the year from `%climateYear%`, so Backbone picks the window at
+  run time rather than at build time.
 
 Every series starts at `t000001`, the first hour of the window. `ts_node` files
 also carry `t000000`, a copy of `t000001`, because Backbone reads a storage's

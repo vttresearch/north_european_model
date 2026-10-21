@@ -72,6 +72,7 @@ from src.timeseries.timeseries_helpers import (
     find_time_axis_defects,
     order_timeseries_for_labelling,
     select_declared_columns,
+    timeseries_folder,
     update_import_timeseries_inc,
     split_timeseries_to_climate_windows,
     calculate_climatological_forecasts,
@@ -738,8 +739,11 @@ class ProcessorRunner:
         # After the length check, which counts the hours of the data.
         if bb_parameter in INITIAL_STEP_PARAMETERS:
             annual_dfs = {yr: add_initial_step(frame) for yr, frame in annual_dfs.items()}
+        # Into the build's timeseries folder; import_timeseries.inc stays at the root.
+        gdx_folder = timeseries_folder(self.output_folder)
+        gdx_folder.mkdir(parents=True, exist_ok=True)
         GDX_exchange.write_climate_window_GDX_files(
-            annual_dfs, self.output_folder, self.logger,
+            annual_dfs, gdx_folder, self.logger,
             bb_parameter=bb_parameter,
             bb_parameter_dimensions=spec.get("bb_parameter_dimensions"),
             gdx_name_suffix=gdx_name_suffix,
@@ -793,7 +797,7 @@ class ProcessorRunner:
             self._report_per_hour_quantiles(processor_name, energy_quantiles, forecasts)
 
             forecast_gdx_path = os.path.join(
-                self.output_folder,
+                gdx_folder,
                 f"{bb_parameter}_{gdx_name_suffix}_forecasts.gdx"
             )
             GDX_exchange.write_df_to_gdx(

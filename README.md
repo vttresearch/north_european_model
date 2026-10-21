@@ -453,7 +453,8 @@ The script automatically copies the following required run specification files f
 * `changes.inc` - reads possible additional excel data, reads timeseries gdx files, and allows users to add their own project specific changes to the end of the file
 
 The python script constructs following files
-* `import_timeseries.inc` - this is a specific file containing instructions for Backbone about how to import timeseries GDX files
+* `timeseries/` - the timeseries GDX files, one per timeseries and climate year
+* `import_timeseries.inc` - this is a specific file containing instructions for Backbone about how to import timeseries GDX files from `timeseries/`
 
 **Note:** The included `scheduleInit.gms` and `changes.inc` files have a specific structure to make them work with *climateYear* and *modelledDays* parameters. If using your own files, adapt a similar structure to them.
 
@@ -484,7 +485,7 @@ Processed input files are written to `c:\Backbone\north_european_model\<output_f
 
 ### Choosing file location
 
-Run the model by running Backbone.gms in GAMS. You can copy created input files to backbone\input or run the directly from the created <output_folder>.
+Run the model by running Backbone.gms in GAMS. You can copy created input files to backbone\input, together with the `timeseries` folder, or run the directly from the created <output_folder>.
 
 It is recommended to run the model directly ftom <output_folder> to guarantee the most recent files, allow running different scenarios from different folders, etc.
 

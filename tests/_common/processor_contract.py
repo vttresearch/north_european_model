@@ -26,6 +26,7 @@ import pandas as pd
 from src.timeseries.timeseries_helpers import (
     find_time_axis_defects,
     order_timeseries_for_labelling,
+    timeseries_folder,
 )
 from src.timeseries.timeseries_processor import ProcessorRunner
 from tests._common.contracts import assert_gams_ready
@@ -115,7 +116,8 @@ class FakeRun:
 
     @property
     def gdx_files(self) -> list[Path]:
-        return sorted(self.output_folder.glob("*.gdx"))
+        """The GDX files in the build's timeseries folder, where they belong."""
+        return sorted(timeseries_folder(self.output_folder).glob("*.gdx"))
 
     def assert_no_gdx_written(self) -> None:
         """Assert the *contract*, not the log line.
@@ -123,9 +125,10 @@ class FakeRun:
         Every rejection path promises "No GDX output will be written". Checking
         the message alone would pass even if the promise were broken -- which is
         exactly what happened with the empty-DataFrame branch, whose message said
-        one thing while execution carried on regardless.
+        one thing while execution carried on regardless. Anywhere in the output
+        folder, so a file written to the wrong place still counts.
         """
-        files = self.gdx_files
+        files = sorted(self.output_folder.rglob("*.gdx"))
         if files:
             raise AssertionError(
                 f"expected no GDX output, found: {[f.name for f in files]}"

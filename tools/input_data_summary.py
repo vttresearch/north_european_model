@@ -2,9 +2,9 @@
 input_data_summary.py -- what is in one built input-data folder, as a report.
 
 Reads <built_folder>/inputData.xlsx and the per-climate-year ts_influx_*, ts_cf_*
-and ts_node_hydro_storage_limits_* GDX files beside it, plus what the build
-recorded about itself: cache/config_structural.json, cache/general_flags.json
-and summary.log.
+and ts_node_hydro_storage_limits_* GDX files in its timeseries/ subfolder, plus
+what the build recorded about itself: cache/config_structural.json,
+cache/general_flags.json and summary.log.
 Writes one self-contained report.md, with its figures, into a subfolder of the
 built folder -- so a colleague can be handed a folder and read it. Each run
 rewrites report.md and the figures it draws; any other file in that subfolder
@@ -159,6 +159,8 @@ from matplotlib.path import Path as MplPath
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+from src.timeseries.timeseries_helpers import timeseries_folder  # noqa: E402
 
 
 # ============================================================================
@@ -1860,7 +1862,8 @@ def read_build_record(folder: Path) -> BuildRecord:
             record.warnings += 1
         elif in_summary and text.startswith("❌"):
             record.errors += 1
-    record.forecast_files = sorted(p.name for p in folder.glob("ts_*_forecasts.gdx"))
+    record.forecast_files = sorted(
+        p.name for p in timeseries_folder(folder).glob("ts_*_forecasts.gdx"))
     return record
 
 
@@ -2204,12 +2207,14 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
     if backend is None:
         return Timeseries(skipped=reason)
     gx, container = backend
+    gdx_folder = timeseries_folder(folder)
 
     years = sorted(set().union(*(
-        set(year_files(folder, family)) for family in DEMAND_FAMILY.values()
+        set(year_files(gdx_folder, family)) for family in DEMAND_FAMILY.values()
     )) if DEMAND_FAMILY else set())
     if not years:
-        return Timeseries(skipped="no per-climate-year ts_influx GDX file in this folder")
+        return Timeseries(skipped="no per-climate-year ts_influx GDX file in this folder's "
+                                  "timeseries/")
 
     # Areas come from the nodes the workbook declares, so a node appearing only
     # in a GDX cannot silently invent a column.
@@ -2239,13 +2244,13 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         second read of it.
         """
         nonlocal hours, window
-        available = year_files(folder, family)
+        available = year_files(gdx_folder, family)
         if not available:
             return
         # A year with no file of this family still takes a slot, so a family
         # that starts late cannot shift every later year out of step with the
         # others. A path that does not exist yields an empty frame.
-        ordered = [available.get(y, folder / f"{family}_{y}.gdx") for y in years]
+        ordered = [available.get(y, gdx_folder / f"{family}_{y}.gdx") for y in years]
         frames: List[Optional[np.ndarray]] = []
 
         def reduce_one(gdx_file, records):
@@ -2321,12 +2326,12 @@ def read_timeseries(folder: Path, workbook: Workbook, zones: bool) -> Timeseries
         {"flow": flow, "node": node, "cf": float(np.mean(values))}
         for (flow, node), values in cf_seen.items()
     ]
-    storage_limit, storage_limit_from = _read_storage_limit(container, folder)
+    storage_limit, storage_limit_from = _read_storage_limit(container, gdx_folder)
 
     hydro = None
     inflow = _stack_windows(node_parts, absent_node=0.0)
     if inflow:
-        upward, downward = _read_storage_limit_series(gx, container, folder, years)
+        upward, downward = _read_storage_limit_series(gx, container, gdx_folder, years)
         window = max(array.shape[1] for array in [*inflow.values(), *upward.values()])
         hydro = HydroSeries(
             years=list(years), hours=window, grid_of=grid_of,
@@ -5061,8 +5066,8 @@ def _consumption_subsection(report: Report, ctx: ReportContext, carrier: str) ->
     elif demand.empty and carrier in DEMAND_FAMILY:
         # The family exists for this carrier but no file of it was found, which
         # is different from a carrier that never has one.
-        report.add(f"No `{DEMAND_FAMILY[carrier]}_<year>.gdx` file was found in this folder, so "
-                   f"there is no demand to report.")
+        report.add(f"No `{DEMAND_FAMILY[carrier]}_<year>.gdx` file was found in this folder's "
+                   f"`timeseries/`, so there is no demand to report.")
         report.add()
     elif demand.empty:
         # Both routes checked: no ts_influx family is written for this carrier,
