@@ -1,9 +1,9 @@
 # Investment and unit lifetimes
 
-What to put in the source workbooks so that a Backbone model can build new
+What to put in the source workbooks so that an investment run can build new
 capacity. That means units, transfer links and storage, and when an existing unit
 starts or stops running. This project only prepares the data. Whether anything
-gets built is decided by the model run, and an investment run needs an init file
+gets built is decided by the run, and an investment run needs an init file
 that this project does not ship.
 
 ## One minute summary
@@ -44,7 +44,7 @@ a column nothing reads.
 
 - [What the build does with these columns](#what-the-build-does-with-these-columns)
 - [When a unit exists](#when-a-unit-exists)
-- [Running an investment model](#running-an-investment-model)
+- [Starting an investment run](#starting-an-investment-run)
 - [Where this is defined](#where-this-is-defined)
 
 ## What the build does with these columns
@@ -111,11 +111,11 @@ and `becomeAvailable` is how a later vintage enters it. Transfer links are the
 exception: they are built at the `t_invest` steps, which this build does not
 write (see below).
 
-## Running an investment model
+## Starting an investment run
 
 The build writes the same input folder for schedule and investment runs. What
 makes a run an investment run is its init file, the GAMS file that sets the time
-structure and the model type. The two are run differently;
+structure and the run mode. The two are run differently;
 [Schedule runs and investment runs](running-the-model.md#schedule-runs-and-investment-runs)
 sets them side by side.
 
@@ -146,7 +146,7 @@ sets them side by side.
   `t000001` ([Timeseries](timeseries.md)). An investment run over one window
   therefore chooses capacity for that climate year's weather alone.
 
-Three Backbone inputs an investment model may want are not written here
+Three Backbone inputs an investment run may want are not written here
 ([Identified gaps](identified-gaps.md)):
 
 - **`t_invest`**, the steps at which transfer links may be built. When it is empty

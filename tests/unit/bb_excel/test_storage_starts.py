@@ -245,7 +245,7 @@ class TestAStartLevelThatCannotBeDetermined:
     """Both sources missed, so there is no level to start the storage at.
 
     A 0 is not a level either. Backbone binds a flagged reference of 0, so
-    ``boundStart=1`` beside one would start the store empty -- a claim about the
+    ``boundStart=1`` beside one would start the storage empty -- a claim about the
     data that nobody made. Writing nothing leaves the start free, and the log
     names the node, because the fix is in the data.
     """

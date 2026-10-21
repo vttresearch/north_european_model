@@ -493,7 +493,7 @@ that does not:
 `1,000.0` · `1 000` · `1'000` · `12,345,678` · `1.000,5` · `1_000` · `100 MW` ·
 `100MW` · `5%` · `€100` · `(500)` · `−5`
 
-Each is read as **not set**, which the model treats as zero, and reported: one
+Each is read as **not set**, which Backbone treats as zero, and reported: one
 message per workbook, naming the three columns with the most bad cells and
 counting the rest. Per column would be right for one stray cell and unreadable
 for a workbook whose export changed format, and that case is the one that buries

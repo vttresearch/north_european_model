@@ -147,8 +147,8 @@ links to it.
   gets, why a parameter column is missing whenever nothing set it, how a node is decided to
   be a price or a balance or a storage node, which capacities and storage start levels are
   derived rather than read, and what each of its warnings is asking you to change.
-- [Investment and unit lifetimes](docs/investment.md) — which source columns let the
-  model build units, transfer links and storage, how `becomeAvailable` and
+- [Investment and unit lifetimes](docs/investment.md) — which source columns let an
+  investment run build units, transfer links and storage, how `becomeAvailable` and
   `becomeUnavailable` say when a unit exists, and what an investment run needs that this
   project does not ship.
 - [Identified gaps](docs/identified-gaps.md) — a working inventory rather than a
@@ -156,7 +156,7 @@ links to it.
   of its own rules are known to be provisional. Read it before designing anything that
   adds a parameter or a sheet.
 - [Running the model](docs/running-the-model.md) — how a built input folder becomes
-  a solved model: the one command that starts a run, why runs happen from the Backbone
+  a finished Backbone run: the one command that starts a run, why runs happen from the Backbone
   checkout above rather than from here, why two runs of one input folder corrupt each other,
   how to tell a run worth trusting from one that merely finished, and what the parent
   checkout's skills and scripts already cover.
@@ -196,7 +196,7 @@ taking part in one, each documenting itself in its module docstring:
   hand in [ATTRIBUTION.md](ATTRIBUTION.md) at the repository root.
   Run it only to change what the maps look like, never as part of a build.
 
-For the model parameters themselves, see `docs/dictionary.md` and `docs/features.md`
+For Backbone's parameters themselves, see `docs/dictionary.md` and `docs/features.md`
 in the Backbone repository. For anyone changing the pipeline rather than the data,
 `tests/README.md` carries the NA/zero boundary map.
 

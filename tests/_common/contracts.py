@@ -431,7 +431,7 @@ def assert_gams_ready(
         first = values.index[np.isinf(as_float)][0]
         raise AssertionError(
             f"{prefix}{value_col!r} row {first} is non-finite ({values.loc[first]}); "
-            f"GAMS accepts INF and the model would fail far from the cause"
+            f"GAMS accepts INF and the run would fail far from the cause"
         )
 
 

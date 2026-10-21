@@ -7,7 +7,7 @@ to be right, and the interesting thing about it is how wide it is.
 
 ``nodedata`` and ``demanddata`` are the obvious half. The other half is not:
 a `unitdata` row declares a grid and a node **per connection**, which is how
-every battery, heat store and fuel grid enters the model without appearing in
+every battery, heat storage and fuel grid enters the model without appearing in
 nodedata at all. Miss that and the check reports about 110 perfectly correct
 rows per build -- which is what the first version of this map did.
 

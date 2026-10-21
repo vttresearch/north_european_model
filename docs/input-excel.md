@@ -99,7 +99,7 @@ built:
 - `invCosts` is zero or empty in `p_gnu_io`, **and**
 - `maxUnitCount` is zero or empty in `p_unit`.
 
-All three matter. Zero capacity alone is not redundant — a unit the model is
+All three matter. Zero capacity alone is not redundant — a unit Backbone is
 allowed to invest in is meaningful with no capacity today, which is the whole
 point of an investment run. The build reports the count and names the first few;
 on Observed Trends 2030 it drops 4 units, on National Trends 2040 it drops 6.
@@ -183,7 +183,7 @@ of `upperLimitCapacityRatio` were guarded; the third crashed a build.
 ## Storage start levels
 
 A node with a state variable needs a level to start from, or the solver may start
-it full and generate energy the model never bought. The builder gives each
+it full and generate energy the run never paid for. The builder gives each
 storage node one of two starts, never both — Backbone aborts on a node with both
 flags.
 
@@ -191,7 +191,7 @@ flags.
 value. The builder writes `boundStartRelative = 1` and a `relative` row, and
 Backbone starts the state at `downwardLimit + relative × (upwardLimit −
 downwardLimit)` on the step before the run's first hour. The band is read on
-that date, so a store whose limits follow the season starts inside them whenever
+that date, so storage whose limits follow the season starts inside them whenever
 the run starts. Every `psOpen` and `reservoir` node starts this way; [Hydro
 data](hydro.md#start-levels) says how their shares are set.
 
@@ -204,7 +204,7 @@ order:
 
 Given one, it writes `boundStart = 1` and a `reference` constant of **70% of that
 maximum**, rounded to a whole unit. For a band that is the same all year —
-batteries, closed pumped hydro, run-of-river, heat stores — that is the same
+batteries, closed pumped hydro, run-of-river, heat storage — that is the same
 start as a share of 0.7.
 
 **A share is used only where Backbone can use it.** Each of these starts at a
@@ -224,7 +224,7 @@ read it.
 node — which is the case to act on, because the fix is in the data: give the node
 an `upwardLimit`, or give one of its units an `upperLimitCapacityRatio`. Writing
 nothing rather than a zero reference is deliberate: Backbone binds a flagged
-`reference` of 0, so the store would start empty on a claim nobody made.
+`reference` of 0, so the storage would start empty on a claim nobody made.
 
 ## How a node is classified
 

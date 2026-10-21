@@ -105,7 +105,7 @@ def prepare_values_for_gdx(
       which is silently wrong rather than loudly wrong.  The offending rows are
       dropped so the GDX stays clean; the error makes the run report failure.
     - **Non-finite values** (inf/-inf) are an error.  GAMS accepts INF, so these
-      would be written happily and then make the model unbounded or infeasible
+      would be written happily and then make the problem unbounded or infeasible
       somewhere far away from the cause.  Dropped as well.
     - **Missing values** are filled with 0, silently unless `report_missing`.
       The fill is correct and necessary; the gap itself originates in the source
@@ -186,7 +186,7 @@ def prepare_values_for_gdx(
         logger.log_status(
             f"{where}: {int(non_finite.sum())} row(s) have a non-finite {value_col} "
             f"(inf/-inf) and have been dropped. GAMS would accept these as INF and "
-            f"the model would fail far from the cause.",
+            f"the run would fail far from the cause.",
             level="error",
         )
         work = work.loc[~non_finite]

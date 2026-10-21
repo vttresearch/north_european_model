@@ -209,7 +209,7 @@ FI      | elec | all      | 1    | 5
 class TestAStartShareOnASeasonalLimit:
     """A ``relative`` column in nodedata beside a limit a processor gives as a series.
 
-    The shape of every hydro reservoir: the workbook states the store's size and
+    The shape of every hydro reservoir: the workbook states the storage's size and
     the share it starts at, and the storage-limits processor says the limit
     follows the season. The start is then a share of the band on whatever date
     the run starts, which is what Backbone needs to see two things for: a floor

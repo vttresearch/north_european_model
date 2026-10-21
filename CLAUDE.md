@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-This repository builds input data for the Backbone energy system model, modelling European power systems including district heating, hydrogen, etc. It reads scenario data from Excel files and time series sources, processes them through a Python pipeline, and produces a folder with all files needed to run the model.
+This repository builds input data for Backbone, modelling European power systems including district heating, hydrogen, etc. It reads scenario data from Excel files and time series sources, processes them through a Python pipeline, and produces a folder with all files needed to run the model.
 
 
 ## Scope for AI assistance
@@ -132,7 +132,7 @@ actually proven here, each dated with what it returned and marked when it was no
 **GAMS needs no configuration here, and this project does not reason about it.** Two
 independent things: `gams.transfer` reads and writes GDX from the Python side, and
 `GDX_exchange.resolve_gams_system_directory` binds it to the install matching the
-installed `gamsapi`, with no environment variable set; separately, a model run goes
+installed `gamsapi`, with no environment variable set; separately, a run goes
 through `run_model.py`, which hands off to the parent's `scripts/run_backbone.py` and
 lets it resolve both. *Which* install and *which* solver it picks belongs in
 `local-setup.txt`, not here. No solver selection, no fallback and no licence-ceiling
@@ -200,7 +200,7 @@ This project is installed inside a Backbone checkout, so the parent directory `.
 the Backbone repository. The two are separate git repos.
 
 - **Read freely** from `../` -- `../docs/dictionary.md` and `../docs/features.md` are the
-  authoritative parameter/feature references; `../inc/` is the core model logic.
+  authoritative parameter/feature references; `../inc/` is Backbone's core logic.
 - **Editing anything under `../` needs explicit user confirmation first -- before
   planning the edit, not just before making it.** It is allowed, but it should be rare.
   Default to changing files in this project.

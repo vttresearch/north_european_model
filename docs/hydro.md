@@ -26,7 +26,7 @@ available, and this page will change with them. See
 - **Seasonal storage limits exist for two of the four types**, and the rest run on a
   flat `upwardLimit` deliberately rather than by mistake. The build names them
   every run.
-- **Stores start at a share of their band** (`nodedata` `relative`), read on the
+- **Hydro storage starts at a share of its band** (`nodedata` `relative`), read on the
   date the run starts, so a run can start in any month and still start inside
   its limits.
 - **The PECD files have holes, and the builder repairs or refuses them by rule:**
@@ -143,12 +143,12 @@ open-loop nodes that are closed-loop in practice: `FR00_psOpen` receives none, a
 **`psOpen` is water-driven only in `AT00`, at 1563 h, and the three Norwegian zones,
 at 3959–4500 h.**
 
-A **low reservoir figure is not a defect**. A reservoir that runs few hours is a store
+A **low reservoir figure is not a defect**. A reservoir that runs few hours is storage
 being kept for when it is worth using, which is what a reservoir is for.
 `AT00_reservoir` runs 732 h and `DE00_reservoir` 754 h against run-of-river at 4906 h
 and 3663 h in the same zones; both hold real seasonal storage (207 GWh usable, 5.8 weeks
 of its own inflow, and 258 GWh, 13 weeks), and Austria's reservoir moves 1.87 TWh
-against 62 TWh of national demand. They are left as peaking stores deliberately.
+against 62 TWh of national demand. They are left as peaking reservoirs deliberately.
 
 **`FI00` and `SE04` are the rows to read with care.** Both are mostly run-of-river with
 a few large reservoirs in the middle of the river system, which no clean split between
@@ -233,19 +233,19 @@ fleet by about a factor of two.
 
 ## Start levels
 
-**Every `psOpen` and `reservoir` store starts at a share of its band**, given in
+**Every `psOpen` and `reservoir` storage starts at a share of its band**, given in
 the `relative` column of `nodedata`: `downwardLimit + relative × (upwardLimit −
 downwardLimit)` on the step before the run's first hour. The builder writes it
 with `boundStartRelative` — see [Input Excel builder](input-excel.md#storage-start-levels)
 — and Backbone reads the band on whatever date the run starts, so a run from June
 starts inside June's band and one from January inside January's.
 
-The seven stores with a constant band, floored at `Eps`, have a share of 0.70:
-70% of the store. The twelve with seasonal limits have shares that put their
-1 January start at 70% of the store's annual maximum — 50% for `ES00_reservoir` —
+The seven storage nodes with a constant band, floored at `Eps`, have a share of 0.70:
+70% of the storage. The twelve with seasonal limits have shares that put their
+1 January start at 70% of the storage's annual maximum — 50% for `ES00_reservoir` —
 as the median over the 35 climate years of Observed Trends 2030:
 
-| Store | share | Store | share |
+| Storage node | share | Storage node | share |
 |---|---|---|---|
 | `NOS0_psOpen` | 0.46 | `FR00_reservoir` | 0.66 |
 | `NOM1_psOpen` | 0.44 | `SE03_reservoir` | 0.67 |
@@ -261,7 +261,7 @@ cannot do that:** 102.7 TWh held for every date lies above the 1 June ceiling of
 `AT00_reservoir`, `NON1_psOpen` and `SE01_reservoir`, and below the 1 September
 floor of `SE02_reservoir` and `AT00_reservoir`.
 
-The shares are data, not a rule: changing a store's start is a one-cell edit.
+The shares are data, not a rule: changing a storage's start is a one-cell edit.
 `scheduleInit.gms` starts every run on 1 January, so a run from another date
 moves `t_start` itself, and the shares follow it there.
 
@@ -458,10 +458,10 @@ minimum, and is reported in `r_qMinGen_gnu`. See the parent's
 PECD's `min-max-generation` file was tried and abandoned, and it is worth saying
 why so that nobody tries again. Its required minimum generation exceeds the
 reservoir inflow of the same zone and week in **24.5% of SE02's weeks and 23% of
-SE01's**, with runs of 22 and 20 consecutive weeks — five months during which the
-model would be told to generate more than the water arriving. The worst single
+SE01's**, with runs of 22 and 20 consecutive weeks — five months during which
+Backbone would be told to generate more than the water arriving. The worst single
 week asks for 302.6 GWh against 17.3 GWh of inflow. A constraint like that either
-drains the reservoir or makes the model infeasible, and no amount of gap-filling
+drains the reservoir or makes the problem infeasible, and no amount of gap-filling
 repairs it. The file has been removed from this repo.
 
 The rows now carry the final data from
@@ -560,7 +560,7 @@ each one looked like a fixable defect until the numbers came in.
 - **SE04's level data is unreliable, on four independent counts.** Its only
   isolated zero, its only multi-week zero run, a width profile that correlates
   with nothing, and a reservoir holding just 2.6 weeks of inflow — barely a
-  seasonal store at all. The node is small (71.7 GWh), so it has not been worth
+  seasonal reservoir at all. The node is small (71.7 GWh), so it has not been worth
   chasing.
 
 **Conclusion: no seasonal bounds are conjured for the nodes that lack them.**
@@ -578,7 +578,7 @@ obviously flat one.
   under `config_OT2030`; listed after `TYNDP-2024_National_Trends.xlsx` under the NT
   configs, so its rows win there.
 - `build_input_summary.py`, section Hydro — whether the fleet matches the water, and
-  whether each store can carry its minimum and pass its inflow, read from a folder a
+  whether each storage node can carry its minimum and pass its inflow, read from a folder a
   build produced.
 - `src_files/data_files/unittypedata_compilation.xlsx` — declares each hydro
   `unittype` with its grids and efficiency, which is what turns

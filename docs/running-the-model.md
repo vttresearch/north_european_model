@@ -1,6 +1,6 @@
 # Running the model
 
-How a built input folder becomes a solved model: the one command that starts a
+How a built input folder becomes a finished Backbone run: the one command that starts a
 run, where its output goes, how many runs can go at once, and how to tell a run
 worth trusting from one that merely finished.
 
@@ -53,7 +53,7 @@ another. They differ in almost everything that decides how to run them:
 | Performance-core pin | an optional safeguard for a long run | no: it would hold a many-thread solve on a few cores |
 
 The rest of this page is about schedule runs where the two differ.
-[Running an investment model](investment.md#running-an-investment-model) is the
+[Starting an investment run](investment.md#starting-an-investment-run) is the
 investment side.
 
 ## Running one case
@@ -197,7 +197,7 @@ another on seven threads, nearly four. Part of the four-run row shared the machi
 with other work, and the eight-run row needs the memory for eight 365-day runs,
 which was not tried.
 
-**Memory runs out before the cores do.** Each run holds its model in memory, and
+**Memory runs out before the cores do.** Each run holds its problem in memory, and
 its results so far: up to about a gigabyte for a short OT2030 run, and more for a
 year run, whose results build up as it goes. Watch free memory as the runs start
 (Task Manager, *Performance*). Once it is gone, Windows moves memory to disk and
@@ -207,7 +207,7 @@ every run slows to a crawl, so start no more runs than fit. On a machine with
 **An investment run does not follow this.** Its one solve uses several cores,
 and it holds the whole problem in memory at once, so a second one beside it
 takes from the first. See
-[Running an investment model](investment.md#running-an-investment-model).
+[Starting an investment run](investment.md#starting-an-investment-run).
 
 `run_model.py` takes an advisory lock on the input folder and refuses to start a
 second run against it, naming the one that holds it. The lock is advisory on
@@ -233,7 +233,7 @@ An investment run is the other case: one large solve, where the solver can put
 several threads to work. The setting is shared by both, because both read the
 input folder's `1_options.gms`, so an investment run raises it for itself with
 `--threads -1`
-([Running an investment model](investment.md#running-an-investment-model)).
+([Starting an investment run](investment.md#starting-an-investment-run)).
 
 `--threads N` changes it for one run, over the input folder's own setting. With
 `--cpus`, keep it no larger than the processors listed, or the threads that lose
@@ -300,7 +300,7 @@ for and marked in no way at all — it reads as a cheaper scenario. Check, in or
 
 1. **The exit code.** An execution error makes GAMS exit non-zero whatever
    `--debug` is set to.
-2. **`warnings.log`, in full.** It is written before any model logic, so a missing
+2. **`warnings.log`, in full.** It is written before any of Backbone's own logic, so a missing
    one is a run that never got that far. `Note:` lines are informational;
    `!!! Warning:` lines are not. In this model a handful of conversion units with
    no efficiency or `conversionCoeff` are deactivated every run — that is this

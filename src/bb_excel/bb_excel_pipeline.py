@@ -1213,7 +1213,7 @@ class BBExcelPipeline:
         A node whose data gives a ``relative`` share starts at that share of its
         band from downwardLimit to upwardLimit at the starting step:
         ``boundStartRelative = 1`` and a ``relative`` row. The band follows the
-        date the run starts on, so this is the form for a store whose limits
+        date the run starts on, so this is the form for storage whose limits
         follow the season.
 
         Every other storage node starts at a level: ``boundStart = 1`` and a
@@ -1294,7 +1294,7 @@ class BBExcelPipeline:
             # start free and names the node, because the fix is in the data: give
             # the node an upwardLimit, or give one of its units an
             # upperLimitCapacityRatio. A reference of 0 would say something else
-            # -- Backbone binds a flagged reference of 0, so the store would start
+            # -- Backbone binds a flagged reference of 0, so the storage would start
             # empty on a claim nobody made.
             if start_value > 0:
                 # Set boundStart to 1 for storage nodes
