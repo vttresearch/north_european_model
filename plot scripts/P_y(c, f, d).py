@@ -81,4 +81,4 @@ plt.subplots_adjust(wspace=0, hspace=0)
 
 # Output
 
-plt.savefig(path.output_dir + '\\1982-P(c, f, d).png')
+plt.savefig(path.output_dir + '\\P(c, f, d).png')

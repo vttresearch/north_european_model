@@ -2,6 +2,7 @@ import gams.transfer as gt
 import pandas as pd
 import os
 import sys
+import re
 from dataclasses import dataclass
 
 # Variable definitions _________________________________________________________________________________________________
@@ -51,6 +52,7 @@ fuel = Fuels(
 
 countryCodes = ['DE', 'FR', 'UK', 'ES', 'PL', 'NL', 'BE', 'SE', 'DK', 'FI', 'NO', 'LT', 'LV', 'EE']
                                                                             # Sorted by population size
+regionCodes  = ['FIN0', 'FIW0', 'FIC0', 'FIE0', 'FISW', 'FISE', 'FIUU']     # Sorted geographically from north to south
 
 # Data processing ______________________________________________________________________________________________________
 
@@ -90,29 +92,31 @@ def account_special_fuels(gen_gnfFt, curtail_gnft, shortage_gnft):
 
 def reindex_and_filter(gen_gnfFt, con_gnfFt):
     
-    # Deriving new indexes
-    gen_gnfFt['country'] = gen_gnfFt.node.str.slice(0, 2)
-    gen_gnfFt['fuel']    = gen_gnfFt.uni.apply(lambda s: s.split('_', 1)[-1])
-    gen_gnfFt.t          = gen_gnfFt.t.str.extract(r'(\d+)').astype(int)
+    # Reindexing fuels and time
+    gen_gnfFt['fuel'] = gen_gnfFt.uni.apply(lambda s: s.split('_', 1)[-1])
+    gen_gnfFt.t       = gen_gnfFt.t.str.extract(r'(\d+)').astype(int)
 
-    con_gnfFt['country'] = con_gnfFt.node.str.slice(0, 2)
-    con_gnfFt.t          = con_gnfFt.t.str.extract(r'(\d+)').astype(int)
+    con_gnfFt.t       = con_gnfFt.t.str.extract(r'(\d+)').astype(int)
 
+    if max(gen_gnfFt.t) < 168:    
+            sys.exit('Error: The study period is shorter than a week. This script is not adapted to handle it.')
+    
     # Dropping not relevant
     gen_gnfFt = gen_gnfFt[gen_gnfFt.node.str.contains('elec') | gen_gnfFt.uni.str.contains('H2shortage')]
     gen_gnfFt = gen_gnfFt[gen_gnfFt.f.str.contains('f00')]
-    gen_nft   = gen_gnfFt.drop(['grid', 'f', 'node', 'uni'], axis=1)
+    gen_nft   = gen_gnfFt.drop(['grid', 'f', 'uni'], axis=1)
 
-    if max(gen_nft.t) < 168:
-        sys.exit('Error: The study period is shorter than a week. This script is not adapted to handle it.')
+    con_nt    = con_gnfFt.drop(['grid', 'f'], axis=1)
 
-    con_nt    = con_gnfFt.drop(['grid', 'f', 'node'], axis=1)
-    
+    # Reindexing nodes
+    gen_nft.node = gen_nft.node.str.slice(0, 4)
+    con_nt.node  = con_nt.node.str.slice(0, 4)
+
     return gen_nft, con_nt
 
-def filter_fuels(gen_cft, fuel):
+def filter_fuels(gen_nft, fuel):
     
-    fuelsPresent = gen_cft.fuel.unique()
+    fuelsPresent = gen_nft.fuel.unique()
     iPresent     = fuel.gdx_name.isin(fuelsPresent)
 
     fuel.gdx_name = fuel.gdx_name[iPresent]
@@ -125,51 +129,61 @@ def filter_fuels(gen_cft, fuel):
 
 def aggregate_by_country(gen_nft, con_nt):
     
-    gen_cft = gen_nft.groupby(['country', 'fuel', 't'])['value'].sum().reset_index()
-    con_ct  = con_nt.groupby(['country', 't'])['value'].sum().reset_index()
+    gen_nft.node = gen_nft.node.str.slice(0, 2)
+    con_nt.node = con_nt.node.str.slice(0, 2)
+
+    gen_nft = gen_nft.groupby(['node', 'fuel', 't'])['value'].sum().reset_index()
+    con_nt  = con_nt.groupby(['node', 't'])['value'].sum().reset_index()
     
-    return gen_cft, con_ct
+    return gen_nft, con_nt
 
-def aggregate_by_day(gen_cft, con_ct):
+def aggregate_by_day(gen_nft, con_nt):
 
-    gen_cft['d'] = (gen_cft.t - 1) // 24 + 1
-    gen_cft = gen_cft.drop(columns='t')
-    gen_cfd = gen_cft.groupby(['country', 'fuel', 'd'], as_index=False).sum()
+    gen_nft['d'] = (gen_nft.t - 1) // 24 + 1
+    gen_nft = gen_nft.drop(columns='t')
+    gen_cfd = gen_nft.groupby(['node', 'fuel', 'd'], as_index=False).sum()
     gen_cfd.value /= 24       # Scaling from MW·h per day to average MW
 
-    con_ct['d'] = (con_ct.t - 1) // 24 + 1
-    con_ct = con_ct.drop(columns='t')
-    con_cd = con_ct.groupby(['country', 'd'], as_index=False).sum()
+    con_nt['d'] = (con_nt.t - 1) // 24 + 1
+    con_nt = con_nt.drop(columns='t')
+    con_cd = con_nt.groupby(['node', 'd'], as_index=False).sum()
     con_cd.value /= 24
 
     return gen_cfd, con_cd
 
-def pivot_and_order(gen_cft, con_ct, fuel, countryCodes, time_column):
+def pivot_and_order(gen_nft, con_nt, fuel, locationCodes, time_column):
 
-    gen_cft = gen_cft.pivot_table(index=['country', time_column], columns='fuel', values='value')
-    gen_cft = gen_cft.reindex(pd.Categorical(countryCodes), level=0)
-    gen_cft = gen_cft[fuel.gdx_name]
+    gen_nft = gen_nft.pivot_table(index=['node', time_column], columns='fuel', values='value')
+    gen_nft = gen_nft.reindex(pd.Categorical(locationCodes), level=0)
+    gen_nft = gen_nft[fuel.gdx_name]
 
-    con_ct = con_ct.pivot_table(index=['country', time_column])
-    con_ct.columns = ['consumption']
-    con_ct = con_ct.reindex(pd.Categorical(countryCodes), level=0)
+    con_nt = con_nt.pivot_table(index=['node', time_column])
+    con_nt.columns = ['consumption']
+    con_nt = con_nt.reindex(pd.Categorical(locationCodes), level=0)
     
-    return gen_cft, con_ct
+    return gen_nft, con_nt
 
-def data_processing(path, fuel, countryCodes, t_resolution):
+def data_processing(path, fuel, locationCodes, t_resolution):
 
     gen_gnfFt, curtail_gnft, shortage_gnft, con_gnfFt = load_data(path)
     gen_gnfFt       = account_special_fuels(gen_gnfFt, curtail_gnft, shortage_gnft)
+
+    if len(locationCodes[0]) == 4:      # if region / not country
+        gen_gnfFt = gen_gnfFt[gen_gnfFt.node.str.startswith('FI')].copy()
+        con_gnfFt = con_gnfFt[con_gnfFt.node.str.startswith('FI')].copy()
+
     gen_nft, con_nt = reindex_and_filter   (gen_gnfFt, con_gnfFt)
     fuel            = filter_fuels         (gen_nft, fuel)
-    gen_cft, con_ct = aggregate_by_country (gen_nft, con_nt)
+
+    if len(locationCodes[0]) == 2:      # if country / not region
+        gen_nft, con_nt = aggregate_by_country (gen_nft, con_nt)
 
     if t_resolution == 'd':
-        gen_cft, con_ct = aggregate_by_day(gen_cft, con_ct)
+        gen_nft, con_nt = aggregate_by_day(gen_nft, con_nt)
 
-    gen_cft, con_ct = pivot_and_order (gen_cft, con_ct, fuel, countryCodes, t_resolution)
+    gen_nft, con_nt = pivot_and_order (gen_nft, con_nt, fuel, locationCodes, t_resolution)
 
-    gen_cft /= 1e3   # MW →  GW
-    con_ct /= -1e3   # consumption values in input data are negative
+    gen_nft /= 1e3   # MW →  GW
+    con_nt /= -1e3   # consumption values in input data are negative
 
-    return gen_cft, con_ct, fuel
+    return gen_nft, con_nt, fuel
