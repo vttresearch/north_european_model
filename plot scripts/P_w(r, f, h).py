@@ -11,49 +11,43 @@ inflowCodes = regionCodes + ['SE01', 'SE03', 'EE00']
 
 # Plot settings ________________________________________________________________________________________________________
 
-def region_subplots(axs, gen_rft, con_rt, fuel_color, inflow_colors, i, region, t0):
+def region_subplots(axs, gen_rft, inflow_rft, fuel_color, inflow_colors, i, region, t0):
     
     ax = axs[i, 0]
 
     gen = gen_rft.loc[region]
-    generation_columns = [column for column in gen.columns if column not in inflowCodes]
-    inflow_columns = [column for column in inflowCodes if column in gen.columns]
-
-    generation = gen[generation_columns]
-    generation.plot.area(
+    gen.plot.area(
         stacked=True,
         ax=ax,
         legend=False,
         xlim=[t0, t0 + 168],
-        color=fuel_color.iloc[:len(generation_columns)],
+        color=fuel_color,
         linewidth=0
     )
 
     # Stack hatched imports above the generation total.
-    cumulative = generation.sum(axis=1)
-    for source, color in zip(inflow_columns, inflow_colors):
-        if source in regionCodes[:4]:
-            hatch_pattern = '/' * 3
-        elif source in regionCodes[4:]:
-            hatch_pattern = '\\' * 3
+    inflow = inflow_rft.loc[region]
+    cumulative = gen.sum(axis=1)
+    for source, color in zip(inflowCodes, inflow_colors):
+        if source in regionCodes[:2]:
+            hatch_pattern = '|' * 3
+        elif source in regionCodes[2:]:
+            hatch_pattern = '-' * 3
         else:
             hatch_pattern = 'x' * 3
 
-        next_cumulative = cumulative + gen[source]
+        next_cumulative = cumulative + inflow[source]
         ax.fill_between(
-            gen.index,
+            inflow.index,
             cumulative,
             next_cumulative,
             facecolor=color,
             edgecolor='white',
             hatch=hatch_pattern,
-            linewidth=0.3,
+            linewidth=0.1,
             label=source
         )
         cumulative = next_cumulative
-
-    con = con_rt.loc[region]
-    con.plot(ax=ax, legend=False, xlim=[t0, t0 + 168], color='black')
 
     ax.text(0.5, 0.85, region, transform=ax.transAxes)
 
@@ -108,16 +102,17 @@ def legend_and_labels(fig, axs, fuel_name):
     plt.subplots_adjust(top=0.96, bottom=0.15, left=0.05, right=0.95, wspace=0, hspace=0)
 
 
-def plot_generation(gen_rft, con_rt, fuel, regionCodes, t0, path):
+def plot_generation(gen_rft, inflow_rft, fuel, regionCodes, t0, path):
 
     plt.rcParams['font.size'] = 9
+    plt.rcParams['hatch.linewidth'] = 0.5
     fig, axs = plt.subplots(7, 1, figsize=(17/2.54, 23/2.54), squeeze=False)
-    inflow_colors = pd.Series([(0.8, 0.6, 0.0), (0.7, 0.5, 0.0), (0.6, 0.4, 0.0), (0.5, 0.3, 0.0),
-                               (0.8, 0.6, 0.0), (0.7, 0.5, 0.0), (0.6, 0.4, 0.0), 
+    inflow_colors = pd.Series([(0.0, 0.8, 1.0), (0.5, 0.8, 1.0), (0.5, 0.8, 0.7), (0.5, 0.8, 0.4),
+                               (0.4, 0.6, 0.4), (0.3, 0.5, 0.3), (0.2, 0.4, 0.2), 
                                (0.6, 0.6, 0.0), (0.5, 0.5, 0.0), (0.4, 0.4, 0.0)])
 
     for i, region in enumerate(regionCodes):
-        region_subplots(axs, gen_rft, con_rt, fuel.color, inflow_colors, i, region, t0)
+        region_subplots(axs, gen_rft, inflow_rft, fuel.color, inflow_colors, i, region, t0)
 
     format_axes(axs, t0)
     legend_and_labels(fig, axs, fuel.name)
@@ -167,15 +162,15 @@ def flow_to_fuel(tr_nnt, gen_rft, regionCodes):
 
     inflow = inflow[inflowCodes]
 
-    return pd.concat([gen_rft, inflow], axis=1)
+    return inflow
 
 # Main _________________________________________________________________________________________________________________
 
 tr_nnt = flowdata(path)
 
 gen_rft, con_rt, fuel = data_processing(path, fuel, regionCodes, 't')
-gen_rft = flow_to_fuel(tr_nnt, gen_rft, regionCodes)
+inflow_rft = flow_to_fuel(tr_nnt, gen_rft, regionCodes)
 
-fuel.name = pd.concat([fuel.name.iloc[:-1], pd.Series(inflowCodes), fuel.name.iloc[-1:]], ignore_index=True)
+fuel.name = pd.concat([fuel.name.iloc[:-1], pd.Series(inflowCodes)], ignore_index=True)
 
-plot_generation(gen_rft, con_rt, fuel, regionCodes, t0, path)
+plot_generation(gen_rft, inflow_rft, fuel, regionCodes, t0, path)
