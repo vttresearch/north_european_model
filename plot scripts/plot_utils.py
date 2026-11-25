@@ -2,7 +2,6 @@ import gams.transfer as gt
 import pandas as pd
 import os
 import sys
-import re
 from dataclasses import dataclass
 
 # Variable definitions _________________________________________________________________________________________________
