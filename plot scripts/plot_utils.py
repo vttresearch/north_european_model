@@ -22,9 +22,6 @@ path = Paths(
     result_gdx = os.path.normpath('C:/backbone/output/results.gdx'),
     debug_gdx  = os.path.normpath('C:/backbone/output/debug.gdx'),
     output_dir = os.path.normpath('C:/backbone/output/')
-    # result_gdx = os.path.normpath('C:/Users/jjustinas/OneDrive - Teknologian Tutkimuskeskus VTT/Desktop/Smaller pojects/1. NER/2. Model/Multiyear/1982-results.gdx'),
-    # debug_gdx  = os.path.normpath('C:/Users/jjustinas/OneDrive - Teknologian Tutkimuskeskus VTT/Desktop/Smaller pojects/1. NER/2. Model/Multiyear/1982-debug.gdx'),
-    # output_dir = os.path.normpath('C:/Users/jjustinas/OneDrive - Teknologian Tutkimuskeskus VTT/Desktop/Smaller pojects/1. NER/2. Model/Multiyear/')
 )
 
 fuel = Fuels(
@@ -48,6 +45,8 @@ fuel = Fuels(
                          (0.5, 0.3, 0.0), (0.8, 0.5, 0.0), (1.0, 0.7, 0.3), (0.0, 0.5, 0.5),
                          (1.0, 0.0, 0.0), (1.0, 0.5, 0.5), (0.8, 0.4, 1.0)])
 )
+
+fuel_metadata = {gn: {'name': n, 'color': c} for gn, n, c in zip(fuel.gdx_name, fuel.name, fuel.color)}
 
 countryCodes = ['DE', 'FR', 'UK', 'ES', 'PL', 'NL', 'BE', 'SE', 'DK', 'FI', 'NO', 'LT', 'LV', 'EE']
                                                                             # Sorted by population size

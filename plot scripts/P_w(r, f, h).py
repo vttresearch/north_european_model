@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
-from plot_utils import path, fuel, regionCodes, data_processing
+from plot_utils import path, fuel, fuel_metadata, regionCodes, data_processing
 import gams.transfer as gt
 
 os.system('cls')
@@ -102,24 +102,41 @@ def legend_and_labels(fig, axs, fuel_name):
     plt.subplots_adjust(top=0.96, bottom=0.15, left=0.05, right=0.95, wspace=0, hspace=0)
 
 
-def plot_generation(gen_rft, inflow_rft, fuel, regionCodes, t0, path):
+def plot_generation(gen_rft, inflow_rft, fuel_metadata, regionCodes, t0, path):
 
+    # Layout
     plt.rcParams['font.size'] = 9
     plt.rcParams['hatch.linewidth'] = 0.5
     fig, axs = plt.subplots(7, 1, figsize=(17/2.54, 23/2.54), squeeze=False)
-    inflow_colors = pd.Series([(0.0, 0.8, 1.0), (0.5, 0.8, 1.0), (0.5, 0.8, 0.7), (0.5, 0.8, 0.4),
+
+    # Legend labels and colors
+    supply_names  = [fuel_metadata[code]['name']  for code in gen_rft.columns] + inflowCodes
+    supply_colors = [fuel_metadata[code]['color'] for code in gen_rft.columns]
+    flow_colors   = pd.Series([(0.0, 0.8, 1.0), (0.5, 0.8, 1.0), (0.5, 0.8, 0.7), (0.5, 0.8, 0.4),
                                (0.4, 0.6, 0.4), (0.3, 0.5, 0.3), (0.2, 0.4, 0.2), 
                                (0.6, 0.6, 0.0), (0.5, 0.5, 0.0), (0.4, 0.4, 0.0)])
 
+    # Plot
     for i, region in enumerate(regionCodes):
-        region_subplots(axs, gen_rft, inflow_rft, fuel.color, inflow_colors, i, region, t0)
+        region_subplots(axs, gen_rft, inflow_rft, supply_colors, flow_colors, i, region, t0)
 
     format_axes(axs, t0)
-    legend_and_labels(fig, axs, fuel.name)
+    legend_and_labels(fig, axs, supply_names)
 
     plt.savefig(os.path.join(path.output_dir, 'P(r, f, h).png'))
 
-# Processing flows _____________________________________________________________________________________________________
+# Data processing ______________________________________________________________________________________________________
+
+def move_shortages(gen, con):
+
+    shortages_present = gen.columns[gen.columns.isin(['Elshortage', 'H2shortage'])]
+    shortage = gen[shortages_present]
+    
+    gen = gen.drop(columns=shortages_present)
+
+    con = con.reindex(gen.index, fill_value=0).join(shortage)
+
+    return gen, con
 
 def flowdata(path):
 
@@ -149,28 +166,26 @@ def flowdata(path):
 
     return tr_nnt
 
-def flow_to_fuel(tr_nnt, gen_rft, regionCodes):
+def flow_table(tr, gen, regionCodes, node1, node2):
 
     # Filtering and pivoting
-    inflow = tr_nnt[tr_nnt.to_node.isin(regionCodes)]
-    inflow = inflow.pivot(index=['to_node', 't'], columns='from_node', values='value' ).fillna(0)
+    flow = tr[tr[node1].isin(regionCodes)]
+    flow = flow.pivot(index=[node1, 't'], columns=node2, values='value' ).fillna(0)
 
-    # Reformating to match gen_rft
-    inflow.index = inflow.index.set_names(['node', 't'])
-    inflow = inflow.reindex(gen_rft.index, fill_value=0)
-    inflow /= 1e3
+    # Reformating to match gen
+    flow.index = flow.index.set_names(['node', 't'])
+    flow = flow.reindex(gen.index, fill_value=0)
+    flow /= 1e3
 
-    inflow = inflow[inflowCodes]
-
-    return inflow
+    return flow
 
 # Main _________________________________________________________________________________________________________________
 
-tr_nnt = flowdata(path)
+gen, con, _ = data_processing(path, fuel, regionCodes, 't')
+gen, con    = move_shortages(gen, con)
 
-gen_rft, con_rt, fuel = data_processing(path, fuel, regionCodes, 't')
-inflow_rft = flow_to_fuel(tr_nnt, gen_rft, regionCodes)
+tr      = flowdata(path)
+inflow  = flow_table(tr, gen, regionCodes, 'to_node', 'from_node')
+outflow = flow_table(tr, gen, regionCodes, 'from_node', 'to_node')
 
-fuel.name = pd.concat([fuel.name.iloc[:-1], pd.Series(inflowCodes)], ignore_index=True)
-
-plot_generation(gen_rft, inflow_rft, fuel, regionCodes, t0, path)
+plot_generation(gen, inflow, fuel_metadata, regionCodes, t0, path)
